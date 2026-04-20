@@ -6,6 +6,7 @@ import { query } from "./db.js";
 import { normalizeEmail, sendUserInvitationEmail } from "./utils.js";
 import { config } from "./config.js";
 import { requirePermission } from "./auth.js";
+import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
 
@@ -175,6 +176,22 @@ router.post("/", requirePermission("usuarios.create"), async (req, res) => {
     fullName: body.fullName,
   });
 
+  await logAuditEvent({
+    req,
+    module: "usuarios",
+    action: "created",
+    entityType: "user",
+    entityId: userId,
+    detail: "Usuario creado",
+    after: {
+      full_name: body.fullName,
+      email,
+      mobile: body.mobile || null,
+      status: body.status || "active",
+      role_ids: Array.isArray(body.roleIds) ? body.roleIds : [],
+    },
+  });
+
   res.status(201).json({
     id: userId,
     inviteEmailSent,
@@ -200,12 +217,15 @@ router.patch(
       return res.status(400).json({ message: "Id de usuario invalido" });
     }
 
-    const users = await query("SELECT id FROM users WHERE id = ? LIMIT 1", [
-      userId,
-    ]);
+    const users = await query(
+      "SELECT id, status FROM users WHERE id = ? LIMIT 1",
+      [userId],
+    );
     if (users.length === 0) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
+
+    const previousStatus = users[0].status;
 
     await query("UPDATE users SET status = ?, updated_at = ? WHERE id = ?", [
       parsed.data.status,
@@ -215,6 +235,17 @@ router.patch(
 
     await audit("status_changed", req.user?.id, userId, {
       status: parsed.data.status,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "usuarios",
+      action: "status_changed",
+      entityType: "user",
+      entityId: userId,
+      detail: "Estado de usuario actualizado",
+      before: { status: previousStatus },
+      after: { status: parsed.data.status },
     });
 
     res.json({
@@ -255,6 +286,14 @@ router.post(
 
       if (result.sent) {
         await audit("password_reset_sent", req.user?.id, userId);
+        await logAuditEvent({
+          req,
+          module: "usuarios",
+          action: "password_reset_sent",
+          entityType: "user",
+          entityId: userId,
+          detail: "Invitacion de reinicio enviada",
+        });
         return res.json({
           message: `Correo de reinicio enviado a ${user.email}`,
         });
@@ -300,6 +339,15 @@ router.put("/:id", requirePermission("usuarios.update"), async (req, res) => {
   if (rows.length === 0) {
     return res.status(404).json({ message: "Usuario no encontrado" });
   }
+
+  const [beforeUser] = await query(
+    "SELECT id, full_name, email, mobile, status FROM users WHERE id = ? LIMIT 1",
+    [userId],
+  );
+  const beforeRoleRows = await query(
+    "SELECT role_id FROM user_roles WHERE user_id = ? ORDER BY role_id",
+    [userId],
+  );
 
   const body = parsed.data;
   const now = new Date();
@@ -354,6 +402,38 @@ router.put("/:id", requirePermission("usuarios.update"), async (req, res) => {
     rolesUpdated: Array.isArray(body.roleIds),
   });
 
+  const [afterUser] = await query(
+    "SELECT id, full_name, email, mobile, status FROM users WHERE id = ? LIMIT 1",
+    [userId],
+  );
+  const afterRoleRows = await query(
+    "SELECT role_id FROM user_roles WHERE user_id = ? ORDER BY role_id",
+    [userId],
+  );
+
+  await logAuditEvent({
+    req,
+    module: "usuarios",
+    action: "updated",
+    entityType: "user",
+    entityId: userId,
+    detail: "Usuario actualizado",
+    before: {
+      full_name: beforeUser?.full_name || null,
+      email: beforeUser?.email || null,
+      mobile: beforeUser?.mobile || null,
+      status: beforeUser?.status || null,
+      role_ids: beforeRoleRows.map((row) => Number(row.role_id)),
+    },
+    after: {
+      full_name: afterUser?.full_name || null,
+      email: afterUser?.email || null,
+      mobile: afterUser?.mobile || null,
+      status: afterUser?.status || null,
+      role_ids: afterRoleRows.map((row) => Number(row.role_id)),
+    },
+  });
+
   res.json({ message: "Usuario actualizado" });
 });
 
@@ -377,6 +457,18 @@ router.put(
         [userId, roleId, now],
       );
     }
+
+    await logAuditEvent({
+      req,
+      module: "usuarios",
+      action: "roles_assigned",
+      entityType: "user",
+      entityId: userId,
+      detail: "Roles asignados al usuario",
+      after: {
+        role_ids: parsed.data.roleIds.map(Number),
+      },
+    });
 
     res.json({ message: "Roles actualizados" });
   },

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { normalizeEmail, signToken } from "./utils.js";
 import { authRequired, loadUser } from "./auth.js";
+import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
 
@@ -102,6 +103,19 @@ router.post("/register-first", async (req, res) => {
     });
 
     const token = signToken(result);
+    await logAuditEvent({
+      req,
+      module: "auth",
+      action: "register_first",
+      entityType: "user",
+      entityId: result.id,
+      detail: "Primer usuario administrador registrado",
+      after: {
+        full_name: result.full_name,
+        email: result.email,
+        status: "active",
+      },
+    });
     return res.status(201).json({ token, user: result });
   } catch (error) {
     if (error.message === "FIRST_USER_ALREADY_EXISTS") {
@@ -129,16 +143,47 @@ router.post("/login", async (req, res) => {
   const email = normalizeEmail(parsed.data.email);
   const rows = await query("SELECT * FROM users WHERE email = ?", [email]);
   if (rows.length === 0) {
+    await logAuditEvent({
+      req,
+      actor: { email },
+      module: "auth",
+      action: "login_failed",
+      entityType: "user",
+      detail: "Intento de login con usuario inexistente",
+      status: "error",
+      after: { email },
+    });
     return res.status(401).json({ message: "Credenciales invalidas" });
   }
 
   const user = rows[0];
   const ok = await bcrypt.compare(parsed.data.password, user.password_hash);
   if (!ok) {
+    await logAuditEvent({
+      req,
+      actor: { id: user.id, full_name: user.full_name, email: user.email },
+      module: "auth",
+      action: "login_failed",
+      entityType: "user",
+      entityId: user.id,
+      detail: "Intento de login con password invalido",
+      status: "error",
+    });
     return res.status(401).json({ message: "Credenciales invalidas" });
   }
 
   if (user.status !== "active") {
+    await logAuditEvent({
+      req,
+      actor: { id: user.id, full_name: user.full_name, email: user.email },
+      module: "auth",
+      action: "login_failed",
+      entityType: "user",
+      entityId: user.id,
+      detail: "Intento de login con usuario inactivo",
+      status: "error",
+      before: { status: user.status },
+    });
     return res.status(403).json({ message: "Usuario inactivo" });
   }
 
@@ -149,6 +194,18 @@ router.post("/login", async (req, res) => {
   );
 
   const token = signToken(user);
+  await logAuditEvent({
+    req,
+    actor: { id: user.id, full_name: user.full_name, email: user.email },
+    module: "auth",
+    action: "login_success",
+    entityType: "user",
+    entityId: user.id,
+    detail: "Inicio de sesion exitoso",
+    before: { last_visit_at: user.last_visit_at || null },
+    after: { last_visit_at: now },
+  });
+
   return res.json({
     token,
     user: {

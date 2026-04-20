@@ -2,6 +2,7 @@ import express from "express";
 import { z } from "zod";
 import { query } from "./db.js";
 import { requirePermission } from "./auth.js";
+import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
 
@@ -55,6 +56,21 @@ router.post("/", requirePermission("roles.create"), async (req, res) => {
     ],
   );
 
+  await logAuditEvent({
+    req,
+    module: "roles",
+    action: "created",
+    entityType: "role",
+    entityId: result.insertId,
+    detail: "Rol creado",
+    after: {
+      name: parsed.data.name,
+      description: parsed.data.description || null,
+      is_active: 1,
+      is_system: 0,
+    },
+  });
+
   res.status(201).json({ id: result.insertId, message: "Rol creado" });
 });
 
@@ -73,7 +89,7 @@ router.patch(
     }
 
     const roles = await query(
-      "SELECT id, name, is_system FROM roles WHERE id = ? LIMIT 1",
+      "SELECT id, name, is_system, is_active FROM roles WHERE id = ? LIMIT 1",
       [roleId],
     );
     if (roles.length === 0) {
@@ -81,6 +97,7 @@ router.patch(
     }
 
     const role = roles[0];
+    const previousIsActive = Number(role.is_active) === 1;
     if (Number(role.is_system) === 1) {
       return res.status(403).json({
         message: "No se puede cambiar el estado de un rol del sistema",
@@ -96,6 +113,17 @@ router.patch(
         roleId,
       ],
     );
+
+    await logAuditEvent({
+      req,
+      module: "roles",
+      action: "status_changed",
+      entityType: "role",
+      entityId: roleId,
+      detail: "Estado de rol actualizado",
+      before: { is_active: previousIsActive },
+      after: { is_active: parsed.data.isActive },
+    });
 
     res.json({
       message: parsed.data.isActive
@@ -183,6 +211,18 @@ router.put(
       "UPDATE roles SET updated_by_user_id = ?, updated_at = ? WHERE id = ?",
       [Number(req.user?.id) || null, now, roleId],
     );
+
+    await logAuditEvent({
+      req,
+      module: "roles",
+      action: "permissions_updated",
+      entityType: "role",
+      entityId: roleId,
+      detail: "Permisos del rol actualizados",
+      after: {
+        permission_ids: parsed.data.permissionIds.map(Number),
+      },
+    });
 
     res.json({ message: "Permisos del rol actualizados" });
   },

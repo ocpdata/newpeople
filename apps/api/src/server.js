@@ -8,6 +8,8 @@ import userRoutes from "./routes.users.js";
 import roleRoutes from "./routes.roles.js";
 import accountRoutes from "./routes.accounts.js";
 import catalogRoutes from "./routes.catalogs.js";
+import auditRoutes from "./routes.audit.js";
+import { startAuditRetentionJob } from "./audit.js";
 
 const app = express();
 
@@ -24,12 +26,15 @@ app.use("/api/users", authRequired, loadUser, userRoutes);
 app.use("/api/roles", authRequired, loadUser, roleRoutes);
 app.use("/api/accounts", authRequired, loadUser, accountRoutes);
 app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
+app.use("/api/audit", authRequired, loadUser, auditRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ message: "Error interno del servidor" });
 });
 
-app.listen(config.port, () => {
-  console.log(`API running on http://localhost:${config.port}`);
+startAuditRetentionJob().finally(() => {
+  app.listen(config.port, () => {
+    console.log(`API running on http://localhost:${config.port}`);
+  });
 });

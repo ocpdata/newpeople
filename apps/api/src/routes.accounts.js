@@ -2,6 +2,7 @@ import express from "express";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requirePermission } from "./auth.js";
+import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
 
@@ -134,6 +135,31 @@ router.post("/", requirePermission("cuentas.create"), async (req, res) => {
       return insertResult.insertId;
     });
 
+    await logAuditEvent({
+      req,
+      module: "cuentas",
+      action: "created",
+      entityType: "account",
+      entityId: accountId,
+      detail: "Cuenta creada",
+      after: {
+        name: body.name,
+        account_type_id: body.accountTypeId,
+        registration_code: body.registrationCode,
+        phone: body.phone || null,
+        economic_sector_id: body.economicSectorId,
+        website: body.website || null,
+        city: body.city || null,
+        state_region: body.stateRegion || null,
+        country_id: body.countryId,
+        description: body.description || null,
+        address_line: body.addressLine || null,
+        postal_code: body.postalCode || null,
+        activation_status_id: body.activationStatusId,
+        owner_user_ids: body.ownerUserIds.map(Number),
+      },
+    });
+
     return res.status(201).json({ id: accountId, message: "Cuenta creada" });
   } catch (error) {
     if (
@@ -161,6 +187,23 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
 
   const now = new Date();
   const body = parsed.data;
+
+  const beforeRows = await query(
+    `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,
+            website, city, state_region, country_id, description, address_line,
+            postal_code, activation_status_id
+     FROM accounts WHERE id = ? LIMIT 1`,
+    [id],
+  );
+
+  if (!beforeRows.length) {
+    return res.status(404).json({ message: "Cuenta no encontrada" });
+  }
+
+  const beforeOwners = await query(
+    "SELECT user_id FROM account_owners WHERE account_id = ? ORDER BY user_id",
+    [id],
+  );
 
   await withTransaction(async (conn) => {
     await conn.query(
@@ -198,6 +241,35 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
     }
   });
 
+  const afterRows = await query(
+    `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,
+            website, city, state_region, country_id, description, address_line,
+            postal_code, activation_status_id
+     FROM accounts WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  const afterOwners = await query(
+    "SELECT user_id FROM account_owners WHERE account_id = ? ORDER BY user_id",
+    [id],
+  );
+
+  await logAuditEvent({
+    req,
+    module: "cuentas",
+    action: "updated",
+    entityType: "account",
+    entityId: id,
+    detail: "Cuenta actualizada",
+    before: {
+      ...beforeRows[0],
+      owner_user_ids: beforeOwners.map((row) => Number(row.user_id)),
+    },
+    after: {
+      ...afterRows[0],
+      owner_user_ids: afterOwners.map((row) => Number(row.user_id)),
+    },
+  });
+
   res.json({ message: "Cuenta actualizada" });
 });
 
@@ -222,6 +294,16 @@ router.patch(
     }
 
     const now = new Date();
+    const accountRows = await query(
+      "SELECT activation_status_id FROM accounts WHERE id = ? LIMIT 1",
+      [id],
+    );
+
+    if (!accountRows.length) {
+      return res.status(404).json({ message: "Cuenta no encontrada" });
+    }
+
+    const previousStatusId = Number(accountRows[0].activation_status_id);
     const updateResult = await query(
       `UPDATE accounts
        SET activation_status_id = ?, updated_by = ?, updated_at = ?
@@ -232,6 +314,17 @@ router.patch(
     if (!updateResult.affectedRows) {
       return res.status(404).json({ message: "Cuenta no encontrada" });
     }
+
+    await logAuditEvent({
+      req,
+      module: "cuentas",
+      action: "status_changed",
+      entityType: "account",
+      entityId: id,
+      detail: "Estado de cuenta actualizado",
+      before: { activation_status_id: previousStatusId },
+      after: { activation_status_id: Number(statusRows[0].id) },
+    });
 
     return res.json({
       message:

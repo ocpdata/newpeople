@@ -756,9 +756,70 @@ td {
   border-color: #d8b3f7;
 }
 
+.audit-total-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #244164;
+  border: 1px solid #cddbf2;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.audit-screen-filters {
+  margin: 10px 0 12px;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.audit-screen-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.audit-screen-actions button {
+  width: auto;
+}
+
+.system-audit-table td {
+  vertical-align: top;
+}
+
+.audit-status-success {
+  color: #0b5e2a;
+  background: #eaf8ef;
+  border-color: #b8e6c7;
+}
+
+.audit-status-error {
+  color: #8a1f1f;
+  background: #fdeeee;
+  border-color: #f5c2c2;
+}
+
+.audit-pager {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
 @media (max-width: 960px) {
   .audit-filters {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .audit-screen-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .audit-screen-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
   }
 }
 

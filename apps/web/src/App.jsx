@@ -81,6 +81,7 @@ function Shell({ currentUser, onLogout }) {
           {can("usuarios.read") && <NavLink to="/users">Usuarios</NavLink>}
           {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
           {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
+          {can("audit.read") && <NavLink to="/audit">Auditoria</NavLink>}
         </nav>
         <button className="logout" onClick={onLogout}>
           Salir
@@ -122,10 +123,253 @@ function Shell({ currentUser, onLogout }) {
               )
             }
           />
+          <Route
+            path="/audit"
+            element={
+              can("audit.read") ? <SystemAuditPage /> : <Navigate to="/" />
+            }
+          />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
     </div>
+  );
+}
+
+function SystemAuditPage() {
+  const [items, setItems] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filters, setFilters] = useState({
+    page: 1,
+    pageSize: 50,
+    from: "",
+    to: "",
+    module: "",
+    action: "",
+    status: "",
+    q: "",
+  });
+
+  function buildQuery(params) {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      if (String(value).trim() === "") return;
+      search.set(key, String(value));
+    });
+    return search.toString();
+  }
+
+  async function load(nextFilters = filters) {
+    setLoading(true);
+    setError("");
+    try {
+      const qs = buildQuery(nextFilters);
+      const { data } = await api.get(`/api/audit${qs ? `?${qs}` : ""}`);
+      setItems(data.items || []);
+      setTotal(Number(data.total || 0));
+      setTotalPages(Number(data.totalPages || 1));
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar auditoria"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function formatDateTime(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString("es-MX", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+  }
+
+  function summarizeChanges(entry) {
+    const changed = entry.changed_fields;
+    if (!changed || typeof changed !== "object") return "-";
+    const fields = Object.keys(changed);
+    if (!fields.length) return "-";
+    return fields.slice(0, 4).join(", ") + (fields.length > 4 ? "..." : "");
+  }
+
+  function changePage(nextPage) {
+    const safePage = Math.max(1, Math.min(totalPages, nextPage));
+    const nextFilters = { ...filters, page: safePage };
+    setFilters(nextFilters);
+    load(nextFilters);
+  }
+
+  function submitFilters(e) {
+    e.preventDefault();
+    const nextFilters = { ...filters, page: 1 };
+    setFilters(nextFilters);
+    load(nextFilters);
+  }
+
+  function resetFilters() {
+    const defaults = {
+      page: 1,
+      pageSize: 50,
+      from: "",
+      to: "",
+      module: "",
+      action: "",
+      status: "",
+      q: "",
+    };
+    setFilters(defaults);
+    load(defaults);
+  }
+
+  return (
+    <section className="panel">
+      <div className="users-header-row">
+        <h2>Auditoria del sistema</h2>
+        <span className="audit-total-pill">{total} eventos</span>
+      </div>
+
+      <form className="audit-screen-filters" onSubmit={submitFilters}>
+        <input
+          type="text"
+          placeholder="Buscar por actor, modulo, accion o detalle"
+          value={filters.q}
+          onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))}
+        />
+        <select
+          value={filters.module}
+          onChange={(e) =>
+            setFilters((p) => ({ ...p, module: e.target.value }))
+          }
+        >
+          <option value="">Todos los modulos</option>
+          <option value="auth">Auth</option>
+          <option value="usuarios">Usuarios</option>
+          <option value="roles">Roles</option>
+          <option value="cuentas">Cuentas</option>
+        </select>
+        <select
+          value={filters.status}
+          onChange={(e) =>
+            setFilters((p) => ({ ...p, status: e.target.value }))
+          }
+        >
+          <option value="">Todos los estados</option>
+          <option value="success">Exito</option>
+          <option value="error">Error</option>
+        </select>
+        <input
+          type="date"
+          value={filters.from}
+          onChange={(e) => setFilters((p) => ({ ...p, from: e.target.value }))}
+        />
+        <input
+          type="date"
+          value={filters.to}
+          onChange={(e) => setFilters((p) => ({ ...p, to: e.target.value }))}
+        />
+        <div className="audit-screen-actions">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={resetFilters}
+          >
+            Limpiar
+          </button>
+          <button type="submit" className="btn-primary" disabled={loading}>
+            {loading ? "Buscando..." : "Aplicar"}
+          </button>
+        </div>
+      </form>
+
+      {error && <div className="toast toast-error">{error}</div>}
+
+      <table className="audit-table system-audit-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Modulo</th>
+            <th>Accion</th>
+            <th>Entidad</th>
+            <th>Actor</th>
+            <th>Estado</th>
+            <th>Cambios</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.length > 0 ? (
+            items.map((entry) => (
+              <tr key={entry.id}>
+                <td className="audit-date">
+                  {formatDateTime(entry.created_at)}
+                </td>
+                <td>{entry.module}</td>
+                <td>{entry.action}</td>
+                <td>
+                  {entry.entity_type}
+                  {entry.entity_id ? ` #${entry.entity_id}` : ""}
+                </td>
+                <td>
+                  {entry.performed_by_name || entry.performed_by_email || "-"}
+                </td>
+                <td>
+                  <span
+                    className={
+                      entry.status === "error"
+                        ? "audit-action-badge audit-status-error"
+                        : "audit-action-badge audit-status-success"
+                    }
+                  >
+                    {entry.status === "error" ? "Error" : "Exito"}
+                  </span>
+                </td>
+                <td className="audit-detail">{summarizeChanges(entry)}</td>
+                <td className="audit-detail">{entry.detail || "-"}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8} className="empty-state">
+                {loading
+                  ? "Cargando eventos..."
+                  : "No hay eventos para estos filtros"}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <div className="audit-pager">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => changePage(filters.page - 1)}
+          disabled={filters.page <= 1 || loading}
+        >
+          Anterior
+        </button>
+        <span>
+          Pagina {filters.page} de {Math.max(1, totalPages)}
+        </span>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => changePage(filters.page + 1)}
+          disabled={filters.page >= totalPages || loading}
+        >
+          Siguiente
+        </button>
+      </div>
+    </section>
   );
 }
 

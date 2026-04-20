@@ -236,6 +236,28 @@ CREATE TABLE IF NOT EXISTS user_audit_log (
   CONSTRAINT fk_ual_affected_user FOREIGN KEY (affected_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  module VARCHAR(60) NOT NULL,
+  action VARCHAR(60) NOT NULL,
+  entity_type VARCHAR(60) NOT NULL,
+  entity_id BIGINT UNSIGNED NULL,
+  status ENUM('success', 'error') NOT NULL DEFAULT 'success',
+  detail VARCHAR(255) NULL,
+  changed_fields JSON NULL,
+  performed_by_user_id BIGINT UNSIGNED NULL,
+  performed_by_name VARCHAR(160) NULL,
+  performed_by_email VARCHAR(190) NULL,
+  ip_address VARCHAR(64) NULL,
+  user_agent VARCHAR(500) NULL,
+  created_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_audit_performed_by_user FOREIGN KEY (performed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_audit_created_at (created_at),
+  INDEX idx_audit_module_created_at (module, created_at),
+  INDEX idx_audit_actor_created_at (performed_by_user_id, created_at),
+  INDEX idx_audit_entity_created_at (entity_type, entity_id, created_at)
+);
+
 INSERT INTO permissions (code, module, action, description, created_at, updated_at)
 VALUES
   ('usuarios.read', 'usuarios', 'read', 'Ver usuarios', NOW(3), NOW(3)),
@@ -248,7 +270,8 @@ VALUES
   ('permissions.read', 'permissions', 'read', 'Ver permisos', NOW(3), NOW(3)),
   ('cuentas.read', 'cuentas', 'read', 'Ver cuentas', NOW(3), NOW(3)),
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),
-  ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3))
+  ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3)),
+  ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 
 INSERT INTO account_types (code, name, is_active) VALUES
