@@ -2141,37 +2141,15 @@ function AccountsPage({ can, currentUser, token }) {
                           onClick={async () => {
                             const statusCode = normalizeText(status.code);
                             console.log("Status code being sent:", statusCode);
-                            console.log("Token available:", !!token);
-                            console.log("Full token:", token);
                             try {
                               setCreatingAccount(true);
                               const payload = { statusCode };
                               console.log("Payload:", payload);
-                              const resp = await fetch(
-                                `/api/accounts/${editingAccountId}/status`,
-                                {
-                                  method: "PATCH",
-                                  headers: {
-                                    "Content-Type": "application/json",
-                                    Authorization: `Bearer ${token}`,
-                                  },
-                                  body: JSON.stringify(payload),
-                                },
+                              const resp = await api.patch(
+                                `/accounts/${editingAccountId}/status`,
+                                payload,
                               );
-                              console.log(
-                                "Response status:",
-                                resp.status,
-                                resp.statusText,
-                              );
-                              if (!resp.ok) {
-                                const err = await resp.json();
-                                console.error("Error from API:", err);
-                                throw new Error(
-                                  err.message || "Error al cambiar estado",
-                                );
-                              }
-                              const resData = await resp.json();
-                              console.log("Success response:", resData);
+                              console.log("Success response:", resp.data);
                               setForm({
                                 ...form,
                                 activationStatusId: String(status.id),
