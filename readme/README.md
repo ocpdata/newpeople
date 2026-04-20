@@ -7,6 +7,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
+- [Contactos](./contactos.md)
 - [Auditoria](./auditoria.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)
