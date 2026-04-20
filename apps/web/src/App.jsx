@@ -118,7 +118,11 @@ function Shell({ currentUser, onLogout }) {
             path="/accounts"
             element={
               can("cuentas.read") ? (
-                <AccountsPage can={can} currentUser={currentUser} />
+                <AccountsPage
+                  can={can}
+                  currentUser={currentUser}
+                  token={token}
+                />
               ) : (
                 <Navigate to="/" />
               )
@@ -128,7 +132,7 @@ function Shell({ currentUser, onLogout }) {
             path="/contacts"
             element={
               can("contactos.read") ? (
-                <ContactsPage can={can} />
+                <ContactsPage can={can} token={token} />
               ) : (
                 <Navigate to="/" />
               )
@@ -1646,7 +1650,7 @@ function RolesPage({ can }) {
   );
 }
 
-function AccountsPage({ can, currentUser }) {
+function AccountsPage({ can, currentUser, token }) {
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
   const [showInactiveAccounts, setShowInactiveAccounts] = useState(false);
@@ -2130,12 +2134,6 @@ function AccountsPage({ can, currentUser }) {
                           }`}
                           onClick={async () => {
                             const statusCode = normalizeText(status.code);
-                            console.log(
-                              "Changing status to:",
-                              statusCode,
-                              "for account",
-                              editingAccountId,
-                            );
                             try {
                               setCreatingAccount(true);
                               const resp = await fetch(
@@ -2149,14 +2147,8 @@ function AccountsPage({ can, currentUser }) {
                                   body: JSON.stringify({ statusCode }),
                                 },
                               );
-                              console.log(
-                                "Status response:",
-                                resp.status,
-                                resp.statusText,
-                              );
                               if (!resp.ok) {
                                 const err = await resp.json();
-                                console.error("Error response:", err);
                                 throw new Error(
                                   err.message || "Error al cambiar estado",
                                 );
@@ -2168,7 +2160,6 @@ function AccountsPage({ can, currentUser }) {
                               setShowAccountStatusMenu(false);
                               setSuccess("Estado actualizado exitosamente");
                             } catch (err) {
-                              console.error("Catch error:", err);
                               setError(
                                 getApiErrorMessage(
                                   err,
@@ -2621,7 +2612,7 @@ function AccountsPage({ can, currentUser }) {
   );
 }
 
-function ContactsPage({ can }) {
+function ContactsPage({ can, token }) {
   const [contacts, setContacts] = useState([]);
   const [showInactiveContacts, setShowInactiveContacts] = useState(false);
   const [contactQuery, setContactQuery] = useState("");
