@@ -7,6 +7,7 @@ import authRoutes from "./routes.auth.js";
 import userRoutes from "./routes.users.js";
 import roleRoutes from "./routes.roles.js";
 import accountRoutes from "./routes.accounts.js";
+import contactRoutes from "./routes.contacts.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import { startAuditRetentionJob } from "./audit.js";
@@ -25,6 +26,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", authRequired, loadUser, userRoutes);
 app.use("/api/roles", authRequired, loadUser, roleRoutes);
 app.use("/api/accounts", authRequired, loadUser, accountRoutes);
+app.use("/api/contacts", authRequired, loadUser, contactRoutes);
 app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
 app.use("/api/audit", authRequired, loadUser, auditRoutes);
 

@@ -1,0 +1,104 @@
+# Auditoria
+
+## Alcance
+
+Modulo de auditoria transversal del sistema para registrar y consultar eventos
+de seguridad y operaciones de negocio.
+
+Incluye eventos de:
+
+- Auth (login exitoso y fallido, bootstrap inicial).
+- Usuarios (alta, edicion, cambio de estado, reset/invitacion).
+- Roles (alta, cambio de estado, cambios de permisos).
+- Cuentas (alta, edicion, cambio de estado).
+
+## Puntos clave de UX
+
+- Pantalla dedicada en menu lateral: Auditoria.
+- Tabla central con eventos ordenados por fecha descendente.
+- Filtros por texto, modulo, estado y rango de fechas.
+- Paginacion server-side.
+- Columna Entidad con nombre legible cuando existe
+  (ejemplo: `user: Omar Carrillo`, `role: Administrador`,
+  `account: AccessQ`).
+- Columna Cambios en formato resumido (solo campos modificados).
+- Badges visuales por resultado: Exito / Error.
+
+## API relacionada (resumen)
+
+- GET /api/audit
+
+Filtros soportados:
+
+- page
+- pageSize
+- from
+- to
+- module
+- action
+- entityType
+- status
+- actorUserId
+- q
+
+Permiso requerido:
+
+- audit.read
+
+## Modelo de datos de auditoria
+
+Tabla principal:
+
+- audit_log
+
+Campos funcionales clave:
+
+- module
+- action
+- entity_type
+- entity_id
+- entity_name (resuelto en consulta por joins)
+- status (`success` o `error`)
+- detail
+- changed_fields (JSON)
+- performed_by_user_id
+- performed_by_name
+- performed_by_email
+- ip_address
+- user_agent
+- created_at
+
+## Politica aplicada en este proyecto
+
+- Alcance: auditoria de todo el sistema (no solo usuarios).
+- Exportacion CSV: no habilitada.
+- Cambios almacenados: solo delta (before/after de campos cambiados).
+- Retencion: 12 meses.
+- Limpieza: purga automatica periodica de registros vencidos.
+
+## Semantica de campos importantes
+
+- Entidad:
+  identifica el objeto afectado por el evento.
+  Se compone de tipo (`entity_type`) y referencia (`entity_id`).
+  En UI se prioriza nombre (`entity_name`) sobre id numerico.
+
+- Cambios:
+  JSON con diferencias por campo.
+  Ejemplo:
+
+```json
+{
+  "mobile": { "before": "5511111111", "after": "5512222222" },
+  "role_ids": { "before": [1, 2], "after": [1] }
+}
+```
+
+## Consideraciones operativas
+
+- Evitar guardar secretos en auditoria (passwords, tokens, claves).
+- Mantener consistencia entre eventos y permisos RBAC.
+- Si se agrega un nuevo modulo, instrumentar sus eventos en backend para que
+  aparezcan automaticamente en la pantalla de auditoria.
+- La auditoria es de consulta, no sustituye backups ni bitacoras de base de
+  datos de bajo nivel.

@@ -186,6 +186,42 @@ CREATE TABLE IF NOT EXISTS account_activation_statuses (
   CONSTRAINT uq_account_activation_statuses_name UNIQUE (name)
 );
 
+CREATE TABLE IF NOT EXISTS contact_purchase_participations (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_contact_purchase_participations_code UNIQUE (code),
+  CONSTRAINT uq_contact_purchase_participations_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS contact_relationship_types (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_contact_relationship_types_code UNIQUE (code),
+  CONSTRAINT uq_contact_relationship_types_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS contact_employment_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_contact_employment_statuses_code UNIQUE (code),
+  CONSTRAINT uq_contact_employment_statuses_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS contact_activation_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_contact_activation_statuses_code UNIQUE (code),
+  CONSTRAINT uq_contact_activation_statuses_name UNIQUE (name)
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
@@ -223,6 +259,44 @@ CREATE TABLE IF NOT EXISTS account_owners (
   CONSTRAINT fk_account_owners_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
   CONSTRAINT fk_account_owners_user FOREIGN KEY (user_id) REFERENCES users(id),
   CONSTRAINT fk_account_owners_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  first_name VARCHAR(120) NOT NULL,
+  last_name VARCHAR(120) NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  position_title VARCHAR(120) NULL,
+  phone VARCHAR(40) NULL,
+  phone_extension VARCHAR(20) NULL,
+  mobile VARCHAR(30) NULL,
+  email VARCHAR(190) NULL,
+  department VARCHAR(120) NULL,
+  country_id BIGINT UNSIGNED NULL,
+  state_region VARCHAR(120) NULL,
+  city VARCHAR(120) NULL,
+  address_line VARCHAR(255) NULL,
+  postal_code VARCHAR(20) NULL,
+  purchase_participation_id BIGINT UNSIGNED NOT NULL,
+  relationship_type_id BIGINT UNSIGNED NOT NULL,
+  employment_status_id BIGINT UNSIGNED NOT NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  manager_contact_id BIGINT UNSIGNED NULL,
+  influences_contact_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_contacts_account FOREIGN KEY (account_id) REFERENCES accounts(id),
+  CONSTRAINT fk_contacts_country FOREIGN KEY (country_id) REFERENCES countries(id),
+  CONSTRAINT fk_contacts_purchase_participation FOREIGN KEY (purchase_participation_id) REFERENCES contact_purchase_participations(id),
+  CONSTRAINT fk_contacts_relationship_type FOREIGN KEY (relationship_type_id) REFERENCES contact_relationship_types(id),
+  CONSTRAINT fk_contacts_employment_status FOREIGN KEY (employment_status_id) REFERENCES contact_employment_statuses(id),
+  CONSTRAINT fk_contacts_activation_status FOREIGN KEY (activation_status_id) REFERENCES contact_activation_statuses(id),
+  CONSTRAINT fk_contacts_manager_contact FOREIGN KEY (manager_contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  CONSTRAINT fk_contacts_influences_contact FOREIGN KEY (influences_contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  CONSTRAINT fk_contacts_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS user_audit_log (
@@ -271,6 +345,9 @@ VALUES
   ('cuentas.read', 'cuentas', 'read', 'Ver cuentas', NOW(3), NOW(3)),
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),
   ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3)),
+  ('contactos.read', 'contactos', 'read', 'Ver contactos', NOW(3), NOW(3)),
+  ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),
+  ('contactos.update', 'contactos', 'update', 'Actualizar contactos', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 
@@ -306,6 +383,33 @@ ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 INSERT INTO account_activation_statuses (code, name, is_active) VALUES
   ('activada', 'Activada', 1),
   ('desactivada', 'Desactivada', 1),
+  ('pendiente_activacion', 'Pendiente de activacion', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO contact_purchase_participations (code, name, is_active) VALUES
+  ('decisor', 'Decisor', 1),
+  ('evaluador', 'Evaluador', 1),
+  ('recomendador', 'Recomendador', 1),
+  ('ninguno', 'Ninguno', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO contact_relationship_types (code, name, is_active) VALUES
+  ('amigo', 'Amigo', 1),
+  ('enemigo', 'Enemigo', 1),
+  ('neutral', 'Neutral', 1),
+  ('ninguno', 'Ninguno', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO contact_employment_statuses (code, name, is_active) VALUES
+  ('labora', 'Labora', 1),
+  ('no_labora', 'No labora', 1),
+  ('vacaciones', 'Vacaciones', 1),
+  ('externo', 'Externo', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO contact_activation_statuses (code, name, is_active) VALUES
+  ('activado', 'Activado', 1),
+  ('desactivado', 'Desactivado', 1),
   ('pendiente_activacion', 'Pendiente de activacion', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 

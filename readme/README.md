@@ -7,6 +7,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
+- [Auditoria](./auditoria.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)
 - [Base de datos](./base-de-datos.md)
@@ -17,6 +18,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Roles: creacion en modal, filtro de roles desactivados y auditoria del rol.
 - Cuentas: alta/edicion en modal, auditoria en edicion, acciones por fila,
   estado visual, filtro de desactivadas, busqueda y ordenamiento por columnas.
+- Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 
 ## Uso recomendado
 

@@ -96,8 +96,23 @@ router.get("/", requirePermission("audit.read"), async (req, res) => {
     `SELECT l.id, l.module, l.action, l.entity_type, l.entity_id,
             l.status, l.detail, l.changed_fields,
             l.performed_by_user_id, l.performed_by_name, l.performed_by_email,
-            l.created_at
+            l.created_at,
+            CASE
+              WHEN l.entity_type = 'user' THEN u.full_name
+              WHEN l.entity_type = 'role' THEN r.name
+              WHEN l.entity_type = 'account' THEN a.name
+              WHEN l.entity_type = 'contact' THEN CONCAT(ct.first_name, ' ', ct.last_name)
+              ELSE NULL
+            END AS entity_name
      FROM audit_log l
+     LEFT JOIN users u
+       ON l.entity_type = 'user' AND l.entity_id = u.id
+     LEFT JOIN roles r
+       ON l.entity_type = 'role' AND l.entity_id = r.id
+     LEFT JOIN accounts a
+       ON l.entity_type = 'account' AND l.entity_id = a.id
+     LEFT JOIN contacts ct
+       ON l.entity_type = 'contact' AND l.entity_id = ct.id
      ${whereSql}
      ORDER BY l.created_at DESC, l.id DESC
      LIMIT ? OFFSET ?`,

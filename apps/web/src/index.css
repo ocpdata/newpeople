@@ -1020,6 +1020,45 @@ td {
   color: #15202b;
 }
 
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.status-icon-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-icon-badge .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-icon-badge.active {
+  color: #0b5e2a;
+  background: #eaf8ef;
+  border-color: #b8e6c7;
+}
+
+.status-icon-badge.inactive {
+  color: #7a1f1f;
+  background: #fdeeee;
+  border-color: #f5c2c2;
+}
+
 .modal-message {
   margin: 0 0 20px;
   font-size: 14px;

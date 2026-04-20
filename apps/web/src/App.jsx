@@ -81,6 +81,7 @@ function Shell({ currentUser, onLogout }) {
           {can("usuarios.read") && <NavLink to="/users">Usuarios</NavLink>}
           {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
           {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
+          {can("contactos.read") && <NavLink to="/contacts">Contactos</NavLink>}
           {can("audit.read") && <NavLink to="/audit">Auditoria</NavLink>}
         </nav>
         <button className="logout" onClick={onLogout}>
@@ -118,6 +119,16 @@ function Shell({ currentUser, onLogout }) {
             element={
               can("cuentas.read") ? (
                 <AccountsPage can={can} currentUser={currentUser} />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+          <Route
+            path="/contacts"
+            element={
+              can("contactos.read") ? (
+                <ContactsPage can={can} />
               ) : (
                 <Navigate to="/" />
               )
@@ -316,7 +327,11 @@ function SystemAuditPage() {
                 <td>{entry.action}</td>
                 <td>
                   {entry.entity_type}
-                  {entry.entity_id ? ` #${entry.entity_id}` : ""}
+                  {entry.entity_name
+                    ? `: ${entry.entity_name}`
+                    : entry.entity_id
+                      ? ` #${entry.entity_id}`
+                      : ""}
                 </td>
                 <td>
                   {entry.performed_by_name || entry.performed_by_email || "-"}
@@ -531,11 +546,6 @@ function UsersPage({ can }) {
   const [sortField, setSortField] = useState("id");
   const [sortDirection, setSortDirection] = useState("asc");
   const [userQuery, setUserQuery] = useState("");
-  const [auditLog, setAuditLog] = useState([]);
-  const [auditQuery, setAuditQuery] = useState("");
-  const [auditAction, setAuditAction] = useState("all");
-  const [auditActor, setAuditActor] = useState("");
-  const [auditTarget, setAuditTarget] = useState("");
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -605,133 +615,6 @@ function UsersPage({ can }) {
     });
   }, [sortedUsers, userQuery]);
 
-  function getAuditActionLabel(entry) {
-    if (entry.action === "created") return "Creado";
-    if (entry.action === "updated") return "Editado";
-    if (entry.action === "password_reset_sent") return "Reinicio enviado";
-    if (entry.action === "status_changed") {
-      try {
-        const d = JSON.parse(entry.detail || "{}");
-        return d.status === "active" ? "Activado" : "Desactivado";
-      } catch {
-        return "Estado cambiado";
-      }
-    }
-    return entry.action || "-";
-  }
-
-  function getAuditDetail(entry) {
-    if (entry.action === "updated") {
-      try {
-        const d = JSON.parse(entry.detail || "{}");
-        const parts = [];
-        if (d.fields?.length) parts.push(d.fields.join(", "));
-        if (d.rolesUpdated) parts.push("roles");
-        return parts.join(", ") || "-";
-      } catch {
-        return "-";
-      }
-    }
-
-    if (entry.action === "created") {
-      try {
-        const d = JSON.parse(entry.detail || "{}");
-        return d.email || "-";
-      } catch {
-        return "-";
-      }
-    }
-
-    return "-";
-  }
-
-  const filteredAuditLog = useMemo(() => {
-    return auditLog.filter((entry) => {
-      if (auditAction !== "all" && entry.action !== auditAction) return false;
-
-      const actorKey = entry.performed_by_email
-        ? entry.performed_by_email
-        : `name:${entry.performed_by_name || "Sin nombre"}`;
-      if (auditActor && actorKey !== auditActor) return false;
-
-      const targetKey = entry.affected_user_email
-        ? entry.affected_user_email
-        : `name:${entry.affected_user_name || "Sin nombre"}`;
-      if (auditTarget && targetKey !== auditTarget) return false;
-
-      const queryText = [
-        getAuditActionLabel(entry),
-        getAuditDetail(entry),
-        entry.performed_by_name,
-        entry.performed_by_email,
-        entry.affected_user_name,
-        entry.affected_user_email,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      if (
-        auditQuery.trim() &&
-        !queryText.includes(auditQuery.trim().toLowerCase())
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [auditLog, auditAction, auditActor, auditTarget, auditQuery]);
-
-  const auditActorOptions = useMemo(() => {
-    const map = new Map();
-    for (const entry of auditLog) {
-      const email = entry.performed_by_email || "";
-      const name = entry.performed_by_name || "Sin nombre";
-      const key = email || `name:${name}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          value: key,
-          label: name,
-        });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) =>
-      a.label.localeCompare(b.label, "es", { sensitivity: "base" }),
-    );
-  }, [auditLog]);
-
-  const auditTargetOptions = useMemo(() => {
-    const map = new Map();
-
-    for (const user of users) {
-      const email = user.email || "";
-      const name = user.full_name || "Sin nombre";
-      const key = email || `name:${name}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          value: key,
-          label: name,
-        });
-      }
-    }
-
-    for (const entry of auditLog) {
-      const email = entry.affected_user_email || "";
-      const name = entry.affected_user_name || "Sin nombre";
-      const key = email || `name:${name}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          value: key,
-          label: name,
-        });
-      }
-    }
-
-    return Array.from(map.values()).sort((a, b) =>
-      a.label.localeCompare(b.label, "es", { sensitivity: "base" }),
-    );
-  }, [users, auditLog]);
-
   function toggleSort(field) {
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -761,8 +644,6 @@ function UsersPage({ can }) {
       ]);
       setUsers(usersRes.data);
       setRoles(rolesRes.data);
-      const auditRes = await api.get("/api/users/audit");
-      setAuditLog(auditRes.data);
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar usuarios"));
     }
@@ -1200,103 +1081,6 @@ function UsersPage({ can }) {
           )}
         </tbody>
       </table>
-
-      <div className="audit-section">
-        <h3>Auditoría de usuarios ({auditLog.length})</h3>
-        <div className="audit-filters">
-          <input
-            type="text"
-            placeholder="Buscar en auditoría"
-            value={auditQuery}
-            onChange={(e) => setAuditQuery(e.target.value)}
-          />
-          <select
-            value={auditAction}
-            onChange={(e) => setAuditAction(e.target.value)}
-          >
-            <option value="all">Todas las acciones</option>
-            <option value="created">Creado</option>
-            <option value="updated">Editado</option>
-            <option value="status_changed">Activado / Desactivado</option>
-            <option value="password_reset_sent">Reinicio enviado</option>
-          </select>
-          <select
-            value={auditActor}
-            onChange={(e) => setAuditActor(e.target.value)}
-          >
-            <option value="">Realizado por: todos</option>
-            {auditActorOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={auditTarget}
-            onChange={(e) => setAuditTarget(e.target.value)}
-          >
-            <option value="">Usuario afectado: todos</option>
-            {auditTargetOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              setAuditQuery("");
-              setAuditAction("all");
-              setAuditActor("");
-              setAuditTarget("");
-            }}
-          >
-            Limpiar
-          </button>
-        </div>
-        <table className="audit-table">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Acción</th>
-              <th>Realizado por</th>
-              <th>Usuario afectado</th>
-              <th>Detalle</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredAuditLog.length > 0 ? (
-              filteredAuditLog.map((entry) => (
-                <tr key={entry.id}>
-                  <td className="audit-date">
-                    {new Date(entry.created_at).toLocaleString("es-MX", {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}
-                  </td>
-                  <td>
-                    <span
-                      className={`audit-action-badge audit-${entry.action}`}
-                    >
-                      {getAuditActionLabel(entry)}
-                    </span>
-                  </td>
-                  <td>{entry.performed_by_name || "-"}</td>
-                  <td>{entry.affected_user_name || "-"}</td>
-                  <td className="audit-detail">{getAuditDetail(entry)}</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={5} className="empty-state">
-                  No hay resultados con los filtros seleccionados
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
 
       {editUser && (
         <div className="modal-overlay" onClick={() => setEditUser(null)}>
@@ -1873,6 +1657,7 @@ function AccountsPage({ can, currentUser }) {
   const [editingAccountId, setEditingAccountId] = useState(null);
   const [editAccountAudit, setEditAccountAudit] = useState(null);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
+  const [showAccountStatusMenu, setShowAccountStatusMenu] = useState(false);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [catalogs, setCatalogs] = useState({
     countries: [],
@@ -1996,6 +1781,7 @@ function AccountsPage({ can, currentUser }) {
     setShowCreateAccountModal(false);
     setEditingAccountId(null);
     setEditAccountAudit(null);
+    setShowAccountStatusMenu(false);
   }
 
   function formatDateTime(value) {
@@ -2187,6 +1973,20 @@ function AccountsPage({ can, currentUser }) {
     return isAccountActive(account) ? "Activada" : "Desactivada";
   }
 
+  function getEditingActivationMeta() {
+    const selectedStatus = catalogs.statuses.find(
+      (x) => String(x.id) === String(form.activationStatusId),
+    );
+    const statusCode = normalizeText(selectedStatus?.code || "");
+    const statusName = normalizeText(selectedStatus?.name || "");
+    const isActive = statusCode === "activada" || statusName === "activada";
+
+    return {
+      label: selectedStatus?.name || "No definido",
+      isActive,
+    };
+  }
+
   async function updateAccountStatus(account, statusCode) {
     setError("");
     setSuccess("");
@@ -2281,9 +2081,133 @@ function AccountsPage({ can, currentUser }) {
             className="modal-dialog modal-dialog-account"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="modal-title">
-              {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
-            </h3>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
+              </h3>
+              {editingAccountId && (
+                <div
+                  className="status-badge-wrapper"
+                  style={{ position: "relative" }}
+                >
+                  <button
+                    type="button"
+                    className={
+                      getEditingActivationMeta().isActive
+                        ? "status-icon-badge active"
+                        : "status-icon-badge inactive"
+                    }
+                    title={
+                      can("cuentas.update")
+                        ? "Click para cambiar estado"
+                        : "Estado de activacion (solo lectura)"
+                    }
+                    onClick={() =>
+                      can("cuentas.update") &&
+                      setShowAccountStatusMenu(!showAccountStatusMenu)
+                    }
+                    style={{
+                      cursor: can("cuentas.update") ? "pointer" : "default",
+                      border: "none",
+                      background: "inherit",
+                      padding: "4px 8px",
+                    }}
+                  >
+                    <span className="status-dot" aria-hidden="true" />
+                    {getEditingActivationMeta().label}
+                  </button>
+                  {showAccountStatusMenu && can("cuentas.update") && (
+                    <div
+                      className="status-menu-dropdown"
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        right: 0,
+                        backgroundColor: "#fff",
+                        border: "1px solid #d0d7de",
+                        borderRadius: "6px",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                        zIndex: 1000,
+                        minWidth: "150px",
+                        marginTop: "4px",
+                      }}
+                    >
+                      {catalogs.statuses.map((status) => (
+                        <button
+                          key={status.id}
+                          type="button"
+                          onClick={async () => {
+                            const statusCode = normalizeText(status.code);
+                            try {
+                              setCreatingAccount(true);
+                              const resp = await fetch(
+                                `/api/accounts/${editingAccountId}/status`,
+                                {
+                                  method: "PUT",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${token}`,
+                                  },
+                                  body: JSON.stringify({ statusCode }),
+                                },
+                              );
+                              if (!resp.ok) {
+                                const err = await resp.json();
+                                throw new Error(
+                                  err.message || "Error al cambiar estado",
+                                );
+                              }
+                              setForm({
+                                ...form,
+                                activationStatusId: String(status.id),
+                              });
+                              setShowAccountStatusMenu(false);
+                              setSuccess("Estado actualizado exitosamente");
+                            } catch (err) {
+                              setError(
+                                getApiErrorMessage(
+                                  err,
+                                  "No fue posible cambiar el estado",
+                                ),
+                              );
+                            } finally {
+                              setCreatingAccount(false);
+                            }
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            padding: "8px 12px",
+                            textAlign: "left",
+                            border: "none",
+                            background:
+                              String(form.activationStatusId) ===
+                              String(status.id)
+                                ? "#f0f4f8"
+                                : "inherit",
+                            cursor: "pointer",
+                            fontSize: "14px",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.background = "#f0f4f8";
+                          }}
+                          onMouseLeave={(e) => {
+                            if (
+                              String(form.activationStatusId) !==
+                              String(status.id)
+                            ) {
+                              e.target.style.background = "inherit";
+                            }
+                          }}
+                        >
+                          {status.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <p className="modal-message account-modal-message">
               {editingAccountId
                 ? "Actualiza los datos necesarios y guarda los cambios."
@@ -2708,6 +2632,914 @@ function AccountsPage({ can, currentUser }) {
             <tr>
               <td colSpan={7} className="empty-state">
                 No hay cuentas que coincidan con los filtros
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function ContactsPage({ can }) {
+  const [contacts, setContacts] = useState([]);
+  const [showInactiveContacts, setShowInactiveContacts] = useState(false);
+  const [contactQuery, setContactQuery] = useState("");
+  const [contactSortField, setContactSortField] = useState("id");
+  const [contactSortDirection, setContactSortDirection] = useState("asc");
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [editingContactId, setEditingContactId] = useState(null);
+  const [openContactMenuId, setOpenContactMenuId] = useState(null);
+  const [savingContact, setSavingContact] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [catalogs, setCatalogs] = useState({
+    accounts: [],
+    countries: [],
+    purchaseParticipations: [],
+    relationshipTypes: [],
+    employmentStatuses: [],
+    activationStatuses: [],
+  });
+
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
+    accountId: "",
+    positionTitle: "",
+    phone: "",
+    phoneExtension: "",
+    mobile: "",
+    email: "",
+    department: "",
+    countryId: "",
+    stateRegion: "",
+    city: "",
+    addressLine: "",
+    postalCode: "",
+    purchaseParticipationId: "",
+    relationshipTypeId: "",
+    employmentStatusId: "",
+    activationStatusId: "",
+    managerContactId: "",
+    influencesContactId: "",
+  });
+
+  function normalizeText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  useEffect(() => {
+    if (!error && !success) return;
+    const timeoutId = window.setTimeout(() => {
+      setError("");
+      setSuccess("");
+    }, 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [error, success]);
+
+  async function load() {
+    try {
+      const [
+        contactsRes,
+        accountsRes,
+        countriesRes,
+        purchaseRes,
+        relationshipRes,
+        employmentRes,
+        activationRes,
+      ] = await Promise.all([
+        api.get("/api/contacts"),
+        api.get("/api/catalogs/contact-accounts"),
+        api.get("/api/catalogs/contact-countries"),
+        api.get("/api/catalogs/contact-purchase-participations"),
+        api.get("/api/catalogs/contact-relationship-types"),
+        api.get("/api/catalogs/contact-employment-statuses"),
+        api.get("/api/catalogs/contact-activation-statuses"),
+      ]);
+
+      setContacts(contactsRes.data || []);
+      setCatalogs({
+        accounts: accountsRes.data || [],
+        countries: countriesRes.data || [],
+        purchaseParticipations: purchaseRes.data || [],
+        relationshipTypes: relationshipRes.data || [],
+        employmentStatuses: employmentRes.data || [],
+        activationStatuses: activationRes.data || [],
+      });
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar contactos"));
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function buildDefaultContactForm() {
+    return {
+      firstName: "",
+      lastName: "",
+      accountId: "",
+      positionTitle: "",
+      phone: "",
+      phoneExtension: "",
+      mobile: "",
+      email: "",
+      department: "",
+      countryId: "",
+      stateRegion: "",
+      city: "",
+      addressLine: "",
+      postalCode: "",
+      purchaseParticipationId: String(
+        catalogs.purchaseParticipations?.[0]?.id || "",
+      ),
+      relationshipTypeId: String(catalogs.relationshipTypes?.[0]?.id || ""),
+      employmentStatusId: String(catalogs.employmentStatuses?.[0]?.id || ""),
+      activationStatusId: String(catalogs.activationStatuses?.[0]?.id || ""),
+      managerContactId: "",
+      influencesContactId: "",
+    };
+  }
+
+  function openCreateContactModal() {
+    setError("");
+    setSuccess("");
+    setEditingContactId(null);
+    setForm(buildDefaultContactForm());
+    setShowContactModal(true);
+  }
+
+  async function openEditContactModal(contactId) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.get(`/api/contacts/${contactId}`);
+      setForm({
+        firstName: data.first_name || "",
+        lastName: data.last_name || "",
+        accountId: String(data.account_id || ""),
+        positionTitle: data.position_title || "",
+        phone: data.phone || "",
+        phoneExtension: data.phone_extension || "",
+        mobile: data.mobile || "",
+        email: data.email || "",
+        department: data.department || "",
+        countryId: data.country_id ? String(data.country_id) : "",
+        stateRegion: data.state_region || "",
+        city: data.city || "",
+        addressLine: data.address_line || "",
+        postalCode: data.postal_code || "",
+        purchaseParticipationId: String(data.purchase_participation_id || ""),
+        relationshipTypeId: String(data.relationship_type_id || ""),
+        employmentStatusId: String(data.employment_status_id || ""),
+        activationStatusId: String(data.activation_status_id || ""),
+        managerContactId: data.manager_contact_id
+          ? String(data.manager_contact_id)
+          : "",
+        influencesContactId: data.influences_contact_id
+          ? String(data.influences_contact_id)
+          : "",
+      });
+      setEditingContactId(Number(contactId));
+      setShowContactModal(true);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar el contacto"));
+    }
+  }
+
+  function closeContactModal() {
+    if (savingContact) return;
+    setShowContactModal(false);
+    setEditingContactId(null);
+  }
+
+  function isContactActive(contact) {
+    return normalizeText(contact.activation_status) === "activado";
+  }
+
+  function getContactStatusLabel(contact) {
+    return isContactActive(contact) ? "Activado" : "Desactivado";
+  }
+
+  function getContactStatusBadgeClass(contact) {
+    return isContactActive(contact)
+      ? "user-status-badge active"
+      : "user-status-badge inactive";
+  }
+
+  const filteredContacts = useMemo(() => {
+    if (showInactiveContacts) return contacts;
+    return contacts.filter((contact) => isContactActive(contact));
+  }, [contacts, showInactiveContacts]);
+
+  const sortedContacts = useMemo(() => {
+    const list = [...filteredContacts];
+
+    const readValue = (contact) => {
+      if (contactSortField === "id") return Number(contact.id) || 0;
+      if (contactSortField === "nombre") return String(contact.full_name || "");
+      if (contactSortField === "cuenta")
+        return String(contact.account_name || "");
+      if (contactSortField === "cargo")
+        return String(contact.position_title || "");
+      if (contactSortField === "email") return String(contact.email || "");
+      if (contactSortField === "estado")
+        return String(getContactStatusLabel(contact));
+      return "";
+    };
+
+    list.sort((a, b) => {
+      const aValue = readValue(a);
+      const bValue = readValue(b);
+
+      let result = 0;
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        result = aValue - bValue;
+      } else {
+        result = String(aValue).localeCompare(String(bValue), "es", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return contactSortDirection === "asc" ? result : -result;
+    });
+
+    return list;
+  }, [filteredContacts, contactSortField, contactSortDirection]);
+
+  const visibleContacts = useMemo(() => {
+    const q = contactQuery.trim().toLowerCase();
+    if (!q) return sortedContacts;
+
+    return sortedContacts.filter((c) => {
+      const haystack = [
+        c.id,
+        c.full_name,
+        c.account_name,
+        c.position_title,
+        c.email,
+        c.mobile,
+        getContactStatusLabel(c),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    });
+  }, [sortedContacts, contactQuery]);
+
+  function toggleContactSort(field) {
+    if (contactSortField === field) {
+      setContactSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setContactSortField(field);
+    setContactSortDirection("asc");
+  }
+
+  function getContactSortArrow(field) {
+    if (contactSortField !== field) return "↕";
+    return contactSortDirection === "asc" ? "↑" : "↓";
+  }
+
+  function toggleContactMenu(contactId) {
+    setOpenContactMenuId((prev) => (prev === contactId ? null : contactId));
+  }
+
+  async function runContactAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenContactMenuId(null);
+    }
+  }
+
+  async function updateContactStatus(contact, statusCode) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.patch(`/api/contacts/${contact.id}/status`, {
+        statusCode,
+      });
+      setSuccess(data?.message || "Estado de contacto actualizado");
+      await load();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del contacto",
+        ),
+      );
+    }
+  }
+
+  async function saveContact(e) {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setSavingContact(true);
+
+    try {
+      const payload = {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        accountId: Number(form.accountId),
+        positionTitle: form.positionTitle || undefined,
+        phone: form.phone || undefined,
+        phoneExtension: form.phoneExtension || undefined,
+        mobile: form.mobile || undefined,
+        email: form.email || undefined,
+        department: form.department || undefined,
+        countryId: form.countryId ? Number(form.countryId) : null,
+        stateRegion: form.stateRegion || undefined,
+        city: form.city || undefined,
+        addressLine: form.addressLine || undefined,
+        postalCode: form.postalCode || undefined,
+        purchaseParticipationId: Number(form.purchaseParticipationId),
+        relationshipTypeId: Number(form.relationshipTypeId),
+        employmentStatusId: Number(form.employmentStatusId),
+        activationStatusId: Number(form.activationStatusId),
+        managerContactId: form.managerContactId
+          ? Number(form.managerContactId)
+          : null,
+        influencesContactId: form.influencesContactId
+          ? Number(form.influencesContactId)
+          : null,
+      };
+
+      const { data } = editingContactId
+        ? await api.put(`/api/contacts/${editingContactId}`, payload)
+        : await api.post("/api/contacts", payload);
+
+      setSuccess(
+        data?.message ||
+          (editingContactId
+            ? "Contacto actualizado correctamente"
+            : "Contacto creado correctamente"),
+      );
+      setShowContactModal(false);
+      setEditingContactId(null);
+      await load();
+    } catch (err) {
+      const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+      if (fieldErrors && typeof fieldErrors === "object") {
+        const firstError = Object.entries(fieldErrors).find(
+          ([, messages]) => Array.isArray(messages) && messages.length > 0,
+        );
+        if (firstError) {
+          const [fieldName, messages] = firstError;
+          setError(`${fieldName}: ${messages[0]}`);
+          setSavingContact(false);
+          return;
+        }
+      }
+      setError(getApiErrorMessage(err, "No fue posible guardar el contacto"));
+    } finally {
+      setSavingContact(false);
+    }
+  }
+
+  const managerOptions = useMemo(() => {
+    return contacts.filter((c) => Number(c.id) !== Number(editingContactId));
+  }, [contacts, editingContactId]);
+
+  return (
+    <section className="panel">
+      <div className="accounts-header-row">
+        <h2>Contactos</h2>
+        {can("contactos.create") && (
+          <button type="button" onClick={openCreateContactModal}>
+            Crear contacto
+          </button>
+        )}
+      </div>
+
+      <label className="role-filter">
+        <input
+          type="checkbox"
+          checked={showInactiveContacts}
+          onChange={(e) => setShowInactiveContacts(e.target.checked)}
+        />
+        Mostrar desactivados
+      </label>
+
+      <div className="accounts-list-filters">
+        <input
+          type="text"
+          placeholder="Buscar contacto por nombre, cuenta, cargo, email, móvil o estado"
+          value={contactQuery}
+          onChange={(e) => setContactQuery(e.target.value)}
+        />
+      </div>
+
+      {showContactModal && (
+        <div className="modal-overlay" onClick={closeContactModal}>
+          <div
+            className="modal-dialog modal-dialog-account"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="modal-title">
+              {editingContactId ? "Editar contacto" : "Crear contacto"}
+            </h3>
+            <p className="modal-message account-modal-message">
+              {editingContactId
+                ? "Actualiza los datos necesarios y guarda los cambios."
+                : "Completa la información principal y guarda para crear el contacto."}
+            </p>
+
+            <form
+              className="account-create-form in-modal"
+              onSubmit={saveContact}
+            >
+              <section className="account-form-section">
+                <h4>Datos principales</h4>
+                <div className="grid-form account-grid-main">
+                  <div className="field-group">
+                    <label>
+                      Nombres <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={form.firstName}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          firstName: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Apellidos <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={form.lastName}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          lastName: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Cuenta <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.accountId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          accountId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona cuenta</option>
+                      {catalogs.accounts.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>Cargo</label>
+                    <input
+                      value={form.positionTitle}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          positionTitle: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>E-mail</label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, email: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Móvil</label>
+                    <input
+                      value={form.mobile}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, mobile: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Telefono fijo</label>
+                    <input
+                      value={form.phone}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, phone: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Extension</label>
+                    <input
+                      value={form.phoneExtension}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          phoneExtension: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Departamento</label>
+                    <input
+                      value={form.department}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          department: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section">
+                <h4>Relacion comercial</h4>
+                <div className="grid-form account-grid-main">
+                  <div className="field-group">
+                    <label>
+                      Participacion de compra{" "}
+                      <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.purchaseParticipationId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          purchaseParticipationId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona participación</option>
+                      {catalogs.purchaseParticipations.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Relacion con nosotros{" "}
+                      <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.relationshipTypeId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          relationshipTypeId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona relación</option>
+                      {catalogs.relationshipTypes.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Situacion en empresa{" "}
+                      <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.employmentStatusId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          employmentStatusId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona situación</option>
+                      {catalogs.employmentStatuses.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {editingContactId && (
+                    <div className="field-group">
+                      <label>
+                        Estado de activacion{" "}
+                        <span className="required-mark">*</span>
+                      </label>
+                      <input
+                        value={
+                          catalogs.activationStatuses.find(
+                            (x) =>
+                              String(x.id) === String(form.activationStatusId),
+                          )?.name || "No definido"
+                        }
+                        disabled
+                        readOnly
+                      />
+                    </div>
+                  )}
+                  <div className="field-group">
+                    <label>Jefe</label>
+                    <select
+                      value={form.managerContactId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          managerContactId: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Sin jefe</option>
+                      {managerOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>Influye en</label>
+                    <select
+                      value={form.influencesContactId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          influencesContactId: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Ninguno</option>
+                      {managerOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section">
+                <h4>Ubicacion (si difiere de la cuenta)</h4>
+                <div className="grid-form account-grid-location">
+                  <div className="field-group">
+                    <label>Pais</label>
+                    <select
+                      value={form.countryId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          countryId: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Usar país de la cuenta</option>
+                      {catalogs.countries.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>Estado</label>
+                    <input
+                      value={form.stateRegion}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          stateRegion: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Ciudad</label>
+                    <input
+                      value={form.city}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, city: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Direccion</label>
+                    <input
+                      value={form.addressLine}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          addressLine: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Codigo postal</label>
+                    <input
+                      value={form.postalCode}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          postalCode: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <div className="modal-buttons" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeContactModal}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingContact}
+                >
+                  {savingContact
+                    ? editingContactId
+                      ? "Guardando..."
+                      : "Creando..."
+                    : editingContactId
+                      ? "Guardar cambios"
+                      : "Crear contacto"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {error && <div className="toast toast-error">{error}</div>}
+      {success && <div className="toast toast-success">{success}</div>}
+
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("id")}
+              >
+                ID <span>{getContactSortArrow("id")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("nombre")}
+              >
+                Nombre <span>{getContactSortArrow("nombre")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("cuenta")}
+              >
+                Cuenta <span>{getContactSortArrow("cuenta")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("cargo")}
+              >
+                Cargo <span>{getContactSortArrow("cargo")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("email")}
+              >
+                E-mail <span>{getContactSortArrow("email")}</span>
+              </button>
+            </th>
+            <th>Móvil</th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleContactSort("estado")}
+              >
+                Estado <span>{getContactSortArrow("estado")}</span>
+              </button>
+            </th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleContacts.length > 0 ? (
+            visibleContacts.map((c) => (
+              <tr key={c.id}>
+                <td>{c.id}</td>
+                <td>{c.full_name}</td>
+                <td>{c.account_name}</td>
+                <td>{c.position_title || "-"}</td>
+                <td>{c.email || "-"}</td>
+                <td>{c.mobile || "-"}</td>
+                <td>
+                  <span className={getContactStatusBadgeClass(c)}>
+                    {getContactStatusLabel(c)}
+                  </span>
+                </td>
+                <td className="accounts-actions-cell">
+                  <div className="user-kebab-wrap">
+                    <button
+                      type="button"
+                      className="kebab-btn"
+                      onClick={() => toggleContactMenu(c.id)}
+                      aria-label="Abrir acciones"
+                    >
+                      ⋮
+                    </button>
+                    {openContactMenuId === c.id && (
+                      <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            runContactAction(() => openEditContactModal(c.id))
+                          }
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isContactActive(c)}
+                          onClick={() =>
+                            runContactAction(() =>
+                              updateContactStatus(c, "activado"),
+                            )
+                          }
+                        >
+                          Activar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!isContactActive(c)}
+                          onClick={() =>
+                            runContactAction(() =>
+                              updateContactStatus(c, "desactivado"),
+                            )
+                          }
+                        >
+                          Desactivar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8} className="empty-state">
+                No hay contactos que coincidan con los filtros
               </td>
             </tr>
           )}
