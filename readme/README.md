@@ -9,6 +9,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)
+- [Base de datos](./base-de-datos.md)
 
 ## Cambios recientes documentados
 
