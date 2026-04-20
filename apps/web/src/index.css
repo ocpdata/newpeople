@@ -1059,6 +1059,47 @@ td {
   border-color: #f5c2c2;
 }
 
+.status-menu-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 1000;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.status-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: none;
+  background: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  color: #1a2e4a;
+  line-height: 1.4;
+  transition: background-color 150ms ease-in-out;
+}
+
+.status-menu-item:hover {
+  background-color: #f0f4f8;
+}
+
+.status-menu-item.selected {
+  background-color: #e8eef8;
+  font-weight: 600;
+}
+
+.status-menu-item:active {
+  background-color: #dae5f3;
+}
+
 .modal-message {
   margin: 0 0 20px;
   font-size: 14px;

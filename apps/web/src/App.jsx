@@ -2117,25 +2117,17 @@ function AccountsPage({ can, currentUser }) {
                     {getEditingActivationMeta().label}
                   </button>
                   {showAccountStatusMenu && can("cuentas.update") && (
-                    <div
-                      className="status-menu-dropdown"
-                      style={{
-                        position: "absolute",
-                        top: "100%",
-                        right: 0,
-                        backgroundColor: "#fff",
-                        border: "1px solid #d0d7de",
-                        borderRadius: "6px",
-                        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                        zIndex: 1000,
-                        minWidth: "150px",
-                        marginTop: "4px",
-                      }}
-                    >
+                    <div className="status-menu-dropdown">
                       {catalogs.statuses.map((status) => (
                         <button
                           key={status.id}
                           type="button"
+                          className={`status-menu-item ${
+                            String(form.activationStatusId) ===
+                            String(status.id)
+                              ? "selected"
+                              : ""
+                          }`}
                           onClick={async () => {
                             const statusCode = normalizeText(status.code);
                             try {
@@ -2172,31 +2164,6 @@ function AccountsPage({ can, currentUser }) {
                               );
                             } finally {
                               setCreatingAccount(false);
-                            }
-                          }}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            padding: "8px 12px",
-                            textAlign: "left",
-                            border: "none",
-                            background:
-                              String(form.activationStatusId) ===
-                              String(status.id)
-                                ? "#f0f4f8"
-                                : "inherit",
-                            cursor: "pointer",
-                            fontSize: "14px",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.target.style.background = "#f0f4f8";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (
-                              String(form.activationStatusId) !==
-                              String(status.id)
-                            ) {
-                              e.target.style.background = "inherit";
                             }
                           }}
                         >
