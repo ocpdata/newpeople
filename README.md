@@ -118,7 +118,9 @@ Nota: si SMTP no esta configurado, el sistema no bloquea endpoints criticos; sol
 - Bootstrap de primer administrador.
 - RBAC por roles y permisos (deny-by-default).
 - Catalogos maestros (paises, monedas, tipos de cuenta, sectores, estados de activacion).
+- Usuarios con gestion de estado y auditoria.
 - Cuentas con propietarios multiples.
+- Contactos con jerarquia (jefe/subordinado) e influencias.
 - Auditoria de acciones de usuario.
 
 ## Troubleshooting rapido

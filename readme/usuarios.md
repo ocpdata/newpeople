@@ -15,9 +15,11 @@ Gestion de usuarios del CRM:
 - Boton de crear usuario en encabezado.
 - Alta de usuario mediante ventana modal.
 - Edicion en modal con campos principales, roles y bloque de auditoria.
+- Badge de estado (Activo/Inactivo) de solo lectura en encabezado del modal de edicion.
 - Acciones por usuario en menu de tres puntos (editar, activar/desactivar,
   reiniciar contrasena).
 - Tabla principal con ordenamiento por columnas y badge visual de estado.
+- Filtro "Mostrar desactivados" (por defecto solo se muestran activos).
 - Filtros para busqueda en lista y auditoria (accion, actor, usuario afectado,
   texto libre).
 

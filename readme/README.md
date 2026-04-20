@@ -14,10 +14,14 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 ## Cambios recientes documentados
 
-- Usuarios: alta en modal, edicion con auditoria visible y acciones por fila.
+- Usuarios: alta en modal, edicion con auditoria visible y acciones por fila;
+  badge de estado solo lectura en modal de edicion; filtro "Mostrar desactivados".
 - Roles: creacion en modal, filtro de roles desactivados y auditoria del rol.
 - Cuentas: alta/edicion en modal, auditoria en edicion, acciones por fila,
-  estado visual, filtro de desactivadas, busqueda y ordenamiento por columnas.
+  estado visual, filtro de desactivadas, busqueda y ordenamiento por columnas;
+  badge de estado solo lectura en modal de edicion.
+- Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
+  edicion, filtro de desactivados.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 
 ## Uso recomendado

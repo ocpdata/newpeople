@@ -347,7 +347,9 @@ Patrones aplicados:
 
 - Tabla con ordenamiento por columnas y flechas.
 - Buscador de lista.
-- Badge de estado.
+- Filtro "Mostrar desactivados" (por defecto solo activos).
+- Badge de estado en tabla.
+- Badge de estado solo lectura en encabezado del modal de edicion.
 - Menu de acciones por fila.
 - Modal de creacion.
 - Modal de edicion con auditoria compacta.
@@ -370,13 +372,28 @@ Patrones aplicados:
 
 - Lista con filtro de desactivadas (por defecto solo activadas).
 - Busqueda + ordenamiento por columnas con flechas.
-- Badge de estado activada/desactivada.
+- Badge de estado activada/desactivada en tabla.
+- Badge de estado solo lectura en encabezado del modal de edicion.
 - Menu de acciones por fila (editar/activar/desactivar).
 - Modal unificado para crear/editar.
 - Formulario seccionado.
 - Propietarios con doble vista:
   seleccionados + lista scrolleable.
 - Auditoria de cuenta en edicion.
+
+## 5.7 Modulo Contactos (frontend)
+
+Patrones aplicados:
+
+- Lista con filtro de desactivados (por defecto solo activados).
+- Busqueda + ordenamiento por columnas con flechas.
+- Badge de estado en tabla.
+- Badge de estado solo lectura en encabezado del modal de edicion.
+- Menu de acciones por fila (editar/activar/desactivar).
+- Modal unificado para crear/editar.
+- Formulario seccionado (datos personales, empresa, relaciones).
+- Jerarquia de contactos: jefe e influencias.
+- Auditoria de contacto en edicion.
 
 ## 6. Modelo de datos (resumen)
 

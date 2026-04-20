@@ -78,6 +78,10 @@ Estandarizar experiencia de usuario, estructura de codigo y comportamiento de:
 - El titulo y el CTA principal cambian por modo:
   - Crear: "Crear ..."
   - Editar: "Editar ..." / "Guardar cambios"
+- En modo edicion, mostrar badge de estado de solo lectura alineado al titulo
+  (dentro de un div.modal-header con flex + space-between).
+- El badge es puramente informativo; los cambios de estado se realizan desde
+  el menu de acciones de la fila en la tabla.
 - Cerrar con Cancelar y opcionalmente clic fuera (si no esta guardando).
 
 ### Layout de formulario
@@ -128,6 +132,7 @@ Estandarizar experiencia de usuario, estructura de codigo y comportamiento de:
 - [ ] Columna Estado con badge.
 - [ ] Columna Acciones con menu kebab.
 - [ ] Modal de alta/edicion con secciones.
+- [ ] Badge de estado (solo lectura) en encabezado del modal de edicion.
 - [ ] Validaciones y manejo de errores por campo.
 - [ ] Auditoria en modo edicion con tipografia compacta.
 - [ ] Toasts de exito y error.

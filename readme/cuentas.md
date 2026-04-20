@@ -15,6 +15,7 @@ Gestion de cuentas comerciales:
 
 - Boton de crear cuenta en encabezado.
 - Creacion y edicion mediante ventana modal.
+- Badge de estado de activacion de solo lectura en encabezado del modal de edicion.
 - Secciones del formulario por contexto (datos principales, ubicacion,
   descripcion, propietarios, auditoria en edicion).
 - Registro no obligatorio: si no se captura se envia vacio.
