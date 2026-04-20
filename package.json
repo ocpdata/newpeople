@@ -1,0 +1,21 @@
+{
+  "name": "newpeople",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix apps/api\" \"npm run dev --prefix apps/web\"",
+    "dev:api": "npm run dev --prefix apps/api",
+    "dev:web": "npm run dev --prefix apps/web",
+    "build:web": "npm run build --prefix apps/web"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "CRM monorepo (Node + React + MySQL)",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

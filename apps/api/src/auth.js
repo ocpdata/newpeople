@@ -1,0 +1,86 @@
+import jwt from "jsonwebtoken";
+import { config } from "./config.js";
+import { query } from "./db.js";
+
+export async function getUserAuthContext(userId) {
+  const users = await query(
+    `SELECT id, full_name, email, status
+     FROM users
+     WHERE id = ?`,
+    [userId],
+  );
+
+  if (users.length === 0) return null;
+
+  const roles = await query(
+    `SELECT r.id, r.name, r.is_system
+     FROM roles r
+     INNER JOIN user_roles ur ON ur.role_id = r.id
+     WHERE ur.user_id = ?
+       AND r.is_active = 1`,
+    [userId],
+  );
+
+  const permissions = await query(
+    `SELECT DISTINCT p.code
+     FROM permissions p
+     INNER JOIN role_permissions rp ON rp.permission_id = p.id
+     INNER JOIN user_roles ur ON ur.role_id = rp.role_id
+     INNER JOIN roles r ON r.id = ur.role_id
+     WHERE ur.user_id = ?
+       AND r.is_active = 1`,
+    [userId],
+  );
+
+  const user = users[0];
+  return {
+    ...user,
+    roles,
+    permissionSet: new Set(permissions.map((p) => p.code)),
+    isAdmin: roles.some((r) => r.name.toLowerCase() === "administrador"),
+  };
+}
+
+export function authRequired(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ message: "Token requerido" });
+  }
+
+  try {
+    const payload = jwt.verify(token, config.jwtSecret);
+    req.auth = payload;
+    return next();
+  } catch {
+    return res.status(401).json({ message: "Token invalido o expirado" });
+  }
+}
+
+export async function loadUser(req, res, next) {
+  const user = await getUserAuthContext(req.auth.sub);
+  if (!user) {
+    return res.status(401).json({ message: "Usuario no encontrado" });
+  }
+  if (user.status !== "active") {
+    return res.status(403).json({ message: "Usuario inactivo" });
+  }
+  req.user = user;
+  return next();
+}
+
+export function requirePermission(permission) {
+  return (req, res, next) => {
+    if (req.user?.isAdmin) return next();
+
+    const hasPermission = req.user?.permissionSet?.has(permission);
+    if (!hasPermission) {
+      return res.status(403).json({
+        message: "No autorizado",
+        requiredPermission: permission,
+      });
+    }
+    return next();
+  };
+}
