@@ -28,7 +28,7 @@ const accountSchema = z.object({
 });
 
 const accountStatusSchema = z.object({
-  statusCode: z.enum(["activada", "desactivada"]),
+  statusCode: z.enum(["activada", "desactivada", "pendiente_activacion"]),
 });
 
 router.get("/", requirePermission("cuentas.read"), async (_req, res) => {
