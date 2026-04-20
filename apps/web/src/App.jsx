@@ -60,10 +60,16 @@ function App() {
     return <LoginPage onLogin={setToken} />;
   }
 
-  return <Shell currentUser={currentUser} onLogout={() => setToken("")} />;
+  return (
+    <Shell
+      currentUser={currentUser}
+      token={token}
+      onLogout={() => setToken("")}
+    />
+  );
 }
 
-function Shell({ currentUser, onLogout }) {
+function Shell({ currentUser, token, onLogout }) {
   const can = useMemo(() => {
     const set = new Set(currentUser.permissions || []);
     const isAdmin = (currentUser.roles || []).some(
