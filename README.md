@@ -1,89 +1,131 @@
 # NewPeople CRM
 
-Monorepo con:
+Monorepo CRM con:
 
 - API: Node.js + Express + MySQL
 - Web: React + Vite
 
-## 1) Requisitos
+## Setup rapido local
 
-- Node 20+
+### 1. Requisitos
+
+- Node.js 20+
 - MySQL 8+
 
-## 2) Configuracion
+### 2. Instalar dependencias
 
-1. Copiar variables de entorno:
-   - `cp apps/api/.env.example apps/api/.env`
-   - `cp apps/web/.env.example apps/web/.env`
-2. Crear base de datos y tablas ejecutando `apps/api/sql/schema.sql` en MySQL.
+Desde la raiz del proyecto:
 
-## 3) Ejecutar en desarrollo
+```bash
+npm install
+```
 
-Desde la raiz:
+### 3. Configurar variables de entorno
+
+```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
+```
+
+### 4. Crear base de datos
+
+Ejecuta el script SQL en tu instancia MySQL:
+
+- apps/api/sql/schema.sql
+
+Este script crea tablas, relaciones y datos semilla (incluyendo rol Administrador y catalogos base).
+
+### 5. Levantar API y Web
 
 ```bash
 npm run dev
 ```
 
-Esto levanta:
+Servicios esperados:
 
-- API en `http://localhost:4000`
-- Web en `http://localhost:5173`
+- API: http://localhost:4000
+- Web: http://localhost:5173
 
-## 4) Flujo inicial
+Healthcheck rapido:
 
-1. Abrir la web.
-2. Como no hay usuarios, aparece formulario de primer usuario.
-3. Ese usuario se crea con rol `Administrador`.
-4. Luego podras gestionar usuarios, roles/permisos y cuentas.
-
-## 5) Modulos implementados
-
-- Autenticacion con JWT.
-- Bootstrap del primer administrador.
-- RBAC (roles + permisos) con deny-by-default.
-- Catalogos: paises, monedas, tipos de cuenta, sectores, estados de activacion.
-- Cuentas con propietarios multiples.
-
-## 6) Pendiente para siguiente fase
-
-- Contactos.
-- Oportunidades.
-- Integracion S3.
-- Integracion ChatGPT.
-
-## 7) Como estan los roles en la base de datos
-
-La estructura de roles y su relacion con usuarios/permisos queda asi:
-
-- Tabla `roles`: guarda el catalogo de roles.
-  - Campos clave: `id`, `name`, `description`, `is_system`, `is_active`, `created_at`, `updated_at`.
-  - `is_system = 1`: rol protegido del sistema.
-  - `is_active = 1`: rol habilitado para asignacion y autorizacion.
-- Tabla `user_roles`: relacion muchos-a-muchos entre usuarios y roles.
-- Tabla `role_permissions`: relacion muchos-a-muchos entre roles y permisos.
-
-Al ejecutar `apps/api/sql/schema.sql`, se siembra este rol inicial:
-
-- `Administrador` con `is_system = 1` e `is_active = 1`.
-- Ademas, se le asignan todos los permisos existentes en la tabla `permissions`.
-
-Consultas utiles para verificar estado:
-
-```sql
-SELECT id, name, is_system, is_active
-FROM roles
-ORDER BY name;
-
-SELECT u.id, u.full_name, r.name AS role_name
-FROM users u
-JOIN user_roles ur ON ur.user_id = u.id
-JOIN roles r ON r.id = ur.role_id
-ORDER BY u.full_name, r.name;
-
-SELECT r.name AS role_name, p.code AS permission_code
-FROM roles r
-JOIN role_permissions rp ON rp.role_id = r.id
-JOIN permissions p ON p.id = rp.permission_id
-ORDER BY r.name, p.code;
+```bash
+curl -sS http://localhost:4000/health
 ```
+
+## Onboarding funcional (primer uso)
+
+1. Abre la web en http://localhost:5173.
+2. Si no existen usuarios, aparece el formulario de primer usuario.
+3. Ese usuario inicial se crea con rol Administrador.
+4. Inicia sesion y comienza a administrar usuarios, roles/permisos y cuentas.
+
+## Scripts disponibles
+
+En raiz:
+
+- npm run dev: levanta API y Web en paralelo.
+- npm run dev:api: levanta solo API.
+- npm run dev:web: levanta solo Web.
+- npm run build:web: genera build de produccion del frontend.
+
+En apps/api:
+
+- npm run dev: API con nodemon.
+- npm run start: API en modo node.
+
+En apps/web:
+
+- npm run dev: Vite dev server.
+- npm run build: build de produccion.
+- npm run preview: preview local del build.
+- npm run lint: lint frontend.
+
+## Variables de entorno
+
+### API (apps/api/.env)
+
+Obligatorias para correr local:
+
+- PORT: puerto de la API (ej. 4000).
+- JWT_SECRET: secreto para firmar tokens JWT.
+- JWT_EXPIRES_IN: expiracion del token (ej. 8h).
+- DB_HOST: host de MySQL.
+- DB_PORT: puerto de MySQL.
+- DB_USER: usuario de MySQL.
+- DB_PASSWORD: password de MySQL.
+- DB_NAME: base de datos (ej. newpeople_crm).
+- DB_POOL_SIZE: tamano del pool de conexiones.
+
+Variables para invitaciones por email:
+
+- APP_INVITE_SETUP_URL: URL frontend para activar cuenta/invitar.
+- SMTP_HOST
+- SMTP_PORT
+- SMTP_SECURE
+- SMTP_USER
+- SMTP_PASS
+- SMTP_FROM
+
+Nota: si SMTP no esta configurado, el sistema no bloquea endpoints criticos; solo omite el envio real de correo.
+
+### Web (apps/web/.env)
+
+- VITE_API_URL: URL base de la API (ej. http://localhost:4000).
+
+## Modulos actuales
+
+- Autenticacion JWT.
+- Bootstrap de primer administrador.
+- RBAC por roles y permisos (deny-by-default).
+- Catalogos maestros (paises, monedas, tipos de cuenta, sectores, estados de activacion).
+- Cuentas con propietarios multiples.
+- Auditoria de acciones de usuario.
+
+## Troubleshooting rapido
+
+- Error de conexion DB:
+  revisa DB_HOST, DB_PORT, DB_USER, DB_PASSWORD y que MySQL este arriba.
+- 401/403 en API:
+  valida token JWT vigente y permisos del rol.
+- Frontend no conecta con backend:
+  confirma que VITE_API_URL apunte al host/puerto correcto.
