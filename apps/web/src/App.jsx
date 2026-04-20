@@ -556,6 +556,7 @@ function UsersPage({ can }) {
   const [sortField, setSortField] = useState("id");
   const [sortDirection, setSortDirection] = useState("asc");
   const [userQuery, setUserQuery] = useState("");
+  const [showInactiveUsers, setShowInactiveUsers] = useState(false);
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -606,10 +607,13 @@ function UsersPage({ can }) {
   }, [users, sortField, sortDirection]);
 
   const filteredUsers = useMemo(() => {
+    const base = showInactiveUsers
+      ? sortedUsers
+      : sortedUsers.filter((u) => u.status === "active");
     const q = userQuery.trim().toLowerCase();
-    if (!q) return sortedUsers;
+    if (!q) return base;
 
-    return sortedUsers.filter((u) => {
+    return base.filter((u) => {
       const haystack = [
         u.id,
         u.full_name,
@@ -623,7 +627,7 @@ function UsersPage({ can }) {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [sortedUsers, userQuery]);
+  }, [sortedUsers, userQuery, showInactiveUsers]);
 
   function toggleSort(field) {
     if (sortField === field) {
@@ -934,6 +938,15 @@ function UsersPage({ can }) {
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
 
+      <label className="role-filter">
+        <input
+          type="checkbox"
+          checked={showInactiveUsers}
+          onChange={(e) => setShowInactiveUsers(e.target.checked)}
+        />
+        Mostrar desactivados
+      </label>
+
       <div className="users-list-filters">
         <input
           type="text"
@@ -1099,7 +1112,20 @@ function UsersPage({ can }) {
             style={{ maxWidth: 480 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="modal-title">Editar usuario</h3>
+            <div className="modal-header">
+              <h3 className="modal-title">Editar usuario</h3>
+              <span
+                className={
+                  editUser.status === "active"
+                    ? "status-icon-badge active"
+                    : "status-icon-badge inactive"
+                }
+                title="Estado del usuario"
+              >
+                <span className="status-dot" aria-hidden="true" />
+                {editUser.status === "active" ? "Activo" : "Inactivo"}
+              </span>
+            </div>
             <form onSubmit={saveEditUser}>
               <div className="grid-form">
                 <div className="field-group">
@@ -1667,7 +1693,6 @@ function AccountsPage({ can, currentUser, token }) {
   const [editingAccountId, setEditingAccountId] = useState(null);
   const [editAccountAudit, setEditAccountAudit] = useState(null);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
-  const [showAccountStatusMenu, setShowAccountStatusMenu] = useState(false);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [catalogs, setCatalogs] = useState({
     countries: [],
@@ -2096,81 +2121,17 @@ function AccountsPage({ can, currentUser, token }) {
                 {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
               </h3>
               {editingAccountId && (
-                <div
-                  className="status-badge-wrapper"
-                  style={{ position: "relative" }}
+                <span
+                  className={
+                    getEditingActivationMeta().isActive
+                      ? "status-icon-badge active"
+                      : "status-icon-badge inactive"
+                  }
+                  title="Estado de activacion"
                 >
-                  <button
-                    type="button"
-                    className={
-                      getEditingActivationMeta().isActive
-                        ? "status-icon-badge active"
-                        : "status-icon-badge inactive"
-                    }
-                    title={
-                      can("cuentas.update")
-                        ? "Click para cambiar estado"
-                        : "Estado de activacion (solo lectura)"
-                    }
-                    onClick={() =>
-                      can("cuentas.update") &&
-                      setShowAccountStatusMenu(!showAccountStatusMenu)
-                    }
-                    style={{
-                      cursor: can("cuentas.update") ? "pointer" : "default",
-                      border: "none",
-                      background: "inherit",
-                      padding: "4px 8px",
-                    }}
-                  >
-                    <span className="status-dot" aria-hidden="true" />
-                    {getEditingActivationMeta().label}
-                  </button>
-                  {showAccountStatusMenu && can("cuentas.update") && (
-                    <div className="status-menu-dropdown">
-                      {catalogs.statuses.map((status) => (
-                        <button
-                          key={status.id}
-                          type="button"
-                          className={`status-menu-item ${
-                            String(form.activationStatusId) ===
-                            String(status.id)
-                              ? "selected"
-                              : ""
-                          }`}
-                          onClick={async () => {
-                            const statusCode = normalizeText(status.code);
-                            try {
-                              setCreatingAccount(true);
-                              const payload = { statusCode };
-                              const resp = await api.patch(
-                                `/api/accounts/${editingAccountId}/status`,
-                                payload,
-                              );
-                              setForm({
-                                ...form,
-                                activationStatusId: String(status.id),
-                              });
-                              setShowAccountStatusMenu(false);
-                              setSuccess("Estado actualizado exitosamente");
-                            } catch (err) {
-                              setError(
-                                getApiErrorMessage(
-                                  err,
-                                  "No fue posible cambiar el estado",
-                                ),
-                              );
-                            } finally {
-                              setCreatingAccount(false);
-                            }
-                          }}
-                        >
-                          {status.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                  <span className="status-dot" aria-hidden="true" />
+                  {getEditingActivationMeta().label}
+                </span>
               )}
             </div>
             <p className="modal-message account-modal-message">
@@ -3011,9 +2972,30 @@ function ContactsPage({ can, token }) {
             className="modal-dialog modal-dialog-account"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="modal-title">
-              {editingContactId ? "Editar contacto" : "Crear contacto"}
-            </h3>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {editingContactId ? "Editar contacto" : "Crear contacto"}
+              </h3>
+              {editingContactId &&
+                (() => {
+                  const c = contacts.find(
+                    (x) => Number(x.id) === Number(editingContactId),
+                  );
+                  return c ? (
+                    <span
+                      className={
+                        isContactActive(c)
+                          ? "status-icon-badge active"
+                          : "status-icon-badge inactive"
+                      }
+                      title="Estado de activacion"
+                    >
+                      <span className="status-dot" aria-hidden="true" />
+                      {getContactStatusLabel(c)}
+                    </span>
+                  ) : null;
+                })()}
+            </div>
             <p className="modal-message account-modal-message">
               {editingContactId
                 ? "Actualiza los datos necesarios y guarda los cambios."
@@ -3218,24 +3200,6 @@ function ContactsPage({ can, token }) {
                       ))}
                     </select>
                   </div>
-                  {editingContactId && (
-                    <div className="field-group">
-                      <label>
-                        Estado de activacion{" "}
-                        <span className="required-mark">*</span>
-                      </label>
-                      <input
-                        value={
-                          catalogs.activationStatuses.find(
-                            (x) =>
-                              String(x.id) === String(form.activationStatusId),
-                          )?.name || "No definido"
-                        }
-                        disabled
-                        readOnly
-                      />
-                    </div>
-                  )}
                   <div className="field-group">
                     <label>Jefe</label>
                     <select
