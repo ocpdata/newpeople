@@ -172,3 +172,221 @@ Archivos backend conectados al modelo:
 - `apps/api/src/routes.roles.js`: CRUD de roles y asignacion de permisos.
 - `apps/api/src/routes.accounts.js`: CRUD de cuentas y propietarios.
 - `apps/api/src/routes.catalogs.js`: lectura de catalogos maestros.
+
+## 10. Diccionario de tablas (campos, tipos y llaves)
+
+### 10.1 users
+
+- PK: `id`
+- Unicos: `email`
+
+| Campo         | Tipo                      | Restricciones              |
+| ------------- | ------------------------- | -------------------------- |
+| id            | BIGINT UNSIGNED           | PK, AUTO_INCREMENT         |
+| full_name     | VARCHAR(160)              | NOT NULL                   |
+| email         | VARCHAR(190)              | NOT NULL, UNIQUE           |
+| description   | TEXT                      | NULL                       |
+| registered_at | DATETIME(3)               | NOT NULL                   |
+| last_visit_at | DATETIME(3)               | NULL                       |
+| avatar_url    | VARCHAR(500)              | NULL                       |
+| mobile        | VARCHAR(30)               | NULL                       |
+| status        | ENUM('active','inactive') | NOT NULL, DEFAULT 'active' |
+| password_hash | VARCHAR(255)              | NOT NULL                   |
+| created_at    | DATETIME(3)               | NOT NULL                   |
+| updated_at    | DATETIME(3)               | NOT NULL                   |
+
+### 10.2 roles
+
+- PK: `id`
+- Unicos: `name`
+- FK: `created_by_user_id -> users.id`, `updated_by_user_id -> users.id`
+
+| Campo              | Tipo            | Restricciones       |
+| ------------------ | --------------- | ------------------- |
+| id                 | BIGINT UNSIGNED | PK, AUTO_INCREMENT  |
+| name               | VARCHAR(80)     | NOT NULL, UNIQUE    |
+| description        | VARCHAR(255)    | NULL                |
+| is_system          | TINYINT(1)      | NOT NULL, DEFAULT 0 |
+| is_active          | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+| created_by_user_id | BIGINT UNSIGNED | NULL, FK            |
+| updated_by_user_id | BIGINT UNSIGNED | NULL, FK            |
+| created_at         | DATETIME(3)     | NOT NULL            |
+| updated_at         | DATETIME(3)     | NOT NULL            |
+
+### 10.3 permissions
+
+- PK: `id`
+- Unicos: `code`, `(module, action)`
+
+| Campo       | Tipo            | Restricciones      |
+| ----------- | --------------- | ------------------ |
+| id          | BIGINT UNSIGNED | PK, AUTO_INCREMENT |
+| code        | VARCHAR(120)    | NOT NULL, UNIQUE   |
+| module      | VARCHAR(60)     | NOT NULL           |
+| action      | VARCHAR(60)     | NOT NULL           |
+| description | VARCHAR(255)    | NULL               |
+| created_at  | DATETIME(3)     | NOT NULL           |
+| updated_at  | DATETIME(3)     | NOT NULL           |
+
+### 10.4 user_roles
+
+- PK compuesta: `(user_id, role_id)`
+- FK: `user_id -> users.id`, `role_id -> roles.id`
+
+| Campo      | Tipo            | Restricciones    |
+| ---------- | --------------- | ---------------- |
+| user_id    | BIGINT UNSIGNED | PK compuesta, FK |
+| role_id    | BIGINT UNSIGNED | PK compuesta, FK |
+| created_at | DATETIME(3)     | NOT NULL         |
+
+### 10.5 role_permissions
+
+- PK compuesta: `(role_id, permission_id)`
+- FK: `role_id -> roles.id`, `permission_id -> permissions.id`
+
+| Campo         | Tipo            | Restricciones    |
+| ------------- | --------------- | ---------------- |
+| role_id       | BIGINT UNSIGNED | PK compuesta, FK |
+| permission_id | BIGINT UNSIGNED | PK compuesta, FK |
+| created_at    | DATETIME(3)     | NOT NULL         |
+
+### 10.6 countries
+
+- PK: `id`
+- Unicos: `iso2`, `iso3`
+
+| Campo      | Tipo            | Restricciones       |
+| ---------- | --------------- | ------------------- |
+| id         | BIGINT UNSIGNED | PK, AUTO_INCREMENT  |
+| iso2       | CHAR(2)         | NOT NULL, UNIQUE    |
+| iso3       | CHAR(3)         | NOT NULL, UNIQUE    |
+| name       | VARCHAR(120)    | NOT NULL            |
+| is_active  | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+| created_at | DATETIME(3)     | NOT NULL            |
+| updated_at | DATETIME(3)     | NOT NULL            |
+
+### 10.7 currencies
+
+- PK: `id`
+- Unicos: `code`
+
+| Campo      | Tipo             | Restricciones       |
+| ---------- | ---------------- | ------------------- |
+| id         | BIGINT UNSIGNED  | PK, AUTO_INCREMENT  |
+| code       | CHAR(3)          | NOT NULL, UNIQUE    |
+| name       | VARCHAR(80)      | NOT NULL            |
+| symbol     | VARCHAR(8)       | NULL                |
+| decimals   | TINYINT UNSIGNED | NOT NULL, DEFAULT 2 |
+| is_active  | TINYINT(1)       | NOT NULL, DEFAULT 1 |
+| created_at | DATETIME(3)      | NOT NULL            |
+| updated_at | DATETIME(3)      | NOT NULL            |
+
+### 10.8 country_currency
+
+- PK compuesta: `(country_id, currency_id)`
+- FK: `country_id -> countries.id`, `currency_id -> currencies.id`
+- Check: `valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from`
+
+| Campo       | Tipo            | Restricciones       |
+| ----------- | --------------- | ------------------- |
+| country_id  | BIGINT UNSIGNED | PK compuesta, FK    |
+| currency_id | BIGINT UNSIGNED | PK compuesta, FK    |
+| is_default  | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+| valid_from  | DATE            | NULL                |
+| valid_to    | DATE            | NULL                |
+| created_at  | DATETIME(3)     | NOT NULL            |
+
+### 10.9 account_types
+
+- PK: `id`
+- Unicos: `code`, `name`
+
+| Campo     | Tipo            | Restricciones       |
+| --------- | --------------- | ------------------- |
+| id        | BIGINT UNSIGNED | PK, AUTO_INCREMENT  |
+| code      | VARCHAR(40)     | NOT NULL, UNIQUE    |
+| name      | VARCHAR(80)     | NOT NULL, UNIQUE    |
+| is_active | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+
+### 10.10 economic_sectors
+
+- PK: `id`
+- Unicos: `code`, `name`
+
+| Campo     | Tipo            | Restricciones       |
+| --------- | --------------- | ------------------- |
+| id        | BIGINT UNSIGNED | PK, AUTO_INCREMENT  |
+| code      | VARCHAR(40)     | NOT NULL, UNIQUE    |
+| name      | VARCHAR(100)    | NOT NULL, UNIQUE    |
+| is_active | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+
+### 10.11 account_activation_statuses
+
+- PK: `id`
+- Unicos: `code`, `name`
+
+| Campo     | Tipo            | Restricciones       |
+| --------- | --------------- | ------------------- |
+| id        | BIGINT UNSIGNED | PK, AUTO_INCREMENT  |
+| code      | VARCHAR(40)     | NOT NULL, UNIQUE    |
+| name      | VARCHAR(80)     | NOT NULL, UNIQUE    |
+| is_active | TINYINT(1)      | NOT NULL, DEFAULT 1 |
+
+### 10.12 accounts
+
+- PK: `id`
+- Unicos: `(country_id, registration_code)`
+- FK:
+  - `account_type_id -> account_types.id`
+  - `economic_sector_id -> economic_sectors.id`
+  - `country_id -> countries.id`
+  - `activation_status_id -> account_activation_statuses.id`
+  - `created_by -> users.id`
+  - `updated_by -> users.id`
+
+| Campo                | Tipo            | Restricciones      |
+| -------------------- | --------------- | ------------------ |
+| id                   | BIGINT UNSIGNED | PK, AUTO_INCREMENT |
+| name                 | VARCHAR(180)    | NOT NULL           |
+| account_type_id      | BIGINT UNSIGNED | NOT NULL, FK       |
+| registration_code    | VARCHAR(80)     | NOT NULL           |
+| phone                | VARCHAR(40)     | NULL               |
+| economic_sector_id   | BIGINT UNSIGNED | NOT NULL, FK       |
+| website              | VARCHAR(300)    | NULL               |
+| city                 | VARCHAR(120)    | NULL               |
+| state_region         | VARCHAR(120)    | NULL               |
+| country_id           | BIGINT UNSIGNED | NOT NULL, FK       |
+| description          | TEXT            | NULL               |
+| address_line         | VARCHAR(255)    | NULL               |
+| postal_code          | VARCHAR(20)     | NULL               |
+| activation_status_id | BIGINT UNSIGNED | NOT NULL, FK       |
+| created_by           | BIGINT UNSIGNED | NOT NULL, FK       |
+| created_at           | DATETIME(3)     | NOT NULL           |
+| updated_by           | BIGINT UNSIGNED | NOT NULL, FK       |
+| updated_at           | DATETIME(3)     | NOT NULL           |
+
+### 10.13 account_owners
+
+- PK compuesta: `(account_id, user_id)`
+- FK: `account_id -> accounts.id`, `user_id -> users.id`, `assigned_by -> users.id`
+
+| Campo       | Tipo            | Restricciones    |
+| ----------- | --------------- | ---------------- |
+| account_id  | BIGINT UNSIGNED | PK compuesta, FK |
+| user_id     | BIGINT UNSIGNED | PK compuesta, FK |
+| assigned_at | DATETIME(3)     | NOT NULL         |
+| assigned_by | BIGINT UNSIGNED | NOT NULL, FK     |
+
+### 10.14 user_audit_log
+
+- PK: `id`
+- FK: `performed_by_user_id -> users.id`, `affected_user_id -> users.id`
+
+| Campo                | Tipo            | Restricciones      |
+| -------------------- | --------------- | ------------------ |
+| id                   | BIGINT UNSIGNED | PK, AUTO_INCREMENT |
+| action               | VARCHAR(60)     | NOT NULL           |
+| performed_by_user_id | BIGINT UNSIGNED | NULL, FK           |
+| affected_user_id     | BIGINT UNSIGNED | NULL, FK           |
+| detail               | TEXT            | NULL               |
+| created_at           | DATETIME(3)     | NOT NULL           |
