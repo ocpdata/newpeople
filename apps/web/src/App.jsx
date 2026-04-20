@@ -2140,8 +2140,13 @@ function AccountsPage({ can, currentUser, token }) {
                           }`}
                           onClick={async () => {
                             const statusCode = normalizeText(status.code);
+                            console.log("Status code being sent:", statusCode);
+                            console.log("Token available:", !!token);
+                            console.log("Full token:", token);
                             try {
                               setCreatingAccount(true);
+                              const payload = { statusCode };
+                              console.log("Payload:", payload);
                               const resp = await fetch(
                                 `/api/accounts/${editingAccountId}/status`,
                                 {
@@ -2150,15 +2155,23 @@ function AccountsPage({ can, currentUser, token }) {
                                     "Content-Type": "application/json",
                                     Authorization: `Bearer ${token}`,
                                   },
-                                  body: JSON.stringify({ statusCode }),
+                                  body: JSON.stringify(payload),
                                 },
+                              );
+                              console.log(
+                                "Response status:",
+                                resp.status,
+                                resp.statusText,
                               );
                               if (!resp.ok) {
                                 const err = await resp.json();
+                                console.error("Error from API:", err);
                                 throw new Error(
                                   err.message || "Error al cambiar estado",
                                 );
                               }
+                              const resData = await resp.json();
+                              console.log("Success response:", resData);
                               setForm({
                                 ...form,
                                 activationStatusId: String(status.id),
@@ -2166,6 +2179,7 @@ function AccountsPage({ can, currentUser, token }) {
                               setShowAccountStatusMenu(false);
                               setSuccess("Estado actualizado exitosamente");
                             } catch (err) {
+                              console.error("Full error:", err);
                               setError(
                                 getApiErrorMessage(
                                   err,
