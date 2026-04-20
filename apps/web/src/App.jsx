@@ -2140,16 +2140,13 @@ function AccountsPage({ can, currentUser, token }) {
                           }`}
                           onClick={async () => {
                             const statusCode = normalizeText(status.code);
-                            console.log("Status code being sent:", statusCode);
                             try {
                               setCreatingAccount(true);
                               const payload = { statusCode };
-                              console.log("Payload:", payload);
                               const resp = await api.patch(
-                                `/accounts/${editingAccountId}/status`,
+                                `/api/accounts/${editingAccountId}/status`,
                                 payload,
                               );
-                              console.log("Success response:", resp.data);
                               setForm({
                                 ...form,
                                 activationStatusId: String(status.id),
@@ -2157,7 +2154,6 @@ function AccountsPage({ can, currentUser, token }) {
                               setShowAccountStatusMenu(false);
                               setSuccess("Estado actualizado exitosamente");
                             } catch (err) {
-                              console.error("Full error:", err);
                               setError(
                                 getApiErrorMessage(
                                   err,
