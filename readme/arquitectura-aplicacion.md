@@ -44,12 +44,14 @@ flowchart LR
       S --> M3[Roles\nroutes.roles.js]
       S --> M4[Accounts\nroutes.accounts.js]
       S --> M5[Catalogs\nroutes.catalogs.js]
+      S --> M6[Contacts\nroutes.contacts.js]
 
       M1 --> SEC[Seguridad\nauthRequired + loadUser + requirePermission]
       M2 --> SEC
       M3 --> SEC
       M4 --> SEC
       M5 --> SEC
+      M6 --> SEC
 
       SEC --> DBL[Data Access\ndb.js\nquery + withTransaction]
       DBL --> DB[(MySQL\nnewpeople_crm)]
@@ -140,6 +142,7 @@ Ruteo montado:
 - /api/users (protegido).
 - /api/roles (protegido).
 - /api/accounts (protegido).
+- /api/contacts (protegido).
 - /api/catalogs (protegido).
 
 ## 4.2 Capa de configuracion
@@ -283,6 +286,24 @@ Notas:
 - ownerUserIds obligatorio (min 1).
 - Creacion y actualizacion de owners con transaccion.
 - Estado se cambia por statusCode: activada/desactivada.
+
+### Contacts (apps/api/src/routes.contacts.js)
+
+Endpoints principales:
+
+- GET /api/contacts
+- GET /api/contacts/:id
+- POST /api/contacts
+- PUT /api/contacts/:id
+- PATCH /api/contacts/:id/status
+
+Notas:
+
+- Validacion con zod.
+- Cada contacto requiere cuenta asociada (accountId obligatorio).
+- Jerarquia opcional: managerContactId e influencesContactId.
+- Estado se cambia por statusCode: activado/desactivado.
+- Permisos: contactos.read / contactos.create / contactos.update.
 
 ### Catalogs (apps/api/src/routes.catalogs.js)
 
@@ -521,6 +542,7 @@ Backend (apps/api/src):
 - routes.users.js: usuarios, estado, invitaciones, auditoria.
 - routes.roles.js: roles, permisos, estado, usuarios por rol.
 - routes.accounts.js: cuentas, owners, estado.
+- routes.contacts.js: contactos, jerarquia, estado.
 - routes.catalogs.js: catalogos maestros.
 
 Frontend (apps/web/src):
