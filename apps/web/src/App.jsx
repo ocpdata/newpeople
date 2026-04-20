@@ -2135,7 +2135,7 @@ function AccountsPage({ can, currentUser }) {
                               const resp = await fetch(
                                 `/api/accounts/${editingAccountId}/status`,
                                 {
-                                  method: "PUT",
+                                  method: "PATCH",
                                   headers: {
                                     "Content-Type": "application/json",
                                     Authorization: `Bearer ${token}`,
