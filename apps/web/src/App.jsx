@@ -1,8 +1,38 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage, setAuthToken } from "./api";
 
+const DEFAULT_STATUS_FILTER = "active";
+const VALID_STATUS_FILTERS = new Set([
+  "active",
+  "pending",
+  "inactive",
+  "all",
+]);
+
+function readStoredStatusFilter(storageKey) {
+  if (typeof window === "undefined") return DEFAULT_STATUS_FILTER;
+  const storedValue = window.localStorage.getItem(storageKey);
+  return VALID_STATUS_FILTERS.has(storedValue)
+    ? storedValue
+    : DEFAULT_STATUS_FILTER;
+}
+
+function usePersistedStatusFilter(storageKey) {
+  const [statusFilter, setStatusFilter] = useState(() =>
+    readStoredStatusFilter(storageKey),
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(storageKey, statusFilter);
+  }, [storageKey, statusFilter]);
+
+  return [statusFilter, setStatusFilter];
+}
+
 function App() {
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [hasUsers, setHasUsers] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("crm_token") || "");
@@ -43,6 +73,10 @@ function App() {
     }
   }
 
+  if (location.pathname === "/set-password") {
+    return <SetPasswordPage onDone={setToken} />;
+  }
+
   if (loading) return <div className="centered">Cargando...</div>;
 
   if (!hasUsers) {
@@ -65,11 +99,40 @@ function App() {
       currentUser={currentUser}
       token={token}
       onLogout={() => setToken("")}
+      onRefreshCurrentUser={fetchMe}
     />
   );
 }
 
-function Shell({ currentUser, token, onLogout }) {
+function getUserInitials(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!parts.length) return "U";
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("");
+}
+
+function UserAvatar({ src, fullName, size = "md" }) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={`Avatar de ${fullName || "usuario"}`}
+        className={`user-avatar user-avatar-${size}`}
+      />
+    );
+  }
+
+  return (
+    <div className={`user-avatar user-avatar-${size} user-avatar-fallback`}>
+      {getUserInitials(fullName)}
+    </div>
+  );
+}
+
+function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
   const can = useMemo(() => {
     const set = new Set(currentUser.permissions || []);
     const isAdmin = (currentUser.roles || []).some(
@@ -87,6 +150,9 @@ function Shell({ currentUser, token, onLogout }) {
           {can("usuarios.read") && <NavLink to="/users">Usuarios</NavLink>}
           {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
           {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
+          {can("oportunidades.read") && (
+            <NavLink to="/opportunities">Oportunidades</NavLink>
+          )}
           {can("contactos.read") && <NavLink to="/contacts">Contactos</NavLink>}
           {can("audit.read") && <NavLink to="/audit">Auditoria</NavLink>}
         </nav>
@@ -96,9 +162,16 @@ function Shell({ currentUser, token, onLogout }) {
       </aside>
       <main className="content">
         <header className="topbar">
-          <div>
-            <strong>{currentUser.full_name}</strong>
-            <p>{currentUser.email}</p>
+          <div className="topbar-user">
+            <UserAvatar
+              src={currentUser.avatar_url}
+              fullName={currentUser.full_name}
+              size="lg"
+            />
+            <div>
+              <strong>{currentUser.full_name}</strong>
+              <p>{currentUser.email}</p>
+            </div>
           </div>
         </header>
 
@@ -117,7 +190,14 @@ function Shell({ currentUser, token, onLogout }) {
           <Route
             path="/roles"
             element={
-              can("roles.read") ? <RolesPage can={can} /> : <Navigate to="/" />
+              can("roles.read") ? (
+                <RolesPage
+                  can={can}
+                  onRefreshCurrentUser={onRefreshCurrentUser}
+                />
+              ) : (
+                <Navigate to="/" />
+              )
             }
           />
           <Route
@@ -135,10 +215,24 @@ function Shell({ currentUser, token, onLogout }) {
             }
           />
           <Route
+            path="/opportunities"
+            element={
+              can("oportunidades.read") ? (
+                <OpportunitiesPage can={can} currentUser={currentUser} />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+          <Route
             path="/contacts"
             element={
               can("contactos.read") ? (
-                <ContactsPage can={can} token={token} />
+                <ContactsPage
+                  can={can}
+                  token={token}
+                  currentUser={currentUser}
+                />
               ) : (
                 <Navigate to="/" />
               )
@@ -276,6 +370,8 @@ function SystemAuditPage() {
           <option value="usuarios">Usuarios</option>
           <option value="roles">Roles</option>
           <option value="cuentas">Cuentas</option>
+          <option value="oportunidades">Oportunidades</option>
+          <option value="contactos">Contactos</option>
         </select>
         <select
           value={filters.status}
@@ -403,8 +499,8 @@ function Dashboard() {
     <section className="panel">
       <h2>Dashboard</h2>
       <p>
-        Base del CRM creada con usuarios, roles, permisos, cuentas, paises y
-        monedas.
+        Base del CRM creada con usuarios, roles, permisos, cuentas,
+        oportunidades, contactos, paises y monedas.
       </p>
       <div className="cards">
         <div className="card">
@@ -538,7 +634,282 @@ function FirstUserSetup({ onDone }) {
   );
 }
 
+function SetPasswordPage({ onDone }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const setupToken = new URLSearchParams(location.search).get("token") || "";
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [contextLoading, setContextLoading] = useState(true);
+  const [inviteContext, setInviteContext] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState("");
+
+  const passwordChecks = useMemo(
+    () => ({
+      length: password.length >= 8,
+      uppercase: /[A-Z]/.test(password),
+      lowercase: /[a-z]/.test(password),
+      number: /\d/.test(password),
+    }),
+    [password],
+  );
+
+  const completedChecks = Object.values(passwordChecks).filter(Boolean).length;
+  const passwordStrength =
+    completedChecks <= 1
+      ? { label: "Debil", tone: "weak" }
+      : completedChecks <= 3
+        ? { label: "Media", tone: "medium" }
+        : { label: "Fuerte", tone: "strong" };
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
+  const formattedInviteExpiration = inviteContext?.expiresAt
+    ? new Intl.DateTimeFormat("es-MX", {
+        dateStyle: "long",
+        timeStyle: "short",
+      }).format(new Date(inviteContext.expiresAt))
+    : "";
+  const canSubmit =
+    !contextLoading &&
+    !saving &&
+    Boolean(setupToken) &&
+    completedChecks === 4 &&
+    password.length > 0 &&
+    password === confirmPassword;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadContext() {
+      if (!setupToken) {
+        setInviteContext(null);
+        setContextLoading(false);
+        setError("El enlace no es valido o esta incompleto.");
+        return;
+      }
+
+      setContextLoading(true);
+      setError("");
+
+      try {
+        const { data } = await api.get("/api/auth/set-password-context", {
+          params: { token: setupToken },
+        });
+
+        if (cancelled) return;
+        setInviteContext(data);
+      } catch (err) {
+        if (cancelled) return;
+        setInviteContext(null);
+        setError(getApiErrorMessage(err, "No fue posible validar el enlace"));
+      } finally {
+        if (!cancelled) {
+          setContextLoading(false);
+        }
+      }
+    }
+
+    loadContext();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setupToken]);
+
+  useEffect(() => {
+    if (!success) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      navigate("/", { replace: true });
+    }, 1400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [navigate, success]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    if (password !== confirmPassword) {
+      setSaving(false);
+      setError("Las contrasenas no coinciden");
+      return;
+    }
+
+    try {
+      const { data } = await api.post("/api/auth/set-password", {
+        token: setupToken,
+        password,
+      });
+      setSuccess(data?.message || "Contrasena configurada correctamente");
+      onDone(data.token);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible configurar la contrasena"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="auth-wrap auth-wrap-password">
+      <div className="password-setup-shell">
+        <aside className="password-setup-hero">
+          <p className="password-setup-eyebrow">Acceso seguro</p>
+          <h1>Activa tu cuenta con una contrasena clara y fuerte.</h1>
+          <p className="password-setup-copy">
+            Este paso deja tu acceso listo. Usa una contrasena facil de recordar para ti
+            y dificil de adivinar para otros.
+          </p>
+          <div className="password-setup-points">
+            <div className="password-setup-point">
+              <strong>Mas rapido</strong>
+              <span>Ve al grano con un formulario corto y una guia visual inmediata.</span>
+            </div>
+            <div className="password-setup-point">
+              <strong>Mas claro</strong>
+              <span>Revisamos en vivo los requisitos antes de enviar.</span>
+            </div>
+            <div className="password-setup-point">
+              <strong>Mas seguro</strong>
+              <span>La fortaleza de la contrasena se muestra mientras escribes.</span>
+            </div>
+          </div>
+        </aside>
+
+        <form className="auth-card password-setup-card" onSubmit={submit}>
+          <div className="password-setup-header">
+            <h2>Configurar contrasena</h2>
+            <p className="auth-copy">
+              Define la contrasena con la que vas a entrar al sistema y te redirigiremos al dashboard.
+            </p>
+          </div>
+
+          {contextLoading ? (
+            <div className="password-setup-context-card is-loading">
+              <strong>Validando enlace...</strong>
+              <span>Estamos comprobando que el acceso siga vigente.</span>
+            </div>
+          ) : inviteContext ? (
+            <div className="password-setup-context-card">
+              <strong>{inviteContext.fullName}</strong>
+              <span>{inviteContext.email}</span>
+              <p>
+                Este enlace corresponde a una
+                {inviteContext.purpose === "reset" ? " recuperacion" : " activacion"}
+                de acceso.
+              </p>
+              {formattedInviteExpiration ? (
+                <p className="password-setup-expiration">
+                  Vigente hasta el {formattedInviteExpiration}.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <label className="auth-field">
+            <span>Nueva contrasena</span>
+            <div className="password-input-wrap">
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Crea una contrasena segura"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+              <button
+                className="password-toggle"
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+              >
+                {showPassword ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+          </label>
+
+          <div className="password-strength-box">
+            <div className="password-strength-head">
+              <span>Fortaleza</span>
+              <strong className={`strength-pill strength-pill-${passwordStrength.tone}`}>
+                {passwordStrength.label}
+              </strong>
+            </div>
+            <div className="password-strength-track" aria-hidden="true">
+              <span
+                className={`password-strength-fill password-strength-fill-${passwordStrength.tone}`}
+                style={{ width: `${(completedChecks / 4) * 100}%` }}
+              />
+            </div>
+            <div className="password-checklist">
+              <p className={passwordChecks.length ? "is-valid" : ""}>Minimo 8 caracteres</p>
+              <p className={passwordChecks.uppercase ? "is-valid" : ""}>Al menos una mayuscula</p>
+              <p className={passwordChecks.lowercase ? "is-valid" : ""}>Al menos una minuscula</p>
+              <p className={passwordChecks.number ? "is-valid" : ""}>Al menos un numero</p>
+            </div>
+          </div>
+
+          <label className="auth-field">
+            <span>Confirmar contrasena</span>
+            <div className="password-input-wrap">
+              <input
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repite tu contrasena"
+                type={showConfirmPassword ? "text" : "password"}
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+              <button
+                className="password-toggle"
+                type="button"
+                onClick={() => setShowConfirmPassword((current) => !current)}
+              >
+                {showConfirmPassword ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+          </label>
+
+          <p
+            className={`password-match ${
+              confirmPassword.length === 0 ? "" : passwordsMatch ? "is-valid" : "is-invalid"
+            }`}
+          >
+            {confirmPassword.length === 0
+              ? "Confirma la contrasena para validar que coincide."
+              : passwordsMatch
+                ? "Las contrasenas coinciden."
+                : "Las contrasenas no coinciden."}
+          </p>
+
+          {error && <p className="error">{error}</p>}
+          {success && (
+            <p className="success-inline">
+              {success}. Redirigiendo al dashboard...
+            </p>
+          )}
+
+          <button disabled={!canSubmit}>
+            {saving ? "Guardando..." : "Guardar contrasena"}
+          </button>
+
+          <p className="auth-hint password-setup-note">
+            Cuando guardes, tu sesion quedara lista y entraras directo al sistema.
+          </p>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function UsersPage({ can }) {
+  const maxUserAvatarSizeBytes = 2 * 1024 * 1024;
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [error, setError] = useState("");
@@ -551,16 +922,20 @@ function UsersPage({ can }) {
     fullName: "",
     email: "",
     mobile: "",
+    avatarUrl: "",
     roleIds: [],
   });
   const [sortField, setSortField] = useState("id");
   const [sortDirection, setSortDirection] = useState("asc");
   const [userQuery, setUserQuery] = useState("");
-  const [showInactiveUsers, setShowInactiveUsers] = useState(false);
+  const [userStatusFilter, setUserStatusFilter] = usePersistedStatusFilter(
+    "crm.users.statusFilter",
+  );
   const [form, setForm] = useState({
     fullName: "",
     email: "",
     mobile: "",
+    avatarUrl: "",
     roleIds: [],
   });
 
@@ -572,6 +947,20 @@ function UsersPage({ can }) {
     }, 4000);
     return () => window.clearTimeout(timeoutId);
   }, [error, success]);
+
+  useEffect(() => {
+    if (openUserMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".users-kebab-wrap")) return;
+      setOpenUserMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openUserMenuId]);
 
   const sortedUsers = useMemo(() => {
     const list = [...users];
@@ -607,9 +996,11 @@ function UsersPage({ can }) {
   }, [users, sortField, sortDirection]);
 
   const filteredUsers = useMemo(() => {
-    const base = showInactiveUsers
-      ? sortedUsers
-      : sortedUsers.filter((u) => u.status === "active");
+    const base = sortedUsers.filter((u) => {
+      if (userStatusFilter === "all") return true;
+      if (userStatusFilter === "inactive") return u.status !== "active";
+      return u.status === "active";
+    });
     const q = userQuery.trim().toLowerCase();
     if (!q) return base;
 
@@ -627,7 +1018,23 @@ function UsersPage({ can }) {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [sortedUsers, userQuery, showInactiveUsers]);
+  }, [sortedUsers, userQuery, userStatusFilter]);
+
+  const userStatusCounts = useMemo(() => {
+    return users.reduce(
+      (totals, user) => {
+        if (user.status === "active") {
+          totals.active += 1;
+          return totals;
+        }
+        totals.inactive += 1;
+        return totals;
+      },
+      { active: 0, inactive: 0 },
+    );
+  }, [users]);
+
+  const totalUsersCount = userStatusCounts.active + userStatusCounts.inactive;
 
   function toggleSort(field) {
     if (sortField === field) {
@@ -672,17 +1079,59 @@ function UsersPage({ can }) {
     setForm((prev) => ({ ...prev, email: "" }));
   }, [showCreateForm]);
 
+  function readUserImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("No fue posible leer la imagen"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleUserAvatarChange(file, applyAvatar) {
+    if (!file) {
+      applyAvatar("");
+      return;
+    }
+
+    if (!String(file.type || "").startsWith("image/")) {
+      setError("Selecciona un archivo de imagen válido");
+      return;
+    }
+
+    if (file.size > maxUserAvatarSizeBytes) {
+      setError("La imagen del usuario no debe exceder 2 MB");
+      return;
+    }
+
+    try {
+      const dataUrl = await readUserImageFile(file);
+      applyAvatar(dataUrl);
+    } catch (err) {
+      setError(String(err?.message || "No fue posible cargar la imagen"));
+    }
+  }
+
   async function createUser(e) {
     e.preventDefault();
     setError("");
     setSuccess("");
     setSaving(true);
     try {
-      const { data } = await api.post("/api/users", form);
+      const payload = {
+        fullName: form.fullName,
+        email: form.email,
+        mobile: form.mobile || undefined,
+        avatarUrl: form.avatarUrl || undefined,
+        roleIds: form.roleIds,
+      };
+
+      const { data } = await api.post("/api/users", payload);
       setForm({
         fullName: "",
         email: "",
         mobile: "",
+        avatarUrl: "",
         roleIds: [],
       });
       setShowCreateForm(false);
@@ -741,6 +1190,7 @@ function UsersPage({ can }) {
       fullName: u.full_name,
       email: u.email,
       mobile: u.mobile || "",
+      avatarUrl: u.avatar_url || "",
       roleIds: currentRoleIds,
     });
     setEditUser(u);
@@ -756,6 +1206,7 @@ function UsersPage({ can }) {
         fullName: editForm.fullName,
         email: editForm.email,
         mobile: editForm.mobile || null,
+        avatarUrl: editForm.avatarUrl || null,
         roleIds: editForm.roleIds,
       });
       setEditUser(null);
@@ -779,7 +1230,14 @@ function UsersPage({ can }) {
   return (
     <section className="panel">
       <div className="users-header-row">
-        <h2>Usuarios</h2>
+        <div className="module-title-with-icon">
+          <h2>Usuarios</h2>
+          <span className="module-title-icon module-title-icon-users" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 12.25a4.25 4.25 0 1 0-4.25-4.25A4.25 4.25 0 0 0 12 12.25m0 1.5c-3.66 0-6.75 2.2-6.75 4.8 0 .52.42.95.95.95h11.6a.95.95 0 0 0 .95-.95c0-2.6-3.09-4.8-6.75-4.8" />
+            </svg>
+          </span>
+        </div>
         {can("usuarios.create") && !showCreateForm && (
           <button type="button" onClick={() => setShowCreateForm(true)}>
             Crear usuario
@@ -866,6 +1324,47 @@ function UsersPage({ can }) {
                     }
                   />
                 </div>
+                <div className="field-group" style={{ gridColumn: "1 / -1" }}>
+                  <label>Imagen del usuario</label>
+                  <div className="user-avatar-upload-wrap">
+                    {form.avatarUrl ? (
+                      <img
+                        src={form.avatarUrl}
+                        alt="Vista previa del usuario"
+                        className="user-avatar-preview"
+                      />
+                    ) : (
+                      <div className="user-avatar-placeholder">Sin imagen</div>
+                    )}
+                    <div className="user-avatar-controls">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) =>
+                          handleUserAvatarChange(
+                            e.target.files?.[0],
+                            (avatarUrl) =>
+                              setForm((prev) => ({ ...prev, avatarUrl })),
+                          )
+                        }
+                      />
+                      <p className="field-hint">
+                        JPG, PNG o WEBP. Tamaño máximo: 2 MB.
+                      </p>
+                      {form.avatarUrl && (
+                        <button
+                          type="button"
+                          className="btn-secondary user-avatar-clear-btn"
+                          onClick={() =>
+                            setForm((prev) => ({ ...prev, avatarUrl: "" }))
+                          }
+                        >
+                          Quitar imagen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <p className="field-hint create-user-email-hint">
@@ -921,6 +1420,7 @@ function UsersPage({ can }) {
                       fullName: "",
                       email: "",
                       mobile: "",
+                      avatarUrl: "",
                       roleIds: [],
                     });
                   }}
@@ -938,14 +1438,67 @@ function UsersPage({ can }) {
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
 
-      <label className="role-filter">
-        <input
-          type="checkbox"
-          checked={showInactiveUsers}
-          onChange={(e) => setShowInactiveUsers(e.target.checked)}
-        />
-        Mostrar desactivados
-      </label>
+      <div className="accounts-status-pills-panel">
+        <div className="accounts-status-pills-copy">
+          <span className="accounts-status-pills-label">Estados visibles</span>
+          <p>
+            Selecciona un estado para mostrar solo los usuarios que
+            correspondan a ese grupo.
+          </p>
+        </div>
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar usuarios por estado"
+        >
+          <button
+            type="button"
+            className={
+              userStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={userStatusFilter === "active"}
+            onClick={() => setUserStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activos</span>
+            <span className="status-filter-pill-count">
+              {userStatusCounts.active}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              userStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={userStatusFilter === "inactive"}
+            onClick={() => setUserStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivados</span>
+            <span className="status-filter-pill-count">
+              {userStatusCounts.inactive}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              userStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={userStatusFilter === "all"}
+            onClick={() => setUserStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todos</span>
+            <span className="status-filter-pill-count">{totalUsersCount}</span>
+          </button>
+        </div>
+      </div>
 
       <div className="users-list-filters">
         <input
@@ -1021,7 +1574,12 @@ function UsersPage({ can }) {
             filteredUsers.map((u) => (
               <tr key={u.id}>
                 <td>{u.id}</td>
-                <td>{u.full_name}</td>
+                <td>
+                  <div className="user-name-cell">
+                    <UserAvatar src={u.avatar_url} fullName={u.full_name} size="sm" />
+                    <span>{u.full_name}</span>
+                  </div>
+                </td>
                 <td>{u.email}</td>
                 <td>{u.mobile || "-"}</td>
                 <td>
@@ -1037,7 +1595,7 @@ function UsersPage({ can }) {
                 </td>
                 <td>{u.roles || "-"}</td>
                 <td>
-                  <div className="user-kebab-wrap">
+                  <div className="user-kebab-wrap users-kebab-wrap">
                     <button
                       type="button"
                       className="kebab-btn"
@@ -1114,17 +1672,25 @@ function UsersPage({ can }) {
           >
             <div className="modal-header">
               <h3 className="modal-title">Editar usuario</h3>
-              <span
-                className={
-                  editUser.status === "active"
-                    ? "status-icon-badge active"
-                    : "status-icon-badge inactive"
-                }
-                title="Estado del usuario"
-              >
-                <span className="status-dot" aria-hidden="true" />
-                {editUser.status === "active" ? "Activo" : "Inactivo"}
-              </span>
+              <div className="opportunity-modal-header-meta">
+                <span className="record-id-badge" title="ID del usuario">
+                  <span className="record-id-icon" aria-hidden="true">
+                    #
+                  </span>
+                  {editUser.id}
+                </span>
+                <span
+                  className={
+                    editUser.status === "active"
+                      ? "status-icon-badge active"
+                      : "status-icon-badge inactive"
+                  }
+                  title="Estado del usuario"
+                >
+                  <span className="status-dot" aria-hidden="true" />
+                  {editUser.status === "active" ? "Activo" : "Inactivo"}
+                </span>
+              </div>
             </div>
             <form onSubmit={saveEditUser}>
               <div className="grid-form">
@@ -1170,6 +1736,47 @@ function UsersPage({ can }) {
                   />
                 </div>
                 <div className="field-group" style={{ gridColumn: "1 / -1" }}>
+                  <label>Imagen del usuario</label>
+                  <div className="user-avatar-upload-wrap">
+                    {editForm.avatarUrl ? (
+                      <img
+                        src={editForm.avatarUrl}
+                        alt="Vista previa del usuario"
+                        className="user-avatar-preview"
+                      />
+                    ) : (
+                      <div className="user-avatar-placeholder">Sin imagen</div>
+                    )}
+                    <div className="user-avatar-controls">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) =>
+                          handleUserAvatarChange(
+                            e.target.files?.[0],
+                            (avatarUrl) =>
+                              setEditForm((prev) => ({ ...prev, avatarUrl })),
+                          )
+                        }
+                      />
+                      <p className="field-hint">
+                        JPG, PNG o WEBP. Tamaño máximo: 2 MB.
+                      </p>
+                      {editForm.avatarUrl && (
+                        <button
+                          type="button"
+                          className="btn-secondary user-avatar-clear-btn"
+                          onClick={() =>
+                            setEditForm((prev) => ({ ...prev, avatarUrl: "" }))
+                          }
+                        >
+                          Quitar imagen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="field-group" style={{ gridColumn: "1 / -1" }}>
                   <label>Roles</label>
                   <div className="roles-picker">
                     {roles.map((r) => (
@@ -1192,39 +1799,38 @@ function UsersPage({ can }) {
                   </div>
                 </div>
 
-                <div
-                  className="field-group modal-audit-small"
-                  style={{ gridColumn: "1 / -1" }}
-                >
-                  <label>Auditoría de usuario</label>
-                  <div className="role-audit-grid">
-                    <div className="audit-item">
-                      <span className="audit-label">Registro</span>
-                      <span className="audit-value">
-                        {formatDateTime(editUser.registered_at)}
-                      </span>
-                    </div>
-                    <div className="audit-item">
-                      <span className="audit-label">Última visita</span>
-                      <span className="audit-value">
-                        {formatDateTime(editUser.last_visit_at)}
-                      </span>
-                    </div>
-                    <div className="audit-item">
-                      <span className="audit-label">Creación de registro</span>
-                      <span className="audit-value">
-                        {formatDateTime(editUser.created_at)}
-                      </span>
-                    </div>
-                    <div className="audit-item">
-                      <span className="audit-label">Última actualización</span>
-                      <span className="audit-value">
-                        {formatDateTime(editUser.updated_at)}
-                      </span>
-                    </div>
+              </div>
+
+              <section className="account-form-section modal-audit-strip">
+                <h4>Auditoría de usuario</h4>
+                <div className="role-audit-grid">
+                  <div className="audit-item">
+                    <span className="audit-label">Creado por</span>
+                    <span className="audit-value">
+                      {editUser.created_by_name || "No registrado"}
+                    </span>
+                  </div>
+                  <div className="audit-item">
+                    <span className="audit-label">Fecha de creacion</span>
+                    <span className="audit-value">
+                      {formatDateTime(editUser.created_at)}
+                    </span>
+                  </div>
+                  <div className="audit-item">
+                    <span className="audit-label">Modificado por</span>
+                    <span className="audit-value">
+                      {editUser.updated_by_name || "No registrado"}
+                    </span>
+                  </div>
+                  <div className="audit-item">
+                    <span className="audit-label">Fecha de modificacion</span>
+                    <span className="audit-value">
+                      {formatDateTime(editUser.updated_at)}
+                    </span>
                   </div>
                 </div>
-              </div>
+              </section>
+
               <div className="modal-buttons" style={{ marginTop: 20 }}>
                 <button type="submit" className="btn-primary" disabled={saving}>
                   {saving ? "Guardando..." : "Guardar"}
@@ -1278,14 +1884,19 @@ function ConfirmationModal({
   );
 }
 
-function RolesPage({ can }) {
+function RolesPage({ can, onRefreshCurrentUser }) {
   const [roles, setRoles] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [selectedRoleId, setSelectedRoleId] = useState(null);
   const [selectedPerms, setSelectedPerms] = useState([]);
   const [roleUsers, setRoleUsers] = useState([]);
-  const [newRoleName, setNewRoleName] = useState("");
+  const [openRoleMenuId, setOpenRoleMenuId] = useState(null);
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState(null);
+  const [roleForm, setRoleForm] = useState({
+    name: "",
+    description: "",
+  });
   const [creatingRole, setCreatingRole] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [error, setError] = useState("");
@@ -1304,6 +1915,20 @@ function RolesPage({ can }) {
     }, 4000);
     return () => window.clearTimeout(timeoutId);
   }, [error, success]);
+
+  useEffect(() => {
+    if (openRoleMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".role-kebab-wrap")) return;
+      setOpenRoleMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openRoleMenuId]);
 
   async function load() {
     try {
@@ -1340,21 +1965,66 @@ function RolesPage({ can }) {
     load();
   }, [showInactive]);
 
-  async function createRole(e) {
+  function resetRoleForm() {
+    setRoleForm({ name: "", description: "" });
+  }
+
+  function closeRoleModal() {
+    if (creatingRole) return;
+    setShowCreateRoleModal(false);
+    setEditingRole(null);
+    resetRoleForm();
+  }
+
+  function openCreateRoleModal() {
+    setEditingRole(null);
+    resetRoleForm();
+    setShowCreateRoleModal(true);
+  }
+
+  function openEditRoleModal(role) {
+    setOpenRoleMenuId(null);
+    setShowCreateRoleModal(false);
+    setEditingRole(role);
+    setRoleForm({
+      name: role.name || "",
+      description: role.description || "",
+    });
+  }
+
+  async function submitRole(e) {
     e.preventDefault();
-    if (!newRoleName.trim()) return;
+    if (!roleForm.name.trim()) return;
     setError("");
     setSuccess("");
     setCreatingRole(true);
     try {
-      await api.post("/api/roles", { name: newRoleName.trim() });
-      const roleName = newRoleName.trim();
-      setNewRoleName("");
-      setShowCreateRoleModal(false);
+      const payload = {
+        name: roleForm.name.trim(),
+        description: roleForm.description.trim(),
+      };
+      const roleName = payload.name;
+      if (editingRole) {
+        await api.put(`/api/roles/${editingRole.id}`, payload);
+      } else {
+        await api.post("/api/roles", payload);
+      }
+      closeRoleModal();
       await load();
-      setSuccess(`Rol "${roleName}" creado correctamente.`);
+      setSuccess(
+        editingRole
+          ? `Rol "${roleName}" actualizado correctamente.`
+          : `Rol "${roleName}" creado correctamente.`,
+      );
     } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible crear el rol"));
+      setError(
+        getApiErrorMessage(
+          err,
+          editingRole
+            ? "No fue posible actualizar el rol"
+            : "No fue posible crear el rol",
+        ),
+      );
     } finally {
       setCreatingRole(false);
     }
@@ -1372,6 +2042,9 @@ function RolesPage({ can }) {
       await api.put(`/api/roles/${selectedRoleId}/permissions`, {
         permissionIds: selectedPerms.map(Number),
       });
+      if (typeof onRefreshCurrentUser === "function") {
+        await onRefreshCurrentUser();
+      }
       await load();
       const selectedRole = roles.find((r) => r.id === selectedRoleId);
       const roleName = selectedRole?.name || "rol";
@@ -1385,6 +2058,7 @@ function RolesPage({ can }) {
 
   async function selectRole(roleId) {
     setSelectedRoleId(roleId);
+    setOpenRoleMenuId(null);
     setError("");
     setSuccess("");
     try {
@@ -1452,6 +2126,19 @@ function RolesPage({ can }) {
     openConfirmModal(role, action);
   }
 
+  function toggleRoleMenu(roleId) {
+    selectRole(roleId);
+    setOpenRoleMenuId((prev) => (prev === roleId ? null : roleId));
+  }
+
+  async function runRoleAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenRoleMenuId(null);
+    }
+  }
+
   function formatDateTime(value) {
     if (!value) return "-";
     const date = new Date(value);
@@ -1466,7 +2153,7 @@ function RolesPage({ can }) {
       <div className="roles-header-row">
         <h2>Roles y permisos</h2>
         {can("roles.create") && (
-          <button type="button" onClick={() => setShowCreateRoleModal(true)}>
+          <button type="button" onClick={openCreateRoleModal}>
             Crear rol
           </button>
         )}
@@ -1496,37 +2183,48 @@ function RolesPage({ can }) {
         isDangerous={confirmModal.action === "desactivar"}
       />
 
-      {showCreateRoleModal && (
+      {(showCreateRoleModal || editingRole) && (
         <div
           className="modal-overlay"
-          onClick={() => {
-            if (creatingRole) return;
-            setShowCreateRoleModal(false);
-            setNewRoleName("");
-          }}
+          onClick={closeRoleModal}
         >
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Crear rol</h3>
-            <form onSubmit={createRole}>
+            <h3 className="modal-title">
+              {editingRole ? "Editar rol" : "Crear rol"}
+            </h3>
+            <form onSubmit={submitRole}>
               <div className="field-group">
                 <label>Nombre de rol</label>
                 <input
-                  value={newRoleName}
-                  onChange={(e) => setNewRoleName(e.target.value)}
+                  value={roleForm.name}
+                  onChange={(e) =>
+                    setRoleForm((prev) => ({ ...prev, name: e.target.value }))
+                  }
                   placeholder="Nombre de rol"
                   autoFocus
                   required
+                />
+              </div>
+              <div className="field-group" style={{ marginTop: 12 }}>
+                <label>Descripcion</label>
+                <textarea
+                  value={roleForm.description}
+                  onChange={(e) =>
+                    setRoleForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Describe el objetivo o alcance del rol"
+                  maxLength={255}
+                  rows={4}
                 />
               </div>
               <div className="modal-buttons" style={{ marginTop: 16 }}>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => {
-                    if (creatingRole) return;
-                    setShowCreateRoleModal(false);
-                    setNewRoleName("");
-                  }}
+                  onClick={closeRoleModal}
                 >
                   Cancelar
                 </button>
@@ -1535,7 +2233,11 @@ function RolesPage({ can }) {
                   className="btn-primary"
                   disabled={creatingRole}
                 >
-                  {creatingRole ? "Creando..." : "Guardar"}
+                  {creatingRole
+                    ? editingRole
+                      ? "Guardando..."
+                      : "Creando..."
+                    : "Guardar"}
                 </button>
               </div>
             </form>
@@ -1576,15 +2278,48 @@ function RolesPage({ can }) {
                   </span>
                 </button>
                 {can("roles.update") && Number(r.is_system) !== 1 && (
-                  <button
-                    type="button"
-                    className="role-toggle"
-                    onClick={() =>
-                      updateRoleStatus(r, Number(r.is_active) !== 1)
-                    }
-                  >
-                    {Number(r.is_active) === 1 ? "Desactivar" : "Activar"}
-                  </button>
+                  <div className="user-kebab-wrap role-kebab-wrap">
+                    <button
+                      type="button"
+                      className="kebab-btn"
+                      onClick={() => toggleRoleMenu(r.id)}
+                      aria-label="Abrir acciones del rol"
+                      title="Acciones"
+                    >
+                      ⋮
+                    </button>
+                    {openRoleMenuId === r.id && (
+                      <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenRoleMenuId(null);
+                            openEditRoleModal(r);
+                          }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Number(r.is_active) === 1}
+                          onClick={() =>
+                            runRoleAction(() => updateRoleStatus(r, true))
+                          }
+                        >
+                          Activar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Number(r.is_active) !== 1}
+                          onClick={() =>
+                            runRoleAction(() => updateRoleStatus(r, false))
+                          }
+                        >
+                          Desactivar
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </li>
             ))}
@@ -1685,7 +2420,8 @@ function RolesPage({ can }) {
 function AccountsPage({ can, currentUser, token }) {
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
-  const [showInactiveAccounts, setShowInactiveAccounts] = useState(false);
+  const [accountStatusFilter, setAccountStatusFilter] =
+    usePersistedStatusFilter("crm.accounts.statusFilter");
   const [accountQuery, setAccountQuery] = useState("");
   const [accountSortField, setAccountSortField] = useState("id");
   const [accountSortDirection, setAccountSortDirection] = useState("asc");
@@ -1702,6 +2438,14 @@ function AccountsPage({ can, currentUser, token }) {
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const explicitAccountPermissions = useMemo(
+    () => new Set(currentUser?.permissions || []),
+    [currentUser],
+  );
+  const canCreateOrRequestAccounts =
+    explicitAccountPermissions.has("cuentas.create") ||
+    explicitAccountPermissions.has("cuentas.request");
+  const canActivateAccounts = explicitAccountPermissions.has("cuentas.create");
 
   useEffect(() => {
     if (!error && !success) return;
@@ -1712,12 +2456,32 @@ function AccountsPage({ can, currentUser, token }) {
     return () => window.clearTimeout(timeoutId);
   }, [error, success]);
 
+  useEffect(() => {
+    if (openAccountMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".accounts-kebab-wrap")) return;
+      setOpenAccountMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openAccountMenuId]);
+
   function normalizeText(value) {
     return String(value || "")
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
+  }
+
+  function findCatalogIdByCode(options, expectedCode) {
+    const target = normalizeText(expectedCode);
+    const found = options.find((opt) => normalizeText(opt.code) === target);
+    return found ? String(found.id) : "";
   }
 
   function findCatalogIdByName(options, expectedName) {
@@ -1765,14 +2529,14 @@ function AccountsPage({ can, currentUser, token }) {
         statusesRes,
       ] = await Promise.all([
         api.get("/api/accounts"),
-        api.get("/api/users"),
+        api.get("/api/catalogs/account-owner-users"),
         api.get("/api/catalogs/countries"),
         api.get("/api/catalogs/account-types"),
         api.get("/api/catalogs/economic-sectors"),
         api.get("/api/catalogs/account-activation-statuses"),
       ]);
       setAccounts(accountsRes.data);
-      setUsers(usersRes.data.filter((u) => u.status === "active"));
+      setUsers(usersRes.data);
       setCatalogs({
         countries: countriesRes.data,
         accountTypes: typesRes.data,
@@ -1919,10 +2683,22 @@ function AccountsPage({ can, currentUser, token }) {
     return normalizeText(account.activation_status) === "activada";
   }
 
+  function isAccountPending(account) {
+    return normalizeText(account.activation_status) === "pendiente de activacion";
+  }
+
+  function isAccountInactive(account) {
+    return normalizeText(account.activation_status) === "desactivada";
+  }
+
   const filteredAccounts = useMemo(() => {
-    if (showInactiveAccounts) return accounts;
-    return accounts.filter((account) => isAccountActive(account));
-  }, [accounts, showInactiveAccounts]);
+    return accounts.filter((account) => {
+      if (accountStatusFilter === "all") return true;
+      if (accountStatusFilter === "pending") return isAccountPending(account);
+      if (accountStatusFilter === "inactive") return isAccountInactive(account);
+      return isAccountActive(account);
+    });
+  }, [accounts, accountStatusFilter]);
 
   const sortedAccounts = useMemo(() => {
     const list = [...filteredAccounts];
@@ -1936,6 +2712,9 @@ function AccountsPage({ can, currentUser, token }) {
       if (accountSortField === "pais") return String(account.country || "");
       if (accountSortField === "registro") {
         return String(account.registration_code || "");
+      }
+      if (accountSortField === "propietarios") {
+        return String(account.owners_display || "");
       }
       if (accountSortField === "estado") {
         return String(getAccountStatusLabel(account) || "");
@@ -1972,6 +2751,7 @@ function AccountsPage({ can, currentUser, token }) {
         a.id,
         a.name,
         a.account_type,
+        a.owners_display,
         a.country,
         a.registration_code,
         getAccountStatusLabel(a),
@@ -1983,6 +2763,26 @@ function AccountsPage({ can, currentUser, token }) {
       return haystack.includes(q);
     });
   }, [sortedAccounts, accountQuery]);
+
+  const accountStatusCounts = useMemo(() => {
+    return accounts.reduce(
+      (totals, account) => {
+        if (isAccountPending(account)) {
+          totals.pending += 1;
+          return totals;
+        }
+        if (isAccountInactive(account)) {
+          totals.inactive += 1;
+          return totals;
+        }
+        totals.active += 1;
+        return totals;
+      },
+      { active: 0, pending: 0, inactive: 0 },
+    );
+  }, [accounts]);
+
+  const totalAccountsCount = accountStatusCounts.active + accountStatusCounts.pending + accountStatusCounts.inactive;
 
   function toggleAccountSort(field) {
     if (accountSortField === field) {
@@ -1999,12 +2799,16 @@ function AccountsPage({ can, currentUser, token }) {
   }
 
   function getAccountStatusBadgeClass(account) {
+    if (isAccountPending(account)) {
+      return "user-status-badge pending";
+    }
     return isAccountActive(account)
       ? "user-status-badge active"
       : "user-status-badge inactive";
   }
 
   function getAccountStatusLabel(account) {
+    if (isAccountPending(account)) return "Pendiente de activacion";
     return isAccountActive(account) ? "Activada" : "Desactivada";
   }
 
@@ -2015,10 +2819,17 @@ function AccountsPage({ can, currentUser, token }) {
     const statusCode = normalizeText(selectedStatus?.code || "");
     const statusName = normalizeText(selectedStatus?.name || "");
     const isActive = statusCode === "activada" || statusName === "activada";
+    const isPending =
+      statusCode === "pendiente_activacion" ||
+      statusName === "pendiente de activacion";
 
     return {
       label: selectedStatus?.name || "No definido",
-      isActive,
+      badgeClass: isPending
+        ? "status-icon-badge pending"
+        : isActive
+          ? "status-icon-badge active"
+          : "status-icon-badge inactive",
     };
   }
 
@@ -2080,21 +2891,93 @@ function AccountsPage({ can, currentUser, token }) {
   return (
     <section className="panel">
       <div className="accounts-header-row">
-        <h2>Cuentas</h2>
-        {can("cuentas.create") && (
+        <div className="module-title-with-icon">
+          <h2>Cuentas</h2>
+          <span className="module-title-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M9 6.25a1.75 1.75 0 0 1 1.75-1.75h2.5A1.75 1.75 0 0 1 15 6.25V7h3.25A2.75 2.75 0 0 1 21 9.75v7.5A2.75 2.75 0 0 1 18.25 20h-12.5A2.75 2.75 0 0 1 3 17.25v-7.5A2.75 2.75 0 0 1 5.75 7H9zm1.5.75h3v-.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25zM4.5 11.5h15v5.75c0 .69-.56 1.25-1.25 1.25H5.75c-.69 0-1.25-.56-1.25-1.25zm15-1.5h-15v-.25c0-.69.56-1.25 1.25-1.25h12.5c.69 0 1.25.56 1.25 1.25z" />
+            </svg>
+          </span>
+        </div>
+        {canCreateOrRequestAccounts && (
           <button type="button" onClick={openCreateAccountModal}>
             Crear cuenta
           </button>
         )}
       </div>
-      <label className="role-filter">
-        <input
-          type="checkbox"
-          checked={showInactiveAccounts}
-          onChange={(e) => setShowInactiveAccounts(e.target.checked)}
-        />
-        Mostrar desactivadas
-      </label>
+      <div className="accounts-status-pills-panel">
+        <div className="accounts-status-pills-copy">
+          <span className="accounts-status-pills-label">Estados visibles</span>
+          <p>
+            Selecciona un estado para mostrar solo las cuentas que correspondan
+            a ese grupo.
+          </p>
+        </div>
+        <div className="accounts-status-pills" role="group" aria-label="Filtrar cuentas por estado">
+          <button
+            type="button"
+            className={
+              accountStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={accountStatusFilter === "active"}
+            onClick={() => setAccountStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activas</span>
+            <span className="status-filter-pill-count">
+              {accountStatusCounts.active}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              accountStatusFilter === "pending"
+                ? "status-filter-pill status-filter-pill-pending is-selected"
+                : "status-filter-pill status-filter-pill-pending"
+            }
+            aria-pressed={accountStatusFilter === "pending"}
+            onClick={() => setAccountStatusFilter("pending")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Pendientes</span>
+            <span className="status-filter-pill-count">
+              {accountStatusCounts.pending}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              accountStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={accountStatusFilter === "inactive"}
+            onClick={() => setAccountStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivadas</span>
+            <span className="status-filter-pill-count">
+              {accountStatusCounts.inactive}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              accountStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={accountStatusFilter === "all"}
+            onClick={() => setAccountStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todas</span>
+            <span className="status-filter-pill-count">{totalAccountsCount}</span>
+          </button>
+        </div>
+      </div>
 
       <div className="accounts-list-filters">
         <input
@@ -2121,17 +3004,21 @@ function AccountsPage({ can, currentUser, token }) {
                 {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
               </h3>
               {editingAccountId && (
-                <span
-                  className={
-                    getEditingActivationMeta().isActive
-                      ? "status-icon-badge active"
-                      : "status-icon-badge inactive"
-                  }
-                  title="Estado de activacion"
-                >
-                  <span className="status-dot" aria-hidden="true" />
-                  {getEditingActivationMeta().label}
-                </span>
+                <div className="opportunity-modal-header-meta">
+                  <span className="record-id-badge" title="ID de la cuenta">
+                    <span className="record-id-icon" aria-hidden="true">
+                      #
+                    </span>
+                    {editingAccountId}
+                  </span>
+                  <span
+                    className={getEditingActivationMeta().badgeClass}
+                    title="Estado de activacion"
+                  >
+                    <span className="status-dot" aria-hidden="true" />
+                    {getEditingActivationMeta().label}
+                  </span>
+                </div>
               )}
             </div>
             <p className="modal-message account-modal-message">
@@ -2371,7 +3258,7 @@ function AccountsPage({ can, currentUser, token }) {
               </section>
 
               {editingAccountId && (
-                <section className="account-form-section account-audit-small">
+                <section className="account-form-section modal-audit-strip">
                   <h4>Auditoria de la cuenta</h4>
                   <div className="role-audit-grid">
                     <div className="audit-item">
@@ -2484,6 +3371,15 @@ function AccountsPage({ can, currentUser, token }) {
               <button
                 type="button"
                 className="sort-header-btn"
+                onClick={() => toggleAccountSort("propietarios")}
+              >
+                Propietarios <span>{getAccountSortArrow("propietarios")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
                 onClick={() => toggleAccountSort("estado")}
               >
                 Estado <span>{getAccountSortArrow("estado")}</span>
@@ -2501,13 +3397,14 @@ function AccountsPage({ can, currentUser, token }) {
                 <td>{a.account_type}</td>
                 <td>{a.country}</td>
                 <td>{a.registration_code}</td>
+                <td>{a.owners_display || "-"}</td>
                 <td>
                   <span className={getAccountStatusBadgeClass(a)}>
                     {getAccountStatusLabel(a)}
                   </span>
                 </td>
                 <td className="accounts-actions-cell">
-                  <div className="user-kebab-wrap">
+                  <div className="user-kebab-wrap accounts-kebab-wrap">
                     <button
                       type="button"
                       className="kebab-btn"
@@ -2528,7 +3425,7 @@ function AccountsPage({ can, currentUser, token }) {
                         </button>
                         <button
                           type="button"
-                          disabled={isAccountActive(a)}
+                          disabled={!canActivateAccounts || isAccountActive(a)}
                           onClick={() =>
                             runAccountAction(() =>
                               updateAccountStatus(a, "activada"),
@@ -2539,7 +3436,18 @@ function AccountsPage({ can, currentUser, token }) {
                         </button>
                         <button
                           type="button"
-                          disabled={!isAccountActive(a)}
+                          disabled={!canActivateAccounts || isAccountPending(a)}
+                          onClick={() =>
+                            runAccountAction(() =>
+                              updateAccountStatus(a, "pendiente_activacion"),
+                            )
+                          }
+                        >
+                          Marcar pendiente
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!canActivateAccounts || isAccountInactive(a)}
                           onClick={() =>
                             runAccountAction(() =>
                               updateAccountStatus(a, "desactivada"),
@@ -2556,7 +3464,7 @@ function AccountsPage({ can, currentUser, token }) {
             ))
           ) : (
             <tr>
-              <td colSpan={7} className="empty-state">
+              <td colSpan={8} className="empty-state">
                 No hay cuentas que coincidan con los filtros
               </td>
             </tr>
@@ -2567,14 +3475,1135 @@ function AccountsPage({ can, currentUser, token }) {
   );
 }
 
-function ContactsPage({ can, token }) {
+function OpportunitiesPage({ can, currentUser }) {
+  const [opportunities, setOpportunities] = useState([]);
+  const [opportunityStatusFilter, setOpportunityStatusFilter] =
+    usePersistedStatusFilter("crm.opportunities.statusFilter");
+  const [opportunityQuery, setOpportunityQuery] = useState("");
+  const [opportunitySortField, setOpportunitySortField] = useState("id");
+  const [opportunitySortDirection, setOpportunitySortDirection] =
+    useState("asc");
+  const [showOpportunityModal, setShowOpportunityModal] = useState(false);
+  const [editingOpportunityId, setEditingOpportunityId] = useState(null);
+  const [editOpportunityAudit, setEditOpportunityAudit] = useState(null);
+  const [openOpportunityMenuId, setOpenOpportunityMenuId] = useState(null);
+  const [savingOpportunity, setSavingOpportunity] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const explicitOpportunityPermissions = useMemo(
+    () => new Set(currentUser?.permissions || []),
+    [currentUser],
+  );
+  const canCreateOrRequestOpportunities =
+    explicitOpportunityPermissions.has("oportunidades.create") ||
+    explicitOpportunityPermissions.has("oportunidades.request");
+  const canChangeOpportunityActivationStatus =
+    explicitOpportunityPermissions.has("oportunidades.create");
+  const [catalogs, setCatalogs] = useState({
+    accounts: [],
+    contacts: [],
+    sellerUsers: [],
+    presalesUsers: [],
+    businessLines: [],
+    stages: [],
+    statuses: [],
+  });
+
+  const [form, setForm] = useState({
+    name: "",
+    amountUsd: "",
+    accountId: "",
+    closeDate: "",
+    contactId: "",
+    salesStageId: "",
+    businessLineId: "",
+    sellerUserId: "",
+    presalesUserId: "",
+    activationStatusId: "",
+  });
+
+  function normalizeText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function findCatalogIdByCode(options, expectedCode) {
+    const target = normalizeText(expectedCode);
+    const found = options.find((opt) => normalizeText(opt.code) === target);
+    return found ? String(found.id) : "";
+  }
+
+  useEffect(() => {
+    if (!error && !success) return;
+    const timeoutId = window.setTimeout(() => {
+      setError("");
+      setSuccess("");
+    }, 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [error, success]);
+
+  useEffect(() => {
+    if (openOpportunityMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".opportunities-kebab-wrap")) return;
+      setOpenOpportunityMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openOpportunityMenuId]);
+
+  async function load() {
+    try {
+      const [
+        opportunitiesRes,
+        accountsRes,
+        contactsRes,
+        sellerUsersRes,
+        presalesUsersRes,
+        businessLinesRes,
+        stagesRes,
+        statusesRes,
+      ] = await Promise.all([
+        api.get("/api/opportunities"),
+        api.get("/api/catalogs/opportunity-accounts"),
+        api.get("/api/catalogs/opportunity-contacts"),
+        api.get("/api/catalogs/opportunity-seller-users"),
+        api.get("/api/catalogs/opportunity-presales-users"),
+        api.get("/api/catalogs/opportunity-business-lines"),
+        api.get("/api/catalogs/opportunity-sales-stages"),
+        api.get("/api/catalogs/opportunity-activation-statuses"),
+      ]);
+
+      setOpportunities(opportunitiesRes.data || []);
+      setCatalogs({
+        accounts: accountsRes.data || [],
+        contacts: contactsRes.data || [],
+        sellerUsers: sellerUsersRes.data || [],
+        presalesUsers: presalesUsersRes.data || [],
+        businessLines: businessLinesRes.data || [],
+        stages: stagesRes.data || [],
+        statuses: statusesRes.data || [],
+      });
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar oportunidades"));
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function buildDefaultOpportunityForm() {
+    const defaultSellerUserId =
+      (currentUser?.roles || []).some(
+        (role) => normalizeText(role.name) === "vendedor",
+      ) &&
+      catalogs.sellerUsers.some(
+        (user) => Number(user.id) === Number(currentUser?.id),
+      )
+        ? String(currentUser.id)
+        : "";
+
+    return {
+      name: "",
+      amountUsd: "",
+      accountId: "",
+      closeDate: "",
+      contactId: "",
+      salesStageId: findCatalogIdByCode(catalogs.stages, "contacto_inicial"),
+      businessLineId: "",
+      sellerUserId: defaultSellerUserId,
+      presalesUserId: "",
+      activationStatusId: findCatalogIdByCode(
+        catalogs.statuses,
+        "pendiente_activacion",
+      ),
+    };
+  }
+
+  useEffect(() => {
+    if (!showOpportunityModal || editingOpportunityId) return;
+    const defaults = buildDefaultOpportunityForm();
+    setForm((prev) => ({
+      ...prev,
+      salesStageId: prev.salesStageId || defaults.salesStageId,
+      sellerUserId: prev.sellerUserId || defaults.sellerUserId,
+      activationStatusId: prev.activationStatusId || defaults.activationStatusId,
+    }));
+  }, [showOpportunityModal, editingOpportunityId, catalogs, currentUser]);
+
+  function openCreateOpportunityModal() {
+    setError("");
+    setSuccess("");
+    setEditingOpportunityId(null);
+    setEditOpportunityAudit(null);
+    setForm(buildDefaultOpportunityForm());
+    setShowOpportunityModal(true);
+  }
+
+  async function openEditOpportunityModal(opportunityId) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.get(`/api/opportunities/${opportunityId}`);
+      setForm({
+        name: data.name || "",
+        amountUsd:
+          data.amount_usd === null || data.amount_usd === undefined
+            ? ""
+            : formatOpportunityAmountInput(String(data.amount_usd)),
+        accountId: String(data.account_id || ""),
+        closeDate: data.close_date ? String(data.close_date).slice(0, 10) : "",
+        contactId: String(data.contact_id || ""),
+        salesStageId: String(data.sales_stage_id || ""),
+        businessLineId: String(data.business_line_id || ""),
+        sellerUserId: String(data.seller_user_id || ""),
+        presalesUserId: data.presales_user_id
+          ? String(data.presales_user_id)
+          : "",
+        activationStatusId: String(data.activation_status_id || ""),
+      });
+      setEditOpportunityAudit({
+        createdByName: data.created_by_name || "",
+        createdAt: data.created_at || "",
+        updatedByName: data.updated_by_name || "",
+        updatedAt: data.updated_at || "",
+        activationStatus: data.activation_status || "",
+      });
+      setEditingOpportunityId(Number(opportunityId));
+      setShowOpportunityModal(true);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar la oportunidad"));
+    }
+  }
+
+  function closeOpportunityModal() {
+    if (savingOpportunity) return;
+    setShowOpportunityModal(false);
+    setEditingOpportunityId(null);
+    setEditOpportunityAudit(null);
+  }
+
+  function getOpportunityStatusLabel(opportunity) {
+    return opportunity.activation_status || "-";
+  }
+
+  function isOpportunityActive(opportunity) {
+    return normalizeText(opportunity.activation_status) === "activada";
+  }
+
+  function isOpportunityPending(opportunity) {
+    return (
+      normalizeText(opportunity.activation_status) ===
+      "pendiente de activacion"
+    );
+  }
+
+  function isOpportunityInactive(opportunity) {
+    return normalizeText(opportunity.activation_status) === "desactivada";
+  }
+
+  function getOpportunityStatusBadgeClass(opportunity) {
+    if (isOpportunityActive(opportunity)) {
+      return "user-status-badge active";
+    }
+    if (isOpportunityPending(opportunity)) {
+      return "user-status-badge pending";
+    }
+    return "user-status-badge inactive";
+  }
+
+  function getOpportunityStatusIconBadgeClass(statusValue) {
+    if (normalizeText(statusValue) === "activada") {
+      return "status-icon-badge active";
+    }
+    if (normalizeText(statusValue) === "pendiente de activacion") {
+      return "status-icon-badge pending";
+    }
+    return "status-icon-badge inactive";
+  }
+
+  const filteredOpportunities = useMemo(() => {
+    return opportunities.filter((opportunity) => {
+      if (opportunityStatusFilter === "all") return true;
+      if (opportunityStatusFilter === "pending") {
+        return isOpportunityPending(opportunity);
+      }
+      if (opportunityStatusFilter === "inactive") {
+        return isOpportunityInactive(opportunity);
+      }
+      return isOpportunityActive(opportunity);
+    });
+  }, [opportunities, opportunityStatusFilter]);
+
+  const opportunityStatusCounts = useMemo(() => {
+    return opportunities.reduce(
+      (totals, opportunity) => {
+        if (isOpportunityPending(opportunity)) {
+          totals.pending += 1;
+          return totals;
+        }
+        if (isOpportunityInactive(opportunity)) {
+          totals.inactive += 1;
+          return totals;
+        }
+        totals.active += 1;
+        return totals;
+      },
+      { active: 0, pending: 0, inactive: 0 },
+    );
+  }, [opportunities]);
+
+  const totalOpportunitiesCount =
+    opportunityStatusCounts.active +
+    opportunityStatusCounts.pending +
+    opportunityStatusCounts.inactive;
+
+  const sortedOpportunities = useMemo(() => {
+    const list = [...filteredOpportunities];
+
+    const readValue = (opportunity) => {
+      if (opportunitySortField === "id") return Number(opportunity.id) || 0;
+      if (opportunitySortField === "nombre") return String(opportunity.name || "");
+      if (opportunitySortField === "cuenta") return String(opportunity.account_name || "");
+      if (opportunitySortField === "vendedor") return String(opportunity.seller_user_name || "");
+      if (opportunitySortField === "preventa") return String(opportunity.presales_user_name || "");
+      if (opportunitySortField === "etapa") return String(opportunity.sales_stage || "");
+      if (opportunitySortField === "importe") return Number(opportunity.amount_usd) || 0;
+      if (opportunitySortField === "cierre") return String(opportunity.close_date || "");
+      if (opportunitySortField === "estado") return String(getOpportunityStatusLabel(opportunity));
+      return "";
+    };
+
+    list.sort((a, b) => {
+      const aValue = readValue(a);
+      const bValue = readValue(b);
+
+      let result = 0;
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        result = aValue - bValue;
+      } else {
+        result = String(aValue).localeCompare(String(bValue), "es", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return opportunitySortDirection === "asc" ? result : -result;
+    });
+
+    return list;
+  }, [filteredOpportunities, opportunitySortField, opportunitySortDirection]);
+
+  const visibleOpportunities = useMemo(() => {
+    const q = opportunityQuery.trim().toLowerCase();
+    if (!q) return sortedOpportunities;
+
+    return sortedOpportunities.filter((opportunity) => {
+      const haystack = [
+        opportunity.id,
+        opportunity.name,
+        opportunity.account_name,
+        opportunity.seller_user_name,
+        opportunity.contact_name,
+        opportunity.sales_stage,
+        opportunity.business_line,
+        opportunity.presales_user_name,
+        opportunity.activation_status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    });
+  }, [sortedOpportunities, opportunityQuery]);
+
+  function toggleOpportunitySort(field) {
+    if (opportunitySortField === field) {
+      setOpportunitySortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setOpportunitySortField(field);
+    setOpportunitySortDirection("asc");
+  }
+
+  function getOpportunitySortArrow(field) {
+    if (opportunitySortField !== field) return "↕";
+    return opportunitySortDirection === "asc" ? "↑" : "↓";
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "No registrado";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "No registrado";
+    return date.toLocaleString("es-ES");
+  }
+
+  function formatCloseDate(value) {
+    if (!value) return "-";
+    const datePart = String(value).split("T")[0];
+    const [year, month, day] = datePart.split("-");
+    if (!year || !month || !day) return value;
+    return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year.slice(-2)}`;
+  }
+
+  function formatOpportunityAmountInput(value) {
+    const rawValue = String(value || "")
+      .replace(/,/g, "")
+      .replace(/[^\d.]/g, "");
+    if (!rawValue) return "";
+
+    const hasDecimal = rawValue.includes(".");
+    const [integerPartRaw, ...decimalRest] = rawValue.split(".");
+    const decimalPart = decimalRest.join("");
+    const integerPartNormalized = integerPartRaw.replace(/^0+(?=\d)/, "") || "0";
+    const formattedInteger = integerPartNormalized.replace(
+      /\B(?=(\d{3})+(?!\d))/g,
+      ",",
+    );
+
+    if (!hasDecimal) return formattedInteger;
+    return `${formattedInteger}.${decimalPart}`;
+  }
+
+  function parseOpportunityAmountInput(value) {
+    return Number(String(value || "").replace(/,/g, ""));
+  }
+
+  const currentSalesStageName =
+    catalogs.stages.find((stage) => String(stage.id) === String(form.salesStageId))
+      ?.name || "";
+
+  async function saveOpportunity(e) {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!form.sellerUserId) {
+      setError("Selecciona un vendedor");
+      return;
+    }
+
+    setSavingOpportunity(true);
+    try {
+      const payload = {
+        name: form.name,
+        amountUsd: parseOpportunityAmountInput(form.amountUsd),
+        accountId: Number(form.accountId),
+        closeDate: form.closeDate,
+        contactId: Number(form.contactId),
+        salesStageId: Number(form.salesStageId),
+        businessLineId: Number(form.businessLineId),
+        sellerUserId: Number(form.sellerUserId),
+        presalesUserId: form.presalesUserId ? Number(form.presalesUserId) : null,
+        activationStatusId: Number(form.activationStatusId),
+      };
+
+      const { data } = editingOpportunityId
+        ? await api.put(`/api/opportunities/${editingOpportunityId}`, payload)
+        : await api.post("/api/opportunities", payload);
+
+      setSuccess(
+        data?.message ||
+          (editingOpportunityId
+            ? "Oportunidad actualizada correctamente"
+            : "Oportunidad creada correctamente"),
+      );
+      setShowOpportunityModal(false);
+      setEditingOpportunityId(null);
+      setEditOpportunityAudit(null);
+      await load();
+    } catch (err) {
+      const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+      if (fieldErrors && typeof fieldErrors === "object") {
+        const firstError = Object.entries(fieldErrors).find(
+          ([, messages]) => Array.isArray(messages) && messages.length > 0,
+        );
+        if (firstError) {
+          const [fieldName, messages] = firstError;
+          setError(`${fieldName}: ${messages[0]}`);
+          setSavingOpportunity(false);
+          return;
+        }
+      }
+      setError(getApiErrorMessage(err, "No fue posible guardar la oportunidad"));
+    } finally {
+      setSavingOpportunity(false);
+    }
+  }
+
+  function toggleOpportunityMenu(opportunityId) {
+    setOpenOpportunityMenuId((prev) =>
+      prev === opportunityId ? null : opportunityId,
+    );
+  }
+
+  async function runOpportunityAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenOpportunityMenuId(null);
+    }
+  }
+
+  async function updateOpportunityStatus(opportunity, statusCode) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.patch(
+        `/api/opportunities/${opportunity.id}/status`,
+        { statusCode },
+      );
+      setSuccess(data?.message || "Estado de oportunidad actualizado");
+      await load();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado de la oportunidad",
+        ),
+      );
+    }
+  }
+
+  const contactOptions = useMemo(() => {
+    if (!form.accountId) return [];
+    return catalogs.contacts.filter(
+      (contact) => Number(contact.account_id) === Number(form.accountId),
+    );
+  }, [catalogs.contacts, form.accountId]);
+
+  useEffect(() => {
+    if (!form.contactId) return;
+    const isValidContact = contactOptions.some(
+      (contact) => Number(contact.id) === Number(form.contactId),
+    );
+    if (isValidContact) return;
+
+    setForm((prev) => ({ ...prev, contactId: "" }));
+  }, [contactOptions, form.contactId]);
+
+  return (
+    <section className="panel">
+      <div className="accounts-header-row">
+        <div className="module-title-with-icon">
+          <h2>Oportunidades</h2>
+          <span
+            className="module-title-icon module-title-icon-opportunities"
+            aria-hidden="true"
+          >
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M5 18.5a.75.75 0 0 1-.75-.75V6.25A2.25 2.25 0 0 1 6.5 4h11a2.25 2.25 0 0 1 2.25 2.25v11.5a.75.75 0 0 1-1.5 0V6.25a.75.75 0 0 0-.75-.75h-11a.75.75 0 0 0-.75.75v11.5a.75.75 0 0 1-.75.75" />
+              <path d="M8.25 15.75a.75.75 0 0 1-.53-1.28l2.72-2.72a.75.75 0 0 1 1.06 0l1.25 1.25 3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L11 13.34l-2.19 2.19a.75.75 0 0 1-.56.22" />
+            </svg>
+          </span>
+        </div>
+        {canCreateOrRequestOpportunities && (
+          <button type="button" onClick={openCreateOpportunityModal}>
+            Crear oportunidad
+          </button>
+        )}
+      </div>
+
+      <div className="accounts-status-pills-panel">
+        <div className="accounts-status-pills-copy">
+          <span className="accounts-status-pills-label">Estados visibles</span>
+          <p>
+            Selecciona un estado para mostrar solo las oportunidades que
+            correspondan a ese grupo.
+          </p>
+        </div>
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar oportunidades por estado"
+        >
+          <button
+            type="button"
+            className={
+              opportunityStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={opportunityStatusFilter === "active"}
+            onClick={() => setOpportunityStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activas</span>
+            <span className="status-filter-pill-count">
+              {opportunityStatusCounts.active}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              opportunityStatusFilter === "pending"
+                ? "status-filter-pill status-filter-pill-pending is-selected"
+                : "status-filter-pill status-filter-pill-pending"
+            }
+            aria-pressed={opportunityStatusFilter === "pending"}
+            onClick={() => setOpportunityStatusFilter("pending")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Pendientes</span>
+            <span className="status-filter-pill-count">
+              {opportunityStatusCounts.pending}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              opportunityStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={opportunityStatusFilter === "inactive"}
+            onClick={() => setOpportunityStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivadas</span>
+            <span className="status-filter-pill-count">
+              {opportunityStatusCounts.inactive}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              opportunityStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={opportunityStatusFilter === "all"}
+            onClick={() => setOpportunityStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todas</span>
+            <span className="status-filter-pill-count">
+              {totalOpportunitiesCount}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div className="accounts-list-filters">
+        <input
+          type="text"
+          placeholder="Buscar oportunidad por nombre, id, cuenta, vendedor, contacto, etapa, linea o preventa"
+          value={opportunityQuery}
+          onChange={(e) => setOpportunityQuery(e.target.value)}
+        />
+      </div>
+
+      {showOpportunityModal && (
+        <div className="modal-overlay" onClick={closeOpportunityModal}>
+          <div
+            className="modal-dialog modal-dialog-account"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {editingOpportunityId ? "Editar oportunidad" : "Crear oportunidad"}
+              </h3>
+              {editingOpportunityId && editOpportunityAudit ? (
+                <div className="opportunity-modal-header-meta">
+                  <span className="record-id-badge" title="ID de la oportunidad">
+                    <span className="record-id-icon" aria-hidden="true">
+                      #
+                    </span>
+                    {editingOpportunityId}
+                  </span>
+                  <span
+                    className={getOpportunityStatusIconBadgeClass(
+                      editOpportunityAudit.activationStatus,
+                    )}
+                    title="Estado de activacion"
+                  >
+                    <span className="status-dot" aria-hidden="true" />
+                    {editOpportunityAudit.activationStatus || "Sin estado"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            <p className="modal-message account-modal-message">
+              {editingOpportunityId
+                ? "Actualiza la información de la oportunidad y guarda los cambios."
+                : "Completa la información principal para registrar la oportunidad."}
+            </p>
+
+            {!editingOpportunityId && (
+              <p className="field-hint">
+                El ID de la oportunidad se asigna automaticamente y coincide con el ID interno.
+              </p>
+            )}
+
+            <form className="account-create-form in-modal" onSubmit={saveOpportunity}>
+              <section className="account-form-section">
+                <h4>Datos principales</h4>
+                <div className="grid-form account-grid-main">
+                  <div className="field-group">
+                    <label>
+                      Nombre de la oportunidad <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={form.name}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, name: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Importe en dólares <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Ej. 50,000"
+                      value={form.amountUsd}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          amountUsd: formatOpportunityAmountInput(e.target.value),
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Fecha de cierre <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={form.closeDate}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, closeDate: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Cuenta <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.accountId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          accountId: e.target.value,
+                          contactId: "",
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona cuenta</option>
+                      {catalogs.accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Contacto de la cuenta <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.contactId}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, contactId: e.target.value }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona contacto</option>
+                      {contactOptions.map((contact) => (
+                        <option key={contact.id} value={contact.id}>
+                          {contact.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section">
+                <h4>Gestion comercial</h4>
+                <div className="grid-form account-grid-main">
+                  {editingOpportunityId ? (
+                    <div className="field-group">
+                      <label>
+                        Etapa de venta <span className="required-mark">*</span>
+                      </label>
+                      <select
+                        value={form.salesStageId}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            salesStageId: e.target.value,
+                          }))
+                        }
+                        required
+                      >
+                        <option value="">Selecciona etapa</option>
+                        {catalogs.stages.map((stage) => (
+                          <option key={stage.id} value={stage.id}>
+                            {stage.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="field-group">
+                      <label>
+                        Etapa de venta <span className="required-mark">*</span>
+                      </label>
+                      <input value={currentSalesStageName} readOnly />
+                    </div>
+                  )}
+                  <div className="field-group">
+                    <label>
+                      Linea de negocio <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.businessLineId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          businessLineId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona linea</option>
+                      {catalogs.businessLines.map((line) => (
+                        <option key={line.id} value={line.id}>
+                          {line.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Vendedor <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.sellerUserId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          sellerUserId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona vendedor</option>
+                      {catalogs.sellerUsers.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>Ingeniero preventa</label>
+                    <select
+                      value={form.presalesUserId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          presalesUserId: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Sin preventa</option>
+                      {catalogs.presalesUsers.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              {editingOpportunityId && editOpportunityAudit && (
+                <section className="account-form-section modal-audit-strip">
+                  <h4>Auditoria</h4>
+                  <div className="role-audit-grid">
+                    <div className="audit-item">
+                      <span className="audit-label">Creado por</span>
+                      <span className="audit-value">
+                        {editOpportunityAudit.createdByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de creacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editOpportunityAudit.createdAt)}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Modificado por</span>
+                      <span className="audit-value">
+                        {editOpportunityAudit.updatedByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de modificacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editOpportunityAudit.updatedAt)}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              <div className="modal-buttons" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeOpportunityModal}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingOpportunity}
+                >
+                  {savingOpportunity
+                    ? editingOpportunityId
+                      ? "Guardando..."
+                      : "Creando..."
+                    : editingOpportunityId
+                      ? "Guardar cambios"
+                      : "Crear oportunidad"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {error && <div className="toast toast-error">{error}</div>}
+      {success && <div className="toast toast-success">{success}</div>}
+
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("id")}
+              >
+                ID <span>{getOpportunitySortArrow("id")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("nombre")}
+              >
+                Oportunidad <span>{getOpportunitySortArrow("nombre")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("cuenta")}
+              >
+                Cuenta <span>{getOpportunitySortArrow("cuenta")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("vendedor")}
+              >
+                Vendedor <span>{getOpportunitySortArrow("vendedor")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("preventa")}
+              >
+                Preventa <span>{getOpportunitySortArrow("preventa")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("etapa")}
+              >
+                Etapa <span>{getOpportunitySortArrow("etapa")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("importe")}
+              >
+                Importe USD <span>{getOpportunitySortArrow("importe")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("cierre")}
+              >
+                Cierre <span>{getOpportunitySortArrow("cierre")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("estado")}
+              >
+                Estado <span>{getOpportunitySortArrow("estado")}</span>
+              </button>
+            </th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleOpportunities.length > 0 ? (
+            visibleOpportunities.map((opportunity) => (
+              <tr key={opportunity.id}>
+                <td>{opportunity.id}</td>
+                <td>{opportunity.name}</td>
+                <td>{opportunity.account_name}</td>
+                <td>{opportunity.seller_user_name || "-"}</td>
+                <td>{opportunity.presales_user_name || "-"}</td>
+                <td>{opportunity.sales_stage}</td>
+                <td>
+                  {Number(opportunity.amount_usd || 0).toLocaleString("en-US", {
+                    style: "currency",
+                    currency: "USD",
+                  })}
+                </td>
+                <td>{formatCloseDate(opportunity.close_date)}</td>
+                <td>
+                  <span className={getOpportunityStatusBadgeClass(opportunity)}>
+                    {getOpportunityStatusLabel(opportunity)}
+                  </span>
+                </td>
+                <td className="accounts-actions-cell">
+                  <div className="user-kebab-wrap opportunities-kebab-wrap">
+                    <button
+                      type="button"
+                      className="kebab-btn"
+                      onClick={() => toggleOpportunityMenu(opportunity.id)}
+                      aria-label="Abrir acciones"
+                    >
+                      ⋮
+                    </button>
+                    {openOpportunityMenuId === opportunity.id && (
+                      <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            runOpportunityAction(() =>
+                              openEditOpportunityModal(opportunity.id),
+                            )
+                          }
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canChangeOpportunityActivationStatus ||
+                            isOpportunityActive(opportunity)
+                          }
+                          onClick={() =>
+                            runOpportunityAction(() =>
+                              updateOpportunityStatus(opportunity, "activada"),
+                            )
+                          }
+                        >
+                          Activar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canChangeOpportunityActivationStatus ||
+                            isOpportunityPending(opportunity)
+                          }
+                          onClick={() =>
+                            runOpportunityAction(() =>
+                              updateOpportunityStatus(
+                                opportunity,
+                                "pendiente_activacion",
+                              ),
+                            )
+                          }
+                        >
+                          Marcar pendiente
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canChangeOpportunityActivationStatus ||
+                            normalizeText(opportunity.activation_status) ===
+                              "desactivada"
+                          }
+                          onClick={() =>
+                            runOpportunityAction(() =>
+                              updateOpportunityStatus(opportunity, "desactivada"),
+                            )
+                          }
+                        >
+                          Desactivar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={10} className="empty-state">
+                No hay oportunidades que coincidan con los filtros
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function ContactsPage({ can, token, currentUser }) {
   const [contacts, setContacts] = useState([]);
-  const [showInactiveContacts, setShowInactiveContacts] = useState(false);
+  const [contactStatusFilter, setContactStatusFilter] =
+    usePersistedStatusFilter("crm.contacts.statusFilter");
   const [contactQuery, setContactQuery] = useState("");
   const [contactSortField, setContactSortField] = useState("id");
   const [contactSortDirection, setContactSortDirection] = useState("asc");
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
+  const [editContactAudit, setEditContactAudit] = useState(null);
   const [openContactMenuId, setOpenContactMenuId] = useState(null);
   const [savingContact, setSavingContact] = useState(false);
   const [error, setError] = useState("");
@@ -2587,7 +4616,15 @@ function ContactsPage({ can, token }) {
     employmentStatuses: [],
     activationStatuses: [],
   });
-
+  const explicitContactPermissions = useMemo(
+    () => new Set(currentUser?.permissions || []),
+    [currentUser],
+  );
+  const canCreateOrRequestContacts =
+    explicitContactPermissions.has("contactos.create") ||
+    explicitContactPermissions.has("contactos.request");
+  const canChangeContactActivationStatus =
+    explicitContactPermissions.has("contactos.create");
   const [form, setForm] = useState({
     firstName: "",
     lastName: "",
@@ -2619,6 +4656,28 @@ function ContactsPage({ can, token }) {
       .trim();
   }
 
+  function findCatalogIdByCode(options, expectedCode) {
+    const target = normalizeText(expectedCode);
+    const found = options.find((opt) => normalizeText(opt.code) === target);
+    return found ? String(found.id) : "";
+  }
+
+  function getAccountLocationFields(accountId) {
+    const selectedAccount = catalogs.accounts.find(
+      (account) => String(account.id) === String(accountId || ""),
+    );
+
+    return {
+      countryId: selectedAccount?.country_id
+        ? String(selectedAccount.country_id)
+        : "",
+      stateRegion: selectedAccount?.state_region || "",
+      city: selectedAccount?.city || "",
+      addressLine: selectedAccount?.address_line || "",
+      postalCode: selectedAccount?.postal_code || "",
+    };
+  }
+
   useEffect(() => {
     if (!error && !success) return;
     const timeoutId = window.setTimeout(() => {
@@ -2627,6 +4686,20 @@ function ContactsPage({ can, token }) {
     }, 4000);
     return () => window.clearTimeout(timeoutId);
   }, [error, success]);
+
+  useEffect(() => {
+    if (openContactMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".contacts-kebab-wrap")) return;
+      setOpenContactMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openContactMenuId]);
 
   async function load() {
     try {
@@ -2666,6 +4739,25 @@ function ContactsPage({ can, token }) {
     load();
   }, []);
 
+  useEffect(() => {
+    if (!showContactModal || editingContactId) return;
+
+    setForm((prev) => ({
+      ...prev,
+      purchaseParticipationId:
+        prev.purchaseParticipationId ||
+        findCatalogIdByCode(catalogs.purchaseParticipations, "ninguno"),
+      relationshipTypeId:
+        prev.relationshipTypeId ||
+        findCatalogIdByCode(catalogs.relationshipTypes, "ninguno"),
+      employmentStatusId:
+        prev.employmentStatusId || String(catalogs.employmentStatuses?.[0]?.id || ""),
+      activationStatusId:
+        prev.activationStatusId || String(catalogs.activationStatuses?.[0]?.id || ""),
+      ...(prev.accountId ? getAccountLocationFields(prev.accountId) : null),
+    }));
+  }, [showContactModal, editingContactId, catalogs]);
+
   function buildDefaultContactForm() {
     return {
       firstName: "",
@@ -2682,10 +4774,14 @@ function ContactsPage({ can, token }) {
       city: "",
       addressLine: "",
       postalCode: "",
-      purchaseParticipationId: String(
-        catalogs.purchaseParticipations?.[0]?.id || "",
+      purchaseParticipationId: findCatalogIdByCode(
+        catalogs.purchaseParticipations,
+        "ninguno",
       ),
-      relationshipTypeId: String(catalogs.relationshipTypes?.[0]?.id || ""),
+      relationshipTypeId: findCatalogIdByCode(
+        catalogs.relationshipTypes,
+        "ninguno",
+      ),
       employmentStatusId: String(catalogs.employmentStatuses?.[0]?.id || ""),
       activationStatusId: String(catalogs.activationStatuses?.[0]?.id || ""),
       managerContactId: "",
@@ -2697,6 +4793,7 @@ function ContactsPage({ can, token }) {
     setError("");
     setSuccess("");
     setEditingContactId(null);
+    setEditContactAudit(null);
     setForm(buildDefaultContactForm());
     setShowContactModal(true);
   }
@@ -2732,6 +4829,12 @@ function ContactsPage({ can, token }) {
           ? String(data.influences_contact_id)
           : "",
       });
+      setEditContactAudit({
+        createdByName: data.created_by_name || "",
+        createdAt: data.created_at || "",
+        updatedByName: data.updated_by_name || "",
+        updatedAt: data.updated_at || "",
+      });
       setEditingContactId(Number(contactId));
       setShowContactModal(true);
     } catch (err) {
@@ -2743,26 +4846,77 @@ function ContactsPage({ can, token }) {
     if (savingContact) return;
     setShowContactModal(false);
     setEditingContactId(null);
+    setEditContactAudit(null);
   }
 
   function isContactActive(contact) {
     return normalizeText(contact.activation_status) === "activado";
   }
 
+  function isContactPending(contact) {
+    return (
+      normalizeText(contact.activation_status) === "pendiente de activacion"
+    );
+  }
+
+  function isContactInactive(contact) {
+    return normalizeText(contact.activation_status) === "desactivado";
+  }
+
   function getContactStatusLabel(contact) {
+    if (isContactPending(contact)) return "Pendiente de activacion";
     return isContactActive(contact) ? "Activado" : "Desactivado";
   }
 
   function getContactStatusBadgeClass(contact) {
+    if (isContactPending(contact)) {
+      return "user-status-badge pending";
+    }
     return isContactActive(contact)
       ? "user-status-badge active"
       : "user-status-badge inactive";
   }
 
+  function getContactStatusIconBadgeClass(contact) {
+    if (isContactPending(contact)) {
+      return "status-icon-badge pending";
+    }
+    return isContactActive(contact)
+      ? "status-icon-badge active"
+      : "status-icon-badge inactive";
+  }
+
   const filteredContacts = useMemo(() => {
-    if (showInactiveContacts) return contacts;
-    return contacts.filter((contact) => isContactActive(contact));
-  }, [contacts, showInactiveContacts]);
+    return contacts.filter((contact) => {
+      if (contactStatusFilter === "all") return true;
+      if (contactStatusFilter === "pending") return isContactPending(contact);
+      if (contactStatusFilter === "inactive") return isContactInactive(contact);
+      return isContactActive(contact);
+    });
+  }, [contacts, contactStatusFilter]);
+
+  const contactStatusCounts = useMemo(() => {
+    return contacts.reduce(
+      (totals, contact) => {
+        if (isContactPending(contact)) {
+          totals.pending += 1;
+          return totals;
+        }
+        if (isContactInactive(contact)) {
+          totals.inactive += 1;
+          return totals;
+        }
+        totals.active += 1;
+        return totals;
+      },
+      { active: 0, pending: 0, inactive: 0 },
+    );
+  }, [contacts]);
+
+  const totalContactsCount =
+    contactStatusCounts.active +
+    contactStatusCounts.pending +
+    contactStatusCounts.inactive;
 
   const sortedContacts = useMemo(() => {
     const list = [...filteredContacts];
@@ -2834,6 +4988,13 @@ function ContactsPage({ can, token }) {
   function getContactSortArrow(field) {
     if (contactSortField !== field) return "↕";
     return contactSortDirection === "asc" ? "↑" : "↓";
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "No registrado";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "No registrado";
+    return date.toLocaleString("es-ES");
   }
 
   function toggleContactMenu(contactId) {
@@ -2913,6 +5074,7 @@ function ContactsPage({ can, token }) {
       );
       setShowContactModal(false);
       setEditingContactId(null);
+      setEditContactAudit(null);
       await load();
     } catch (err) {
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
@@ -2934,28 +5096,127 @@ function ContactsPage({ can, token }) {
   }
 
   const managerOptions = useMemo(() => {
-    return contacts.filter((c) => Number(c.id) !== Number(editingContactId));
-  }, [contacts, editingContactId]);
+    return contacts.filter((contact) => {
+      if (Number(contact.id) === Number(editingContactId)) return false;
+      if (!form.accountId) return false;
+      return Number(contact.account_id) === Number(form.accountId);
+    });
+  }, [contacts, editingContactId, form.accountId]);
+
+  useEffect(() => {
+    if (!form.managerContactId) return;
+    const isValidManager = managerOptions.some(
+      (contact) => Number(contact.id) === Number(form.managerContactId),
+    );
+    if (isValidManager) return;
+
+    setForm((prev) => ({
+      ...prev,
+      managerContactId: "",
+    }));
+  }, [managerOptions, form.managerContactId]);
 
   return (
     <section className="panel">
       <div className="accounts-header-row">
-        <h2>Contactos</h2>
-        {can("contactos.create") && (
+        <div className="module-title-with-icon">
+          <h2>Contactos</h2>
+          <span
+            className="module-title-icon module-title-icon-contacts"
+            aria-hidden="true"
+          >
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M7 4.5A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5V7A2.5 2.5 0 0 0 17 4.5zm0 1.5h10c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1V7c0-.55.45-1 1-1" />
+              <path d="M12 8.25a2.25 2.25 0 1 0 2.25 2.25A2.25 2.25 0 0 0 12 8.25m0 6c-1.94 0-3.75.97-3.75 2.1a.65.65 0 0 0 .65.65h6.2a.65.65 0 0 0 .65-.65c0-1.13-1.81-2.1-3.75-2.1" />
+            </svg>
+          </span>
+        </div>
+        {canCreateOrRequestContacts && (
           <button type="button" onClick={openCreateContactModal}>
             Crear contacto
           </button>
         )}
       </div>
 
-      <label className="role-filter">
-        <input
-          type="checkbox"
-          checked={showInactiveContacts}
-          onChange={(e) => setShowInactiveContacts(e.target.checked)}
-        />
-        Mostrar desactivados
-      </label>
+      <div className="accounts-status-pills-panel">
+        <div className="accounts-status-pills-copy">
+          <span className="accounts-status-pills-label">Estados visibles</span>
+          <p>
+            Selecciona un estado para mostrar solo los contactos que
+            correspondan a ese grupo.
+          </p>
+        </div>
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar contactos por estado"
+        >
+          <button
+            type="button"
+            className={
+              contactStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={contactStatusFilter === "active"}
+            onClick={() => setContactStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activos</span>
+            <span className="status-filter-pill-count">
+              {contactStatusCounts.active}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              contactStatusFilter === "pending"
+                ? "status-filter-pill status-filter-pill-pending is-selected"
+                : "status-filter-pill status-filter-pill-pending"
+            }
+            aria-pressed={contactStatusFilter === "pending"}
+            onClick={() => setContactStatusFilter("pending")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Pendientes</span>
+            <span className="status-filter-pill-count">
+              {contactStatusCounts.pending}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              contactStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={contactStatusFilter === "inactive"}
+            onClick={() => setContactStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivados</span>
+            <span className="status-filter-pill-count">
+              {contactStatusCounts.inactive}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              contactStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={contactStatusFilter === "all"}
+            onClick={() => setContactStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todas</span>
+            <span className="status-filter-pill-count">
+              {totalContactsCount}
+            </span>
+          </button>
+        </div>
+      </div>
 
       <div className="accounts-list-filters">
         <input
@@ -2982,17 +5243,21 @@ function ContactsPage({ can, token }) {
                     (x) => Number(x.id) === Number(editingContactId),
                   );
                   return c ? (
-                    <span
-                      className={
-                        isContactActive(c)
-                          ? "status-icon-badge active"
-                          : "status-icon-badge inactive"
-                      }
-                      title="Estado de activacion"
-                    >
-                      <span className="status-dot" aria-hidden="true" />
-                      {getContactStatusLabel(c)}
-                    </span>
+                    <div className="opportunity-modal-header-meta">
+                      <span className="record-id-badge" title="ID del contacto">
+                        <span className="record-id-icon" aria-hidden="true">
+                          #
+                        </span>
+                        {editingContactId}
+                      </span>
+                      <span
+                        className={getContactStatusIconBadgeClass(c)}
+                        title="Estado de activacion"
+                      >
+                        <span className="status-dot" aria-hidden="true" />
+                        {getContactStatusLabel(c)}
+                      </span>
+                    </div>
                   ) : null;
                 })()}
             </div>
@@ -3045,12 +5310,17 @@ function ContactsPage({ can, token }) {
                     </label>
                     <select
                       value={form.accountId}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const accountId = e.target.value;
+
                         setForm((prev) => ({
                           ...prev,
-                          accountId: e.target.value,
-                        }))
-                      }
+                          accountId,
+                          ...(editingContactId
+                            ? null
+                            : getAccountLocationFields(accountId)),
+                        }));
+                      }}
                       required
                     >
                       <option value="">Selecciona cuenta</option>
@@ -3311,6 +5581,38 @@ function ContactsPage({ can, token }) {
                 </div>
               </section>
 
+              {editingContactId && editContactAudit && (
+                <section className="account-form-section modal-audit-strip">
+                  <h4>Auditoria del contacto</h4>
+                  <div className="role-audit-grid">
+                    <div className="audit-item">
+                      <span className="audit-label">Creado por</span>
+                      <span className="audit-value">
+                        {editContactAudit.createdByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de creacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editContactAudit.createdAt)}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Modificado por</span>
+                      <span className="audit-value">
+                        {editContactAudit.updatedByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de modificacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editContactAudit.updatedAt)}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               <div className="modal-buttons" style={{ marginTop: 16 }}>
                 <button
                   type="button"
@@ -3418,7 +5720,7 @@ function ContactsPage({ can, token }) {
                   </span>
                 </td>
                 <td className="accounts-actions-cell">
-                  <div className="user-kebab-wrap">
+                  <div className="user-kebab-wrap contacts-kebab-wrap">
                     <button
                       type="button"
                       className="kebab-btn"
@@ -3439,7 +5741,10 @@ function ContactsPage({ can, token }) {
                         </button>
                         <button
                           type="button"
-                          disabled={isContactActive(c)}
+                          disabled={
+                            !canChangeContactActivationStatus ||
+                            isContactActive(c)
+                          }
                           onClick={() =>
                             runContactAction(() =>
                               updateContactStatus(c, "activado"),
@@ -3450,7 +5755,24 @@ function ContactsPage({ can, token }) {
                         </button>
                         <button
                           type="button"
-                          disabled={!isContactActive(c)}
+                          disabled={
+                            !canChangeContactActivationStatus ||
+                            isContactPending(c)
+                          }
+                          onClick={() =>
+                            runContactAction(() =>
+                              updateContactStatus(c, "pendiente_activacion"),
+                            )
+                          }
+                        >
+                          Marcar pendiente
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canChangeContactActivationStatus ||
+                            isContactInactive(c)
+                          }
                           onClick={() =>
                             runContactAction(() =>
                               updateContactStatus(c, "desactivado"),

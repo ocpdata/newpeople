@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
-import { requirePermission } from "./auth.js";
+import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
@@ -34,10 +34,110 @@ const contactSchema = z.object({
 });
 
 const contactStatusSchema = z.object({
-  statusCode: z.enum(["activado", "desactivado"]),
+  statusCode: z.enum(["activado", "desactivado", "pendiente_activacion"]),
 });
 
-router.get("/", requirePermission("contactos.read"), async (_req, res) => {
+const contactCreatePermissions = ["contactos.create", "contactos.request"];
+
+function isAdminUser(user) {
+  return Boolean(user?.isAdmin);
+}
+
+function applyOwnedAccountScope({ user, accountExpression, params }) {
+  if (isAdminUser(user)) return "";
+  params.push(Number(user.id));
+  return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountExpression} AND ao_scope.user_id = ?`;
+}
+
+async function requireAccessibleContactOr404({ user, contactId, message }) {
+  const params = [];
+  const ownershipJoin = applyOwnedAccountScope({
+    user,
+    accountExpression: "c.account_id",
+    params,
+  });
+  params.push(Number(contactId));
+  const rows = await query(
+    `SELECT c.id
+     FROM contacts c
+     ${ownershipJoin}
+     WHERE c.id = ?
+     LIMIT 1`,
+    params,
+  );
+
+  if (!rows.length) {
+    return { ok: false, response: { status: 404, body: { message } } };
+  }
+
+  return { ok: true };
+}
+
+async function requireAccessibleAccountForContact({ user, accountId }) {
+  if (isAdminUser(user)) return { ok: true };
+
+  const rows = await query(
+    `SELECT 1
+     FROM account_owners
+     WHERE account_id = ? AND user_id = ?
+     LIMIT 1`,
+    [Number(accountId), Number(user.id)],
+  );
+
+  if (!rows.length) {
+    return {
+      ok: false,
+      response: {
+        status: 403,
+        body: { message: "No autorizado para usar una cuenta que no te pertenece" },
+      },
+    };
+  }
+
+  return { ok: true };
+}
+
+function hasExplicitContactPermission(user, permission) {
+  return user?.permissionSet?.has(permission);
+}
+
+function canChangeContactActivationStatus(user) {
+  return hasExplicitContactPermission(user, "contactos.create");
+}
+
+async function getContactActivationStatusId(statusCode) {
+  const rows = await query(
+    "SELECT id FROM contact_activation_statuses WHERE code = ? LIMIT 1",
+    [statusCode],
+  );
+  return rows.length ? Number(rows[0].id) : null;
+}
+
+async function getContactActivationStatusCodeById(statusId) {
+  const rows = await query(
+    "SELECT code FROM contact_activation_statuses WHERE id = ? LIMIT 1",
+    [statusId],
+  );
+  return rows.length ? String(rows[0].code) : null;
+}
+
+function resolveContactCreationStatusCode(user) {
+  if (hasExplicitContactPermission(user, "contactos.create")) {
+    return "activado";
+  }
+  if (hasExplicitContactPermission(user, "contactos.request")) {
+    return "pendiente_activacion";
+  }
+  return null;
+}
+
+router.get("/", requirePermission("contactos.read"), async (req, res) => {
+  const params = [];
+  const ownershipJoin = applyOwnedAccountScope({
+    user: req.user,
+    accountExpression: "c.account_id",
+    params,
+  });
   const rows = await query(
     `SELECT c.id, c.first_name, c.last_name,
             CONCAT(c.first_name, ' ', c.last_name) AS full_name,
@@ -61,6 +161,7 @@ router.get("/", requirePermission("contactos.read"), async (_req, res) => {
             c.created_at, u1.full_name AS created_by_name,
             c.updated_at, u2.full_name AS updated_by_name
      FROM contacts c
+               ${ownershipJoin}
      INNER JOIN accounts a ON a.id = c.account_id
      INNER JOIN contact_relationship_types ctr ON ctr.id = c.relationship_type_id
      INNER JOIN contact_purchase_participations cpp ON cpp.id = c.purchase_participation_id
@@ -71,6 +172,7 @@ router.get("/", requirePermission("contactos.read"), async (_req, res) => {
      INNER JOIN users u1 ON u1.id = c.created_by
      INNER JOIN users u2 ON u2.id = c.updated_by
      ORDER BY c.id DESC`,
+    params,
   );
   res.json(rows);
 });
@@ -80,6 +182,14 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ message: "Id de contacto invalido" });
   }
+
+  const params = [];
+  const ownershipJoin = applyOwnedAccountScope({
+    user: req.user,
+    accountExpression: "c.account_id",
+    params,
+  });
+  params.push(id);
 
   const rows = await query(
     `SELECT c.*, a.name AS account_name,
@@ -101,6 +211,7 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
               ELSE CONCAT(ci.first_name, ' ', ci.last_name)
             END AS influences_contact_name
      FROM contacts c
+     ${ownershipJoin}
      INNER JOIN accounts a ON a.id = c.account_id
      INNER JOIN contact_relationship_types ctr ON ctr.id = c.relationship_type_id
      INNER JOIN contact_purchase_participations cpp ON cpp.id = c.purchase_participation_id
@@ -112,7 +223,7 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
      LEFT JOIN contacts cm ON cm.id = c.manager_contact_id
      LEFT JOIN contacts ci ON ci.id = c.influences_contact_id
      WHERE c.id = ?`,
-    [id],
+    params,
   );
 
   if (!rows.length) {
@@ -122,7 +233,7 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
   res.json(rows[0]);
 });
 
-router.post("/", requirePermission("contactos.create"), async (req, res) => {
+router.post("/", requireAnyPermission(contactCreatePermissions), async (req, res) => {
   const parsed = contactSchema.safeParse(req.body);
   if (!parsed.success) {
     return res
@@ -132,6 +243,23 @@ router.post("/", requirePermission("contactos.create"), async (req, res) => {
 
   const body = parsed.data;
   const now = new Date();
+  const accountAccess = await requireAccessibleAccountForContact({
+    user: req.user,
+    accountId: body.accountId,
+  });
+  if (!accountAccess.ok) {
+    return res.status(accountAccess.response.status).json(accountAccess.response.body);
+  }
+  const creationStatusCode = resolveContactCreationStatusCode(req.user);
+  const activationStatusId = creationStatusCode
+    ? await getContactActivationStatusId(creationStatusCode)
+    : null;
+
+  if (!activationStatusId) {
+    return res.status(403).json({
+      message: "No autorizado para crear o solicitar contactos",
+    });
+  }
 
   try {
     const contactId = await withTransaction(async (conn) => {
@@ -161,7 +289,7 @@ router.post("/", requirePermission("contactos.create"), async (req, res) => {
           body.purchaseParticipationId,
           body.relationshipTypeId,
           body.employmentStatusId,
-          body.activationStatusId,
+          activationStatusId,
           body.managerContactId || null,
           body.influencesContactId || null,
           req.user.id,
@@ -187,11 +315,17 @@ router.post("/", requirePermission("contactos.create"), async (req, res) => {
         account_id: body.accountId,
         email: body.email || null,
         mobile: body.mobile || null,
-        activation_status_id: body.activationStatusId,
+        activation_status_id: activationStatusId,
       },
     });
 
-    return res.status(201).json({ id: contactId, message: "Contacto creado" });
+    return res.status(201).json({
+      id: contactId,
+      message:
+        creationStatusCode === "activado"
+          ? "Contacto creado"
+          : "Solicitud de contacto creada en estado pendiente",
+    });
   } catch (error) {
     return res
       .status(500)
@@ -215,12 +349,49 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
   const body = parsed.data;
   const now = new Date();
 
+  const contactAccess = await requireAccessibleContactOr404({
+    user: req.user,
+    contactId: id,
+    message: "Contacto no encontrado",
+  });
+  if (!contactAccess.ok) {
+    return res.status(contactAccess.response.status).json(contactAccess.response.body);
+  }
+
+  const accountAccess = await requireAccessibleAccountForContact({
+    user: req.user,
+    accountId: body.accountId,
+  });
+  if (!accountAccess.ok) {
+    return res.status(accountAccess.response.status).json(accountAccess.response.body);
+  }
+
   const beforeRows = await query(
     "SELECT * FROM contacts WHERE id = ? LIMIT 1",
     [id],
   );
   if (!beforeRows.length) {
     return res.status(404).json({ message: "Contacto no encontrado" });
+  }
+
+  const previousStatusCode = await getContactActivationStatusCodeById(
+    Number(beforeRows[0].activation_status_id),
+  );
+  const requestedStatusCode = await getContactActivationStatusCodeById(
+    Number(body.activationStatusId),
+  );
+
+  if (!requestedStatusCode) {
+    return res.status(400).json({ message: "Estado de activacion invalido" });
+  }
+
+  if (
+    requestedStatusCode !== previousStatusCode &&
+    !canChangeContactActivationStatus(req.user)
+  ) {
+    return res.status(403).json({
+      message: "No autorizado para cambiar el estado de activacion de contactos",
+    });
   }
 
   await withTransaction(async (conn) => {
@@ -303,6 +474,21 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (!canChangeContactActivationStatus(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para cambiar el estado de activacion de contactos",
+      });
+    }
+
+    const contactAccess = await requireAccessibleContactOr404({
+      user: req.user,
+      contactId: id,
+      message: "Contacto no encontrado",
+    });
+    if (!contactAccess.ok) {
+      return res.status(contactAccess.response.status).json(contactAccess.response.body);
+    }
+
     const beforeRows = await query(
       "SELECT activation_status_id FROM contacts WHERE id = ? LIMIT 1",
       [id],
@@ -336,7 +522,9 @@ router.patch(
       message:
         parsed.data.statusCode === "activado"
           ? "Contacto activado"
-          : "Contacto desactivado",
+          : parsed.data.statusCode === "pendiente_activacion"
+            ? "Contacto marcado como pendiente"
+            : "Contacto desactivado",
     });
   },
 );

@@ -8,14 +8,99 @@ CREATE TABLE IF NOT EXISTS users (
   description TEXT NULL,
   registered_at DATETIME(3) NOT NULL,
   last_visit_at DATETIME(3) NULL,
-  avatar_url VARCHAR(500) NULL,
+  avatar_url LONGTEXT NULL,
   mobile VARCHAR(30) NULL,
   status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
   password_hash VARCHAR(255) NOT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  updated_by BIGINT UNSIGNED NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_users_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_users_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT uq_users_email UNIQUE (email)
 );
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE users ADD COLUMN created_by BIGINT UNSIGNED NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'created_by'
+);
+PREPARE s_users_col_1 FROM @stmt;
+EXECUTE s_users_col_1;
+DEALLOCATE PREPARE s_users_col_1;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE users ADD COLUMN updated_by BIGINT UNSIGNED NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'updated_by'
+);
+PREPARE s_users_col_2 FROM @stmt;
+EXECUTE s_users_col_2;
+DEALLOCATE PREPARE s_users_col_2;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE users MODIFY COLUMN avatar_url LONGTEXT NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'avatar_url'
+    AND LOWER(DATA_TYPE) = 'longtext'
+);
+PREPARE s_users_col_3 FROM @stmt;
+EXECUTE s_users_col_3;
+DEALLOCATE PREPARE s_users_col_3;
+
+UPDATE users
+SET created_by = COALESCE(created_by, id),
+    updated_by = COALESCE(updated_by, created_by, id)
+WHERE created_by IS NULL OR updated_by IS NULL;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE users ADD CONSTRAINT fk_users_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND CONSTRAINT_NAME = 'fk_users_created_by'
+);
+PREPARE s_users_fk_1 FROM @stmt;
+EXECUTE s_users_fk_1;
+DEALLOCATE PREPARE s_users_fk_1;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE users ADD CONSTRAINT fk_users_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND CONSTRAINT_NAME = 'fk_users_updated_by'
+);
+PREPARE s_users_fk_2 FROM @stmt;
+EXECUTE s_users_fk_2;
+DEALLOCATE PREPARE s_users_fk_2;
 
 CREATE TABLE IF NOT EXISTS roles (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -122,6 +207,20 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   CONSTRAINT fk_role_permissions_permission FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS password_setup_tokens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  purpose ENUM('invite', 'reset') NOT NULL DEFAULT 'invite',
+  expires_at DATETIME(3) NOT NULL,
+  used_at DATETIME(3) NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_password_setup_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_password_setup_tokens_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT uq_password_setup_tokens_hash UNIQUE (token_hash)
+);
+
 CREATE TABLE IF NOT EXISTS countries (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   iso2 CHAR(2) NOT NULL,
@@ -222,6 +321,35 @@ CREATE TABLE IF NOT EXISTS contact_activation_statuses (
   CONSTRAINT uq_contact_activation_statuses_name UNIQUE (name)
 );
 
+CREATE TABLE IF NOT EXISTS opportunity_business_lines (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(60) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_opportunity_business_lines_code UNIQUE (code),
+  CONSTRAINT uq_opportunity_business_lines_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_sales_stages (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(60) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  stage_order TINYINT UNSIGNED NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_opportunity_sales_stages_code UNIQUE (code),
+  CONSTRAINT uq_opportunity_sales_stages_name UNIQUE (name),
+  CONSTRAINT uq_opportunity_sales_stages_order UNIQUE (stage_order)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_activation_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_opportunity_activation_statuses_code UNIQUE (code),
+  CONSTRAINT uq_opportunity_activation_statuses_name UNIQUE (name)
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
@@ -299,6 +427,109 @@ CREATE TABLE IF NOT EXISTS contacts (
   CONSTRAINT fk_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS opportunities (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(180) NOT NULL,
+  amount_usd DECIMAL(15, 2) NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  close_date DATE NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
+  sales_stage_id BIGINT UNSIGNED NOT NULL,
+  business_line_id BIGINT UNSIGNED NOT NULL,
+  seller_user_id BIGINT UNSIGNED NULL,
+  presales_user_id BIGINT UNSIGNED NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_opportunities_account FOREIGN KEY (account_id) REFERENCES accounts(id),
+  CONSTRAINT fk_opportunities_contact FOREIGN KEY (contact_id) REFERENCES contacts(id),
+  CONSTRAINT fk_opportunities_sales_stage FOREIGN KEY (sales_stage_id) REFERENCES opportunity_sales_stages(id),
+  CONSTRAINT fk_opportunities_business_line FOREIGN KEY (business_line_id) REFERENCES opportunity_business_lines(id),
+  CONSTRAINT fk_opportunities_seller_user FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_opportunities_presales_user FOREIGN KEY (presales_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_opportunities_activation_status FOREIGN KEY (activation_status_id) REFERENCES opportunity_activation_statuses(id),
+  CONSTRAINT fk_opportunities_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_opportunities_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
+);
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD COLUMN seller_user_id BIGINT UNSIGNED NULL AFTER business_line_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'seller_user_id'
+);
+PREPARE s_opportunities_seller_col FROM @stmt;
+EXECUTE s_opportunities_seller_col;
+DEALLOCATE PREPARE s_opportunities_seller_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD CONSTRAINT fk_opportunities_seller_user FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND CONSTRAINT_NAME = 'fk_opportunities_seller_user'
+);
+PREPARE s_opportunities_seller_fk FROM @stmt;
+EXECUTE s_opportunities_seller_fk;
+DEALLOCATE PREPARE s_opportunities_seller_fk;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 1,
+    'UPDATE opportunities o LEFT JOIN (SELECT opportunity_id, MIN(user_id) AS seller_user_id FROM opportunity_owners GROUP BY opportunity_id) oo ON oo.opportunity_id = o.id SET o.seller_user_id = COALESCE(o.seller_user_id, oo.seller_user_id) WHERE oo.seller_user_id IS NOT NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunity_owners'
+);
+PREPARE s_opportunities_migrate_seller FROM @stmt;
+EXECUTE s_opportunities_migrate_seller;
+DEALLOCATE PREPARE s_opportunities_migrate_seller;
+
+DROP TABLE IF EXISTS opportunity_owners;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 1,
+    'ALTER TABLE opportunities DROP INDEX uq_opportunities_code',
+    'SELECT 1'
+  )
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND INDEX_NAME = 'uq_opportunities_code'
+);
+PREPARE s_opportunities_drop_idx FROM @stmt;
+EXECUTE s_opportunities_drop_idx;
+DEALLOCATE PREPARE s_opportunities_drop_idx;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 1,
+    'ALTER TABLE opportunities DROP COLUMN opportunity_code',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'opportunity_code'
+);
+PREPARE s_opportunities_drop_col FROM @stmt;
+EXECUTE s_opportunities_drop_col;
+DEALLOCATE PREPARE s_opportunities_drop_col;
+
 CREATE TABLE IF NOT EXISTS user_audit_log (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   action VARCHAR(60) NOT NULL,
@@ -344,10 +575,16 @@ VALUES
   ('permissions.read', 'permissions', 'read', 'Ver permisos', NOW(3), NOW(3)),
   ('cuentas.read', 'cuentas', 'read', 'Ver cuentas', NOW(3), NOW(3)),
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),
+  ('cuentas.request', 'cuentas', 'request', 'Solicitar creacion de cuentas', NOW(3), NOW(3)),
   ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3)),
   ('contactos.read', 'contactos', 'read', 'Ver contactos', NOW(3), NOW(3)),
   ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),
+  ('contactos.request', 'contactos', 'request', 'Solicitar creacion de contactos', NOW(3), NOW(3)),
   ('contactos.update', 'contactos', 'update', 'Actualizar contactos', NOW(3), NOW(3)),
+  ('oportunidades.read', 'oportunidades', 'read', 'Ver oportunidades', NOW(3), NOW(3)),
+  ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
+  ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
+  ('oportunidades.update', 'oportunidades', 'update', 'Actualizar oportunidades', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 
@@ -410,6 +647,40 @@ ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 INSERT INTO contact_activation_statuses (code, name, is_active) VALUES
   ('activado', 'Activado', 1),
   ('desactivado', 'Desactivado', 1),
+  ('pendiente_activacion', 'Pendiente de activacion', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO opportunity_business_lines (code, name, is_active) VALUES
+  ('f5_tradicional', 'F5 tradicional', 1),
+  ('f5_renovacion', 'F5 renovación', 1),
+  ('f5_dcs', 'F5 DCS', 1),
+  ('f5_nginx', 'F5 Nginx', 1),
+  ('bluecat_micetro', 'Bluecat Micetro', 1),
+  ('bluecat_renovacion', 'Bluecat Renovación', 1),
+  ('bluecat_integrity', 'Bluecat Integrity', 1),
+  ('bluecat_observabilidad', 'Bluecat Observabilidad', 1),
+  ('bluecat_edge', 'Bluecat Edge', 1),
+  ('servicios', 'Servicios', 1),
+  ('otros', 'Otros', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO opportunity_sales_stages (code, name, stage_order, is_active) VALUES
+  ('contacto_inicial', 'Contacto Inicial', 1, 1),
+  ('identificacion_oportunidad', 'Identificación de la oportunidad', 2, 1),
+  ('desarrollo', 'Desarrollo', 3, 1),
+  ('cotizacion', 'Cotización', 4, 1),
+  ('demostracion', 'Demostración', 5, 1),
+  ('negociacion', 'Negociación', 6, 1),
+  ('waiting', 'Waiting', 7, 1),
+  ('ganada', 'Ganada', 8, 1)
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  stage_order = VALUES(stage_order),
+  is_active = VALUES(is_active);
+
+INSERT INTO opportunity_activation_statuses (code, name, is_active) VALUES
+  ('activada', 'Activada', 1),
+  ('desactivada', 'Desactivada', 1),
   ('pendiente_activacion', 'Pendiente de activacion', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 

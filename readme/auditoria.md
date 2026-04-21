@@ -12,6 +12,12 @@ Incluye eventos de:
 - Roles (alta, cambio de estado, cambios de permisos).
 - Cuentas (alta, edicion, cambio de estado).
 
+En invitaciones y reinicios de password, los eventos pueden incluir:
+
+- `invite_purpose`: `invite` o `reset`
+- `invite_expires_at`: vigencia del enlace temporal
+- razon y detalle SMTP cuando el envio falla
+
 ## Puntos clave de UX
 
 - Pantalla dedicada en menu lateral: Auditoria.
@@ -97,6 +103,7 @@ Campos funcionales clave:
 ## Consideraciones operativas
 
 - Evitar guardar secretos en auditoria (passwords, tokens, claves).
+- En este proyecto solo se auditan proposito, expiracion y estado del enlace; el token plano no se persiste en auditoria.
 - Mantener consistencia entre eventos y permisos RBAC.
 - Si se agrega un nuevo modulo, instrumentar sus eventos en backend para que
   aparezcan automaticamente en la pantalla de auditoria.

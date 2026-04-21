@@ -1,0 +1,266 @@
+import bcrypt from "bcryptjs";
+import { query } from "../../src/db.js";
+
+export const TEST_PASSWORD = "Request123!";
+export const TEST_PREFIX = `api_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+function placeholders(length) {
+  return Array.from({ length }, () => "?").join(", ");
+}
+
+export async function getPermissionIds(codes) {
+  const rows = await query(
+    `SELECT id, code FROM permissions WHERE code IN (${placeholders(codes.length)})`,
+    codes,
+  );
+  const byCode = new Map(rows.map((row) => [row.code, Number(row.id)]));
+  return codes.map((code) => {
+    const permissionId = byCode.get(code);
+    if (!permissionId) {
+      throw new Error(`Permiso no encontrado: ${code}`);
+    }
+    return permissionId;
+  });
+}
+
+export async function createRole({
+  name,
+  permissionCodes = [],
+  createdByUserId = null,
+}) {
+  const now = new Date();
+  await query(
+    `INSERT INTO roles
+      (name, description, is_system, is_active, created_by_user_id, updated_by_user_id, created_at, updated_at)
+     VALUES (?, ?, 0, 1, ?, ?, ?, ?)`,
+    [
+      name,
+      `Rol temporal de pruebas: ${name}`,
+      createdByUserId,
+      createdByUserId,
+      now,
+      now,
+    ],
+  );
+
+  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  const roleId = Number(roleRows[0].id);
+
+  if (permissionCodes.length) {
+    const permissionIds = await getPermissionIds(permissionCodes);
+    for (const permissionId of permissionIds) {
+      await query(
+        "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, ?)",
+        [roleId, permissionId, now],
+      );
+    }
+  }
+
+  return roleId;
+}
+
+export async function ensureNamedRole(name) {
+  const existingRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  if (existingRows.length) {
+    return { roleId: Number(existingRows[0].id), created: false };
+  }
+
+  const now = new Date();
+  await query(
+    `INSERT INTO roles
+      (name, description, is_system, is_active, created_by_user_id, updated_by_user_id, created_at, updated_at)
+     VALUES (?, ?, 0, 1, NULL, NULL, ?, ?)`,
+    [name, `Rol temporal requerido por pruebas: ${name}`, now, now],
+  );
+
+  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  return { roleId: Number(roleRows[0].id), created: true };
+}
+
+export async function createUser({
+  fullName,
+  email,
+  roleIds = [],
+  status = "active",
+}) {
+  const now = new Date();
+  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
+  const result = await query(
+    `INSERT INTO users
+      (full_name, email, description, registered_at, avatar_url, mobile, status, password_hash, created_by, updated_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, ?, ?)`,
+    [
+      fullName,
+      email,
+      `Usuario temporal de pruebas: ${fullName}`,
+      now,
+      status,
+      passwordHash,
+      now,
+      now,
+    ],
+  );
+  const userId = Number(result.insertId);
+
+  for (const roleId of roleIds) {
+    await query(
+      "INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)",
+      [userId, roleId, now],
+    );
+  }
+
+  return userId;
+}
+
+export async function login(supertestRequest, email) {
+  const response = await supertestRequest.post("/api/auth/login").send({
+    email,
+    password: TEST_PASSWORD,
+  });
+  return response;
+}
+
+export async function getCatalogId(tableName, code, columnName = "code") {
+  const rows = await query(
+    `SELECT id FROM ${tableName} WHERE ${columnName} = ? LIMIT 1`,
+    [code],
+  );
+  if (!rows.length) {
+    throw new Error(
+      `Catalogo no encontrado en ${tableName}.${columnName}: ${code}`,
+    );
+  }
+  return Number(rows[0].id);
+}
+
+export async function getFirstId(tableName) {
+  const rows = await query(`SELECT id FROM ${tableName} ORDER BY id LIMIT 1`);
+  if (!rows.length) {
+    throw new Error(`Tabla sin datos: ${tableName}`);
+  }
+  return Number(rows[0].id);
+}
+
+export async function getStatusCodeById(tableName, entityId, statusColumn) {
+  const rows = await query(
+    `SELECT s.code
+     FROM ${tableName} e
+     INNER JOIN ${statusColumn.table} s ON s.id = e.${statusColumn.column}
+     WHERE e.id = ?`,
+    [entityId],
+  );
+  return rows.length ? String(rows[0].code) : null;
+}
+
+export async function createDirectAccount({ ownerUserId, actorUserId, suffix }) {
+  const now = new Date();
+  const result = await query(
+    `INSERT INTO accounts
+      (name, account_type_id, registration_code, phone, economic_sector_id, website, city, state_region,
+       country_id, description, address_line, postal_code, activation_status_id,
+       created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `Cuenta fixture ${suffix}`,
+      await getFirstId("account_types"),
+      `FIX-${suffix}`,
+      await getFirstId("economic_sectors"),
+      "CDMX",
+      "CDMX",
+      await getCatalogId("countries", "MX", "iso2"),
+      "Cuenta fixture para pruebas",
+      "Calle fixture",
+      "01000",
+      await getCatalogId("account_activation_statuses", "activada"),
+      actorUserId,
+      now,
+      actorUserId,
+      now,
+    ],
+  );
+  const accountId = Number(result.insertId);
+  await query(
+    "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
+    [accountId, ownerUserId, now, actorUserId],
+  );
+  return accountId;
+}
+
+export async function createDirectContact({ accountId, actorUserId, suffix }) {
+  const now = new Date();
+  const result = await query(
+    `INSERT INTO contacts
+      (first_name, last_name, account_id, position_title, phone, phone_extension,
+       mobile, email, department, country_id, state_region, city, address_line,
+       postal_code, purchase_participation_id, relationship_type_id,
+       employment_status_id, activation_status_id, manager_contact_id,
+       influences_contact_id, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+    [
+      "Contacto",
+      `Fixture ${suffix}`,
+      accountId,
+      "Compras",
+      `555${suffix.slice(-6)}`,
+      `fixture.${suffix}@example.com`,
+      "Compras",
+      await getCatalogId("countries", "MX", "iso2"),
+      "CDMX",
+      "Ciudad de Mexico",
+      "Direccion fixture",
+      "01000",
+      await getCatalogId("contact_purchase_participations", "ninguno"),
+      await getCatalogId("contact_relationship_types", "ninguno"),
+      await getFirstId("contact_employment_statuses"),
+      await getCatalogId("contact_activation_statuses", "activado"),
+      actorUserId,
+      now,
+      actorUserId,
+      now,
+    ],
+  );
+  return Number(result.insertId);
+}
+
+export async function cleanupArtifacts({
+  opportunityIds = [],
+  contactIds = [],
+  accountIds = [],
+  userIds = [],
+  roleIds = [],
+}) {
+  if (opportunityIds.length) {
+    await query(
+      `DELETE FROM opportunities WHERE id IN (${placeholders(opportunityIds.length)})`,
+      opportunityIds,
+    );
+  }
+
+  if (contactIds.length) {
+    await query(
+      `DELETE FROM contacts WHERE id IN (${placeholders(contactIds.length)})`,
+      contactIds,
+    );
+  }
+
+  if (accountIds.length) {
+    await query(
+      `DELETE FROM accounts WHERE id IN (${placeholders(accountIds.length)})`,
+      accountIds,
+    );
+  }
+
+  if (userIds.length) {
+    await query(
+      `DELETE FROM users WHERE id IN (${placeholders(userIds.length)})`,
+      userIds,
+    );
+  }
+
+  if (roleIds.length) {
+    await query(
+      `DELETE FROM roles WHERE id IN (${placeholders(roleIds.length)})`,
+      roleIds,
+    );
+  }
+}

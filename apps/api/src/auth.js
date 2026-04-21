@@ -4,7 +4,7 @@ import { query } from "./db.js";
 
 export async function getUserAuthContext(userId) {
   const users = await query(
-    `SELECT id, full_name, email, status
+    `SELECT id, full_name, email, avatar_url, status
      FROM users
      WHERE id = ?`,
     [userId],
@@ -81,6 +81,25 @@ export function requirePermission(permission) {
         requiredPermission: permission,
       });
     }
+    return next();
+  };
+}
+
+export function requireAnyPermission(permissions) {
+  return (req, res, next) => {
+    if (req.user?.isAdmin) return next();
+
+    const hasPermission = permissions.some((permission) =>
+      req.user?.permissionSet?.has(permission),
+    );
+
+    if (!hasPermission) {
+      return res.status(403).json({
+        message: "No autorizado",
+        requiredAnyPermission: permissions,
+      });
+    }
+
     return next();
   };
 }

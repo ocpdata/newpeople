@@ -38,14 +38,20 @@ SHOW TABLES;
 - `users`: usuarios del sistema.
 - `roles`: catalogo de roles (incluye `is_system`, `is_active`).
 - `permissions`: permisos por modulo/accion (`code` unico).
+- Para cuentas, contactos y oportunidades se modelan acciones `read`, `create`, `request` y `update`.
 - `user_roles`: asignacion N:M entre usuarios y roles.
 - `role_permissions`: asignacion N:M entre roles y permisos.
+- `password_setup_tokens`: tokens de un solo uso para activacion y reinicio de contrasena.
 - `user_audit_log`: bitacora de acciones sobre usuarios.
 
 ### Cuentas
 
 - `accounts`: entidad principal de cuentas/clientes.
 - `account_owners`: propietarios N:M de una cuenta.
+
+### Oportunidades
+
+- `opportunities`: entidad principal de oportunidades comerciales.
 
 ### Catalogos
 
@@ -55,18 +61,29 @@ SHOW TABLES;
 - `account_types`
 - `economic_sectors`
 - `account_activation_statuses`
+- `opportunity_business_lines`
+- `opportunity_sales_stages`
+- `opportunity_activation_statuses`
 
 ## 4. Relaciones clave
 
 - `users` N:M `roles` via `user_roles`.
 - `roles` N:M `permissions` via `role_permissions`.
 - `accounts` N:M `users` via `account_owners`.
+- `opportunities.seller_user_id` -> `users.id`.
 - `accounts.account_type_id` -> `account_types.id`.
 - `accounts.economic_sector_id` -> `economic_sectors.id`.
 - `accounts.country_id` -> `countries.id`.
 - `accounts.activation_status_id` -> `account_activation_statuses.id`.
+- `opportunities.account_id` -> `accounts.id`.
+- `opportunities.contact_id` -> `contacts.id`.
+- `opportunities.sales_stage_id` -> `opportunity_sales_stages.id`.
+- `opportunities.business_line_id` -> `opportunity_business_lines.id`.
+- `opportunities.seller_user_id` -> `users.id`.
+- `opportunities.activation_status_id` -> `opportunity_activation_statuses.id`.
 - `accounts.created_by` y `accounts.updated_by` -> `users.id`.
 - `roles.created_by_user_id` y `roles.updated_by_user_id` -> `users.id`.
+- `password_setup_tokens.user_id` y `password_setup_tokens.created_by` -> `users.id`.
 - `user_audit_log.performed_by_user_id` y `user_audit_log.affected_user_id` -> `users.id`.
 
 ## 5. Reglas e integridad
@@ -88,6 +105,8 @@ Integridad referencial:
 Reglas de negocio desde esquema:
 
 - `users.status` es `active|inactive` (ENUM).
+- `password_setup_tokens` guarda solo `token_hash`, nunca el token plano.
+- Solo puede existir un token hash por valor y cada token puede marcarse como usado via `used_at`.
 - `country_currency` valida rango de fechas (`valid_to >= valid_from` si ambas existen).
 - `accounts.registration_code` es obligatorio a nivel DB.
 
@@ -96,8 +115,10 @@ Reglas de negocio desde esquema:
 El script carga automaticamente:
 
 - Permisos base (`usuarios.*`, `roles.*`, `permissions.read`, `cuentas.*`).
+- Permisos base de oportunidades (`oportunidades.*`).
 - Rol `Administrador` (`is_system=1`) con todos los permisos.
 - Catalogos de tipo de cuenta, sector economico y estados de activacion.
+- Catalogos de oportunidades: lineas de negocio, etapas de venta y estados.
 - Paises y monedas frecuentes para LATAM.
 - Relacion por defecto pais-moneda en `country_currency`.
 
@@ -116,6 +137,8 @@ JOIN role_permissions rp ON rp.role_id = r.id
 JOIN permissions p ON p.id = rp.permission_id
 ORDER BY r.name, p.code;
 ```
+
+Para cuentas, contactos y oportunidades el catalogo de permisos incluye las acciones `read`, `create`, `request` y `update`.
 
 ### 7.2 Usuarios y roles asignados
 
@@ -155,6 +178,16 @@ ORDER BY l.created_at DESC
 LIMIT 100;
 ```
 
+### 7.5 Tokens de set password vigentes
+
+```sql
+SELECT pst.id, pst.purpose, pst.expires_at, pst.used_at,
+       u.full_name, u.email
+FROM password_setup_tokens pst
+JOIN users u ON u.id = pst.user_id
+ORDER BY pst.created_at DESC;
+```
+
 ## 8. Mantenimiento y evolucion
 
 - Mantener `schema.sql` como fuente unica de verdad para nuevas instalaciones.
@@ -168,9 +201,11 @@ Archivos backend conectados al modelo:
 
 - `apps/api/src/db.js`: pool y helper transaccional.
 - `apps/api/src/routes.auth.js`: autenticacion y bootstrap inicial.
+- `apps/api/src/passwordSetupTokens.js`: emision, validacion y consumo de tokens de acceso.
 - `apps/api/src/routes.users.js`: CRUD usuarios, roles y auditoria.
 - `apps/api/src/routes.roles.js`: CRUD de roles y asignacion de permisos.
 - `apps/api/src/routes.accounts.js`: CRUD de cuentas y propietarios.
+- `apps/api/src/routes.opportunities.js`: CRUD de oportunidades y vendedor.
 - `apps/api/src/routes.catalogs.js`: lectura de catalogos maestros.
 
 ## 10. Diccionario de tablas (campos, tipos y llaves)

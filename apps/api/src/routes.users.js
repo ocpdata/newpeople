@@ -1,14 +1,38 @@
 import express from "express";
 import bcrypt from "bcryptjs";
-import crypto from "node:crypto";
 import { z } from "zod";
 import { query } from "./db.js";
-import { normalizeEmail, sendUserInvitationEmail } from "./utils.js";
-import { config } from "./config.js";
+import { buildInviteSetupUrl, normalizeEmail, sendUserInvitationEmail } from "./utils.js";
 import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { issuePasswordSetupToken } from "./passwordSetupTokens.js";
 
 const router = express.Router();
+
+const avatarUrlValueSchema = z
+  .string()
+  .max(3_000_000)
+  .refine((value) => {
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return true;
+      }
+      return parsed.protocol === "data:" && value.startsWith("data:image/");
+    } catch {
+      return false;
+    }
+  }, "Avatar invalido");
+
+const avatarUrlSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  avatarUrlValueSchema.optional(),
+);
+
+const nullableAvatarUrlSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  avatarUrlValueSchema.nullable().optional(),
+);
 
 async function audit(action, performedByUserId, affectedUserId, detail = null) {
   try {
@@ -27,12 +51,40 @@ async function audit(action, performedByUserId, affectedUserId, detail = null) {
   }
 }
 
+async function logInviteDeliveryFailure({ req, userId, email, result, action, detail }) {
+  await audit(action, req.user?.id, userId, {
+    email,
+    reason: result.reason || "unknown",
+    detail: result.detail || null,
+    purpose: result.purpose || null,
+    expiresAt: result.expiresAt || null,
+  });
+
+  await logAuditEvent({
+    req,
+    module: "usuarios",
+    action,
+    entityType: "user",
+    entityId: userId,
+    status: "error",
+    detail,
+    after: {
+      email,
+      invite_email_sent: false,
+      invite_email_reason: result.reason || "unknown",
+      invite_email_detail: result.detail || null,
+      invite_purpose: result.purpose || null,
+      invite_expires_at: result.expiresAt || null,
+    },
+  });
+}
+
 const createUserSchema = z.object({
   fullName: z.string().min(3).max(160),
   email: z.string().email(),
   description: z.string().max(2000).optional(),
   mobile: z.string().max(30).optional(),
-  avatarUrl: z.string().url().max(500).optional(),
+  avatarUrl: avatarUrlSchema.optional(),
   status: z.enum(["active", "inactive"]).optional(),
   roleIds: z.array(z.number().int().positive()).optional(),
 });
@@ -55,9 +107,13 @@ router.get("/", requirePermission("usuarios.read"), async (_req, res) => {
   const rows = await query(
     `SELECT u.id, u.full_name, u.email, u.description, u.registered_at, u.last_visit_at,
             u.created_at, u.updated_at,
+            uc.full_name AS created_by_name,
+            uu.full_name AS updated_by_name,
             u.avatar_url, u.mobile, u.status,
             GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR ', ') AS roles
      FROM users u
+     LEFT JOIN users uc ON uc.id = u.created_by
+     LEFT JOIN users uu ON uu.id = u.updated_by
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r ON r.id = ur.role_id
      GROUP BY u.id
@@ -84,29 +140,24 @@ router.post(
     }
 
     const email = normalizeEmail(parsed.data.email);
-    const inviteUrl = `${config.app.inviteSetupUrl}?email=${encodeURIComponent(email)}`;
+    const inviteUrl = buildInviteSetupUrl("preview-token");
 
-    try {
-      const result = await sendUserInvitationEmail({
-        to: email,
-        fullName: parsed.data.fullName || "Usuario",
-        inviteUrl,
-      });
+    const result = await sendUserInvitationEmail({
+      to: email,
+      fullName: parsed.data.fullName || "Usuario",
+      inviteUrl,
+      purpose: "invite",
+    });
 
-      if (result.sent) {
-        return res.json({ message: "Correo de prueba enviado correctamente" });
-      }
-
-      return res.status(202).json({
-        message: "SMTP no configurado. Correo de prueba pendiente",
-        detail: result.reason || "unknown",
-      });
-    } catch (error) {
-      return res.status(500).json({
-        message: "No fue posible enviar el correo de prueba",
-        detail: String(error?.message || error),
-      });
+    if (result.sent) {
+      return res.json({ message: "Correo de prueba enviado correctamente" });
     }
+
+    return res.status(502).json({
+      message: "No fue posible enviar el correo de prueba",
+      reason: result.reason || "unknown",
+      detail: result.detail || null,
+    });
   },
 );
 
@@ -127,13 +178,12 @@ router.post("/", requirePermission("usuarios.create"), async (req, res) => {
   }
 
   const now = new Date();
-  const temporaryPassword = crypto.randomBytes(32).toString("hex");
-  const hash = await bcrypt.hash(temporaryPassword, 10);
+  const temporaryPassword = await bcrypt.hash(`pending:${email}:${now.getTime()}`, 10);
 
   const insert = await query(
     `INSERT INTO users
-      (full_name, email, description, registered_at, avatar_url, mobile, status, password_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (full_name, email, description, registered_at, avatar_url, mobile, status, password_hash, created_by, updated_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       body.fullName,
       email,
@@ -142,7 +192,9 @@ router.post("/", requirePermission("usuarios.create"), async (req, res) => {
       body.avatarUrl || null,
       body.mobile || null,
       body.status || "active",
-      hash,
+      temporaryPassword,
+      req.user?.id || null,
+      req.user?.id || null,
       now,
       now,
     ],
@@ -158,22 +210,29 @@ router.post("/", requirePermission("usuarios.create"), async (req, res) => {
     }
   }
 
-  const inviteUrl = `${config.app.inviteSetupUrl}?email=${encodeURIComponent(email)}`;
-  let inviteEmailSent = false;
-  try {
-    const inviteResult = await sendUserInvitationEmail({
-      to: email,
-      fullName: body.fullName,
-      inviteUrl,
-    });
-    inviteEmailSent = Boolean(inviteResult.sent);
-  } catch (mailError) {
-    console.error("No fue posible enviar correo de invitacion:", mailError);
-  }
+  const passwordSetupInvite = await issuePasswordSetupToken({
+    userId,
+    purpose: "invite",
+    createdBy: req.user?.id || null,
+  });
+  const inviteUrl = passwordSetupInvite.inviteUrl;
+  const inviteResult = await sendUserInvitationEmail({
+    to: email,
+    fullName: body.fullName,
+    inviteUrl,
+    purpose: passwordSetupInvite.purpose,
+    expiresAt: passwordSetupInvite.expiresAt,
+  });
+  const inviteEmailSent = Boolean(inviteResult.sent);
 
   await audit("created", req.user?.id, userId, {
     email,
     fullName: body.fullName,
+    inviteEmailSent,
+    inviteEmailReason: inviteResult.reason || null,
+    inviteEmailDetail: inviteResult.detail || null,
+    invitePurpose: passwordSetupInvite.purpose,
+    inviteExpiresAt: passwordSetupInvite.expiresAt,
   });
 
   await logAuditEvent({
@@ -182,19 +241,45 @@ router.post("/", requirePermission("usuarios.create"), async (req, res) => {
     action: "created",
     entityType: "user",
     entityId: userId,
-    detail: "Usuario creado",
+    detail: inviteEmailSent
+      ? "Usuario creado"
+      : `Usuario creado. Invitacion pendiente: ${inviteResult.reason || "unknown"}`,
     after: {
       full_name: body.fullName,
       email,
       mobile: body.mobile || null,
       status: body.status || "active",
       role_ids: Array.isArray(body.roleIds) ? body.roleIds : [],
+      invite_email_sent: inviteEmailSent,
+      invite_email_reason: inviteResult.reason || null,
+      invite_email_detail: inviteResult.detail || null,
+      invite_purpose: passwordSetupInvite.purpose,
+      invite_expires_at: passwordSetupInvite.expiresAt,
     },
   });
+
+  if (!inviteEmailSent) {
+    await logInviteDeliveryFailure({
+      req,
+      userId,
+      email,
+      result: {
+        ...inviteResult,
+        purpose: passwordSetupInvite.purpose,
+        expiresAt: passwordSetupInvite.expiresAt,
+      },
+      action: "invitation_email_failed",
+      detail: `No fue posible enviar la invitacion al crear el usuario: ${inviteResult.reason || "unknown"}`,
+    });
+  }
 
   res.status(201).json({
     id: userId,
     inviteEmailSent,
+    inviteEmailReason: inviteResult.reason || null,
+    inviteEmailDetail: inviteResult.detail || null,
+    inviteExpiresAt: passwordSetupInvite.expiresAt,
+    inviteSetupUrl: inviteEmailSent ? null : inviteUrl,
     message: inviteEmailSent
       ? "Usuario creado y correo de invitacion enviado"
       : "Usuario creado. Correo de invitacion pendiente",
@@ -227,8 +312,9 @@ router.patch(
 
     const previousStatus = users[0].status;
 
-    await query("UPDATE users SET status = ?, updated_at = ? WHERE id = ?", [
+    await query("UPDATE users SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
       parsed.data.status,
+      req.user?.id || null,
       new Date(),
       userId,
     ]);
@@ -275,40 +361,64 @@ router.post(
     }
 
     const user = rows[0];
-    const inviteUrl = `${config.app.inviteSetupUrl}?email=${encodeURIComponent(user.email)}`;
+    const passwordSetupInvite = await issuePasswordSetupToken({
+      userId,
+      purpose: "reset",
+      createdBy: req.user?.id || null,
+    });
+    const inviteUrl = passwordSetupInvite.inviteUrl;
 
-    try {
-      const result = await sendUserInvitationEmail({
-        to: user.email,
-        fullName: user.full_name,
-        inviteUrl,
+    const result = await sendUserInvitationEmail({
+      to: user.email,
+      fullName: user.full_name,
+      inviteUrl,
+      purpose: passwordSetupInvite.purpose,
+      expiresAt: passwordSetupInvite.expiresAt,
+    });
+
+    if (result.sent) {
+      await audit("password_reset_sent", req.user?.id, userId, {
+        purpose: passwordSetupInvite.purpose,
+        expiresAt: passwordSetupInvite.expiresAt,
       });
-
-      if (result.sent) {
-        await audit("password_reset_sent", req.user?.id, userId);
-        await logAuditEvent({
-          req,
-          module: "usuarios",
-          action: "password_reset_sent",
-          entityType: "user",
-          entityId: userId,
-          detail: "Invitacion de reinicio enviada",
-        });
-        return res.json({
-          message: `Correo de reinicio enviado a ${user.email}`,
-        });
-      }
-
-      return res.status(202).json({
-        message: "SMTP no configurado. Correo de reinicio pendiente",
-        detail: result.reason || "unknown",
+      await logAuditEvent({
+        req,
+        module: "usuarios",
+        action: "password_reset_sent",
+        entityType: "user",
+        entityId: userId,
+        detail: "Invitacion de reinicio enviada",
+        after: {
+          invite_purpose: passwordSetupInvite.purpose,
+          invite_expires_at: passwordSetupInvite.expiresAt,
+        },
       });
-    } catch (error) {
-      return res.status(500).json({
-        message: "No fue posible enviar correo de reinicio",
-        detail: String(error?.message || error),
+      return res.json({
+        message: `Correo de reinicio enviado a ${user.email}`,
+        inviteExpiresAt: passwordSetupInvite.expiresAt,
       });
     }
+
+    await logInviteDeliveryFailure({
+      req,
+      userId,
+      email: user.email,
+      result: {
+        ...result,
+        purpose: passwordSetupInvite.purpose,
+        expiresAt: passwordSetupInvite.expiresAt,
+      },
+      action: "password_reset_failed",
+      detail: `No fue posible enviar la invitacion de reinicio: ${result.reason || "unknown"}`,
+    });
+
+    return res.status(502).json({
+      message: "No fue posible enviar correo de reinicio",
+      reason: result.reason || "unknown",
+      detail: result.detail || null,
+      inviteSetupUrl: inviteUrl,
+      inviteExpiresAt: passwordSetupInvite.expiresAt,
+    });
   },
 );
 
@@ -323,6 +433,7 @@ router.put("/:id", requirePermission("usuarios.update"), async (req, res) => {
       fullName: z.string().min(3).max(160).optional(),
       email: z.string().email().optional(),
       mobile: z.string().max(30).optional().nullable(),
+      avatarUrl: nullableAvatarUrlSchema,
       roleIds: z.array(z.number().int().positive()).optional(),
     })
     .safeParse(req.body);
@@ -355,7 +466,8 @@ router.put("/:id", requirePermission("usuarios.update"), async (req, res) => {
   if (
     body.fullName !== undefined ||
     body.email !== undefined ||
-    body.mobile !== undefined
+    body.mobile !== undefined ||
+    body.avatarUrl !== undefined
   ) {
     const fields = [];
     const values = [];
@@ -381,6 +493,12 @@ router.put("/:id", requirePermission("usuarios.update"), async (req, res) => {
       fields.push("mobile = ?");
       values.push(body.mobile || null);
     }
+    if (body.avatarUrl !== undefined) {
+      fields.push("avatar_url = ?");
+      values.push(body.avatarUrl || null);
+    }
+    fields.push("updated_by = ?");
+    values.push(req.user?.id || null);
     fields.push("updated_at = ?");
     values.push(now);
     values.push(userId);

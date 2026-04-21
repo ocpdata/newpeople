@@ -3,7 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: resolve(__dirname, "../.env") });
+const envFileName =
+  process.env.API_ENV === "test" ||
+  process.env.NODE_ENV === "test" ||
+  process.env.VITEST
+    ? "../.env.test"
+    : "../.env";
+
+dotenv.config({ path: resolve(__dirname, envFileName) });
 
 export const config = {
   port: Number(process.env.PORT || 4000),
@@ -12,6 +19,9 @@ export const config = {
   app: {
     inviteSetupUrl:
       process.env.APP_INVITE_SETUP_URL || "http://localhost:5173/set-password",
+    passwordSetupTokenMinutes: Number(
+      process.env.APP_PASSWORD_SETUP_TOKEN_MINUTES || 1440,
+    ),
   },
   mail: {
     host: process.env.SMTP_HOST || "",

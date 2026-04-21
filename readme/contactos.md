@@ -9,15 +9,16 @@ Gestion de contactos comerciales asociados a cuentas:
 - Asignacion de catalogos (tipo de relacion, participacion en compra,
   situacion en empresa, estado de activacion).
 - Jerarquia de contactos: jefe directo e influencias.
-- Activacion y desactivacion de contactos.
+- Activacion, marcado pendiente y desactivacion de contactos.
 - Visualizacion en tabla con filtros y ordenamiento.
 - Auditoria de cambios por contacto.
 
 ## Puntos clave de UX
 
 - Boton de crear contacto en encabezado.
+- El boton aparece tanto con permiso de crear como de solicitar contactos.
 - Creacion y edicion mediante ventana modal.
-- Badge de estado (Activado/Desactivado) de solo lectura en encabezado del
+- Badge de estado (Activado/Desactivado/Pendiente) de solo lectura en encabezado del
   modal de edicion.
 - Secciones del formulario por contexto:
   - Datos principales (nombre, puesto, cuenta).
@@ -27,10 +28,10 @@ Gestion de contactos comerciales asociados a cuentas:
     situacion en empresa).
   - Jerarquia (jefe, contacto al que influye).
   - Auditoria (en modo edicion).
-- Filtro "Mostrar desactivados" (por defecto solo activados).
+- Filtros "Mostrar desactivados" y "Mostrar pendientes".
 - Busqueda por texto y ordenamiento por columnas con flechas.
-- Menu de acciones por fila (editar, activar, desactivar).
-- Estado visual en tabla con badge (Activado/Desactivado).
+- Menu de acciones por fila (editar, activar, marcar pendiente, desactivar).
+- Estado visual en tabla con badge (Activado/Desactivado/Pendiente).
 
 ## API relacionada (resumen)
 
@@ -44,6 +45,7 @@ Permisos requeridos:
 
 - contactos.read
 - contactos.create
+- contactos.request
 - contactos.update
 
 ## Catalogos de contactos
@@ -58,7 +60,14 @@ Los siguientes catalogos aplican exclusivamente al modulo de contactos:
 ## Consideraciones
 
 - Cada contacto debe estar asociado a una cuenta (obligatorio).
+- Los usuarios no administradores solo ven y operan contactos de cuentas de las que son propietarios.
+- Los administradores pueden ver y operar todos los contactos.
 - La jerarquia (jefe / influye en) es opcional y referencia otros contactos.
+- Con `contactos.create`, el contacto se registra activado automaticamente.
+- Con `contactos.request`, el contacto se registra en pendiente automaticamente.
+- Solo usuarios con `contactos.create` pueden cambiar el estado de activacion de un contacto.
+- El rol Administrador no sustituye esta regla: para contactos manda el permiso explicito.
+- Si el usuario no tiene `contactos.create` ni `contactos.request`, no puede crear ni solicitar contactos.
 - El estado de activacion se cambia desde el menu de acciones de la tabla,
   no desde el formulario de edicion.
 - En modo edicion, el badge del encabezado muestra el estado actual de forma

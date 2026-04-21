@@ -15,6 +15,34 @@ export function setAuthToken(token) {
   }
 }
 
+function formatValidationErrors(errors) {
+  if (!errors || typeof errors !== "object") return "";
+
+  const fieldErrors = errors.fieldErrors || {};
+  const fieldMessages = Object.entries(fieldErrors)
+    .flatMap(([field, messages]) => {
+      if (!Array.isArray(messages) || messages.length === 0) return [];
+      return `${field}: ${messages.join(", ")}`;
+    })
+    .filter(Boolean);
+
+  const formMessages = Array.isArray(errors.formErrors)
+    ? errors.formErrors.filter(Boolean)
+    : [];
+
+  return [...formMessages, ...fieldMessages].join(" | ");
+}
+
 export function getApiErrorMessage(error, fallback = "Error de red") {
-  return error?.response?.data?.message || fallback;
+  const data = error?.response?.data;
+  if (!data) return fallback;
+
+  const validationDetail = formatValidationErrors(data.errors);
+  if (validationDetail) {
+    return data.message
+      ? `${data.message}: ${validationDetail}`
+      : validationDetail;
+  }
+
+  return data.message || fallback;
 }

@@ -210,7 +210,18 @@ Funciones:
 
 - signToken: emite JWT con sub/email/name.
 - normalizeEmail: estandarizacion de email.
-- sendUserInvitationEmail: envio SMTP para invitacion/reinicio.
+- buildInviteSetupUrl: construye URL frontend con token opaco.
+- sendUserInvitationEmail: envio SMTP para invitacion/reinicio con copy por proposito y fecha de expiracion.
+
+Archivo complementario: apps/api/src/passwordSetupTokens.js
+
+Responsabilidades:
+
+- asegurar la tabla `password_setup_tokens`;
+- emitir token opaco con hash persistido;
+- invalidar tokens pendientes previos del usuario;
+- validar estado del token: `valid`, `used`, `expired`, `inactive`, `invalid`;
+- consumir token en transaccion al guardar la contrasena.
 
 Comportamiento resiliente SMTP:
 
@@ -226,12 +237,16 @@ Endpoints:
 - GET /api/auth/bootstrap-status
 - POST /api/auth/register-first
 - POST /api/auth/login
+- GET /api/auth/set-password-context
+- POST /api/auth/set-password
 - GET /api/auth/me
 
 Notas de arquitectura:
 
 - register-first es transaccional y crea el primer admin.
 - login actualiza last_visit_at.
+- set-password ya no depende de email; usa token temporal de un solo uso.
+- set-password-context permite a la UI validar el enlace antes de mostrar el formulario.
 - /me retorna contexto de permisos y roles para UI.
 
 ### Users (apps/api/src/routes.users.js)
@@ -250,7 +265,9 @@ Notas:
 
 - Validacion de payload con zod.
 - Auditoria de usuario en user_audit_log para create/update/status/reset.
-- Creacion de usuario con password temporal y flujo de invitacion.
+- Creacion de usuario con password provisional y flujo de invitacion con token opaco.
+- Si el correo falla, la API devuelve `inviteSetupUrl` e `inviteExpiresAt` para recuperacion operativa.
+- La auditoria registra `invite_purpose` e `invite_expires_at` cuando aplica.
 
 ### Roles (apps/api/src/routes.roles.js)
 
@@ -258,6 +275,7 @@ Endpoints principales:
 
 - GET /api/roles
 - POST /api/roles
+- PUT /api/roles/:id
 - PATCH /api/roles/:id/status
 - GET /api/roles/permissions
 - GET /api/roles/:id/permissions
@@ -267,6 +285,7 @@ Endpoints principales:
 Notas:
 
 - Soporta includeInactive en listado.
+- Permite editar nombre y descripcion de roles no-sistema.
 - Protege roles de sistema frente a desactivacion.
 - Actualiza metadatos de auditoria en cambios de permisos/estado.
 
@@ -283,9 +302,36 @@ Endpoints principales:
 Notas:
 
 - Validacion con zod.
-- ownerUserIds obligatorio (min 1).
-- Creacion y actualizacion de owners con transaccion.
-- Estado se cambia por statusCode: activada/desactivada.
+- Propietarios obligatorios al crear y editar.
+- Creacion habilitada con `cuentas.create` o `cuentas.request`.
+- Si el usuario tiene `cuentas.create`, la cuenta nace activada.
+- Si el usuario tiene solo `cuentas.request`, la cuenta nace pendiente.
+- Cualquier cambio del estado de activacion requiere `cuentas.create`.
+- En cuentas, la decision de crear activa o pendiente usa el permiso explicito, no el bypass de admin.
+- Estado se cambia por statusCode: activada/desactivada/pendiente_activacion.
+
+### Opportunities (apps/api/src/routes.opportunities.js)
+
+Endpoints principales:
+
+- GET /api/opportunities
+- GET /api/opportunities/:id
+- POST /api/opportunities
+- PUT /api/opportunities/:id
+- PATCH /api/opportunities/:id/status
+
+Notas:
+
+- Validacion con zod.
+- sellerUserId obligatorio.
+- La oportunidad exige cuenta y contacto de la misma cuenta.
+- Preventa es opcional y referencia un usuario de la aplicacion.
+- Creacion habilitada con `oportunidades.create` o `oportunidades.request`.
+- Si el usuario tiene `oportunidades.create`, la oportunidad nace activada.
+- Si el usuario tiene solo `oportunidades.request`, la oportunidad nace pendiente.
+- Cualquier cambio del estado de activacion requiere `oportunidades.create`.
+- En oportunidades, la decision de crear activa o pendiente usa el permiso explicito, no el bypass de admin.
+- Estado se cambia por statusCode: activada/desactivada/pendiente_activacion.
 
 ### Contacts (apps/api/src/routes.contacts.js)
 
@@ -302,8 +348,13 @@ Notas:
 - Validacion con zod.
 - Cada contacto requiere cuenta asociada (accountId obligatorio).
 - Jerarquia opcional: managerContactId e influencesContactId.
-- Estado se cambia por statusCode: activado/desactivado.
-- Permisos: contactos.read / contactos.create / contactos.update.
+- Creacion habilitada con `contactos.create` o `contactos.request`.
+- Si el usuario tiene `contactos.create`, el contacto nace activado.
+- Si el usuario tiene solo `contactos.request`, el contacto nace pendiente.
+- Cualquier cambio del estado de activacion requiere `contactos.create`.
+- En contactos, la decision de crear activa o pendiente usa el permiso explicito, no el bypass de admin.
+- Estado se cambia por statusCode: activado/desactivado/pendiente_activacion.
+- Permisos: contactos.read / contactos.create / contactos.request / contactos.update.
 
 ### Catalogs (apps/api/src/routes.catalogs.js)
 
@@ -314,6 +365,12 @@ Endpoints:
 - GET /api/catalogs/account-types
 - GET /api/catalogs/economic-sectors
 - GET /api/catalogs/account-activation-statuses
+- GET /api/catalogs/opportunity-accounts
+- GET /api/catalogs/opportunity-contacts
+- GET /api/catalogs/opportunity-users
+- GET /api/catalogs/opportunity-business-lines
+- GET /api/catalogs/opportunity-sales-stages
+- GET /api/catalogs/opportunity-activation-statuses
 
 Notas:
 
@@ -391,11 +448,11 @@ Patrones aplicados:
 
 Patrones aplicados:
 
-- Lista con filtro de desactivadas (por defecto solo activadas).
+- Lista con filtros de desactivadas y pendientes (por defecto solo activadas).
 - Busqueda + ordenamiento por columnas con flechas.
-- Badge de estado activada/desactivada en tabla.
+- Badge de estado activada/desactivada/pendiente en tabla.
 - Badge de estado solo lectura en encabezado del modal de edicion.
-- Menu de acciones por fila (editar/activar/desactivar).
+- Menu de acciones por fila (editar/activar/marcar pendiente/desactivar).
 - Modal unificado para crear/editar.
 - Formulario seccionado.
 - Propietarios con doble vista:
@@ -406,11 +463,11 @@ Patrones aplicados:
 
 Patrones aplicados:
 
-- Lista con filtro de desactivados (por defecto solo activados).
+- Lista con filtros de desactivados y pendientes (por defecto solo activados).
 - Busqueda + ordenamiento por columnas con flechas.
 - Badge de estado en tabla.
 - Badge de estado solo lectura en encabezado del modal de edicion.
-- Menu de acciones por fila (editar/activar/desactivar).
+- Menu de acciones por fila (editar/activar/marcar pendiente/desactivar).
 - Modal unificado para crear/editar.
 - Formulario seccionado (datos personales, empresa, relaciones).
 - Jerarquia de contactos: jefe e influencias.
@@ -515,7 +572,8 @@ Para nuevos modulos (ejemplo Contactos/Oportunidades):
 
 - Crear route file dedicado.
 - Validar payloads con zod.
-- Proteger con requirePermission.
+- Proteger lectura y edicion con `requirePermission`.
+- Proteger creacion con `requireAnyPermission([modulo.create, modulo.request])` cuando aplique flujo de solicitud.
 - Reutilizar withTransaction en operaciones compuestas.
 
 3. Frontend:
@@ -526,7 +584,7 @@ Para nuevos modulos (ejemplo Contactos/Oportunidades):
 
 4. Permisos:
 
-- Crear permisos modulo.read/create/update.
+- Crear permisos modulo.read/create/request/update cuando el recurso pueda solicitarse.
 - Asignar a roles desde gestion de roles.
 
 ## 12. Anexo: mapa rapido de archivos

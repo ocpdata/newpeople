@@ -7,20 +7,25 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
+- [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Auditoria](./auditoria.md)
+- [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)
 - [Base de datos](./base-de-datos.md)
 
 ## Cambios recientes documentados
 
+- Usuarios/Auth: set password migrado a token temporal de un solo uso, vigencia visible en UI, redireccion automatica al dashboard y auditoria con proposito/expiracion.
 - Usuarios: alta en modal, edicion con auditoria visible y acciones por fila;
   badge de estado solo lectura en modal de edicion; filtro "Mostrar desactivados".
 - Roles: creacion en modal, filtro de roles desactivados y auditoria del rol.
 - Cuentas: alta/edicion en modal, auditoria en edicion, acciones por fila,
   estado visual, filtro de desactivadas, busqueda y ordenamiento por columnas;
   badge de estado solo lectura en modal de edicion.
+- Oportunidades: alta/edicion en modal, vendedor unico, preventa opcional,
+  auditoria en edicion y acciones por fila.
 - Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
   edicion, filtro de desactivados.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.

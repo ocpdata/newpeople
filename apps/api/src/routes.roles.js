@@ -44,11 +44,19 @@ router.post("/", requirePermission("roles.create"), async (req, res) => {
 
   const now = new Date();
   const actorUserId = Number(req.user?.id) || null;
+  const name = parsed.data.name.trim();
+  const description = parsed.data.description?.trim() || null;
+  const existing = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [
+    name,
+  ]);
+  if (existing.length > 0) {
+    return res.status(409).json({ message: "El nombre del rol ya existe." });
+  }
   const result = await query(
     "INSERT INTO roles (name, description, is_system, is_active, created_by_user_id, updated_by_user_id, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?, ?, ?)",
     [
-      parsed.data.name,
-      parsed.data.description || null,
+      name,
+      description,
       actorUserId,
       actorUserId,
       now,
@@ -64,14 +72,83 @@ router.post("/", requirePermission("roles.create"), async (req, res) => {
     entityId: result.insertId,
     detail: "Rol creado",
     after: {
-      name: parsed.data.name,
-      description: parsed.data.description || null,
+      name,
+      description,
       is_active: 1,
       is_system: 0,
     },
   });
 
   res.status(201).json({ id: result.insertId, message: "Rol creado" });
+});
+
+router.put("/:id", requirePermission("roles.update"), async (req, res) => {
+  const roleId = Number(req.params.id);
+  const parsed = z
+    .object({
+      name: z.string().min(2).max(80),
+      description: z.string().max(255).optional(),
+    })
+    .safeParse(req.body);
+
+  if (!Number.isInteger(roleId) || roleId <= 0) {
+    return res.status(400).json({ message: "Id de rol invalido" });
+  }
+  if (!parsed.success) {
+    return res
+      .status(400)
+      .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+  }
+
+  const roles = await query(
+    "SELECT id, name, description, is_system, is_active FROM roles WHERE id = ? LIMIT 1",
+    [roleId],
+  );
+  if (roles.length === 0) {
+    return res.status(404).json({ message: "Rol no encontrado" });
+  }
+
+  const role = roles[0];
+  if (Number(role.is_system) === 1) {
+    return res.status(403).json({
+      message: "No se puede editar un rol del sistema",
+    });
+  }
+
+  const name = parsed.data.name.trim();
+  const description = parsed.data.description?.trim() || null;
+  const existing = await query(
+    "SELECT id FROM roles WHERE name = ? AND id <> ? LIMIT 1",
+    [name, roleId],
+  );
+  if (existing.length > 0) {
+    return res.status(409).json({ message: "El nombre del rol ya existe." });
+  }
+
+  const now = new Date();
+  await query(
+    "UPDATE roles SET name = ?, description = ?, updated_by_user_id = ?, updated_at = ? WHERE id = ?",
+    [name, description, Number(req.user?.id) || null, now, roleId],
+  );
+
+  await logAuditEvent({
+    req,
+    module: "roles",
+    action: "updated",
+    entityType: "role",
+    entityId: roleId,
+    detail: "Rol actualizado",
+    before: {
+      name: role.name,
+      description: role.description || null,
+    },
+    after: {
+      name,
+      description,
+    },
+  });
+
+  res.json({ message: "Rol actualizado" });
 });
 
 router.patch(

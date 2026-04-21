@@ -8,6 +8,7 @@ Gestion de usuarios del CRM:
 - Edicion de datos principales.
 - Activacion y desactivacion.
 - Envio de invitacion para establecer o reiniciar contrasena.
+- Consumo de enlace de set password con token temporal y vigencia visible.
 - Auditoria de acciones de usuarios.
 
 ## Puntos clave de UX
@@ -31,11 +32,15 @@ Gestion de usuarios del CRM:
 - PATCH /api/users/:id/status
 - POST /api/users/:id/reset-password-invite
 - GET /api/users/audit
+- GET /api/auth/set-password-context
+- POST /api/auth/set-password
 
 ## Consideraciones
 
 - El estado del usuario impacta acceso al sistema.
 - La auditoria ayuda a trazabilidad de cambios.
 - Mantener consistencia en mensajes de exito y error.
+- Las invitaciones y reinicios usan token opaco de un solo uso; no exponer email como mecanismo de autorizacion en la URL.
+- Si SMTP falla, el backend devuelve el enlace temporal y su expiracion para resolver el acceso manualmente.
 - En la edicion, la auditoria se muestra en formato compacto para no saturar la
   lectura del formulario.

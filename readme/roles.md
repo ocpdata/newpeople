@@ -5,6 +5,7 @@
 Administracion de roles y permisos del sistema:
 
 - Creacion de roles.
+- Edicion de nombre y descripcion del rol.
 - Activacion y desactivacion de roles.
 - Asignacion de permisos por rol.
 - Consulta de usuarios asociados a un rol.
@@ -14,6 +15,7 @@ Administracion de roles y permisos del sistema:
 
 - Boton de crear rol alineado en encabezado.
 - Creacion de rol mediante ventana modal.
+- Creacion y edicion de rol con campos nombre y descripcion.
 - Filtro Mostrar desactivados para incluir o excluir roles inactivos.
 - Listado de roles con badge de estado (Activo/Desactivado).
 - Conteos visibles por modulo:
@@ -26,6 +28,7 @@ Administracion de roles y permisos del sistema:
 
 - GET /api/roles
 - POST /api/roles
+- PUT /api/roles/:id
 - PATCH /api/roles/:id/status
 - GET /api/roles/permissions
 - PUT /api/roles/:id/permissions
@@ -35,6 +38,9 @@ Administracion de roles y permisos del sistema:
 
 - Los roles de sistema no deben desactivarse accidentalmente.
 - La asignacion de permisos debe ser explicita y revisable.
+- Para cuentas, contactos y oportunidades existen permisos separados de lectura, creacion, solicitud y actualizacion.
+- Los permisos `*.create` crean el recurso en estado activo.
+- Los permisos `*.request` permiten solicitar el recurso y este nace en estado pendiente.
 - Los cambios de estado deben quedar auditables.
 - Si un rol se desactiva y el filtro de desactivados esta apagado, el rol puede
   salir de la lista visible.

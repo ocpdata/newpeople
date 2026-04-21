@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
-import { requirePermission } from "./auth.js";
+import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
@@ -31,25 +31,118 @@ const accountStatusSchema = z.object({
   statusCode: z.enum(["activada", "desactivada", "pendiente_activacion"]),
 });
 
-router.get("/", requirePermission("cuentas.read"), async (_req, res) => {
+const accountCreatePermissions = ["cuentas.create", "cuentas.request"];
+
+function isAdminUser(user) {
+  return Boolean(user?.isAdmin);
+}
+
+function applyAccountOwnershipScope({ user, accountAlias, params }) {
+  if (isAdminUser(user)) return "";
+  params.push(Number(user.id));
+  return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountAlias}.id AND ao_scope.user_id = ?`;
+}
+
+async function requireAccessibleAccountOr404({ user, accountId, message }) {
+  const params = [];
+  const ownershipJoin = applyAccountOwnershipScope({
+    user,
+    accountAlias: "a",
+    params,
+  });
+  params.push(Number(accountId));
+  const rows = await query(
+    `SELECT a.id
+     FROM accounts a
+     ${ownershipJoin}
+     WHERE a.id = ?
+     LIMIT 1`,
+    params,
+  );
+
+  if (!rows.length) {
+    return { ok: false, response: { status: 404, body: { message } } };
+  }
+
+  return { ok: true };
+}
+
+function hasExplicitAccountPermission(user, permission) {
+  return user?.permissionSet?.has(permission);
+}
+
+function canActivateAccounts(user) {
+  return hasExplicitAccountPermission(user, "cuentas.create");
+}
+
+async function getAccountActivationStatusId(statusCode) {
+  const rows = await query(
+    "SELECT id FROM account_activation_statuses WHERE code = ? LIMIT 1",
+    [statusCode],
+  );
+  return rows.length ? Number(rows[0].id) : null;
+}
+
+async function getAccountActivationStatusCodeById(statusId) {
+  const rows = await query(
+    "SELECT code FROM account_activation_statuses WHERE id = ? LIMIT 1",
+    [statusId],
+  );
+  return rows.length ? String(rows[0].code) : null;
+}
+
+function resolveAccountCreationStatusCode(user) {
+  if (hasExplicitAccountPermission(user, "cuentas.create")) {
+    return "activada";
+  }
+  if (hasExplicitAccountPermission(user, "cuentas.request")) {
+    return "pendiente_activacion";
+  }
+  return null;
+}
+
+router.get("/", requirePermission("cuentas.read"), async (req, res) => {
+  const params = [];
+  const ownershipJoin = applyAccountOwnershipScope({
+    user: req.user,
+    accountAlias: "a",
+    params,
+  });
   const rows = await query(
     `SELECT a.id, a.name, atp.name AS account_type, a.registration_code, a.phone, es.name AS economic_sector,
             a.website, a.city, a.state_region, c.name AS country, aas.name AS activation_status,
+            COALESCE(owners.owner_names, '') AS owners_display,
             a.created_at, u1.full_name AS created_by_name, a.updated_at, u2.full_name AS updated_by_name
      FROM accounts a
+     ${ownershipJoin}
      INNER JOIN account_types atp ON atp.id = a.account_type_id
      INNER JOIN economic_sectors es ON es.id = a.economic_sector_id
      INNER JOIN countries c ON c.id = a.country_id
      INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
      INNER JOIN users u1 ON u1.id = a.created_by
      INNER JOIN users u2 ON u2.id = a.updated_by
+     LEFT JOIN (
+       SELECT ao.account_id,
+              GROUP_CONCAT(DISTINCT u.full_name ORDER BY u.full_name SEPARATOR ', ') AS owner_names
+       FROM account_owners ao
+       INNER JOIN users u ON u.id = ao.user_id
+       GROUP BY ao.account_id
+     ) owners ON owners.account_id = a.id
      ORDER BY a.id DESC`,
+    params,
   );
   res.json(rows);
 });
 
 router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
   const id = Number(req.params.id);
+  const params = [];
+  const ownershipJoin = applyAccountOwnershipScope({
+    user: req.user,
+    accountAlias: "a",
+    params,
+  });
+  params.push(id);
   const rows = await query(
     `SELECT a.*,
             atp.name AS account_type,
@@ -59,6 +152,7 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
             u1.full_name AS created_by_name,
             u2.full_name AS updated_by_name
      FROM accounts a
+     ${ownershipJoin}
      INNER JOIN account_types atp ON atp.id = a.account_type_id
      INNER JOIN economic_sectors es ON es.id = a.economic_sector_id
      INNER JOIN countries c ON c.id = a.country_id
@@ -66,7 +160,7 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
      INNER JOIN users u1 ON u1.id = a.created_by
      INNER JOIN users u2 ON u2.id = a.updated_by
      WHERE a.id = ?`,
-    [id],
+    params,
   );
 
   if (rows.length === 0) {
@@ -85,7 +179,7 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
   res.json({ ...rows[0], owners });
 });
 
-router.post("/", requirePermission("cuentas.create"), async (req, res) => {
+router.post("/", requireAnyPermission(accountCreatePermissions), async (req, res) => {
   const parsed = accountSchema.safeParse(req.body);
   if (!parsed.success) {
     return res
@@ -95,6 +189,16 @@ router.post("/", requirePermission("cuentas.create"), async (req, res) => {
 
   const now = new Date();
   const body = parsed.data;
+  const creationStatusCode = resolveAccountCreationStatusCode(req.user);
+  const activationStatusId = creationStatusCode
+    ? await getAccountActivationStatusId(creationStatusCode)
+    : null;
+
+  if (!activationStatusId) {
+    return res.status(403).json({
+      message: "No autorizado para crear o solicitar cuentas",
+    });
+  }
 
   try {
     const accountId = await withTransaction(async (conn) => {
@@ -117,7 +221,7 @@ router.post("/", requirePermission("cuentas.create"), async (req, res) => {
           body.description || null,
           body.addressLine || null,
           body.postalCode || null,
-          body.activationStatusId,
+          activationStatusId,
           req.user.id,
           now,
           req.user.id,
@@ -155,12 +259,18 @@ router.post("/", requirePermission("cuentas.create"), async (req, res) => {
         description: body.description || null,
         address_line: body.addressLine || null,
         postal_code: body.postalCode || null,
-        activation_status_id: body.activationStatusId,
+        activation_status_id: activationStatusId,
         owner_user_ids: body.ownerUserIds.map(Number),
       },
     });
 
-    return res.status(201).json({ id: accountId, message: "Cuenta creada" });
+    return res.status(201).json({
+      id: accountId,
+      message:
+        creationStatusCode === "activada"
+          ? "Cuenta creada"
+          : "Solicitud de cuenta creada en estado pendiente",
+    });
   } catch (error) {
     if (
       String(error.message || "").includes(
@@ -188,6 +298,15 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   const now = new Date();
   const body = parsed.data;
 
+  const accountAccess = await requireAccessibleAccountOr404({
+    user: req.user,
+    accountId: id,
+    message: "Cuenta no encontrada",
+  });
+  if (!accountAccess.ok) {
+    return res.status(accountAccess.response.status).json(accountAccess.response.body);
+  }
+
   const beforeRows = await query(
     `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,
             website, city, state_region, country_id, description, address_line,
@@ -198,6 +317,26 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
 
   if (!beforeRows.length) {
     return res.status(404).json({ message: "Cuenta no encontrada" });
+  }
+
+  const previousStatusCode = await getAccountActivationStatusCodeById(
+    Number(beforeRows[0].activation_status_id),
+  );
+  const requestedStatusCode = await getAccountActivationStatusCodeById(
+    Number(body.activationStatusId),
+  );
+
+  if (!requestedStatusCode) {
+    return res.status(400).json({ message: "Estado de activacion invalido" });
+  }
+
+  if (
+    requestedStatusCode !== previousStatusCode &&
+    !canActivateAccounts(req.user)
+  ) {
+    return res.status(403).json({
+      message: "No autorizado para cambiar el estado de activacion de cuentas",
+    });
   }
 
   const beforeOwners = await query(
@@ -293,6 +432,21 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (!canActivateAccounts(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para cambiar el estado de activacion de cuentas",
+      });
+    }
+
+    const accountAccess = await requireAccessibleAccountOr404({
+      user: req.user,
+      accountId: id,
+      message: "Cuenta no encontrada",
+    });
+    if (!accountAccess.ok) {
+      return res.status(accountAccess.response.status).json(accountAccess.response.body);
+    }
+
     const now = new Date();
     const accountRows = await query(
       "SELECT activation_status_id FROM accounts WHERE id = ? LIMIT 1",
@@ -330,7 +484,9 @@ router.patch(
       message:
         parsed.data.statusCode === "activada"
           ? "Cuenta activada"
-          : "Cuenta desactivada",
+          : parsed.data.statusCode === "pendiente_activacion"
+            ? "Cuenta marcada como pendiente"
+            : "Cuenta desactivada",
     });
   },
 );
