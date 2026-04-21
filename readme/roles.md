@@ -13,13 +13,18 @@ Administracion de roles y permisos del sistema:
 
 ## Puntos clave de UX
 
-- Boton de crear rol alineado en encabezado.
+- Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear rol` a la derecha.
 - Creacion de rol mediante ventana modal.
 - Creacion y edicion de rol con campos nombre y descripcion.
 - Filtro Mostrar desactivados para incluir o excluir roles inactivos.
 - Listado de roles con badge de estado (Activo/Desactivado).
 - Conteos visibles por modulo:
   roles totales, permisos totales y usuarios del rol seleccionado.
+- Diseno de 3 columnas con altura controlada (`calc(100vh - 220px)`) y scroll
+  independiente por columna:
+  - Columna 1: lista de roles.
+  - Columna 2: permisos agrupados por modulo.
+  - Columna 3: usuarios asociados al rol seleccionado.
 - Seleccion de rol con actualizacion inmediata de:
   permisos asignados, usuarios asociados y datos de auditoria.
 - Confirmacion previa para cambios sensibles de estado.

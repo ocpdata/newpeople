@@ -13,8 +13,9 @@ Gestion de cuentas comerciales:
 
 ## Puntos clave de UX
 
-- Boton de crear cuenta en encabezado.
+- Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear cuenta` a la derecha.
 - El boton aparece tanto con permiso de crear como de solicitar cuentas.
+- Barra de filtros: pills de estado (Todos / Activadas / Pendientes / Desactivadas) + busqueda inline.
 - Creacion y edicion mediante ventana modal.
 - Badge de estado de activacion de solo lectura en encabezado del modal de edicion.
 - Secciones del formulario por contexto (datos principales, ubicacion,
@@ -24,8 +25,8 @@ Gestion de cuentas comerciales:
   tarjetas de seleccionados + lista scrolleable de seleccion.
 - Menu de acciones por fila (editar, activar, marcar pendiente, desactivar).
 - Estado visual en tabla con badge (Activada/Desactivada/Pendiente).
-- Filtros "Mostrar desactivadas" y "Mostrar pendientes".
 - Busqueda por texto y ordenamiento por columnas con flechas.
+- Paginacion con selector de 10 / 50 / 100 registros por pagina y navegacion previo/siguiente.
 
 ## API relacionada (resumen)
 

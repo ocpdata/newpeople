@@ -15,8 +15,9 @@ Gestion de contactos comerciales asociados a cuentas:
 
 ## Puntos clave de UX
 
-- Boton de crear contacto en encabezado.
+- Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear contacto` a la derecha.
 - El boton aparece tanto con permiso de crear como de solicitar contactos.
+- Barra de filtros: pills de estado (Todos / Activados / Pendientes / Desactivados) + busqueda inline.
 - Creacion y edicion mediante ventana modal.
 - Badge de estado (Activado/Desactivado/Pendiente) de solo lectura en encabezado del
   modal de edicion.
@@ -28,10 +29,10 @@ Gestion de contactos comerciales asociados a cuentas:
     situacion en empresa).
   - Jerarquia (jefe, contacto al que influye).
   - Auditoria (en modo edicion).
-- Filtros "Mostrar desactivados" y "Mostrar pendientes".
 - Busqueda por texto y ordenamiento por columnas con flechas.
 - Menu de acciones por fila (editar, activar, marcar pendiente, desactivar).
 - Estado visual en tabla con badge (Activado/Desactivado/Pendiente).
+- Paginacion con selector de 10 / 50 / 100 registros por pagina y navegacion previo/siguiente.
 
 ## API relacionada (resumen)
 

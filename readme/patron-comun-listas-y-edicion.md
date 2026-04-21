@@ -15,15 +15,16 @@ Estandarizar experiencia de usuario, estructura de codigo y comportamiento de:
 
 ## Estructura base de pantalla
 
-1. Encabezado del modulo
+1. Encabezado del modulo (`.roles-page-header`)
 
-- Titulo del modulo.
-- Boton primario de creacion alineado a la derecha.
+- Titulo del modulo con icono SVG (`.module-title-with-icon`).
+- Subtitulo descriptivo (`.roles-subtitle`).
+- Boton primario de creacion alineado a la derecha (`.btn-primary`, texto `+ Crear ...`).
 
-2. Filtros generales
+2. Barra de filtros (`.roles-pills-bar.accounts-pills-bar-row`)
 
-- Toggle para mostrar/ocultar registros inactivos o desactivados.
-- Campo de busqueda por texto libre.
+- Pills de estado para filtrar registros (Todos / Activos / Pendientes / Desactivados).
+- Campo de busqueda por texto libre alineado a la derecha (`.accounts-search-inline`).
 
 3. Tabla principal
 
@@ -31,7 +32,13 @@ Estandarizar experiencia de usuario, estructura de codigo y comportamiento de:
 - Columna Estado con badge visual.
 - Columna Acciones al extremo derecho.
 
-4. Modal de alta/edicion
+4. Paginacion (`.users-pagination`)
+
+- Informacion de rango visible (ej. "1–10 de 35").
+- Navegacion previo/siguiente.
+- Selector de registros por pagina: 10 / 50 / 100.
+
+5. Modal de alta/edicion
 
 - Formulario por secciones.
 - Boton secundario Cancelar y boton primario Guardar/Crear.
@@ -125,12 +132,12 @@ Estandarizar experiencia de usuario, estructura de codigo y comportamiento de:
 
 ## Checklist para nuevas ventanas
 
-- [ ] Encabezado con boton Crear.
-- [ ] Filtro de activos/inactivos.
-- [ ] Buscador por texto.
+- [ ] Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear ...` a la derecha.
+- [ ] Barra de filtros: pills de estado + busqueda inline a la derecha.
 - [ ] Tabla con columnas ordenables y flechas.
 - [ ] Columna Estado con badge.
 - [ ] Columna Acciones con menu kebab.
+- [ ] Paginacion con selector 10 / 50 / 100 y navegacion previo/siguiente.
 - [ ] Modal de alta/edicion con secciones.
 - [ ] Badge de estado (solo lectura) en encabezado del modal de edicion.
 - [ ] Validaciones y manejo de errores por campo.

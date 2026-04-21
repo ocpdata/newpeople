@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { api, getApiErrorMessage, setAuthToken } from "./api";
 
 const DEFAULT_STATUS_FILTER = "active";
-const VALID_STATUS_FILTERS = new Set([
-  "active",
-  "pending",
-  "inactive",
-  "all",
-]);
+const VALID_STATUS_FILTERS = new Set(["active", "pending", "inactive", "all"]);
 
 function readStoredStatusFilter(storageKey) {
   if (typeof window === "undefined") return DEFAULT_STATUS_FILTER;
@@ -665,7 +668,8 @@ function SetPasswordPage({ onDone }) {
       : completedChecks <= 3
         ? { label: "Media", tone: "medium" }
         : { label: "Fuerte", tone: "strong" };
-  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
+  const passwordsMatch =
+    confirmPassword.length > 0 && password === confirmPassword;
   const formattedInviteExpiration = inviteContext?.expiresAt
     ? new Intl.DateTimeFormat("es-MX", {
         dateStyle: "long",
@@ -749,7 +753,9 @@ function SetPasswordPage({ onDone }) {
       setSuccess(data?.message || "Contrasena configurada correctamente");
       onDone(data.token);
     } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible configurar la contrasena"));
+      setError(
+        getApiErrorMessage(err, "No fue posible configurar la contrasena"),
+      );
     } finally {
       setSaving(false);
     }
@@ -762,13 +768,15 @@ function SetPasswordPage({ onDone }) {
           <p className="password-setup-eyebrow">Acceso seguro</p>
           <h1>Activa tu cuenta con una contrasena clara y fuerte.</h1>
           <p className="password-setup-copy">
-            Este paso deja tu acceso listo. Usa una contrasena facil de recordar para ti
-            y dificil de adivinar para otros.
+            Este paso deja tu acceso listo. Usa una contrasena facil de recordar
+            para ti y dificil de adivinar para otros.
           </p>
           <div className="password-setup-points">
             <div className="password-setup-point">
               <strong>Mas rapido</strong>
-              <span>Ve al grano con un formulario corto y una guia visual inmediata.</span>
+              <span>
+                Ve al grano con un formulario corto y una guia visual inmediata.
+              </span>
             </div>
             <div className="password-setup-point">
               <strong>Mas claro</strong>
@@ -776,7 +784,9 @@ function SetPasswordPage({ onDone }) {
             </div>
             <div className="password-setup-point">
               <strong>Mas seguro</strong>
-              <span>La fortaleza de la contrasena se muestra mientras escribes.</span>
+              <span>
+                La fortaleza de la contrasena se muestra mientras escribes.
+              </span>
             </div>
           </div>
         </aside>
@@ -785,7 +795,8 @@ function SetPasswordPage({ onDone }) {
           <div className="password-setup-header">
             <h2>Configurar contrasena</h2>
             <p className="auth-copy">
-              Define la contrasena con la que vas a entrar al sistema y te redirigiremos al dashboard.
+              Define la contrasena con la que vas a entrar al sistema y te
+              redirigiremos al dashboard.
             </p>
           </div>
 
@@ -800,7 +811,9 @@ function SetPasswordPage({ onDone }) {
               <span>{inviteContext.email}</span>
               <p>
                 Este enlace corresponde a una
-                {inviteContext.purpose === "reset" ? " recuperacion" : " activacion"}
+                {inviteContext.purpose === "reset"
+                  ? " recuperacion"
+                  : " activacion"}
                 de acceso.
               </p>
               {formattedInviteExpiration ? (
@@ -836,7 +849,9 @@ function SetPasswordPage({ onDone }) {
           <div className="password-strength-box">
             <div className="password-strength-head">
               <span>Fortaleza</span>
-              <strong className={`strength-pill strength-pill-${passwordStrength.tone}`}>
+              <strong
+                className={`strength-pill strength-pill-${passwordStrength.tone}`}
+              >
                 {passwordStrength.label}
               </strong>
             </div>
@@ -847,10 +862,18 @@ function SetPasswordPage({ onDone }) {
               />
             </div>
             <div className="password-checklist">
-              <p className={passwordChecks.length ? "is-valid" : ""}>Minimo 8 caracteres</p>
-              <p className={passwordChecks.uppercase ? "is-valid" : ""}>Al menos una mayuscula</p>
-              <p className={passwordChecks.lowercase ? "is-valid" : ""}>Al menos una minuscula</p>
-              <p className={passwordChecks.number ? "is-valid" : ""}>Al menos un numero</p>
+              <p className={passwordChecks.length ? "is-valid" : ""}>
+                Minimo 8 caracteres
+              </p>
+              <p className={passwordChecks.uppercase ? "is-valid" : ""}>
+                Al menos una mayuscula
+              </p>
+              <p className={passwordChecks.lowercase ? "is-valid" : ""}>
+                Al menos una minuscula
+              </p>
+              <p className={passwordChecks.number ? "is-valid" : ""}>
+                Al menos un numero
+              </p>
             </div>
           </div>
 
@@ -878,7 +901,11 @@ function SetPasswordPage({ onDone }) {
 
           <p
             className={`password-match ${
-              confirmPassword.length === 0 ? "" : passwordsMatch ? "is-valid" : "is-invalid"
+              confirmPassword.length === 0
+                ? ""
+                : passwordsMatch
+                  ? "is-valid"
+                  : "is-invalid"
             }`}
           >
             {confirmPassword.length === 0
@@ -900,7 +927,8 @@ function SetPasswordPage({ onDone }) {
           </button>
 
           <p className="auth-hint password-setup-note">
-            Cuando guardes, tu sesion quedara lista y entraras directo al sistema.
+            Cuando guardes, tu sesion quedara lista y entraras directo al
+            sistema.
           </p>
         </form>
       </div>
@@ -931,6 +959,8 @@ function UsersPage({ can }) {
   const [userStatusFilter, setUserStatusFilter] = usePersistedStatusFilter(
     "crm.users.statusFilter",
   );
+  const [usersPerPage, setUsersPerPage] = useState(10);
+  const [usersPage, setUsersPage] = useState(1);
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -1019,6 +1049,20 @@ function UsersPage({ can }) {
       return haystack.includes(q);
     });
   }, [sortedUsers, userQuery, userStatusFilter]);
+
+  // reset to page 1 when filters change
+  useEffect(() => {
+    setUsersPage(1);
+  }, [userQuery, userStatusFilter, usersPerPage]);
+
+  const totalUserPages = Math.max(
+    1,
+    Math.ceil(filteredUsers.length / usersPerPage),
+  );
+  const pagedUsers = filteredUsers.slice(
+    (usersPage - 1) * usersPerPage,
+    usersPage * usersPerPage,
+  );
 
   const userStatusCounts = useMemo(() => {
     return users.reduce(
@@ -1229,18 +1273,30 @@ function UsersPage({ can }) {
 
   return (
     <section className="panel">
-      <div className="users-header-row">
-        <div className="module-title-with-icon">
-          <h2>Usuarios</h2>
-          <span className="module-title-icon module-title-icon-users" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M12 12.25a4.25 4.25 0 1 0-4.25-4.25A4.25 4.25 0 0 0 12 12.25m0 1.5c-3.66 0-6.75 2.2-6.75 4.8 0 .52.42.95.95.95h11.6a.95.95 0 0 0 .95-.95c0-2.6-3.09-4.8-6.75-4.8" />
-            </svg>
-          </span>
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Usuarios</h2>
+            <span
+              className="module-title-icon module-title-icon-users"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 12.25a4.25 4.25 0 1 0-4.25-4.25A4.25 4.25 0 0 0 12 12.25m0 1.5c-3.66 0-6.75 2.2-6.75 4.8 0 .52.42.95.95.95h11.6a.95.95 0 0 0 .95-.95c0-2.6-3.09-4.8-6.75-4.8" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona los usuarios del sistema y sus roles asignados
+          </p>
         </div>
         {can("usuarios.create") && !showCreateForm && (
-          <button type="button" onClick={() => setShowCreateForm(true)}>
-            Crear usuario
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setShowCreateForm(true)}
+          >
+            + Crear usuario
           </button>
         )}
       </div>
@@ -1438,14 +1494,7 @@ function UsersPage({ can }) {
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
 
-      <div className="accounts-status-pills-panel">
-        <div className="accounts-status-pills-copy">
-          <span className="accounts-status-pills-label">Estados visibles</span>
-          <p>
-            Selecciona un estado para mostrar solo los usuarios que
-            correspondan a ese grupo.
-          </p>
-        </div>
+      <div className="roles-pills-bar accounts-pills-bar-row">
         <div
           className="accounts-status-pills"
           role="group"
@@ -1498,12 +1547,10 @@ function UsersPage({ can }) {
             <span className="status-filter-pill-count">{totalUsersCount}</span>
           </button>
         </div>
-      </div>
-
-      <div className="users-list-filters">
         <input
+          className="accounts-search-inline"
           type="text"
-          placeholder="Buscar usuario por nombre, email, móvil, estado o rol"
+          placeholder="Buscar por nombre, email, móvil, estado o rol"
           value={userQuery}
           onChange={(e) => setUserQuery(e.target.value)}
         />
@@ -1571,12 +1618,16 @@ function UsersPage({ can }) {
         </thead>
         <tbody>
           {filteredUsers.length > 0 ? (
-            filteredUsers.map((u) => (
+            pagedUsers.map((u) => (
               <tr key={u.id}>
                 <td>{u.id}</td>
                 <td>
                   <div className="user-name-cell">
-                    <UserAvatar src={u.avatar_url} fullName={u.full_name} size="sm" />
+                    <UserAvatar
+                      src={u.avatar_url}
+                      fullName={u.full_name}
+                      size="sm"
+                    />
                     <span>{u.full_name}</span>
                   </div>
                 </td>
@@ -1662,6 +1713,52 @@ function UsersPage({ can }) {
           )}
         </tbody>
       </table>
+
+      {filteredUsers.length > 0 && (
+        <div className="users-pagination">
+          <div className="users-pagination-left">
+            <span className="users-pagination-info">
+              {(usersPage - 1) * usersPerPage + 1}–
+              {Math.min(usersPage * usersPerPage, filteredUsers.length)} de{" "}
+              {filteredUsers.length}
+            </span>
+          </div>
+          <div className="users-pagination-center">
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={usersPage === 1}
+              onClick={() => setUsersPage((p) => p - 1)}
+            >
+              ‹
+            </button>
+            <span className="users-pagination-pages">
+              {usersPage} / {totalUserPages}
+            </span>
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={usersPage === totalUserPages}
+              onClick={() => setUsersPage((p) => p + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="users-pagination-right">
+            <span className="users-pagination-label">Por página:</span>
+            {[10, 50, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`users-perpage-btn${usersPerPage === n ? " is-active" : ""}`}
+                onClick={() => setUsersPerPage(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {editUser && (
         <div className="modal-overlay" onClick={() => setEditUser(null)}>
@@ -1798,7 +1895,6 @@ function UsersPage({ can }) {
                     ))}
                   </div>
                 </div>
-
               </div>
 
               <section className="account-form-section modal-audit-strip">
@@ -1898,7 +1994,7 @@ function RolesPage({ can, onRefreshCurrentUser }) {
     description: "",
   });
   const [creatingRole, setCreatingRole] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
+  const [roleStatusFilter, setRoleStatusFilter] = useState("active");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [confirmModal, setConfirmModal] = useState({
@@ -1932,9 +2028,10 @@ function RolesPage({ can, onRefreshCurrentUser }) {
 
   async function load() {
     try {
-      const rolesUrl = showInactive
-        ? "/api/roles?includeInactive=1"
-        : "/api/roles";
+      const rolesUrl =
+        roleStatusFilter === "all" || roleStatusFilter === "inactive"
+          ? "/api/roles?includeInactive=1"
+          : "/api/roles";
       const [rolesRes, permsRes] = await Promise.all([
         api.get(rolesUrl),
         api.get("/api/roles/permissions"),
@@ -1963,7 +2060,7 @@ function RolesPage({ can, onRefreshCurrentUser }) {
 
   useEffect(() => {
     load();
-  }, [showInactive]);
+  }, [roleStatusFilter]);
 
   function resetRoleForm() {
     setRoleForm({ name: "", description: "" });
@@ -2097,7 +2194,11 @@ function RolesPage({ can, onRefreshCurrentUser }) {
       await api.patch(`/api/roles/${roleId}/status`, {
         isActive: nextIsActive,
       });
-      if (!nextIsActive && !showInactive && selectedRoleId === roleId) {
+      if (
+        !nextIsActive &&
+        roleStatusFilter === "active" &&
+        selectedRoleId === roleId
+      ) {
         setSelectedRoleId(null);
         setSelectedPerms([]);
       }
@@ -2150,22 +2251,84 @@ function RolesPage({ can, onRefreshCurrentUser }) {
 
   return (
     <section className="panel">
-      <div className="roles-header-row">
-        <h2>Roles y permisos</h2>
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Roles y permisos</h2>
+            <span className="module-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 1a5 5 0 1 1 0 10A5 5 0 0 1 12 1zm0 1.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM3.5 19.5A8.5 8.5 0 0 1 12 13a8.5 8.5 0 0 1 8.5 6.5H3.5zM2 20.5C2.42 16.09 6.8 13 12 13s9.58 3.09 10 7.5H2zM17 14l1.5 1.5L23 11l-1.5-1.5L17 14zm1.5 1.5L17 14l-2 2 1.5 1.5 2-2z" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona los roles del sistema y asigna permisos por módulo
+          </p>
+        </div>
         {can("roles.create") && (
-          <button type="button" onClick={openCreateRoleModal}>
-            Crear rol
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreateRoleModal}
+          >
+            + Crear rol
           </button>
         )}
       </div>
-      <label className="role-filter">
-        <input
-          type="checkbox"
-          checked={showInactive}
-          onChange={(e) => setShowInactive(e.target.checked)}
-        />
-        Mostrar desactivados
-      </label>
+      <div className="roles-pills-bar">
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar roles por estado"
+        >
+          <button
+            type="button"
+            className={
+              roleStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={roleStatusFilter === "active"}
+            onClick={() => setRoleStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activos</span>
+            <span className="status-filter-pill-count">
+              {roles.filter((r) => Number(r.is_active) === 1).length}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              roleStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={roleStatusFilter === "inactive"}
+            onClick={() => setRoleStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivados</span>
+            <span className="status-filter-pill-count">
+              {roles.filter((r) => Number(r.is_active) === 0).length}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              roleStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={roleStatusFilter === "all"}
+            onClick={() => setRoleStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todos</span>
+            <span className="status-filter-pill-count">{roles.length}</span>
+          </button>
+        </div>
+      </div>
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
 
@@ -2184,10 +2347,7 @@ function RolesPage({ can, onRefreshCurrentUser }) {
       />
 
       {(showCreateRoleModal || editingRole) && (
-        <div
-          className="modal-overlay"
-          onClick={closeRoleModal}
-        >
+        <div className="modal-overlay" onClick={closeRoleModal}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">
               {editingRole ? "Editar rol" : "Crear rol"}
@@ -2245,179 +2405,338 @@ function RolesPage({ can, onRefreshCurrentUser }) {
         </div>
       )}
 
-      <div className="split-3">
-        <div>
-          <h3>Roles ({roles.length})</h3>
-          <ul className="list roles-list">
-            {roles.map((r) => (
-              <li
-                key={r.id}
-                className={
-                  Number(r.is_active) === 1 ? "role-row" : "role-row inactive"
+      <div className="roles-workspace">
+        {/* Columna 1: lista de roles */}
+        <div className="roles-col">
+          <div className="roles-col-header">
+            <div className="roles-col-header-left">
+              <span className="roles-col-title">Roles</span>
+              <span className="roles-col-count">
+                {
+                  roles.filter((r) =>
+                    roleStatusFilter === "all"
+                      ? true
+                      : roleStatusFilter === "active"
+                        ? Number(r.is_active) === 1
+                        : Number(r.is_active) === 0,
+                  ).length
                 }
-              >
-                <button
-                  className={selectedRoleId === r.id ? "active" : ""}
-                  onClick={() => selectRole(r.id)}
-                >
-                  <span className="role-header-line">
-                    <span className="role-name">{r.name}</span>{" "}
-                    <span
-                      className={
-                        Number(r.is_active) === 1
-                          ? "role-status-badge active"
-                          : "role-status-badge inactive"
-                      }
-                    >
-                      {Number(r.is_active) === 1 ? "Activo" : "Desactivado"}
-                    </span>{" "}
-                    ({r.permissions_count})
-                  </span>
-                  <span className="role-description">
-                    {r.description || "Sin descripcion"}
-                  </span>
-                </button>
-                {can("roles.update") && Number(r.is_system) !== 1 && (
-                  <div className="user-kebab-wrap role-kebab-wrap">
-                    <button
-                      type="button"
-                      className="kebab-btn"
-                      onClick={() => toggleRoleMenu(r.id)}
-                      aria-label="Abrir acciones del rol"
-                      title="Acciones"
-                    >
-                      ⋮
-                    </button>
-                    {openRoleMenuId === r.id && (
-                      <div className="user-kebab-menu">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenRoleMenuId(null);
-                            openEditRoleModal(r);
-                          }}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={Number(r.is_active) === 1}
-                          onClick={() =>
-                            runRoleAction(() => updateRoleStatus(r, true))
-                          }
-                        >
-                          Activar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={Number(r.is_active) !== 1}
-                          onClick={() =>
-                            runRoleAction(() => updateRoleStatus(r, false))
-                          }
-                        >
-                          Desactivar
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div>
-          <h3>Permisos ({permissions.length})</h3>
-          <div className="checkbox-grid">
-            {permissions.map((p) => (
-              <label key={p.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedPerms.includes(Number(p.id))}
-                  onChange={(e) => {
-                    const permissionId = Number(p.id);
-                    if (e.target.checked) {
-                      setSelectedPerms((prev) => [...prev, permissionId]);
-                    } else {
-                      setSelectedPerms((prev) =>
-                        prev.filter((id) => id !== permissionId),
-                      );
-                    }
-                  }}
-                />
-                {p.code}
-              </label>
-            ))}
+              </span>
+            </div>
           </div>
-          {can("roles.update") && (
-            <button onClick={savePerms}>Guardar permisos</button>
+          <ul className="roles-card-list">
+            {roles
+              .filter((r) =>
+                roleStatusFilter === "all"
+                  ? true
+                  : roleStatusFilter === "active"
+                    ? Number(r.is_active) === 1
+                    : Number(r.is_active) === 0,
+              )
+              .map((r) => (
+                <li
+                  key={r.id}
+                  className={[
+                    "roles-card",
+                    selectedRoleId === r.id ? "is-selected" : "",
+                    Number(r.is_active) === 0 ? "is-inactive" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <button
+                    className="roles-card-btn"
+                    onClick={() => selectRole(r.id)}
+                  >
+                    <div className="roles-card-top">
+                      <span className="roles-card-name">{r.name}</span>
+                      <span
+                        className={
+                          Number(r.is_active) === 1
+                            ? "role-status-badge active"
+                            : "role-status-badge inactive"
+                        }
+                      >
+                        {Number(r.is_active) === 1 ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
+                    <div className="roles-card-meta">
+                      <span className="roles-card-desc">
+                        {r.description || "Sin descripción"}
+                      </span>
+                      <span className="roles-card-perm-count">
+                        {r.permissions_count} permisos
+                      </span>
+                    </div>
+                  </button>
+                  {can("roles.update") && Number(r.is_system) !== 1 && (
+                    <div className="user-kebab-wrap role-kebab-wrap">
+                      <button
+                        type="button"
+                        className="kebab-btn"
+                        onClick={() => toggleRoleMenu(r.id)}
+                        aria-label="Abrir acciones del rol"
+                        title="Acciones"
+                      >
+                        ⋮
+                      </button>
+                      {openRoleMenuId === r.id && (
+                        <div className="user-kebab-menu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenRoleMenuId(null);
+                              openEditRoleModal(r);
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Number(r.is_active) === 1}
+                            onClick={() =>
+                              runRoleAction(() => updateRoleStatus(r, true))
+                            }
+                          >
+                            Activar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Number(r.is_active) !== 1}
+                            onClick={() =>
+                              runRoleAction(() => updateRoleStatus(r, false))
+                            }
+                          >
+                            Desactivar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+          </ul>
+          {selectedRole && (
+            <div className="role-audit-compact">
+              <div className="role-audit-compact-title">Auditoría</div>
+              <div className="audit-item">
+                <span className="audit-label">Creado por</span>
+                <span className="audit-value">
+                  {selectedRole.created_by_user_name || "—"}
+                </span>
+              </div>
+              <div className="audit-item">
+                <span className="audit-label">Fecha creación</span>
+                <span className="audit-value">
+                  {formatDateTime(selectedRole.created_at)}
+                </span>
+              </div>
+              <div className="audit-item">
+                <span className="audit-label">Modificado por</span>
+                <span className="audit-value">
+                  {selectedRole.updated_by_user_name || "—"}
+                </span>
+              </div>
+              <div className="audit-item">
+                <span className="audit-label">Última modificación</span>
+                <span className="audit-value">
+                  {formatDateTime(selectedRole.updated_at)}
+                </span>
+              </div>
+            </div>
           )}
         </div>
 
-        <div>
-          <h3>Usuarios {selectedRoleId ? `(${roleUsers.length})` : ""}</h3>
-          {selectedRoleId ? (
-            <div className="users-list">
-              {roleUsers.length > 0 ? (
-                <ul className="list">
-                  {roleUsers.map((u) => (
-                    <li key={u.id} className="user-item">
-                      <div className="user-name">{u.full_name}</div>
-                      <div className="user-email">{u.email}</div>
-                      <div className="user-status">{u.status}</div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="empty-state">No hay usuarios con este rol</p>
+        {/* Columna 2: permisos */}
+        <div className="roles-col">
+          <div className="roles-col-header">
+            <div className="roles-col-header-left">
+              <span className="roles-col-title">Permisos</span>
+              <span className="roles-col-count">{permissions.length}</span>
+              {can("roles.update") && selectedRoleId && (
+                <button
+                  className="btn-icon-save-perms"
+                  onClick={savePerms}
+                  title="Guardar permisos"
+                  type="button"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                  Guardar
+                </button>
               )}
             </div>
+          </div>
+          {selectedRoleId ? (
+            <div className="permissions-by-module">
+              {Object.entries(
+                permissions.reduce((acc, p) => {
+                  const mod = p.module || "otros";
+                  if (!acc[mod]) acc[mod] = [];
+                  acc[mod].push(p);
+                  return acc;
+                }, {}),
+              ).map(([mod, perms]) => (
+                <div key={mod} className="permission-module-group">
+                  <div className="permission-module-header">
+                    {mod.charAt(0).toUpperCase() + mod.slice(1)}
+                  </div>
+                  <div className="checkbox-grid">
+                    {perms.map((p) => (
+                      <label key={p.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedPerms.includes(Number(p.id))}
+                          onChange={(e) => {
+                            const permissionId = Number(p.id);
+                            if (e.target.checked) {
+                              setSelectedPerms((prev) => [
+                                ...prev,
+                                permissionId,
+                              ]);
+                            } else {
+                              setSelectedPerms((prev) =>
+                                prev.filter((id) => id !== permissionId),
+                              );
+                            }
+                          }}
+                        />
+                        <span className="permission-label">
+                          <span className="permission-code">{p.action}</span>
+                          {p.description && (
+                            <span className="permission-description">
+                              {p.description}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
-            <p className="empty-state">Selecciona un rol para ver usuarios</p>
+            <div className="roles-empty-state">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="36"
+                height="36"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#c0cfe0"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <p>Selecciona un rol para gestionar sus permisos</p>
+            </div>
           )}
         </div>
-      </div>
 
-      <div className="role-audit-panel">
-        <h3>Auditoria del rol</h3>
-        {selectedRole ? (
-          <div className="role-audit-grid">
-            <div className="audit-item">
-              <span className="audit-label">Creado por</span>
-              <span className="audit-value">
-                {selectedRole.created_by_user_name || "No registrado"}
-              </span>
-            </div>
-            <div className="audit-item">
-              <span className="audit-label">Fecha de creacion</span>
-              <span className="audit-value">
-                {formatDateTime(selectedRole.created_at)}
-              </span>
-            </div>
-            <div className="audit-item">
-              <span className="audit-label">Modificado por</span>
-              <span className="audit-value">
-                {selectedRole.updated_by_user_name || "No registrado"}
-              </span>
-            </div>
-            <div className="audit-item">
-              <span className="audit-label">Fecha de modificacion</span>
-              <span className="audit-value">
-                {formatDateTime(selectedRole.updated_at)}
-              </span>
+        {/* Columna 3: usuarios + auditoría */}
+        <div className="roles-col">
+          <div className="roles-col-header">
+            <div className="roles-col-header-left">
+              <span className="roles-col-title">Usuarios asignados</span>
+              {selectedRoleId && (
+                <span className="roles-col-count">{roleUsers.length}</span>
+              )}
             </div>
           </div>
-        ) : (
-          <p className="empty-state">
-            Selecciona un rol para ver datos de creacion y modificacion
-          </p>
-        )}
+          {selectedRoleId ? (
+            <>
+              <div className="users-list">
+                {roleUsers.length > 0 ? (
+                  <ul className="list">
+                    {roleUsers.map((u) => (
+                      <li key={u.id} className="roles-user-item">
+                        <div className="roles-user-avatar">
+                          {u.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="roles-user-info">
+                          <div className="roles-user-name">{u.full_name}</div>
+                          <div className="roles-user-email">{u.email}</div>
+                        </div>
+                        <span
+                          className={
+                            u.status === "active"
+                              ? "role-status-badge active"
+                              : "role-status-badge inactive"
+                          }
+                        >
+                          {u.status === "active" ? "Activo" : "Inactivo"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="roles-empty-state">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="36"
+                      height="36"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#c0cfe0"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <p>No hay usuarios con este rol</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="roles-empty-state">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="36"
+                height="36"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#c0cfe0"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <p>Selecciona un rol para ver sus usuarios</p>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
 }
 
 function AccountsPage({ can, currentUser, token }) {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
   const [accountStatusFilter, setAccountStatusFilter] =
@@ -2425,9 +2744,25 @@ function AccountsPage({ can, currentUser, token }) {
   const [accountQuery, setAccountQuery] = useState("");
   const [accountSortField, setAccountSortField] = useState("id");
   const [accountSortDirection, setAccountSortDirection] = useState("asc");
+  const [accountsPerPage, setAccountsPerPage] = useState(10);
+  const [accountsPage, setAccountsPage] = useState(1);
   const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState(null);
   const [editAccountAudit, setEditAccountAudit] = useState(null);
+  const [editAccountOpportunities, setEditAccountOpportunities] = useState([]);
+  const [loadingAccountOpportunities, setLoadingAccountOpportunities] =
+    useState(false);
+  const [oppSectionStatusFilter, setOppSectionStatusFilter] = useState("all");
+  const [oppSectionYearFilter, setOppSectionYearFilter] = useState(
+    String(new Date().getFullYear()),
+  );
+  const [accountOppsModalAccount, setAccountOppsModalAccount] = useState(null);
+  const [accountContactsModalAccount, setAccountContactsModalAccount] =
+    useState(null);
+  const [editAccountContacts, setEditAccountContacts] = useState([]);
+  const [loadingAccountContacts, setLoadingAccountContacts] = useState(false);
+  const [contactModalStatusFilter, setContactModalStatusFilter] =
+    useState("all");
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [catalogs, setCatalogs] = useState({
@@ -2583,6 +2918,54 @@ function AccountsPage({ can, currentUser, token }) {
     setShowAccountStatusMenu(false);
   }
 
+  async function openAccountOppsModal(account) {
+    setOppSectionStatusFilter("all");
+    setOppSectionYearFilter(String(new Date().getFullYear()));
+    setEditAccountOpportunities([]);
+    setAccountOppsModalAccount(account);
+    setLoadingAccountOpportunities(true);
+    try {
+      const { data: opps } = await api.get(
+        `/api/opportunities?accountId=${account.id}`,
+      );
+      setEditAccountOpportunities(Array.isArray(opps) ? opps : []);
+    } catch {
+      setEditAccountOpportunities([]);
+    } finally {
+      setLoadingAccountOpportunities(false);
+    }
+  }
+
+  function closeAccountOppsModal() {
+    setAccountOppsModalAccount(null);
+    setEditAccountOpportunities([]);
+    setOppSectionStatusFilter("all");
+    setOppSectionYearFilter(String(new Date().getFullYear()));
+  }
+
+  async function openAccountContactsModal(account) {
+    setEditAccountContacts([]);
+    setContactModalStatusFilter("all");
+    setAccountContactsModalAccount(account);
+    setLoadingAccountContacts(true);
+    try {
+      const { data: contacts } = await api.get(
+        `/api/contacts?accountId=${account.id}`,
+      );
+      setEditAccountContacts(Array.isArray(contacts) ? contacts : []);
+    } catch {
+      setEditAccountContacts([]);
+    } finally {
+      setLoadingAccountContacts(false);
+    }
+  }
+
+  function closeAccountContactsModal() {
+    setAccountContactsModalAccount(null);
+    setEditAccountContacts([]);
+    setContactModalStatusFilter("all");
+  }
+
   function formatDateTime(value) {
     if (!value) return "No registrado";
     const date = new Date(value);
@@ -2684,7 +3067,9 @@ function AccountsPage({ can, currentUser, token }) {
   }
 
   function isAccountPending(account) {
-    return normalizeText(account.activation_status) === "pendiente de activacion";
+    return (
+      normalizeText(account.activation_status) === "pendiente de activacion"
+    );
   }
 
   function isAccountInactive(account) {
@@ -2764,6 +3149,20 @@ function AccountsPage({ can, currentUser, token }) {
     });
   }, [sortedAccounts, accountQuery]);
 
+  // reset to page 1 when filters change
+  useEffect(() => {
+    setAccountsPage(1);
+  }, [accountQuery, accountStatusFilter, accountsPerPage]);
+
+  const totalAccountPages = Math.max(
+    1,
+    Math.ceil(visibleAccounts.length / accountsPerPage),
+  );
+  const pagedAccounts = visibleAccounts.slice(
+    (accountsPage - 1) * accountsPerPage,
+    accountsPage * accountsPerPage,
+  );
+
   const accountStatusCounts = useMemo(() => {
     return accounts.reduce(
       (totals, account) => {
@@ -2782,7 +3181,10 @@ function AccountsPage({ can, currentUser, token }) {
     );
   }, [accounts]);
 
-  const totalAccountsCount = accountStatusCounts.active + accountStatusCounts.pending + accountStatusCounts.inactive;
+  const totalAccountsCount =
+    accountStatusCounts.active +
+    accountStatusCounts.pending +
+    accountStatusCounts.inactive;
 
   function toggleAccountSort(field) {
     if (accountSortField === field) {
@@ -2890,30 +3292,36 @@ function AccountsPage({ can, currentUser, token }) {
 
   return (
     <section className="panel">
-      <div className="accounts-header-row">
-        <div className="module-title-with-icon">
-          <h2>Cuentas</h2>
-          <span className="module-title-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M9 6.25a1.75 1.75 0 0 1 1.75-1.75h2.5A1.75 1.75 0 0 1 15 6.25V7h3.25A2.75 2.75 0 0 1 21 9.75v7.5A2.75 2.75 0 0 1 18.25 20h-12.5A2.75 2.75 0 0 1 3 17.25v-7.5A2.75 2.75 0 0 1 5.75 7H9zm1.5.75h3v-.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25zM4.5 11.5h15v5.75c0 .69-.56 1.25-1.25 1.25H5.75c-.69 0-1.25-.56-1.25-1.25zm15-1.5h-15v-.25c0-.69.56-1.25 1.25-1.25h12.5c.69 0 1.25.56 1.25 1.25z" />
-            </svg>
-          </span>
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Cuentas</h2>
+            <span className="module-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M9 6.25a1.75 1.75 0 0 1 1.75-1.75h2.5A1.75 1.75 0 0 1 15 6.25V7h3.25A2.75 2.75 0 0 1 21 9.75v7.5A2.75 2.75 0 0 1 18.25 20h-12.5A2.75 2.75 0 0 1 3 17.25v-7.5A2.75 2.75 0 0 1 5.75 7H9zm1.5.75h3v-.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25zM4.5 11.5h15v5.75c0 .69-.56 1.25-1.25 1.25H5.75c-.69 0-1.25-.56-1.25-1.25zm15-1.5h-15v-.25c0-.69.56-1.25 1.25-1.25h12.5c.69 0 1.25.56 1.25 1.25z" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona las cuentas del sistema y sus datos de contacto
+          </p>
         </div>
         {canCreateOrRequestAccounts && (
-          <button type="button" onClick={openCreateAccountModal}>
-            Crear cuenta
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreateAccountModal}
+          >
+            + Crear cuenta
           </button>
         )}
       </div>
-      <div className="accounts-status-pills-panel">
-        <div className="accounts-status-pills-copy">
-          <span className="accounts-status-pills-label">Estados visibles</span>
-          <p>
-            Selecciona un estado para mostrar solo las cuentas que correspondan
-            a ese grupo.
-          </p>
-        </div>
-        <div className="accounts-status-pills" role="group" aria-label="Filtrar cuentas por estado">
+      <div className="roles-pills-bar accounts-pills-bar-row">
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar cuentas por estado"
+        >
           <button
             type="button"
             className={
@@ -2974,15 +3382,15 @@ function AccountsPage({ can, currentUser, token }) {
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Todas</span>
-            <span className="status-filter-pill-count">{totalAccountsCount}</span>
+            <span className="status-filter-pill-count">
+              {totalAccountsCount}
+            </span>
           </button>
         </div>
-      </div>
-
-      <div className="accounts-list-filters">
         <input
+          className="accounts-search-inline"
           type="text"
-          placeholder="Buscar cuenta por ID, nombre, tipo, pais, registro o estado"
+          placeholder="Buscar por ID, nombre, tipo, país, registro o estado"
           value={accountQuery}
           onChange={(e) => setAccountQuery(e.target.value)}
         />
@@ -3390,7 +3798,7 @@ function AccountsPage({ can, currentUser, token }) {
         </thead>
         <tbody>
           {visibleAccounts.length > 0 ? (
-            visibleAccounts.map((a) => (
+            pagedAccounts.map((a) => (
               <tr key={a.id}>
                 <td>{a.id}</td>
                 <td>{a.name}</td>
@@ -3447,7 +3855,9 @@ function AccountsPage({ can, currentUser, token }) {
                         </button>
                         <button
                           type="button"
-                          disabled={!canActivateAccounts || isAccountInactive(a)}
+                          disabled={
+                            !canActivateAccounts || isAccountInactive(a)
+                          }
                           onClick={() =>
                             runAccountAction(() =>
                               updateAccountStatus(a, "desactivada"),
@@ -3456,6 +3866,28 @@ function AccountsPage({ can, currentUser, token }) {
                         >
                           Desactivar
                         </button>
+                        {can("oportunidades.read") && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runAccountAction(() => openAccountOppsModal(a))
+                            }
+                          >
+                            Oportunidades
+                          </button>
+                        )}
+                        {can("contactos.read") && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runAccountAction(() =>
+                                openAccountContactsModal(a),
+                              )
+                            }
+                          >
+                            Contactos
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3471,11 +3903,383 @@ function AccountsPage({ can, currentUser, token }) {
           )}
         </tbody>
       </table>
+
+      {visibleAccounts.length > 0 && (
+        <div className="users-pagination">
+          <div className="users-pagination-left">
+            <span className="users-pagination-info">
+              {(accountsPage - 1) * accountsPerPage + 1}–
+              {Math.min(accountsPage * accountsPerPage, visibleAccounts.length)}{" "}
+              de {visibleAccounts.length}
+            </span>
+          </div>
+          <div className="users-pagination-center">
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={accountsPage === 1}
+              onClick={() => setAccountsPage((p) => p - 1)}
+            >
+              ‹
+            </button>
+            <span className="users-pagination-pages">
+              {accountsPage} / {totalAccountPages}
+            </span>
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={accountsPage === totalAccountPages}
+              onClick={() => setAccountsPage((p) => p + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="users-pagination-right">
+            <span className="users-pagination-label">Por página:</span>
+            {[10, 50, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`users-perpage-btn${accountsPerPage === n ? " is-active" : ""}`}
+                onClick={() => setAccountsPerPage(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {accountOppsModalAccount &&
+        (() => {
+          const oppCloseYears = [
+            ...new Set(
+              editAccountOpportunities
+                .map((o) =>
+                  o.close_date ? new Date(o.close_date).getFullYear() : null,
+                )
+                .filter(Boolean),
+            ),
+          ].sort((a, b) => b - a);
+
+          const visibleOpps = editAccountOpportunities.filter((o) => {
+            if (
+              oppSectionStatusFilter !== "all" &&
+              normalizeText(o.activation_status) !==
+                normalizeText(oppSectionStatusFilter)
+            )
+              return false;
+            if (oppSectionYearFilter !== "all" && o.close_date) {
+              if (
+                String(new Date(o.close_date).getFullYear()) !==
+                oppSectionYearFilter
+              )
+                return false;
+            } else if (oppSectionYearFilter !== "all" && !o.close_date) {
+              return false;
+            }
+            return true;
+          });
+
+          return (
+            <div
+              className="modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Oportunidades de ${accountOppsModalAccount.name}`}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) closeAccountOppsModal();
+              }}
+            >
+              <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+                <div className="modal-header">
+                  <h3 className="modal-title">
+                    Oportunidades &mdash;{" "}
+                    <span style={{ fontWeight: 400 }}>
+                      {accountOppsModalAccount.name}
+                    </span>
+                  </h3>
+                </div>
+
+                {!loadingAccountOpportunities &&
+                  editAccountOpportunities.length > 0 && (
+                    <div className="account-opps-filters">
+                      <div
+                        className="account-opps-pills"
+                        role="group"
+                        aria-label="Filtrar por estado"
+                      >
+                        {[
+                          "activada",
+                          "pendiente de activacion",
+                          "desactivada",
+                          "all",
+                        ].map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            className={`account-opps-pill account-opps-pill--${s === "all" ? "all" : s === "activada" ? "active" : s === "pendiente de activacion" ? "pending" : "inactive"}${
+                              oppSectionStatusFilter === s ? " is-active" : ""
+                            }`}
+                            onClick={() => setOppSectionStatusFilter(s)}
+                          >
+                            {s === "all"
+                              ? "Todas"
+                              : s === "activada"
+                                ? "Activadas"
+                                : s === "pendiente de activacion"
+                                  ? "Pendientes"
+                                  : "Desactivadas"}
+                          </button>
+                        ))}
+                      </div>
+                      {oppCloseYears.length > 0 && (
+                        <select
+                          className="account-opps-year-select"
+                          value={oppSectionYearFilter}
+                          onChange={(e) =>
+                            setOppSectionYearFilter(e.target.value)
+                          }
+                          aria-label="Filtrar por año de cierre"
+                        >
+                          <option value="all">Todos los años</option>
+                          {oppCloseYears.map((y) => (
+                            <option key={y} value={String(y)}>
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                {loadingAccountOpportunities ? (
+                  <p className="account-opps-empty">
+                    Cargando oportunidades...
+                  </p>
+                ) : editAccountOpportunities.length === 0 ? (
+                  <p className="account-opps-empty">
+                    No hay oportunidades registradas para esta cuenta.
+                  </p>
+                ) : visibleOpps.length === 0 ? (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                ) : (
+                  <div className="account-opps-list">
+                    {visibleOpps.map((opp) => (
+                      <div
+                        key={opp.id}
+                        className="account-opp-row account-opp-row--clickable"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          closeAccountOppsModal();
+                          navigate(`/opportunities?edit=${opp.id}`);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            closeAccountOppsModal();
+                            navigate(`/opportunities?edit=${opp.id}`);
+                          }
+                        }}
+                      >
+                        <div className="account-opp-main">
+                          <span className="account-opp-name">{opp.name}</span>
+                          <span
+                            className={(() => {
+                              const s = normalizeText(opp.activation_status);
+                              if (s === "activada")
+                                return "user-status-badge active";
+                              if (s === "pendiente de activacion")
+                                return "user-status-badge pending";
+                              return "user-status-badge inactive";
+                            })()}
+                          >
+                            {opp.activation_status || "-"}
+                          </span>
+                        </div>
+                        <div className="account-opp-meta">
+                          <span>{opp.sales_stage}</span>
+                          <span>{opp.business_line}</span>
+                          <span>
+                            {Number(opp.amount_usd).toLocaleString("es-MX", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 0,
+                            })}
+                          </span>
+                          <span>
+                            Cierre:{" "}
+                            {opp.close_date
+                              ? new Date(opp.close_date).toLocaleDateString(
+                                  "es-MX",
+                                )
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="modal-buttons" style={{ marginTop: 16 }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={closeAccountOppsModal}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {accountContactsModalAccount && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Contactos de ${accountContactsModalAccount.name}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeAccountContactsModal();
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Contactos &mdash;{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {accountContactsModalAccount.name}
+                </span>
+              </h3>
+            </div>
+
+            {!loadingAccountContacts && editAccountContacts.length > 0 && (
+              <div className="account-opps-filters">
+                <div
+                  className="account-opps-pills"
+                  role="group"
+                  aria-label="Filtrar por estado"
+                >
+                  {[
+                    "activado",
+                    "pendiente de activacion",
+                    "desactivado",
+                    "all",
+                  ].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`account-opps-pill account-opps-pill--${
+                        s === "all"
+                          ? "all"
+                          : s === "activado"
+                            ? "active"
+                            : s === "pendiente de activacion"
+                              ? "pending"
+                              : "inactive"
+                      }${contactModalStatusFilter === s ? " is-active" : ""}`}
+                      onClick={() => setContactModalStatusFilter(s)}
+                    >
+                      {s === "all"
+                        ? "Todas"
+                        : s === "activado"
+                          ? "Activados"
+                          : s === "pendiente de activacion"
+                            ? "Pendientes"
+                            : "Desactivados"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(() => {
+              const visibleContacts =
+                contactModalStatusFilter === "all"
+                  ? editAccountContacts
+                  : editAccountContacts.filter(
+                      (c) =>
+                        normalizeText(c.activation_status) ===
+                        contactModalStatusFilter,
+                    );
+              return loadingAccountContacts ? (
+                <p className="account-opps-empty">Cargando contactos...</p>
+              ) : editAccountContacts.length === 0 ? (
+                <p className="account-opps-empty">
+                  No hay contactos registrados para esta cuenta.
+                </p>
+              ) : visibleContacts.length === 0 ? (
+                <p className="account-opps-empty">
+                  Sin resultados para el filtro seleccionado.
+                </p>
+              ) : (
+                <div className="account-opps-list">
+                  {visibleContacts.map((c) => (
+                    <div
+                      key={c.id}
+                      className="account-opp-row account-opp-row--clickable"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        closeAccountContactsModal();
+                        navigate(`/contacts?edit=${c.id}`);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          closeAccountContactsModal();
+                          navigate(`/contacts?edit=${c.id}`);
+                        }
+                      }}
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">{c.full_name}</span>
+                        <span
+                          className={(() => {
+                            const s = normalizeText(c.activation_status);
+                            if (s === "activado")
+                              return "user-status-badge active";
+                            if (s === "pendiente de activacion")
+                              return "user-status-badge pending";
+                            return "user-status-badge inactive";
+                          })()}
+                        >
+                          {c.activation_status || "-"}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>{c.position_title || "—"}</span>
+                        <span>{c.relationship_type || "—"}</span>
+                        {c.email && <span>{c.email}</span>}
+                        {c.phone && <span>{c.phone}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeAccountContactsModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
 function OpportunitiesPage({ can, currentUser }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [opportunities, setOpportunities] = useState([]);
   const [opportunityStatusFilter, setOpportunityStatusFilter] =
     usePersistedStatusFilter("crm.opportunities.statusFilter");
@@ -3483,6 +4287,8 @@ function OpportunitiesPage({ can, currentUser }) {
   const [opportunitySortField, setOpportunitySortField] = useState("id");
   const [opportunitySortDirection, setOpportunitySortDirection] =
     useState("asc");
+  const [opportunitiesPerPage, setOpportunitiesPerPage] = useState(10);
+  const [opportunitiesPage, setOpportunitiesPage] = useState(1);
   const [showOpportunityModal, setShowOpportunityModal] = useState(false);
   const [editingOpportunityId, setEditingOpportunityId] = useState(null);
   const [editOpportunityAudit, setEditOpportunityAudit] = useState(null);
@@ -3600,6 +4406,13 @@ function OpportunitiesPage({ can, currentUser }) {
     load();
   }, []);
 
+  useEffect(() => {
+    const editId = searchParams.get("edit");
+    if (!editId) return;
+    setSearchParams({}, { replace: true });
+    openEditOpportunityModal(Number(editId));
+  }, [searchParams]);
+
   function buildDefaultOpportunityForm() {
     const defaultSellerUserId =
       (currentUser?.roles || []).some(
@@ -3635,7 +4448,8 @@ function OpportunitiesPage({ can, currentUser }) {
       ...prev,
       salesStageId: prev.salesStageId || defaults.salesStageId,
       sellerUserId: prev.sellerUserId || defaults.sellerUserId,
-      activationStatusId: prev.activationStatusId || defaults.activationStatusId,
+      activationStatusId:
+        prev.activationStatusId || defaults.activationStatusId,
     }));
   }, [showOpportunityModal, editingOpportunityId, catalogs, currentUser]);
 
@@ -3701,8 +4515,7 @@ function OpportunitiesPage({ can, currentUser }) {
 
   function isOpportunityPending(opportunity) {
     return (
-      normalizeText(opportunity.activation_status) ===
-      "pendiente de activacion"
+      normalizeText(opportunity.activation_status) === "pendiente de activacion"
     );
   }
 
@@ -3771,14 +4584,22 @@ function OpportunitiesPage({ can, currentUser }) {
 
     const readValue = (opportunity) => {
       if (opportunitySortField === "id") return Number(opportunity.id) || 0;
-      if (opportunitySortField === "nombre") return String(opportunity.name || "");
-      if (opportunitySortField === "cuenta") return String(opportunity.account_name || "");
-      if (opportunitySortField === "vendedor") return String(opportunity.seller_user_name || "");
-      if (opportunitySortField === "preventa") return String(opportunity.presales_user_name || "");
-      if (opportunitySortField === "etapa") return String(opportunity.sales_stage || "");
-      if (opportunitySortField === "importe") return Number(opportunity.amount_usd) || 0;
-      if (opportunitySortField === "cierre") return String(opportunity.close_date || "");
-      if (opportunitySortField === "estado") return String(getOpportunityStatusLabel(opportunity));
+      if (opportunitySortField === "nombre")
+        return String(opportunity.name || "");
+      if (opportunitySortField === "cuenta")
+        return String(opportunity.account_name || "");
+      if (opportunitySortField === "vendedor")
+        return String(opportunity.seller_user_name || "");
+      if (opportunitySortField === "preventa")
+        return String(opportunity.presales_user_name || "");
+      if (opportunitySortField === "etapa")
+        return String(opportunity.sales_stage || "");
+      if (opportunitySortField === "importe")
+        return Number(opportunity.amount_usd) || 0;
+      if (opportunitySortField === "cierre")
+        return String(opportunity.close_date || "");
+      if (opportunitySortField === "estado")
+        return String(getOpportunityStatusLabel(opportunity));
       return "";
     };
 
@@ -3826,6 +4647,20 @@ function OpportunitiesPage({ can, currentUser }) {
     });
   }, [sortedOpportunities, opportunityQuery]);
 
+  // reset to page 1 when filters change
+  useEffect(() => {
+    setOpportunitiesPage(1);
+  }, [opportunityQuery, opportunityStatusFilter, opportunitiesPerPage]);
+
+  const totalOpportunityPages = Math.max(
+    1,
+    Math.ceil(visibleOpportunities.length / opportunitiesPerPage),
+  );
+  const pagedOpportunities = visibleOpportunities.slice(
+    (opportunitiesPage - 1) * opportunitiesPerPage,
+    opportunitiesPage * opportunitiesPerPage,
+  );
+
   function toggleOpportunitySort(field) {
     if (opportunitySortField === field) {
       setOpportunitySortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -3864,7 +4699,8 @@ function OpportunitiesPage({ can, currentUser }) {
     const hasDecimal = rawValue.includes(".");
     const [integerPartRaw, ...decimalRest] = rawValue.split(".");
     const decimalPart = decimalRest.join("");
-    const integerPartNormalized = integerPartRaw.replace(/^0+(?=\d)/, "") || "0";
+    const integerPartNormalized =
+      integerPartRaw.replace(/^0+(?=\d)/, "") || "0";
     const formattedInteger = integerPartNormalized.replace(
       /\B(?=(\d{3})+(?!\d))/g,
       ",",
@@ -3879,8 +4715,9 @@ function OpportunitiesPage({ can, currentUser }) {
   }
 
   const currentSalesStageName =
-    catalogs.stages.find((stage) => String(stage.id) === String(form.salesStageId))
-      ?.name || "";
+    catalogs.stages.find(
+      (stage) => String(stage.id) === String(form.salesStageId),
+    )?.name || "";
 
   async function saveOpportunity(e) {
     e.preventDefault();
@@ -3902,7 +4739,9 @@ function OpportunitiesPage({ can, currentUser }) {
         salesStageId: Number(form.salesStageId),
         businessLineId: Number(form.businessLineId),
         sellerUserId: Number(form.sellerUserId),
-        presalesUserId: form.presalesUserId ? Number(form.presalesUserId) : null,
+        presalesUserId: form.presalesUserId
+          ? Number(form.presalesUserId)
+          : null,
         activationStatusId: Number(form.activationStatusId),
       };
 
@@ -3933,7 +4772,9 @@ function OpportunitiesPage({ can, currentUser }) {
           return;
         }
       }
-      setError(getApiErrorMessage(err, "No fue posible guardar la oportunidad"));
+      setError(
+        getApiErrorMessage(err, "No fue posible guardar la oportunidad"),
+      );
     } finally {
       setSavingOpportunity(false);
     }
@@ -3992,34 +4833,36 @@ function OpportunitiesPage({ can, currentUser }) {
 
   return (
     <section className="panel">
-      <div className="accounts-header-row">
-        <div className="module-title-with-icon">
-          <h2>Oportunidades</h2>
-          <span
-            className="module-title-icon module-title-icon-opportunities"
-            aria-hidden="true"
-          >
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M5 18.5a.75.75 0 0 1-.75-.75V6.25A2.25 2.25 0 0 1 6.5 4h11a2.25 2.25 0 0 1 2.25 2.25v11.5a.75.75 0 0 1-1.5 0V6.25a.75.75 0 0 0-.75-.75h-11a.75.75 0 0 0-.75.75v11.5a.75.75 0 0 1-.75.75" />
-              <path d="M8.25 15.75a.75.75 0 0 1-.53-1.28l2.72-2.72a.75.75 0 0 1 1.06 0l1.25 1.25 3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L11 13.34l-2.19 2.19a.75.75 0 0 1-.56.22" />
-            </svg>
-          </span>
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Oportunidades</h2>
+            <span
+              className="module-title-icon module-title-icon-opportunities"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M5 18.5a.75.75 0 0 1-.75-.75V6.25A2.25 2.25 0 0 1 6.5 4h11a2.25 2.25 0 0 1 2.25 2.25v11.5a.75.75 0 0 1-1.5 0V6.25a.75.75 0 0 0-.75-.75h-11a.75.75 0 0 0-.75.75v11.5a.75.75 0 0 1-.75.75" />
+                <path d="M8.25 15.75a.75.75 0 0 1-.53-1.28l2.72-2.72a.75.75 0 0 1 1.06 0l1.25 1.25 3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L11 13.34l-2.19 2.19a.75.75 0 0 1-.56.22" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona las oportunidades comerciales y su seguimiento
+          </p>
         </div>
         {canCreateOrRequestOpportunities && (
-          <button type="button" onClick={openCreateOpportunityModal}>
-            Crear oportunidad
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreateOpportunityModal}
+          >
+            + Crear oportunidad
           </button>
         )}
       </div>
 
-      <div className="accounts-status-pills-panel">
-        <div className="accounts-status-pills-copy">
-          <span className="accounts-status-pills-label">Estados visibles</span>
-          <p>
-            Selecciona un estado para mostrar solo las oportunidades que
-            correspondan a ese grupo.
-          </p>
-        </div>
+      <div className="roles-pills-bar accounts-pills-bar-row">
         <div
           className="accounts-status-pills"
           role="group"
@@ -4090,12 +4933,10 @@ function OpportunitiesPage({ can, currentUser }) {
             </span>
           </button>
         </div>
-      </div>
-
-      <div className="accounts-list-filters">
         <input
+          className="accounts-search-inline"
           type="text"
-          placeholder="Buscar oportunidad por nombre, id, cuenta, vendedor, contacto, etapa, linea o preventa"
+          placeholder="Buscar por nombre, ID, cuenta, vendedor, contacto, etapa o línea"
           value={opportunityQuery}
           onChange={(e) => setOpportunityQuery(e.target.value)}
         />
@@ -4109,11 +4950,16 @@ function OpportunitiesPage({ can, currentUser }) {
           >
             <div className="modal-header">
               <h3 className="modal-title">
-                {editingOpportunityId ? "Editar oportunidad" : "Crear oportunidad"}
+                {editingOpportunityId
+                  ? "Editar oportunidad"
+                  : "Crear oportunidad"}
               </h3>
               {editingOpportunityId && editOpportunityAudit ? (
                 <div className="opportunity-modal-header-meta">
-                  <span className="record-id-badge" title="ID de la oportunidad">
+                  <span
+                    className="record-id-badge"
+                    title="ID de la oportunidad"
+                  >
                     <span className="record-id-icon" aria-hidden="true">
                       #
                     </span>
@@ -4140,17 +4986,22 @@ function OpportunitiesPage({ can, currentUser }) {
 
             {!editingOpportunityId && (
               <p className="field-hint">
-                El ID de la oportunidad se asigna automaticamente y coincide con el ID interno.
+                El ID de la oportunidad se asigna automaticamente y coincide con
+                el ID interno.
               </p>
             )}
 
-            <form className="account-create-form in-modal" onSubmit={saveOpportunity}>
+            <form
+              className="account-create-form in-modal"
+              onSubmit={saveOpportunity}
+            >
               <section className="account-form-section">
                 <h4>Datos principales</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
                     <label>
-                      Nombre de la oportunidad <span className="required-mark">*</span>
+                      Nombre de la oportunidad{" "}
+                      <span className="required-mark">*</span>
                     </label>
                     <input
                       value={form.name}
@@ -4162,7 +5013,8 @@ function OpportunitiesPage({ can, currentUser }) {
                   </div>
                   <div className="field-group">
                     <label>
-                      Importe en dólares <span className="required-mark">*</span>
+                      Importe en dólares{" "}
+                      <span className="required-mark">*</span>
                     </label>
                     <input
                       type="text"
@@ -4172,7 +5024,9 @@ function OpportunitiesPage({ can, currentUser }) {
                       onChange={(e) =>
                         setForm((prev) => ({
                           ...prev,
-                          amountUsd: formatOpportunityAmountInput(e.target.value),
+                          amountUsd: formatOpportunityAmountInput(
+                            e.target.value,
+                          ),
                         }))
                       }
                       required
@@ -4186,7 +5040,10 @@ function OpportunitiesPage({ can, currentUser }) {
                       type="date"
                       value={form.closeDate}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, closeDate: e.target.value }))
+                        setForm((prev) => ({
+                          ...prev,
+                          closeDate: e.target.value,
+                        }))
                       }
                       required
                     />
@@ -4216,12 +5073,16 @@ function OpportunitiesPage({ can, currentUser }) {
                   </div>
                   <div className="field-group">
                     <label>
-                      Contacto de la cuenta <span className="required-mark">*</span>
+                      Contacto de la cuenta{" "}
+                      <span className="required-mark">*</span>
                     </label>
                     <select
                       value={form.contactId}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, contactId: e.target.value }))
+                        setForm((prev) => ({
+                          ...prev,
+                          contactId: e.target.value,
+                        }))
                       }
                       required
                     >
@@ -4487,7 +5348,7 @@ function OpportunitiesPage({ can, currentUser }) {
         </thead>
         <tbody>
           {visibleOpportunities.length > 0 ? (
-            visibleOpportunities.map((opportunity) => (
+            pagedOpportunities.map((opportunity) => (
               <tr key={opportunity.id}>
                 <td>{opportunity.id}</td>
                 <td>{opportunity.name}</td>
@@ -4569,7 +5430,10 @@ function OpportunitiesPage({ can, currentUser }) {
                           }
                           onClick={() =>
                             runOpportunityAction(() =>
-                              updateOpportunityStatus(opportunity, "desactivada"),
+                              updateOpportunityStatus(
+                                opportunity,
+                                "desactivada",
+                              ),
                             )
                           }
                         >
@@ -4590,17 +5454,69 @@ function OpportunitiesPage({ can, currentUser }) {
           )}
         </tbody>
       </table>
+
+      {visibleOpportunities.length > 0 && (
+        <div className="users-pagination">
+          <div className="users-pagination-left">
+            <span className="users-pagination-info">
+              {(opportunitiesPage - 1) * opportunitiesPerPage + 1}–
+              {Math.min(
+                opportunitiesPage * opportunitiesPerPage,
+                visibleOpportunities.length,
+              )}{" "}
+              de {visibleOpportunities.length}
+            </span>
+          </div>
+          <div className="users-pagination-center">
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={opportunitiesPage === 1}
+              onClick={() => setOpportunitiesPage((p) => p - 1)}
+            >
+              ‹
+            </button>
+            <span className="users-pagination-pages">
+              {opportunitiesPage} / {totalOpportunityPages}
+            </span>
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={opportunitiesPage === totalOpportunityPages}
+              onClick={() => setOpportunitiesPage((p) => p + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="users-pagination-right">
+            <span className="users-pagination-label">Por página:</span>
+            {[10, 50, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`users-perpage-btn${opportunitiesPerPage === n ? " is-active" : ""}`}
+                onClick={() => setOpportunitiesPerPage(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
 function ContactsPage({ can, token, currentUser }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
   const [contactStatusFilter, setContactStatusFilter] =
     usePersistedStatusFilter("crm.contacts.statusFilter");
   const [contactQuery, setContactQuery] = useState("");
   const [contactSortField, setContactSortField] = useState("id");
   const [contactSortDirection, setContactSortDirection] = useState("asc");
+  const [contactsPerPage, setContactsPerPage] = useState(10);
+  const [contactsPage, setContactsPage] = useState(1);
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactAudit, setEditContactAudit] = useState(null);
@@ -4740,6 +5656,13 @@ function ContactsPage({ can, token, currentUser }) {
   }, []);
 
   useEffect(() => {
+    const editId = searchParams.get("edit");
+    if (!editId) return;
+    setSearchParams({}, { replace: true });
+    openEditContactModal(Number(editId));
+  }, [searchParams]);
+
+  useEffect(() => {
     if (!showContactModal || editingContactId) return;
 
     setForm((prev) => ({
@@ -4751,9 +5674,11 @@ function ContactsPage({ can, token, currentUser }) {
         prev.relationshipTypeId ||
         findCatalogIdByCode(catalogs.relationshipTypes, "ninguno"),
       employmentStatusId:
-        prev.employmentStatusId || String(catalogs.employmentStatuses?.[0]?.id || ""),
+        prev.employmentStatusId ||
+        String(catalogs.employmentStatuses?.[0]?.id || ""),
       activationStatusId:
-        prev.activationStatusId || String(catalogs.activationStatuses?.[0]?.id || ""),
+        prev.activationStatusId ||
+        String(catalogs.activationStatuses?.[0]?.id || ""),
       ...(prev.accountId ? getAccountLocationFields(prev.accountId) : null),
     }));
   }, [showContactModal, editingContactId, catalogs]);
@@ -4976,6 +5901,20 @@ function ContactsPage({ can, token, currentUser }) {
     });
   }, [sortedContacts, contactQuery]);
 
+  // reset to page 1 when filters change
+  useEffect(() => {
+    setContactsPage(1);
+  }, [contactQuery, contactStatusFilter, contactsPerPage]);
+
+  const totalContactPages = Math.max(
+    1,
+    Math.ceil(visibleContacts.length / contactsPerPage),
+  );
+  const pagedContacts = visibleContacts.slice(
+    (contactsPage - 1) * contactsPerPage,
+    contactsPage * contactsPerPage,
+  );
+
   function toggleContactSort(field) {
     if (contactSortField === field) {
       setContactSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -5118,34 +6057,36 @@ function ContactsPage({ can, token, currentUser }) {
 
   return (
     <section className="panel">
-      <div className="accounts-header-row">
-        <div className="module-title-with-icon">
-          <h2>Contactos</h2>
-          <span
-            className="module-title-icon module-title-icon-contacts"
-            aria-hidden="true"
-          >
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M7 4.5A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5V7A2.5 2.5 0 0 0 17 4.5zm0 1.5h10c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1V7c0-.55.45-1 1-1" />
-              <path d="M12 8.25a2.25 2.25 0 1 0 2.25 2.25A2.25 2.25 0 0 0 12 8.25m0 6c-1.94 0-3.75.97-3.75 2.1a.65.65 0 0 0 .65.65h6.2a.65.65 0 0 0 .65-.65c0-1.13-1.81-2.1-3.75-2.1" />
-            </svg>
-          </span>
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Contactos</h2>
+            <span
+              className="module-title-icon module-title-icon-contacts"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M7 4.5A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5V7A2.5 2.5 0 0 0 17 4.5zm0 1.5h10c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1V7c0-.55.45-1 1-1" />
+                <path d="M12 8.25a2.25 2.25 0 1 0 2.25 2.25A2.25 2.25 0 0 0 12 8.25m0 6c-1.94 0-3.75.97-3.75 2.1a.65.65 0 0 0 .65.65h6.2a.65.65 0 0 0 .65-.65c0-1.13-1.81-2.1-3.75-2.1" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona los contactos del sistema y sus datos de comunicación
+          </p>
         </div>
         {canCreateOrRequestContacts && (
-          <button type="button" onClick={openCreateContactModal}>
-            Crear contacto
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreateContactModal}
+          >
+            + Crear contacto
           </button>
         )}
       </div>
 
-      <div className="accounts-status-pills-panel">
-        <div className="accounts-status-pills-copy">
-          <span className="accounts-status-pills-label">Estados visibles</span>
-          <p>
-            Selecciona un estado para mostrar solo los contactos que
-            correspondan a ese grupo.
-          </p>
-        </div>
+      <div className="roles-pills-bar accounts-pills-bar-row">
         <div
           className="accounts-status-pills"
           role="group"
@@ -5216,12 +6157,10 @@ function ContactsPage({ can, token, currentUser }) {
             </span>
           </button>
         </div>
-      </div>
-
-      <div className="accounts-list-filters">
         <input
+          className="accounts-search-inline"
           type="text"
-          placeholder="Buscar contacto por nombre, cuenta, cargo, email, móvil o estado"
+          placeholder="Buscar por nombre, cuenta, cargo, email, móvil o estado"
           value={contactQuery}
           onChange={(e) => setContactQuery(e.target.value)}
         />
@@ -5706,7 +6645,7 @@ function ContactsPage({ can, token, currentUser }) {
         </thead>
         <tbody>
           {visibleContacts.length > 0 ? (
-            visibleContacts.map((c) => (
+            pagedContacts.map((c) => (
               <tr key={c.id}>
                 <td>{c.id}</td>
                 <td>{c.full_name}</td>
@@ -5796,6 +6735,52 @@ function ContactsPage({ can, token, currentUser }) {
           )}
         </tbody>
       </table>
+
+      {visibleContacts.length > 0 && (
+        <div className="users-pagination">
+          <div className="users-pagination-left">
+            <span className="users-pagination-info">
+              {(contactsPage - 1) * contactsPerPage + 1}–
+              {Math.min(contactsPage * contactsPerPage, visibleContacts.length)}{" "}
+              de {visibleContacts.length}
+            </span>
+          </div>
+          <div className="users-pagination-center">
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={contactsPage === 1}
+              onClick={() => setContactsPage((p) => p - 1)}
+            >
+              ‹
+            </button>
+            <span className="users-pagination-pages">
+              {contactsPage} / {totalContactPages}
+            </span>
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={contactsPage === totalContactPages}
+              onClick={() => setContactsPage((p) => p + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="users-pagination-right">
+            <span className="users-pagination-label">Por página:</span>
+            {[10, 50, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`users-perpage-btn${contactsPerPage === n ? " is-active" : ""}`}
+                onClick={() => setContactsPerPage(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

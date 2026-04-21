@@ -38,7 +38,11 @@ function applyOwnedAccountScope({ user, accountExpression, params }) {
   return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountExpression} AND ao_scope.user_id = ?`;
 }
 
-async function requireAccessibleOpportunityOr404({ user, opportunityId, message }) {
+async function requireAccessibleOpportunityOr404({
+  user,
+  opportunityId,
+  message,
+}) {
   const params = [];
   const ownershipJoin = applyOwnedAccountScope({
     user,
@@ -188,6 +192,17 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
     accountExpression: "o.account_id",
     params,
   });
+
+  const accountIdFilter = req.query.accountId
+    ? Number(req.query.accountId)
+    : null;
+  if (accountIdFilter !== null) {
+    if (!Number.isInteger(accountIdFilter) || accountIdFilter <= 0) {
+      return res.status(400).json({ message: "accountId invalido" });
+    }
+    params.push(accountIdFilter);
+  }
+
   const rows = await query(
     `SELECT o.id, o.name, o.amount_usd, o.close_date,
             a.id AS account_id, a.name AS account_name,
@@ -212,6 +227,7 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
      INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
      INNER JOIN users u1 ON u1.id = o.created_by
      INNER JOIN users u2 ON u2.id = o.updated_by
+     ${accountIdFilter !== null ? "WHERE o.account_id = ?" : ""}
      ORDER BY o.id DESC`,
     params,
   );
@@ -387,7 +403,9 @@ router.put(
       message: "Oportunidad no encontrada",
     });
     if (!opportunityAccess.ok) {
-      return res.status(opportunityAccess.response.status).json(opportunityAccess.response.body);
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
     }
 
     const beforeRows = await query(
@@ -414,7 +432,8 @@ router.put(
       !canChangeOpportunityActivationStatus(req.user)
     ) {
       return res.status(403).json({
-        message: "No autorizado para cambiar el estado de activacion de oportunidades",
+        message:
+          "No autorizado para cambiar el estado de activacion de oportunidades",
       });
     }
 
@@ -497,7 +516,8 @@ router.patch(
 
     if (!canChangeOpportunityActivationStatus(req.user)) {
       return res.status(403).json({
-        message: "No autorizado para cambiar el estado de activacion de oportunidades",
+        message:
+          "No autorizado para cambiar el estado de activacion de oportunidades",
       });
     }
 
@@ -507,7 +527,9 @@ router.patch(
       message: "Oportunidad no encontrada",
     });
     if (!opportunityAccess.ok) {
-      return res.status(opportunityAccess.response.status).json(opportunityAccess.response.body);
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
     }
 
     const beforeRows = await query(

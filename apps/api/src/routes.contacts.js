@@ -89,7 +89,9 @@ async function requireAccessibleAccountForContact({ user, accountId }) {
       ok: false,
       response: {
         status: 403,
-        body: { message: "No autorizado para usar una cuenta que no te pertenece" },
+        body: {
+          message: "No autorizado para usar una cuenta que no te pertenece",
+        },
       },
     };
   }
@@ -138,6 +140,17 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
     accountExpression: "c.account_id",
     params,
   });
+
+  const accountIdFilter = req.query.accountId
+    ? Number(req.query.accountId)
+    : null;
+  if (accountIdFilter !== null) {
+    if (!Number.isInteger(accountIdFilter) || accountIdFilter <= 0) {
+      return res.status(400).json({ message: "accountId invalido" });
+    }
+    params.push(accountIdFilter);
+  }
+
   const rows = await query(
     `SELECT c.id, c.first_name, c.last_name,
             CONCAT(c.first_name, ' ', c.last_name) AS full_name,
@@ -171,6 +184,7 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
      LEFT JOIN contacts ci ON ci.id = c.influences_contact_id
      INNER JOIN users u1 ON u1.id = c.created_by
      INNER JOIN users u2 ON u2.id = c.updated_by
+     ${accountIdFilter !== null ? "WHERE c.account_id = ?" : ""}
      ORDER BY c.id DESC`,
     params,
   );
@@ -233,105 +247,111 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
   res.json(rows[0]);
 });
 
-router.post("/", requireAnyPermission(contactCreatePermissions), async (req, res) => {
-  const parsed = contactSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res
-      .status(400)
-      .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
-  }
+router.post(
+  "/",
+  requireAnyPermission(contactCreatePermissions),
+  async (req, res) => {
+    const parsed = contactSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
 
-  const body = parsed.data;
-  const now = new Date();
-  const accountAccess = await requireAccessibleAccountForContact({
-    user: req.user,
-    accountId: body.accountId,
-  });
-  if (!accountAccess.ok) {
-    return res.status(accountAccess.response.status).json(accountAccess.response.body);
-  }
-  const creationStatusCode = resolveContactCreationStatusCode(req.user);
-  const activationStatusId = creationStatusCode
-    ? await getContactActivationStatusId(creationStatusCode)
-    : null;
-
-  if (!activationStatusId) {
-    return res.status(403).json({
-      message: "No autorizado para crear o solicitar contactos",
+    const body = parsed.data;
+    const now = new Date();
+    const accountAccess = await requireAccessibleAccountForContact({
+      user: req.user,
+      accountId: body.accountId,
     });
-  }
+    if (!accountAccess.ok) {
+      return res
+        .status(accountAccess.response.status)
+        .json(accountAccess.response.body);
+    }
+    const creationStatusCode = resolveContactCreationStatusCode(req.user);
+    const activationStatusId = creationStatusCode
+      ? await getContactActivationStatusId(creationStatusCode)
+      : null;
 
-  try {
-    const contactId = await withTransaction(async (conn) => {
-      const [insertResult] = await conn.query(
-        `INSERT INTO contacts
+    if (!activationStatusId) {
+      return res.status(403).json({
+        message: "No autorizado para crear o solicitar contactos",
+      });
+    }
+
+    try {
+      const contactId = await withTransaction(async (conn) => {
+        const [insertResult] = await conn.query(
+          `INSERT INTO contacts
           (first_name, last_name, account_id, position_title, phone, phone_extension,
            mobile, email, department, country_id, state_region, city, address_line,
            postal_code, purchase_participation_id, relationship_type_id,
            employment_status_id, activation_status_id, manager_contact_id,
            influences_contact_id, created_by, created_at, updated_by, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          body.firstName,
-          body.lastName,
-          body.accountId,
-          body.positionTitle || null,
-          body.phone || null,
-          body.phoneExtension || null,
-          body.mobile || null,
-          body.email || null,
-          body.department || null,
-          body.countryId || null,
-          body.stateRegion || null,
-          body.city || null,
-          body.addressLine || null,
-          body.postalCode || null,
-          body.purchaseParticipationId,
-          body.relationshipTypeId,
-          body.employmentStatusId,
-          activationStatusId,
-          body.managerContactId || null,
-          body.influencesContactId || null,
-          req.user.id,
-          now,
-          req.user.id,
-          now,
-        ],
-      );
+          [
+            body.firstName,
+            body.lastName,
+            body.accountId,
+            body.positionTitle || null,
+            body.phone || null,
+            body.phoneExtension || null,
+            body.mobile || null,
+            body.email || null,
+            body.department || null,
+            body.countryId || null,
+            body.stateRegion || null,
+            body.city || null,
+            body.addressLine || null,
+            body.postalCode || null,
+            body.purchaseParticipationId,
+            body.relationshipTypeId,
+            body.employmentStatusId,
+            activationStatusId,
+            body.managerContactId || null,
+            body.influencesContactId || null,
+            req.user.id,
+            now,
+            req.user.id,
+            now,
+          ],
+        );
 
-      return insertResult.insertId;
-    });
+        return insertResult.insertId;
+      });
 
-    await logAuditEvent({
-      req,
-      module: "contactos",
-      action: "created",
-      entityType: "contact",
-      entityId: contactId,
-      detail: "Contacto creado",
-      after: {
-        first_name: body.firstName,
-        last_name: body.lastName,
-        account_id: body.accountId,
-        email: body.email || null,
-        mobile: body.mobile || null,
-        activation_status_id: activationStatusId,
-      },
-    });
+      await logAuditEvent({
+        req,
+        module: "contactos",
+        action: "created",
+        entityType: "contact",
+        entityId: contactId,
+        detail: "Contacto creado",
+        after: {
+          first_name: body.firstName,
+          last_name: body.lastName,
+          account_id: body.accountId,
+          email: body.email || null,
+          mobile: body.mobile || null,
+          activation_status_id: activationStatusId,
+        },
+      });
 
-    return res.status(201).json({
-      id: contactId,
-      message:
-        creationStatusCode === "activado"
-          ? "Contacto creado"
-          : "Solicitud de contacto creada en estado pendiente",
-    });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "No fue posible crear el contacto" });
-  }
-});
+      return res.status(201).json({
+        id: contactId,
+        message:
+          creationStatusCode === "activado"
+            ? "Contacto creado"
+            : "Solicitud de contacto creada en estado pendiente",
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({ message: "No fue posible crear el contacto" });
+    }
+  },
+);
 
 router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
   const id = Number(req.params.id);
@@ -355,7 +375,9 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
     message: "Contacto no encontrado",
   });
   if (!contactAccess.ok) {
-    return res.status(contactAccess.response.status).json(contactAccess.response.body);
+    return res
+      .status(contactAccess.response.status)
+      .json(contactAccess.response.body);
   }
 
   const accountAccess = await requireAccessibleAccountForContact({
@@ -363,7 +385,9 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
     accountId: body.accountId,
   });
   if (!accountAccess.ok) {
-    return res.status(accountAccess.response.status).json(accountAccess.response.body);
+    return res
+      .status(accountAccess.response.status)
+      .json(accountAccess.response.body);
   }
 
   const beforeRows = await query(
@@ -390,7 +414,8 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
     !canChangeContactActivationStatus(req.user)
   ) {
     return res.status(403).json({
-      message: "No autorizado para cambiar el estado de activacion de contactos",
+      message:
+        "No autorizado para cambiar el estado de activacion de contactos",
     });
   }
 
@@ -476,7 +501,8 @@ router.patch(
 
     if (!canChangeContactActivationStatus(req.user)) {
       return res.status(403).json({
-        message: "No autorizado para cambiar el estado de activacion de contactos",
+        message:
+          "No autorizado para cambiar el estado de activacion de contactos",
       });
     }
 
@@ -486,7 +512,9 @@ router.patch(
       message: "Contacto no encontrado",
     });
     if (!contactAccess.ok) {
-      return res.status(contactAccess.response.status).json(contactAccess.response.body);
+      return res
+        .status(contactAccess.response.status)
+        .json(contactAccess.response.body);
     }
 
     const beforeRows = await query(

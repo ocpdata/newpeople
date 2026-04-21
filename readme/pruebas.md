@@ -148,56 +148,66 @@ Ejemplos:
 
 ### Usuarios
 
-1. Abrir listado y confirmar pills: `Activos`, `Desactivados`, `Todos`.
-2. Validar que cada pill muestre solo lo que indica.
-3. Cambiar de pill, recargar la pagina y confirmar persistencia.
-4. Crear usuario nuevo con roles validos.
-5. Editar usuario y confirmar auditoria visible.
-6. Activar o desactivar usuario desde acciones por fila.
-7. Verificar avatar en lista, topbar y modal de edicion.
-8. Enviar reinicio de contrasena y comprobar que el backend devuelva fecha de expiracion si el correo falla.
-9. Abrir el enlace de set password y validar que muestre usuario, tipo de acceso y vigencia.
-10. Guardar la contrasena y confirmar redireccion automatica al dashboard.
+1. Confirmar encabezado unificado: titulo con icono, subtitulo, boton `+ Crear usuario`.
+2. Abrir listado y confirmar pills: `Activos`, `Desactivados`, `Todos`.
+3. Validar que cada pill muestre solo lo que indica.
+4. Confirmar que la busqueda inline filtra sin recargar la pagina.
+5. Validar controles de paginacion: selector 10/50/100, navegacion previo/siguiente.
+6. Crear usuario nuevo con roles validos.
+7. Editar usuario y confirmar auditoria visible.
+8. Activar o desactivar usuario desde acciones por fila.
+9. Verificar avatar en lista, topbar y modal de edicion.
+10. Enviar reinicio de contrasena y comprobar que el backend devuelva fecha de expiracion si el correo falla.
+11. Abrir el enlace de set password y validar que muestre usuario, tipo de acceso y vigencia.
+12. Guardar la contrasena y confirmar redireccion automatica al dashboard.
 
 ### Roles y permisos
 
-1. Crear rol.
-2. Asignar permisos al rol.
-3. Asignar rol a un usuario.
-4. Confirmar que la UI del usuario actual se refresque si cambian sus permisos.
-5. Verificar que el usuario vea o no vea botones segun permisos efectivos.
+1. Confirmar encabezado unificado: titulo con icono, subtitulo, boton `+ Crear rol`.
+2. Confirmar diseno de 3 columnas y scroll independiente por columna.
+3. Crear rol.
+4. Asignar permisos al rol.
+5. Asignar rol a un usuario.
+6. Confirmar que la UI del usuario actual se refresque si cambian sus permisos.
+7. Verificar que el usuario vea o no vea botones segun permisos efectivos.
 
 ### Cuentas
 
-1. Probar pills: `Activas`, `Pendientes`, `Desactivadas`, `Todas`.
-2. Confirmar que cada pill filtre solo ese grupo.
-3. Confirmar persistencia del filtro tras recarga.
-4. Crear cuenta con usuario `cuentas.create` y validar estado inicial activo.
-5. Crear cuenta con usuario `cuentas.request` y validar estado inicial pendiente.
-6. Intentar crear cuenta sin `cuentas.create` ni `cuentas.request` y validar rechazo.
-7. Cambiar estado de activacion con `cuentas.create` y validar exito.
-8. Intentar cambiar estado con `cuentas.update` pero sin `cuentas.create` y validar `403`.
-9. Editar datos no relacionados al estado y validar que `cuentas.update` siga funcionando.
+1. Confirmar encabezado unificado: titulo con icono, subtitulo, boton `+ Crear cuenta`.
+2. Probar pills: `Activas`, `Pendientes`, `Desactivadas`, `Todas`.
+3. Confirmar que cada pill filtre solo ese grupo.
+4. Confirmar que la busqueda inline filtra sin recargar la pagina.
+5. Validar controles de paginacion: selector 10/50/100, navegacion previo/siguiente.
+6. Crear cuenta con usuario `cuentas.create` y validar estado inicial activo.
+7. Crear cuenta con usuario `cuentas.request` y validar estado inicial pendiente.
+8. Intentar crear cuenta sin `cuentas.create` ni `cuentas.request` y validar rechazo.
+9. Cambiar estado de activacion con `cuentas.create` y validar exito.
+10. Intentar cambiar estado con `cuentas.update` pero sin `cuentas.create` y validar `403`.
+11. Editar datos no relacionados al estado y validar que `cuentas.update` siga funcionando.
 
 ### Contactos
 
-1. Probar pills: `Activos`, `Pendientes`, `Desactivados`, `Todas`.
-2. Confirmar persistencia del filtro tras recarga.
-3. Crear contacto con `contactos.create` y validar estado inicial activo.
-4. Crear contacto con `contactos.request` y validar estado inicial pendiente.
-5. Intentar activar contacto sin `contactos.create` y validar rechazo.
-6. Confirmar que el contacto herede ubicacion de la cuenta al crear.
-7. Confirmar que el campo `Jefe` solo liste contactos de la misma cuenta.
+1. Confirmar encabezado unificado: titulo con icono, subtitulo, boton `+ Crear contacto`.
+2. Probar pills: `Activos`, `Pendientes`, `Desactivados`, `Todas`.
+3. Confirmar que la busqueda inline filtra sin recargar la pagina.
+4. Validar controles de paginacion: selector 10/50/100, navegacion previo/siguiente.
+5. Crear contacto con `contactos.create` y validar estado inicial activo.
+6. Crear contacto con `contactos.request` y validar estado inicial pendiente.
+7. Intentar activar contacto sin `contactos.create` y validar rechazo.
+8. Confirmar que el contacto herede ubicacion de la cuenta al crear.
+9. Confirmar que el campo `Jefe` solo liste contactos de la misma cuenta.
 
 ### Oportunidades
 
-1. Probar pills: `Activas`, `Pendientes`, `Desactivadas`, `Todas`.
-2. Confirmar persistencia del filtro tras recarga.
-3. Crear oportunidad con `oportunidades.create` y validar estado inicial activo.
-4. Crear oportunidad con `oportunidades.request` y validar estado inicial pendiente.
-5. Intentar activar oportunidad sin `oportunidades.create` y validar rechazo.
-6. Confirmar vendedor, preventa opcional, linea de negocio y etapa.
-7. Confirmar formato de importe y fecha de cierre en lista y modal.
+1. Confirmar encabezado unificado: titulo con icono, subtitulo, boton `+ Crear oportunidad`.
+2. Probar pills: `Activas`, `Pendientes`, `Desactivadas`, `Todas`.
+3. Confirmar que la busqueda inline filtra sin recargar la pagina.
+4. Validar controles de paginacion: selector 10/50/100, navegacion previo/siguiente.
+5. Crear oportunidad con `oportunidades.create` y validar estado inicial activo.
+6. Crear oportunidad con `oportunidades.request` y validar estado inicial pendiente.
+7. Intentar activar oportunidad sin `oportunidades.create` y validar rechazo.
+8. Confirmar vendedor, preventa opcional, linea de negocio y etapa.
+9. Confirmar formato de importe y fecha de cierre en lista y modal.
 
 ### Auditoria
 

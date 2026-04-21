@@ -1,16 +1,68 @@
-# React + Vite
+# NewPeople CRM — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+SPA construida con React + Vite. Consume la API Express de `apps/api`.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 18
+- Vite 6
+- React Router
+- Axios (cliente HTTP con JWT)
 
-## React Compiler
+## Estructura relevante
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```
+src/
+  App.jsx       — componente raiz con toda la logica de modulos
+  App.css       — estilos de componentes
+  index.css     — estilos globales, layout y sistema de diseno
+  api.js        — cliente axios con interceptor de Authorization
+  main.jsx      — entrada de la aplicacion
+```
 
-## Expanding the ESLint configuration
+## Levantar en desarrollo
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev
+```
+
+Web disponible en http://localhost:5173.
+
+## Build de produccion
+
+```bash
+npm run build
+```
+
+## Pruebas E2E
+
+```bash
+npm run test:e2e
+```
+
+Requiere Playwright instalado (`npx playwright install`).
+
+## Modulos implementados
+
+- Autenticacion (login, set-password con token temporal)
+- Usuarios (lista paginada, alta/edicion en modal, auditoria)
+- Roles (diseno 3 columnas: roles / permisos / usuarios del rol)
+- Cuentas (lista paginada, alta/edicion en modal, propietarios, auditoria)
+- Contactos (lista paginada, alta/edicion en modal, jerarquia, auditoria)
+- Oportunidades (lista paginada, alta/edicion en modal, auditoria)
+- Auditoria global (filtros, paginacion, entidad por nombre)
+
+## Patron de encabezado unificado
+
+Todos los modulos usan el mismo patron visual:
+
+- Titulo con icono SVG (`.module-title-with-icon`).
+- Subtitulo descriptivo (`.roles-subtitle`).
+- Boton primario de creacion alineado a la derecha.
+- Barra de filtros con pills de estado + campo de busqueda inline.
+
+## Paginacion
+
+Los modulos Usuarios, Cuentas, Contactos y Oportunidades incluyen controles de
+paginacion con selector de registros por pagina (10 / 50 / 100) y navegacion
+previo/siguiente.

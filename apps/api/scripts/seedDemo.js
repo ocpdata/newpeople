@@ -15,6 +15,9 @@ const DEFAULT_PASSWORD = "Demo12345!";
 const ADMIN_ROLE_NAME = "Administrador";
 const SELLER_ROLE_NAME = "Vendedor";
 const PRESALES_ROLE_NAME = "Preventa";
+const DIR_COMERCIAL_ROLE_NAME = "Director Comercial";
+const ING_OPS_ROLE_NAME = "Ingeniero Operaciones";
+const CONTABILIDAD_ROLE_NAME = "Contabilidad";
 
 const FIRST_NAMES = [
   "Ana",
@@ -193,12 +196,15 @@ function parseArgs(argv) {
     else if (key === "opportunities-per-account") {
       options.opportunitiesPerAccount = Number(value);
     } else if (key === "admin-name") options.adminName = String(value);
-    else if (key === "admin-email") options.adminEmail = String(value).trim().toLowerCase();
+    else if (key === "admin-email")
+      options.adminEmail = String(value).trim().toLowerCase();
     else if (key === "admin-password") options.adminPassword = String(value);
     else if (key === "oscar-name") options.oscarName = String(value);
-    else if (key === "oscar-email") options.oscarEmail = String(value).trim().toLowerCase();
+    else if (key === "oscar-email")
+      options.oscarEmail = String(value).trim().toLowerCase();
     else if (key === "oscar-password") options.oscarPassword = String(value);
-    else if (key === "default-password") options.defaultPassword = String(value);
+    else if (key === "default-password")
+      options.defaultPassword = String(value);
     else throw new Error(`Opcion no reconocida: ${arg}`);
   }
 
@@ -222,7 +228,9 @@ function validateOptions(options) {
   }
 
   if (options.users < 2) {
-    throw new Error("users debe ser al menos 2 para incluir administrador y Oscar");
+    throw new Error(
+      "users debe ser al menos 2 para incluir administrador y Oscar",
+    );
   }
   if (options.contactsMax < options.contactsMin) {
     throw new Error("contacts-max no puede ser menor que contacts-min");
@@ -252,6 +260,136 @@ function buildUserSpecs(options) {
       roleName: SELLER_ROLE_NAME,
       description: "Usuario base para demo manual",
       mobile: "+51 999 100 0001",
+      reusable: true,
+    },
+    {
+      key: "patricia-salas",
+      fullName: "Patricia Salas",
+      email: "patricia.salas@demo.com",
+      password: options.defaultPassword,
+      roleName: DIR_COMERCIAL_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 300 0001",
+      reusable: true,
+    },
+    {
+      key: "laura-mendoza",
+      fullName: "Laura Mendoza",
+      email: "laura.mendoza@demo.com",
+      password: options.defaultPassword,
+      roleName: CONTABILIDAD_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 300 0002",
+      reusable: true,
+    },
+    {
+      key: "roberto-fuentes",
+      fullName: "Roberto Fuentes",
+      email: "roberto.fuentes@demo.com",
+      password: options.defaultPassword,
+      roleName: CONTABILIDAD_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 300 0003",
+      reusable: true,
+    },
+    {
+      key: "andres-villanueva",
+      fullName: "Andres Villanueva",
+      email: "andres.villanueva@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0001",
+      reusable: true,
+    },
+    {
+      key: "claudia-herrera",
+      fullName: "Claudia Herrera",
+      email: "claudia.herrera@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0002",
+      reusable: true,
+    },
+    {
+      key: "diego-morales",
+      fullName: "Diego Morales",
+      email: "diego.morales@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0003",
+      reusable: true,
+    },
+    {
+      key: "elena-paredes",
+      fullName: "Elena Paredes",
+      email: "elena.paredes@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0004",
+      reusable: true,
+    },
+    {
+      key: "fernando-castillo",
+      fullName: "Fernando Castillo",
+      email: "fernando.castillo@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0005",
+      reusable: true,
+    },
+    {
+      key: "gabriela-rios",
+      fullName: "Gabriela Rios",
+      email: "gabriela.rios@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0006",
+      reusable: true,
+    },
+    {
+      key: "hector-vargas",
+      fullName: "Hector Vargas",
+      email: "hector.vargas@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0007",
+      reusable: true,
+    },
+    {
+      key: "isabel-navarro",
+      fullName: "Isabel Navarro",
+      email: "isabel.navarro@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0008",
+      reusable: true,
+    },
+    {
+      key: "jorge-medina",
+      fullName: "Jorge Medina",
+      email: "jorge.medina@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0009",
+      reusable: true,
+    },
+    {
+      key: "karla-espinoza",
+      fullName: "Karla Espinoza",
+      email: "karla.espinoza@demo.com",
+      password: options.defaultPassword,
+      roleName: ING_OPS_ROLE_NAME,
+      description: `${DEMO_MARKER}:user:fixed`,
+      mobile: "+52 555 400 0010",
       reusable: true,
     },
   ];
@@ -303,7 +441,9 @@ async function ensureRole(conn, { name, description, permissionCodes }) {
       permissionCodes,
     );
 
-    const idsByCode = new Map(permissionRows.map((row) => [row.code, Number(row.id)]));
+    const idsByCode = new Map(
+      permissionRows.map((row) => [row.code, Number(row.id)]),
+    );
     for (const permissionCode of permissionCodes) {
       const permissionId = idsByCode.get(permissionCode);
       if (!permissionId) {
@@ -322,22 +462,58 @@ async function ensureRole(conn, { name, description, permissionCodes }) {
 }
 
 async function fetchCatalogs() {
-  const [countries, accountTypes, economicSectors, accountStatuses, purchaseParticipations, relationshipTypes, employmentStatuses, contactStatuses, businessLines, salesStages, opportunityStatuses] = await Promise.all([
-    query("SELECT id, iso2, name FROM countries WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM account_types WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM economic_sectors WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM account_activation_statuses WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM contact_purchase_participations WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM contact_relationship_types WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM contact_employment_statuses WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM contact_activation_statuses WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM opportunity_business_lines WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM opportunity_sales_stages WHERE is_active = 1 ORDER BY id"),
-    query("SELECT id, code, name FROM opportunity_activation_statuses WHERE is_active = 1 ORDER BY id"),
+  const [
+    countries,
+    accountTypes,
+    economicSectors,
+    accountStatuses,
+    purchaseParticipations,
+    relationshipTypes,
+    employmentStatuses,
+    contactStatuses,
+    businessLines,
+    salesStages,
+    opportunityStatuses,
+  ] = await Promise.all([
+    query(
+      "SELECT id, iso2, name FROM countries WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM account_types WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM economic_sectors WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM account_activation_statuses WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM contact_purchase_participations WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM contact_relationship_types WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM contact_employment_statuses WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM contact_activation_statuses WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM opportunity_business_lines WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM opportunity_sales_stages WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM opportunity_activation_statuses WHERE is_active = 1 ORDER BY id",
+    ),
   ]);
 
   if (!countries.length || !accountTypes.length || !economicSectors.length) {
-    throw new Error("Faltan catalogos base. Ejecuta primero apps/api/sql/schema.sql");
+    throw new Error(
+      "Faltan catalogos base. Ejecuta primero apps/api/sql/schema.sql",
+    );
   }
 
   return {
@@ -410,8 +586,11 @@ async function collectSafetyState(userSpecs) {
 }
 
 function summarizePlan({ options, userSpecs }) {
-  const contactCounts = Array.from({ length: options.accounts }, (_, index) =>
-    options.contactsMin + (index % (options.contactsMax - options.contactsMin + 1)),
+  const contactCounts = Array.from(
+    { length: options.accounts },
+    (_, index) =>
+      options.contactsMin +
+      (index % (options.contactsMax - options.contactsMin + 1)),
   );
   const totalContacts = contactCounts.reduce((sum, count) => sum + count, 0);
   return {
@@ -431,12 +610,23 @@ function printSummary({ options, userSpecs, safetyState, plan }) {
   console.log(`Cuentas a sembrar: ${plan.totalAccounts}`);
   console.log(`Contactos estimados: ${plan.totalContacts}`);
   console.log(`Oportunidades a sembrar: ${plan.totalOpportunities}`);
-  console.log(`Datos demo existentes: ${safetyState.existingDemoUsers.length} usuarios, ${safetyState.existingDemoAccounts.length} cuentas`);
-  console.log(`Usuarios reutilizables detectados: ${safetyState.reusableExistingUsers.length}`);
+  console.log(
+    `Datos demo existentes: ${safetyState.existingDemoUsers.length} usuarios, ${safetyState.existingDemoAccounts.length} cuentas`,
+  );
+  console.log(
+    `Usuarios reutilizables detectados: ${safetyState.reusableExistingUsers.length}`,
+  );
   console.log(`Administrador: ${options.adminName} <${options.adminEmail}>`);
-  console.log(`Usuario vendedor garantizado: ${options.oscarName} <${options.oscarEmail}>`);
+  console.log(
+    `Usuario vendedor garantizado: ${options.oscarName} <${options.oscarEmail}>`,
+  );
   console.log(`Password resto de usuarios: ${options.defaultPassword}`);
-  console.log(`Primeros usuarios demo: ${userSpecs.slice(0, 5).map((user) => `${user.fullName} (${user.roleName})`).join(", ")}`);
+  console.log(
+    `Primeros usuarios demo: ${userSpecs
+      .slice(0, 5)
+      .map((user) => `${user.fullName} (${user.roleName})`)
+      .join(", ")}`,
+  );
   if (safetyState.collisions.length > 0) {
     console.log("Colisiones detectadas con usuarios existentes no demo:");
     for (const collision of safetyState.collisions) {
@@ -451,19 +641,23 @@ function pickRow(rows, index) {
 
 function makeAccountStatusId(catalogs, index) {
   if (index % 10 === 0) return byCode(catalogs.accountStatuses, "desactivada");
-  if (index % 4 === 0) return byCode(catalogs.accountStatuses, "pendiente_activacion");
+  if (index % 4 === 0)
+    return byCode(catalogs.accountStatuses, "pendiente_activacion");
   return byCode(catalogs.accountStatuses, "activada");
 }
 
 function makeContactStatusId(catalogs, index) {
   if (index % 9 === 0) return byCode(catalogs.contactStatuses, "desactivado");
-  if (index % 4 === 0) return byCode(catalogs.contactStatuses, "pendiente_activacion");
+  if (index % 4 === 0)
+    return byCode(catalogs.contactStatuses, "pendiente_activacion");
   return byCode(catalogs.contactStatuses, "activado");
 }
 
 function makeOpportunityStatusId(catalogs, index) {
-  if (index % 11 === 0) return byCode(catalogs.opportunityStatuses, "desactivada");
-  if (index % 3 === 0) return byCode(catalogs.opportunityStatuses, "pendiente_activacion");
+  if (index % 11 === 0)
+    return byCode(catalogs.opportunityStatuses, "desactivada");
+  if (index % 3 === 0)
+    return byCode(catalogs.opportunityStatuses, "pendiente_activacion");
   return byCode(catalogs.opportunityStatuses, "activada");
 }
 
@@ -515,7 +709,9 @@ async function resetDemoData(conn) {
      )`,
     [`${DEMO_MARKER}:%`],
   );
-  await conn.query(`DELETE FROM users WHERE description LIKE ?`, [`${DEMO_MARKER}:%`]);
+  await conn.query(`DELETE FROM users WHERE description LIKE ?`, [
+    `${DEMO_MARKER}:%`,
+  ]);
 }
 
 async function seedDemoData({ options, userSpecs, catalogs }) {
@@ -547,11 +743,35 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     const presalesRoleId = await ensureRole(conn, {
       name: PRESALES_ROLE_NAME,
       description: "Rol demo para preventa",
+      permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
+    });
+    await ensureRole(conn, {
+      name: "Director Comercial",
+      description: "Acceso a cuentas, contactos y oportunidades",
       permissionCodes: [
         "cuentas.read",
+        "cuentas.request",
+        "cuentas.create",
+        "cuentas.update",
         "contactos.read",
+        "contactos.request",
+        "contactos.create",
+        "contactos.update",
         "oportunidades.read",
+        "oportunidades.request",
+        "oportunidades.create",
+        "oportunidades.update",
       ],
+    });
+    await ensureRole(conn, {
+      name: "Ingeniero Operaciones",
+      description: "Acceso de lectura a cuentas, contactos y oportunidades",
+      permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
+    });
+    await ensureRole(conn, {
+      name: "Contabilidad",
+      description: "Acceso de lectura a cuentas, contactos y oportunidades",
+      permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
     });
     const roleIdByName = new Map([
       [ADMIN_ROLE_NAME, adminRoleId],
@@ -561,7 +781,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
     const now = new Date();
     const createdUsers = [];
-    const reusableEmails = userSpecs.filter((user) => user.reusable).map((user) => user.email);
+    const reusableEmails = userSpecs
+      .filter((user) => user.reusable)
+      .map((user) => user.email);
     const reusablePlaceholders = reusableEmails.map(() => "?").join(", ");
     const [reusableRows] = reusableEmails.length
       ? await conn.query(
@@ -570,7 +792,10 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         )
       : [[]];
     const reusableByEmail = new Map(
-      reusableRows.map((row) => [String(row.email).toLowerCase(), Number(row.id)]),
+      reusableRows.map((row) => [
+        String(row.email).toLowerCase(),
+        Number(row.id),
+      ]),
     );
     let adminUserId = reusableByEmail.get(options.adminEmail) || null;
 
@@ -662,8 +887,12 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       createdUsers.push({ ...user, id: userId });
     }
 
-    const sellerUsers = createdUsers.filter((user) => user.roleName === SELLER_ROLE_NAME);
-    const presalesUsers = createdUsers.filter((user) => user.roleName === PRESALES_ROLE_NAME);
+    const sellerUsers = createdUsers.filter(
+      (user) => user.roleName === SELLER_ROLE_NAME,
+    );
+    const presalesUsers = createdUsers.filter(
+      (user) => user.roleName === PRESALES_ROLE_NAME,
+    );
     const createdAccounts = [];
 
     for (let index = 0; index < options.accounts; index += 1) {
@@ -722,11 +951,20 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     for (let index = 0; index < createdAccounts.length; index += 1) {
       const account = createdAccounts[index];
       const totalContacts =
-        options.contactsMin + (index % (options.contactsMax - options.contactsMin + 1));
+        options.contactsMin +
+        (index % (options.contactsMax - options.contactsMin + 1));
       const accountContacts = [];
-      for (let contactIndex = 0; contactIndex < totalContacts; contactIndex += 1) {
-        const firstName = FIRST_NAMES[(contactCounter + contactIndex) % FIRST_NAMES.length];
-        const lastName = LAST_NAMES[(contactCounter + index + contactIndex) % LAST_NAMES.length];
+      for (
+        let contactIndex = 0;
+        contactIndex < totalContacts;
+        contactIndex += 1
+      ) {
+        const firstName =
+          FIRST_NAMES[(contactCounter + contactIndex) % FIRST_NAMES.length];
+        const lastName =
+          LAST_NAMES[
+            (contactCounter + index + contactIndex) % LAST_NAMES.length
+          ];
         const [insert] = await conn.query(
           `INSERT INTO contacts
             (first_name, last_name, account_id, position_title, phone, phone_extension,
@@ -739,7 +977,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             firstName,
             lastName,
             account.id,
-            POSITION_TITLES[(contactCounter + contactIndex) % POSITION_TITLES.length],
+            POSITION_TITLES[
+              (contactCounter + contactIndex) % POSITION_TITLES.length
+            ],
             `+52 555 ${String(400000 + contactCounter).slice(-6)}`,
             `${100 + ((contactCounter + contactIndex) % 900)}`,
             `+52 777 ${String(500000 + contactCounter).slice(-6)}`,
@@ -770,10 +1010,17 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     for (let index = 0; index < createdAccounts.length; index += 1) {
       const account = createdAccounts[index];
       const contactIds = createdContactsByAccount.get(account.id) || [];
-      for (let opportunityIndex = 0; opportunityIndex < options.opportunitiesPerAccount; opportunityIndex += 1) {
+      for (
+        let opportunityIndex = 0;
+        opportunityIndex < options.opportunitiesPerAccount;
+        opportunityIndex += 1
+      ) {
         const contactId = contactIds[opportunityIndex % contactIds.length];
         const salesStage = pickRow(catalogs.salesStages, opportunityCounter);
-        const businessLine = pickRow(catalogs.businessLines, opportunityCounter + 2);
+        const businessLine = pickRow(
+          catalogs.businessLines,
+          opportunityCounter + 2,
+        );
         const presalesUser = presalesUsers.length
           ? presalesUsers[opportunityCounter % presalesUsers.length]
           : null;
@@ -831,10 +1078,18 @@ async function main() {
   printSummary({ options, userSpecs, safetyState, plan });
 
   if (safetyState.collisions.length > 0) {
-    throw new Error("Hay colisiones con usuarios existentes no demo. Ajusta emails o limpia manualmente antes de sembrar.");
+    throw new Error(
+      "Hay colisiones con usuarios existentes no demo. Ajusta emails o limpia manualmente antes de sembrar.",
+    );
   }
-  if (!options.reset && (safetyState.existingDemoUsers.length > 0 || safetyState.existingDemoAccounts.length > 0)) {
-    throw new Error("Ya existe data demo. Usa --reset para regenerarla de forma segura.");
+  if (
+    !options.reset &&
+    (safetyState.existingDemoUsers.length > 0 ||
+      safetyState.existingDemoAccounts.length > 0)
+  ) {
+    throw new Error(
+      "Ya existe data demo. Usa --reset para regenerarla de forma segura.",
+    );
   }
   if (options.dryRun) {
     console.log("Dry-run finalizado. No se insertaron datos.");
@@ -847,7 +1102,9 @@ async function main() {
   console.log(`Cuentas creadas: ${result.createdAccounts}`);
   console.log(`Contactos creados: ${result.createdContacts}`);
   console.log(`Oportunidades creadas: ${result.createdOpportunities}`);
-  console.log(`Administrador: ${options.adminEmail} / ${options.adminPassword}`);
+  console.log(
+    `Administrador: ${options.adminEmail} / ${options.adminPassword}`,
+  );
   console.log(`Oscar: ${options.oscarEmail} / ${options.oscarPassword}`);
   console.log(`Resto de usuarios demo: ${options.defaultPassword}`);
 }

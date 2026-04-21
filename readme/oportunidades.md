@@ -14,8 +14,9 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 
 ## Puntos clave de UX
 
-- Boton de crear oportunidad en encabezado.
+- Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear oportunidad` a la derecha.
 - El boton aparece tanto con permiso de crear como de solicitar oportunidades.
+- Barra de filtros: pills de estado (Todos / Activadas / Pendientes / Desactivadas) + busqueda inline.
 - Creacion y edicion mediante ventana modal.
 - Badge de estado de activacion de solo lectura en encabezado del modal de edicion.
 - Secciones del formulario por contexto:
@@ -25,6 +26,7 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - El listado muestra activadas y pendientes por defecto, y permite incluir desactivadas.
 - Busqueda por texto y ordenamiento por columnas con flechas.
 - Menu de acciones por fila con editar, activar, marcar pendiente y desactivar.
+- Paginacion con selector de 10 / 50 / 100 registros por pagina y navegacion previo/siguiente.
 
 ## API relacionada (resumen)
 
