@@ -89,6 +89,30 @@ const createUserSchema = z.object({
   roleIds: z.array(z.number().int().positive()).optional(),
 });
 
+async function getActiveAccountsWithoutAlternativeOwners(userId) {
+  const rows = await query(
+    `SELECT a.id, a.name
+     FROM accounts a
+     INNER JOIN account_owners ao_target
+       ON ao_target.account_id = a.id AND ao_target.user_id = ?
+     INNER JOIN account_activation_statuses aas
+       ON aas.id = a.activation_status_id AND aas.code = 'activada'
+     LEFT JOIN account_owners ao_other
+       ON ao_other.account_id = a.id AND ao_other.user_id <> ?
+     LEFT JOIN users u_other
+       ON u_other.id = ao_other.user_id AND u_other.status = 'active'
+     GROUP BY a.id, a.name
+     HAVING COUNT(u_other.id) = 0
+     ORDER BY a.name, a.id`,
+    [userId, userId],
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    name: row.name,
+  }));
+}
+
 router.get("/audit", requirePermission("usuarios.read"), async (_req, res) => {
   const rows = await query(
     `SELECT l.id, l.action, l.detail, l.created_at,
@@ -311,6 +335,17 @@ router.patch(
     }
 
     const previousStatus = users[0].status;
+
+    if (parsed.data.status === "inactive" && previousStatus !== "inactive") {
+      const blockedAccounts = await getActiveAccountsWithoutAlternativeOwners(userId);
+      if (blockedAccounts.length > 0) {
+        return res.status(409).json({
+          message:
+            "No es posible desactivar al usuario porque dejaria cuentas activas sin propietarios activos",
+          accounts: blockedAccounts,
+        });
+      }
+    }
 
     await query("UPDATE users SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?", [
       parsed.data.status,

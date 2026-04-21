@@ -123,6 +123,56 @@ async function getContactActivationStatusCodeById(statusId) {
   return rows.length ? String(rows[0].code) : null;
 }
 
+async function getOpportunityCountsForContact(contactId) {
+  const rows = await query(
+    `SELECT oas.code, COUNT(*) AS count
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE o.contact_id = ?
+     GROUP BY oas.code`,
+    [contactId],
+  );
+
+  return rows.reduce(
+    (totals, row) => ({
+      ...totals,
+      [String(row.code)]: Number(row.count) || 0,
+    }),
+    {},
+  );
+}
+
+async function getBlockedContactStatusResponse(contactId, nextStatusCode) {
+  const opportunityCounts = await getOpportunityCountsForContact(contactId);
+  const activeOpportunities = Number(opportunityCounts.activada || 0);
+  const inactiveOpportunities = Number(opportunityCounts.desactivada || 0);
+
+  if (nextStatusCode === "desactivado" && activeOpportunities > 0) {
+    return {
+      status: 409,
+      body: {
+        message:
+          "No es posible desactivar el contacto porque tiene oportunidades activas",
+      },
+    };
+  }
+
+  if (
+    nextStatusCode === "pendiente_activacion" &&
+    activeOpportunities + inactiveOpportunities > 0
+  ) {
+    return {
+      status: 409,
+      body: {
+        message:
+          "No es posible marcar el contacto como pendiente porque tiene oportunidades activas o desactivadas",
+      },
+    };
+  }
+
+  return null;
+}
+
 function resolveContactCreationStatusCode(user) {
   if (hasExplicitContactPermission(user, "contactos.create")) {
     return "activado";
@@ -419,6 +469,18 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
     });
   }
 
+  if (requestedStatusCode !== previousStatusCode) {
+    const blockedStatusResponse = await getBlockedContactStatusResponse(
+      id,
+      requestedStatusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
+    }
+  }
+
   await withTransaction(async (conn) => {
     await conn.query(
       `UPDATE contacts
@@ -523,6 +585,16 @@ router.patch(
     );
     if (!beforeRows.length) {
       return res.status(404).json({ message: "Contacto no encontrado" });
+    }
+
+    const blockedStatusResponse = await getBlockedContactStatusResponse(
+      id,
+      parsed.data.statusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
     }
 
     const now = new Date();

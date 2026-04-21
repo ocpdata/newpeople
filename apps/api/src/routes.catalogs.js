@@ -74,7 +74,7 @@ router.get(
   requirePermission("cuentas.read"),
   async (_req, res) => {
     const rows = await query(
-      `SELECT id, full_name, email
+      `SELECT id, full_name, email, status
        FROM users
        WHERE status = 'active'
        ORDER BY full_name`,

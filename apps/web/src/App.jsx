@@ -945,6 +945,7 @@ function UsersPage({ can }) {
   const [saving, setSaving] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [openUserMenuId, setOpenUserMenuId] = useState(null);
+  const [confirmUserAction, setConfirmUserAction] = useState(null);
   const [editUser, setEditUser] = useState(null);
   const [editForm, setEditForm] = useState({
     fullName: "",
@@ -1205,6 +1206,57 @@ function UsersPage({ can }) {
     }
   }
 
+  function openUserActionConfirmation(user, action) {
+    setConfirmUserAction({ user, action });
+    setOpenUserMenuId(null);
+  }
+
+  function closeUserActionConfirmation() {
+    if (saving) return;
+    setConfirmUserAction(null);
+  }
+
+  async function confirmSelectedUserAction() {
+    if (!confirmUserAction) return;
+
+    if (confirmUserAction.action === "inactive") {
+      await updateUserStatus(confirmUserAction.user.id, "inactive");
+    } else if (confirmUserAction.action === "active") {
+      await updateUserStatus(confirmUserAction.user.id, "active");
+    } else if (confirmUserAction.action === "reset-password") {
+      await sendResetInvite(confirmUserAction.user.id);
+    }
+
+    setConfirmUserAction(null);
+  }
+
+  function getUserActionConfirmationTitle() {
+    if (confirmUserAction?.action === "active") return "Activar usuario";
+    if (confirmUserAction?.action === "reset-password") {
+      return "Reiniciar contrasena";
+    }
+    return "Desactivar usuario";
+  }
+
+  function getUserActionConfirmationMessage() {
+    const fullName = confirmUserAction?.user?.full_name || "";
+    if (confirmUserAction?.action === "active") {
+      return `Seguro que deseas activar al usuario "${fullName}"?`;
+    }
+    if (confirmUserAction?.action === "reset-password") {
+      return `Seguro que deseas enviar un reinicio de contrasena para el usuario "${fullName}"?`;
+    }
+    return `Seguro que deseas desactivar al usuario "${fullName}"?`;
+  }
+
+  function getUserActionConfirmationText() {
+    if (confirmUserAction?.action === "active") return "Activar";
+    if (confirmUserAction?.action === "reset-password") {
+      return "Enviar reinicio";
+    }
+    return "Desactivar";
+  }
+
   async function sendResetInvite(userId) {
     setError("");
     setSuccess("");
@@ -1273,6 +1325,16 @@ function UsersPage({ can }) {
 
   return (
     <section className="panel">
+      <ConfirmationModal
+        isOpen={Boolean(confirmUserAction)}
+        title={getUserActionConfirmationTitle()}
+        message={getUserActionConfirmationMessage()}
+        onConfirm={confirmSelectedUserAction}
+        onCancel={closeUserActionConfirmation}
+        confirmText={getUserActionConfirmationText()}
+        isDangerous={confirmUserAction?.action === "inactive"}
+      />
+
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -1671,9 +1733,7 @@ function UsersPage({ can }) {
                           <button
                             type="button"
                             onClick={() =>
-                              runUserAction(() =>
-                                updateUserStatus(u.id, "inactive"),
-                              )
+                              openUserActionConfirmation(u, "inactive")
                             }
                           >
                             Desactivar
@@ -1682,9 +1742,7 @@ function UsersPage({ can }) {
                           <button
                             type="button"
                             onClick={() =>
-                              runUserAction(() =>
-                                updateUserStatus(u.id, "active"),
-                              )
+                              openUserActionConfirmation(u, "active")
                             }
                           >
                             Activar
@@ -1693,7 +1751,7 @@ function UsersPage({ can }) {
                         <button
                           type="button"
                           onClick={() =>
-                            runUserAction(() => sendResetInvite(u.id))
+                            openUserActionConfirmation(u, "reset-password")
                           }
                         >
                           Reiniciar contrasena
@@ -2764,6 +2822,8 @@ function AccountsPage({ can, currentUser, token }) {
   const [contactModalStatusFilter, setContactModalStatusFilter] =
     useState("all");
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
+  const [confirmAccountStatusAction, setConfirmAccountStatusAction] =
+    useState(null);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [catalogs, setCatalogs] = useState({
     countries: [],
@@ -2853,6 +2913,38 @@ function AccountsPage({ can, currentUser, token }) {
 
   const [form, setForm] = useState(buildDefaultAccountForm);
 
+  function normalizeOwnerOption(user) {
+    return {
+      ...user,
+      status: user?.status || "active",
+    };
+  }
+
+  function mergeOwnerOptions(baseUsers, extraUsers = []) {
+    const merged = new Map();
+
+    [...baseUsers, ...extraUsers].forEach((user) => {
+      if (!user?.id) return;
+      merged.set(Number(user.id), normalizeOwnerOption(user));
+    });
+
+    return Array.from(merged.values()).sort((left, right) =>
+      String(left.full_name || "").localeCompare(String(right.full_name || ""), "es", {
+        sensitivity: "base",
+      }),
+    );
+  }
+
+  function isInactiveOwner(user) {
+    return normalizeText(user?.status) === "inactive";
+  }
+
+  function getOwnerOptionLabel(user) {
+    return isInactiveOwner(user)
+      ? `${user.full_name} (inactivo)`
+      : user.full_name;
+  }
+
   async function load() {
     try {
       const [
@@ -2871,7 +2963,7 @@ function AccountsPage({ can, currentUser, token }) {
         api.get("/api/catalogs/account-activation-statuses"),
       ]);
       setAccounts(accountsRes.data);
-      setUsers(usersRes.data);
+      setUsers((usersRes.data || []).map(normalizeOwnerOption));
       setCatalogs({
         countries: countriesRes.data,
         accountTypes: typesRes.data,
@@ -2906,6 +2998,7 @@ function AccountsPage({ can, currentUser, token }) {
     setSuccess("");
     setEditingAccountId(null);
     setEditAccountAudit(null);
+    setUsers((prev) => prev.filter((user) => !isInactiveOwner(user)));
     setForm(buildDefaultAccountForm());
     setShowCreateAccountModal(true);
   }
@@ -3254,11 +3347,60 @@ function AccountsPage({ can, currentUser, token }) {
     }
   }
 
+  function openAccountStatusConfirmation(account, statusCode) {
+    setConfirmAccountStatusAction({ account, statusCode });
+    setOpenAccountMenuId(null);
+  }
+
+  function closeAccountStatusConfirmation() {
+    setConfirmAccountStatusAction(null);
+  }
+
+  async function confirmSelectedAccountStatusChange() {
+    if (!confirmAccountStatusAction) return;
+
+    await updateAccountStatus(
+      confirmAccountStatusAction.account,
+      confirmAccountStatusAction.statusCode,
+    );
+    setConfirmAccountStatusAction(null);
+  }
+
+  function getAccountStatusConfirmationMeta() {
+    const accountName = confirmAccountStatusAction?.account?.name || "";
+
+    if (confirmAccountStatusAction?.statusCode === "activada") {
+      return {
+        title: "Activar cuenta",
+        message: `Seguro que deseas activar la cuenta "${accountName}"?`,
+        confirmText: "Activar",
+        isDangerous: false,
+      };
+    }
+
+    if (confirmAccountStatusAction?.statusCode === "pendiente_activacion") {
+      return {
+        title: "Marcar cuenta como pendiente",
+        message: `Seguro que deseas marcar como pendiente la cuenta "${accountName}"?`,
+        confirmText: "Marcar pendiente",
+        isDangerous: false,
+      };
+    }
+
+    return {
+      title: "Desactivar cuenta",
+      message: `Seguro que deseas desactivar la cuenta "${accountName}"?`,
+      confirmText: "Desactivar",
+      isDangerous: true,
+    };
+  }
+
   async function openEditAccountModal(accountId) {
     setError("");
     setSuccess("");
     try {
       const { data } = await api.get(`/api/accounts/${accountId}`);
+      setUsers((prev) => mergeOwnerOptions(prev, data.owners || []));
       setForm({
         name: data.name || "",
         registrationCode: data.registration_code || "",
@@ -3292,6 +3434,16 @@ function AccountsPage({ can, currentUser, token }) {
 
   return (
     <section className="panel">
+      <ConfirmationModal
+        isOpen={Boolean(confirmAccountStatusAction)}
+        title={getAccountStatusConfirmationMeta().title}
+        message={getAccountStatusConfirmationMeta().message}
+        onConfirm={confirmSelectedAccountStatusChange}
+        onCancel={closeAccountStatusConfirmation}
+        confirmText={getAccountStatusConfirmationMeta().confirmText}
+        isDangerous={getAccountStatusConfirmationMeta().isDangerous}
+      />
+
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -3622,7 +3774,9 @@ function AccountsPage({ can, currentUser, token }) {
                           onClick={() => toggleOwnerUser(u.id)}
                           title="Quitar propietario"
                         >
-                          <span className="owner-name">{u.full_name}</span>
+                          <span className="owner-name">
+                            {getOwnerOptionLabel(u)}
+                          </span>
                           <span className="owner-email">{u.email}</span>
                         </button>
                       ))}
@@ -3647,15 +3801,19 @@ function AccountsPage({ can, currentUser, token }) {
                       const isSelected = form.ownerUserIds.includes(
                         Number(u.id),
                       );
+                      const isInactive = isInactiveOwner(u);
                       return (
                         <label key={u.id} className="owners-list-item">
                           <input
                             type="checkbox"
                             checked={isSelected}
+                            disabled={isInactive && !isSelected}
                             onChange={() => toggleOwnerUser(u.id)}
                           />
                           <span className="owners-list-text">
-                            <span className="owner-name">{u.full_name}</span>
+                            <span className="owner-name">
+                              {getOwnerOptionLabel(u)}
+                            </span>
                             <span className="owner-email">{u.email}</span>
                           </span>
                         </label>
@@ -3835,9 +3993,7 @@ function AccountsPage({ can, currentUser, token }) {
                           type="button"
                           disabled={!canActivateAccounts || isAccountActive(a)}
                           onClick={() =>
-                            runAccountAction(() =>
-                              updateAccountStatus(a, "activada"),
-                            )
+                            openAccountStatusConfirmation(a, "activada")
                           }
                         >
                           Activar
@@ -3846,8 +4002,9 @@ function AccountsPage({ can, currentUser, token }) {
                           type="button"
                           disabled={!canActivateAccounts || isAccountPending(a)}
                           onClick={() =>
-                            runAccountAction(() =>
-                              updateAccountStatus(a, "pendiente_activacion"),
+                            openAccountStatusConfirmation(
+                              a,
+                              "pendiente_activacion",
                             )
                           }
                         >
@@ -3859,9 +4016,7 @@ function AccountsPage({ can, currentUser, token }) {
                             !canActivateAccounts || isAccountInactive(a)
                           }
                           onClick={() =>
-                            runAccountAction(() =>
-                              updateAccountStatus(a, "desactivada"),
-                            )
+                            openAccountStatusConfirmation(a, "desactivada")
                           }
                         >
                           Desactivar
@@ -5521,6 +5676,8 @@ function ContactsPage({ can, token, currentUser }) {
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactAudit, setEditContactAudit] = useState(null);
   const [openContactMenuId, setOpenContactMenuId] = useState(null);
+  const [confirmContactStatusAction, setConfirmContactStatusAction] =
+    useState(null);
   const [savingContact, setSavingContact] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -5967,6 +6124,54 @@ function ContactsPage({ can, token, currentUser }) {
     }
   }
 
+  function openContactStatusConfirmation(contact, statusCode) {
+    setConfirmContactStatusAction({ contact, statusCode });
+    setOpenContactMenuId(null);
+  }
+
+  function closeContactStatusConfirmation() {
+    setConfirmContactStatusAction(null);
+  }
+
+  async function confirmSelectedContactStatusChange() {
+    if (!confirmContactStatusAction) return;
+
+    await updateContactStatus(
+      confirmContactStatusAction.contact,
+      confirmContactStatusAction.statusCode,
+    );
+    setConfirmContactStatusAction(null);
+  }
+
+  function getContactStatusConfirmationMeta() {
+    const contactName = confirmContactStatusAction?.contact?.full_name || "";
+
+    if (confirmContactStatusAction?.statusCode === "activado") {
+      return {
+        title: "Activar contacto",
+        message: `Seguro que deseas activar al contacto "${contactName}"?`,
+        confirmText: "Activar",
+        isDangerous: false,
+      };
+    }
+
+    if (confirmContactStatusAction?.statusCode === "pendiente_activacion") {
+      return {
+        title: "Marcar contacto como pendiente",
+        message: `Seguro que deseas marcar como pendiente al contacto "${contactName}"?`,
+        confirmText: "Marcar pendiente",
+        isDangerous: false,
+      };
+    }
+
+    return {
+      title: "Desactivar contacto",
+      message: `Seguro que deseas desactivar al contacto "${contactName}"?`,
+      confirmText: "Desactivar",
+      isDangerous: true,
+    };
+  }
+
   async function saveContact(e) {
     e.preventDefault();
     setError("");
@@ -6057,6 +6262,16 @@ function ContactsPage({ can, token, currentUser }) {
 
   return (
     <section className="panel">
+      <ConfirmationModal
+        isOpen={Boolean(confirmContactStatusAction)}
+        title={getContactStatusConfirmationMeta().title}
+        message={getContactStatusConfirmationMeta().message}
+        onConfirm={confirmSelectedContactStatusChange}
+        onCancel={closeContactStatusConfirmation}
+        confirmText={getContactStatusConfirmationMeta().confirmText}
+        isDangerous={getContactStatusConfirmationMeta().isDangerous}
+      />
+
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -6685,9 +6900,7 @@ function ContactsPage({ can, token, currentUser }) {
                             isContactActive(c)
                           }
                           onClick={() =>
-                            runContactAction(() =>
-                              updateContactStatus(c, "activado"),
-                            )
+                            openContactStatusConfirmation(c, "activado")
                           }
                         >
                           Activar
@@ -6699,8 +6912,9 @@ function ContactsPage({ can, token, currentUser }) {
                             isContactPending(c)
                           }
                           onClick={() =>
-                            runContactAction(() =>
-                              updateContactStatus(c, "pendiente_activacion"),
+                            openContactStatusConfirmation(
+                              c,
+                              "pendiente_activacion",
                             )
                           }
                         >
@@ -6713,9 +6927,7 @@ function ContactsPage({ can, token, currentUser }) {
                             isContactInactive(c)
                           }
                           onClick={() =>
-                            runContactAction(() =>
-                              updateContactStatus(c, "desactivado"),
-                            )
+                            openContactStatusConfirmation(c, "desactivado")
                           }
                         >
                           Desactivar

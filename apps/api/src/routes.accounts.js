@@ -91,6 +91,56 @@ async function getAccountActivationStatusCodeById(statusId) {
   return rows.length ? String(rows[0].code) : null;
 }
 
+async function getContactCountsForAccount(accountId) {
+  const rows = await query(
+    `SELECT cas.code, COUNT(*) AS count
+     FROM contacts c
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+     WHERE c.account_id = ?
+     GROUP BY cas.code`,
+    [accountId],
+  );
+
+  return rows.reduce(
+    (totals, row) => ({
+      ...totals,
+      [String(row.code)]: Number(row.count) || 0,
+    }),
+    {},
+  );
+}
+
+async function getBlockedAccountStatusResponse(accountId, nextStatusCode) {
+  const contactCounts = await getContactCountsForAccount(accountId);
+  const activeContacts = Number(contactCounts.activado || 0);
+  const inactiveContacts = Number(contactCounts.desactivado || 0);
+
+  if (nextStatusCode === "desactivada" && activeContacts > 0) {
+    return {
+      status: 409,
+      body: {
+        message:
+          "No es posible desactivar la cuenta porque tiene contactos activos",
+      },
+    };
+  }
+
+  if (
+    nextStatusCode === "pendiente_activacion" &&
+    activeContacts + inactiveContacts > 0
+  ) {
+    return {
+      status: 409,
+      body: {
+        message:
+          "No es posible marcar la cuenta como pendiente porque tiene contactos activos o desactivados",
+      },
+    };
+  }
+
+  return null;
+}
+
 function resolveAccountCreationStatusCode(user) {
   if (hasExplicitAccountPermission(user, "cuentas.create")) {
     return "activada";
@@ -99,6 +149,13 @@ function resolveAccountCreationStatusCode(user) {
     return "pendiente_activacion";
   }
   return null;
+}
+
+function getOwnerDisplayExpression(userAlias = "u") {
+  return `CASE
+    WHEN ${userAlias}.status = 'inactive' THEN CONCAT(${userAlias}.full_name, ' (inactivo)')
+    ELSE ${userAlias}.full_name
+  END`;
 }
 
 router.get("/", requirePermission("cuentas.read"), async (req, res) => {
@@ -123,7 +180,10 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
      INNER JOIN users u2 ON u2.id = a.updated_by
      LEFT JOIN (
        SELECT ao.account_id,
-              GROUP_CONCAT(DISTINCT u.full_name ORDER BY u.full_name SEPARATOR ', ') AS owner_names
+              GROUP_CONCAT(
+                DISTINCT ${getOwnerDisplayExpression("u")}
+                ORDER BY u.full_name SEPARATOR ', '
+              ) AS owner_names
        FROM account_owners ao
        INNER JOIN users u ON u.id = ao.user_id
        GROUP BY ao.account_id
@@ -168,7 +228,7 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
   }
 
   const owners = await query(
-    `SELECT u.id, u.full_name, u.email
+    `SELECT u.id, u.full_name, u.email, u.status
      FROM account_owners ao
      INNER JOIN users u ON u.id = ao.user_id
      WHERE ao.account_id = ?
@@ -339,6 +399,18 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
     });
   }
 
+  if (requestedStatusCode !== previousStatusCode) {
+    const blockedStatusResponse = await getBlockedAccountStatusResponse(
+      id,
+      requestedStatusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
+    }
+  }
+
   const beforeOwners = await query(
     "SELECT user_id FROM account_owners WHERE account_id = ? ORDER BY user_id",
     [id],
@@ -455,6 +527,16 @@ router.patch(
 
     if (!accountRows.length) {
       return res.status(404).json({ message: "Cuenta no encontrada" });
+    }
+
+    const blockedStatusResponse = await getBlockedAccountStatusResponse(
+      id,
+      parsed.data.statusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
     }
 
     const previousStatusId = Number(accountRows[0].activation_status_id);

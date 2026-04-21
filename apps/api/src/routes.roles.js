@@ -181,6 +181,20 @@ router.patch(
       });
     }
 
+    if (!parsed.data.isActive) {
+      const assignedUsers = await query(
+        "SELECT COUNT(*) AS count FROM user_roles WHERE role_id = ?",
+        [roleId],
+      );
+
+      if (Number(assignedUsers[0]?.count || 0) > 0) {
+        return res.status(409).json({
+          message:
+            "No se puede desactivar un rol que tiene usuarios asignados",
+        });
+      }
+    }
+
     await query(
       "UPDATE roles SET is_active = ?, updated_by_user_id = ?, updated_at = ? WHERE id = ?",
       [

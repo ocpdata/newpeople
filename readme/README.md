@@ -4,6 +4,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 ## Indice
 
+- [Logica de negocio](./logica-negocio.md)
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
@@ -17,6 +18,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 ## Cambios recientes documentados
 
+- Nuevo documento transversal: logica de negocio del CRM con reglas comunes de RBAC, ownership, create/request, activacion y auditoria.
 - Usuarios/Auth: set password migrado a token temporal de un solo uso, vigencia visible en UI, redireccion automatica al dashboard y auditoria con proposito/expiracion.
 - Usuarios: alta en modal, edicion con auditoria visible y acciones por fila;
   badge de estado solo lectura en modal de edicion; filtro "Mostrar desactivados";

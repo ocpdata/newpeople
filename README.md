@@ -160,6 +160,11 @@ Endpoints relevantes:
 - Contactos con jerarquia (jefe/subordinado) e influencias.
 - Auditoria de acciones de usuario.
 
+## Documentacion funcional
+
+- Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
+- Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
+
 ## Troubleshooting rapido
 
 - Error de conexion DB:

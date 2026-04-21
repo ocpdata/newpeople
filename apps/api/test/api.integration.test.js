@@ -51,6 +51,10 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_contacts_request`,
       permissionCodes: ["contactos.request", "contactos.update"],
     });
+    ctx.contactCreateRoleId = await createRole({
+      name: `${TEST_PREFIX}_contacts_create`,
+      permissionCodes: ["contactos.create", "contactos.update"],
+    });
     ctx.opportunityRequestRoleId = await createRole({
       name: `${TEST_PREFIX}_opps_request`,
       permissionCodes: ["oportunidades.request", "oportunidades.update"],
@@ -73,6 +77,7 @@ describe("API integration baseline", () => {
       ctx.accountRequestRoleId,
       ctx.accountReadRoleId,
       ctx.contactRequestRoleId,
+      ctx.contactCreateRoleId,
       ctx.opportunityRequestRoleId,
       ctx.roleManagerRoleId,
       ctx.dynamicPermissionRoleId,
@@ -104,6 +109,10 @@ describe("API integration baseline", () => {
         "contact_activation_statuses",
         "activado",
       ),
+      contactInactiveStatusId: await getCatalogId(
+        "contact_activation_statuses",
+        "desactivado",
+      ),
       contactPendingStatusId: await getCatalogId(
         "contact_activation_statuses",
         "pendiente_activacion",
@@ -116,6 +125,10 @@ describe("API integration baseline", () => {
       opportunityActiveStatusId: await getCatalogId(
         "opportunity_activation_statuses",
         "activada",
+      ),
+      opportunityInactiveStatusId: await getCatalogId(
+        "opportunity_activation_statuses",
+        "desactivada",
       ),
       opportunityPendingStatusId: await getCatalogId(
         "opportunity_activation_statuses",
@@ -142,6 +155,11 @@ describe("API integration baseline", () => {
       fullName: "API Contact Request",
       email: `${TEST_PREFIX}.contacts.request@example.com`,
       roleIds: [ctx.contactRequestRoleId],
+    });
+    ctx.contactCreateUserId = await createUser({
+      fullName: "API Contact Create",
+      email: `${TEST_PREFIX}.contacts.create@example.com`,
+      roleIds: [ctx.contactCreateRoleId],
     });
     ctx.opportunityRequestUserId = await createUser({
       fullName: "API Opportunity Request",
@@ -174,6 +192,7 @@ describe("API integration baseline", () => {
       ctx.accountRequestUserId,
       ctx.accountReadUserId,
       ctx.contactRequestUserId,
+      ctx.contactCreateUserId,
       ctx.opportunityRequestUserId,
       ctx.sellerUserId,
       ctx.roleManagerUserId,
@@ -577,6 +596,139 @@ describe("API integration baseline", () => {
       "API Account Create",
       "API Account Read",
     ]);
+    expect(detailResponse.body.owners.map((owner) => owner.status)).toEqual([
+      "active",
+      "active",
+    ]);
+  });
+
+  test("usuarios.update bloquea desactivacion si dejaria cuentas activas sin propietarios activos", async () => {
+    const guardedOwnerUserId = await createUser({
+      fullName: "API Sole Active Owner",
+      email: `${TEST_PREFIX}.sole.active.owner@example.com`,
+      roleIds: [ctx.sellerRoleId],
+    });
+    cleanup.userIds.push(guardedOwnerUserId);
+
+    const guardedAccountId = await createDirectAccount({
+      ownerUserId: guardedOwnerUserId,
+      actorUserId: guardedOwnerUserId,
+      suffix: `${TEST_PREFIX}_guarded_owner`,
+    });
+    cleanup.accountIds.push(guardedAccountId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.users.crud@example.com`,
+    );
+
+    const response = await request(app)
+      .patch(`/api/users/${guardedOwnerUserId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ status: "inactive" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.message).toBe(
+      "No es posible desactivar al usuario porque dejaria cuentas activas sin propietarios activos",
+    );
+    expect(response.body.accounts).toEqual([
+      {
+        id: guardedAccountId,
+        name: `Cuenta fixture ${TEST_PREFIX}_guarded_owner`,
+      },
+    ]);
+
+    const persistedRows = await query(
+      "SELECT status FROM users WHERE id = ? LIMIT 1",
+      [guardedOwnerUserId],
+    );
+
+    expect(persistedRows[0].status).toBe("active");
+  });
+
+  test("usuarios.update permite desactivar si queda otro propietario activo y cuentas.read marca propietarios inactivos", async () => {
+    const activeOwnerUserId = await createUser({
+      fullName: "API Active Co Owner",
+      email: `${TEST_PREFIX}.active.co.owner@example.com`,
+      roleIds: [ctx.accountReadRoleId],
+    });
+    const inactiveOwnerUserId = await createUser({
+      fullName: "API Inactive Co Owner",
+      email: `${TEST_PREFIX}.inactive.co.owner@example.com`,
+      roleIds: [ctx.sellerRoleId],
+    });
+    cleanup.userIds.push(activeOwnerUserId, inactiveOwnerUserId);
+
+    const loginCreateResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginCreateResponse.body.token}`)
+      .send({
+        name: `Cuenta Owners Inactive ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: `OWN-INACTIVE-${TEST_PREFIX}`,
+        phone: "5550002424",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://owners-inactive.example.com",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Cuenta para validar propietarios inactivos",
+        addressLine: "Direccion owners inactive",
+        postalCode: "01005",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [activeOwnerUserId, inactiveOwnerUserId],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(createResponse.body.id));
+
+    const loginUserCrudResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.users.crud@example.com`,
+    );
+
+    const deactivateResponse = await request(app)
+      .patch(`/api/users/${inactiveOwnerUserId}/status`)
+      .set("Authorization", `Bearer ${loginUserCrudResponse.body.token}`)
+      .send({ status: "inactive" });
+
+    expect(deactivateResponse.status).toBe(200);
+    expect(deactivateResponse.body.message).toBe("Usuario desactivado");
+
+    const readLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.active.co.owner@example.com`,
+    );
+
+    const listResponse = await request(app)
+      .get("/api/accounts")
+      .set("Authorization", `Bearer ${readLoginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+
+    const createdAccount = listResponse.body.find(
+      (account) => Number(account.id) === Number(createResponse.body.id),
+    );
+
+    expect(createdAccount).toBeTruthy();
+    expect(createdAccount.owners_display).toBe(
+      "API Active Co Owner, API Inactive Co Owner (inactivo)",
+    );
+
+    const detailResponse = await request(app)
+      .get(`/api/accounts/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${readLoginResponse.body.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.owners.map((owner) => owner.status)).toEqual([
+      "active",
+      "inactive",
+    ]);
   });
 
   test("cuentas.put permite editar sin cambiar estado y bloquea cambio de estado sin cuentas.create", async () => {
@@ -654,6 +806,89 @@ describe("API integration baseline", () => {
     expect(blockedStatusPut.body.message).toBe(
       "No autorizado para cambiar el estado de activacion de cuentas",
     );
+  });
+
+  test("cuentas.update bloquea desactivar una cuenta si tiene contactos activos", async () => {
+    const guardedAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_active_contacts`,
+    });
+    cleanup.accountIds.push(guardedAccountId);
+
+    const activeContactId = await createDirectContact({
+      accountId: guardedAccountId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_active_contacts`,
+    });
+    cleanup.contactIds.push(activeContactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const patchResponse = await request(app)
+      .patch(`/api/accounts/${guardedAccountId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "desactivada" });
+
+    expect(patchResponse.status).toBe(409);
+    expect(patchResponse.body.message).toBe(
+      "No es posible desactivar la cuenta porque tiene contactos activos",
+    );
+
+    const statusCode = await getStatusCodeById("accounts", guardedAccountId, {
+      table: "account_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activada");
+  });
+
+  test("cuentas.update bloquea marcar una cuenta como pendiente si tiene contactos activos o desactivados", async () => {
+    const accountWithInactiveContactsId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_inactive_contacts`,
+    });
+    cleanup.accountIds.push(accountWithInactiveContactsId);
+
+    const inactiveContactId = await createDirectContact({
+      accountId: accountWithInactiveContactsId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_inactive_contacts`,
+    });
+    cleanup.contactIds.push(inactiveContactId);
+
+    await query(
+      "UPDATE contacts SET activation_status_id = ? WHERE id = ?",
+      [ctx.catalogIds.contactInactiveStatusId, inactiveContactId],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const patchResponse = await request(app)
+      .patch(`/api/accounts/${accountWithInactiveContactsId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "pendiente_activacion" });
+
+    expect(patchResponse.status).toBe(409);
+    expect(patchResponse.body.message).toBe(
+      "No es posible marcar la cuenta como pendiente porque tiene contactos activos o desactivados",
+    );
+
+    const statusCode = await getStatusCodeById(
+      "accounts",
+      accountWithInactiveContactsId,
+      {
+        table: "account_activation_statuses",
+        column: "activation_status_id",
+      },
+    );
+    expect(statusCode).toBe("activada");
   });
 
   test("contactos.request crea pendiente y no permite activar sin contactos.create", async () => {
@@ -818,6 +1053,132 @@ describe("API integration baseline", () => {
     expect(blockedStatusPut.body.message).toBe(
       "No autorizado para cambiar el estado de activacion de contactos",
     );
+  });
+
+  test("contactos.update bloquea desactivar un contacto si tiene oportunidades activas", async () => {
+    const guardedAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_active_opps`,
+    });
+    cleanup.accountIds.push(guardedAccountId);
+
+    const guardedContactId = await createDirectContact({
+      accountId: guardedAccountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_active_opps`,
+    });
+    cleanup.contactIds.push(guardedContactId);
+
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad contacto ${TEST_PREFIX}`,
+        17500,
+        guardedAccountId,
+        "2026-11-30",
+        guardedContactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.contactCreateUserId,
+        now,
+        ctx.contactCreateUserId,
+        now,
+      ],
+    );
+    cleanup.opportunityIds.push(Number(insertResult.insertId));
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.create@example.com`,
+    );
+
+    const patchResponse = await request(app)
+      .patch(`/api/contacts/${guardedContactId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "desactivado" });
+
+    expect(patchResponse.status).toBe(409);
+    expect(patchResponse.body.message).toBe(
+      "No es posible desactivar el contacto porque tiene oportunidades activas",
+    );
+
+    const statusCode = await getStatusCodeById("contacts", guardedContactId, {
+      table: "contact_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activado");
+  });
+
+  test("contactos.update bloquea marcar un contacto como pendiente si tiene oportunidades activas o desactivadas", async () => {
+    const guardedAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_pending_opps`,
+    });
+    cleanup.accountIds.push(guardedAccountId);
+
+    const guardedContactId = await createDirectContact({
+      accountId: guardedAccountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_pending_opps`,
+    });
+    cleanup.contactIds.push(guardedContactId);
+
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad pendiente contacto ${TEST_PREFIX}`,
+        22000,
+        guardedAccountId,
+        "2026-10-31",
+        guardedContactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityInactiveStatusId,
+        ctx.contactCreateUserId,
+        now,
+        ctx.contactCreateUserId,
+        now,
+      ],
+    );
+    cleanup.opportunityIds.push(Number(insertResult.insertId));
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.create@example.com`,
+    );
+
+    const patchResponse = await request(app)
+      .patch(`/api/contacts/${guardedContactId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "pendiente_activacion" });
+
+    expect(patchResponse.status).toBe(409);
+    expect(patchResponse.body.message).toBe(
+      "No es posible marcar el contacto como pendiente porque tiene oportunidades activas o desactivadas",
+    );
+
+    const statusCode = await getStatusCodeById("contacts", guardedContactId, {
+      table: "contact_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activado");
   });
 
   test("oportunidades.request crea pendiente y no permite activar sin oportunidades.create", async () => {
@@ -1005,5 +1366,30 @@ describe("API integration baseline", () => {
     expect(afterMe.body.permissions).toContain("contactos.create");
     expect(afterMe.body.permissions).toContain("contactos.update");
     expect(afterMe.body.permissions).not.toContain("contactos.request");
+  });
+
+  test("roles.update bloquea desactivar un rol si todavia tiene usuarios asignados", async () => {
+    const managerLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.roles.manager@example.com`,
+    );
+
+    const deactivateResponse = await request(app)
+      .patch(`/api/roles/${ctx.dynamicPermissionRoleId}/status`)
+      .set("Authorization", `Bearer ${managerLogin.body.token}`)
+      .send({ isActive: false });
+
+    expect(deactivateResponse.status).toBe(409);
+    expect(deactivateResponse.body.message).toBe(
+      "No se puede desactivar un rol que tiene usuarios asignados",
+    );
+
+    const roleRows = await query(
+      "SELECT is_active FROM roles WHERE id = ? LIMIT 1",
+      [ctx.dynamicPermissionRoleId],
+    );
+
+    expect(roleRows).toHaveLength(1);
+    expect(Number(roleRows[0].is_active)).toBe(1);
   });
 });
