@@ -9,6 +9,7 @@
     "dev": "concurrently \"npm run dev --prefix apps/api\" \"npm run dev --prefix apps/web\"",
     "dev:api": "npm run dev --prefix apps/api",
     "dev:web": "npm run dev --prefix apps/web",
+    "seed:demo:reset-db": "npm run seed:demo:reset-db --prefix apps/api",
     "build:web": "npm run build --prefix apps/web",
     "test:api": "npm run test --prefix apps/api",
     "test:web:e2e": "npm run test:e2e --prefix apps/web"

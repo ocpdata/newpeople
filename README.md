@@ -66,6 +66,7 @@ En raiz:
 - npm run dev: levanta API y Web en paralelo.
 - npm run dev:api: levanta solo API.
 - npm run dev:web: levanta solo Web.
+- npm run seed:demo:reset-db: elimina la base configurada en `apps/api/.env`, vuelve a cargar `apps/api/sql/schema.sql` y luego siembra la demo.
 - npm run seed:demo --prefix apps/api -- --dry-run: previsualiza la carga demo sin insertar datos.
 - npm run seed:demo --prefix apps/api -- --reset: elimina datos demo previos y vuelve a sembrarlos.
 - npm run build:web: genera build de produccion del frontend.
@@ -186,6 +187,12 @@ Sembrar regenerando primero los datos demo previos:
 npm run seed:demo --prefix apps/api -- --reset
 ```
 
+Recrear por completo la base configurada y luego cargar demo:
+
+```bash
+npm run seed:demo:reset-db
+```
+
 Parametros soportados:
 
 ```bash
@@ -206,5 +213,6 @@ npm run seed:demo --prefix apps/api -- \
 Notas:
 
 - El script usa `apps/api/.env` y siembra la base apuntada por `DB_NAME`.
+- `npm run seed:demo:reset-db` si elimina por completo la base apuntada por `DB_NAME`, reimporta el schema y despues ejecuta el seeder demo.
 - Marca toda la data demo con `DEMO_SEED_V1` para que `--reset` limpie solo esa carga.
 - Si detecta colisiones con usuarios existentes no demo, aborta para no sobrescribir datos reales.
