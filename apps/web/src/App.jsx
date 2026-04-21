@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import DatePicker from "react-datepicker";
+import { es } from "date-fns/locale";
 import {
   NavLink,
   Navigate,
@@ -32,6 +34,24 @@ function usePersistedStatusFilter(storageKey) {
   }, [storageKey, statusFilter]);
 
   return [statusFilter, setStatusFilter];
+}
+
+function parseDateFilterValue(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value)
+    .split("-")
+    .map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  const parsedDate = new Date(year, month - 1, day);
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+function formatDateFilterValue(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "";
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function App() {
@@ -255,21 +275,57 @@ function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
 }
 
 function SystemAuditPage() {
-  const [items, setItems] = useState([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState({
+  const defaultFilters = {
     page: 1,
     pageSize: 50,
     from: "",
     to: "",
     module: "",
     action: "",
+    entityType: "",
     status: "",
     q: "",
-  });
+  };
+  const [items, setItems] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filters, setFilters] = useState(defaultFilters);
+  const [debouncedQuery, setDebouncedQuery] = useState(defaultFilters.q);
+  const auditModuleOptions = [
+    { value: "", label: "Todos los modulos" },
+    { value: "auth", label: "Auth" },
+    { value: "usuarios", label: "Usuarios" },
+    { value: "roles", label: "Roles" },
+    { value: "cuentas", label: "Cuentas" },
+    { value: "oportunidades", label: "Oportunidades" },
+    { value: "contactos", label: "Contactos" },
+  ];
+  const auditActionOptions = [
+    { value: "", label: "Todas las acciones" },
+    { value: "created", label: "Creacion" },
+    { value: "updated", label: "Actualizacion" },
+    { value: "status_changed", label: "Cambio de estado" },
+    { value: "permissions_updated", label: "Permisos actualizados" },
+    { value: "roles_assigned", label: "Roles asignados" },
+    { value: "password_reset_sent", label: "Reset enviado" },
+    { value: "password_reset_failed", label: "Reset fallido" },
+    { value: "invitation_email_failed", label: "Invitacion fallida" },
+    { value: "register_first", label: "Registro inicial" },
+    { value: "login_success", label: "Login exitoso" },
+    { value: "login_failed", label: "Login fallido" },
+    { value: "password_set", label: "Contrasena configurada" },
+    { value: "set_password_failed", label: "Contrasena fallida" },
+  ];
+  const auditEntityOptions = [
+    { value: "", label: "Todas las entidades" },
+    { value: "user", label: "Usuario" },
+    { value: "role", label: "Rol" },
+    { value: "account", label: "Cuenta" },
+    { value: "contact", label: "Contacto" },
+    { value: "opportunity", label: "Oportunidad" },
+  ];
 
   function buildQuery(params) {
     const search = new URLSearchParams();
@@ -298,8 +354,41 @@ function SystemAuditPage() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedQuery(filters.q);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [filters.q]);
+
+  const appliedFilters = useMemo(
+    () => ({
+      page: filters.page,
+      pageSize: filters.pageSize,
+      from: filters.from,
+      to: filters.to,
+      module: filters.module,
+      action: filters.action,
+      entityType: filters.entityType,
+      status: filters.status,
+      q: debouncedQuery,
+    }),
+    [
+      filters.page,
+      filters.pageSize,
+      filters.from,
+      filters.to,
+      filters.module,
+      filters.action,
+      filters.entityType,
+      filters.status,
+      debouncedQuery,
+    ],
+  );
+
+  useEffect(() => {
+    load(appliedFilters);
+  }, [appliedFilters]);
 
   function formatDateTime(value) {
     if (!value) return "-";
@@ -321,94 +410,216 @@ function SystemAuditPage() {
 
   function changePage(nextPage) {
     const safePage = Math.max(1, Math.min(totalPages, nextPage));
-    const nextFilters = { ...filters, page: safePage };
-    setFilters(nextFilters);
-    load(nextFilters);
+    setFilters((prev) => ({ ...prev, page: safePage }));
   }
 
-  function submitFilters(e) {
-    e.preventDefault();
-    const nextFilters = { ...filters, page: 1 };
-    setFilters(nextFilters);
-    load(nextFilters);
+  function changePageSize(pageSize) {
+    setFilters((prev) => ({ ...prev, page: 1, pageSize }));
   }
 
-  function resetFilters() {
-    const defaults = {
-      page: 1,
-      pageSize: 50,
-      from: "",
-      to: "",
-      module: "",
-      action: "",
-      status: "",
-      q: "",
-    };
-    setFilters(defaults);
-    load(defaults);
-  }
+  const startItem = total === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
+  const endItem = total === 0 ? 0 : Math.min(filters.page * filters.pageSize, total);
+  const activeAuditFilterCount = [
+    filters.q,
+    filters.module,
+    filters.action,
+    filters.entityType,
+    filters.status,
+    filters.from,
+    filters.to,
+  ].filter((value) => String(value || "").trim() !== "").length;
 
   return (
     <section className="panel">
-      <div className="users-header-row">
-        <h2>Auditoria del sistema</h2>
-        <span className="audit-total-pill">{total} eventos</span>
-      </div>
-
-      <form className="audit-screen-filters" onSubmit={submitFilters}>
-        <input
-          type="text"
-          placeholder="Buscar por actor, modulo, accion o detalle"
-          value={filters.q}
-          onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))}
-        />
-        <select
-          value={filters.module}
-          onChange={(e) =>
-            setFilters((p) => ({ ...p, module: e.target.value }))
-          }
-        >
-          <option value="">Todos los modulos</option>
-          <option value="auth">Auth</option>
-          <option value="usuarios">Usuarios</option>
-          <option value="roles">Roles</option>
-          <option value="cuentas">Cuentas</option>
-          <option value="oportunidades">Oportunidades</option>
-          <option value="contactos">Contactos</option>
-        </select>
-        <select
-          value={filters.status}
-          onChange={(e) =>
-            setFilters((p) => ({ ...p, status: e.target.value }))
-          }
-        >
-          <option value="">Todos los estados</option>
-          <option value="success">Exito</option>
-          <option value="error">Error</option>
-        </select>
-        <input
-          type="date"
-          value={filters.from}
-          onChange={(e) => setFilters((p) => ({ ...p, from: e.target.value }))}
-        />
-        <input
-          type="date"
-          value={filters.to}
-          onChange={(e) => setFilters((p) => ({ ...p, to: e.target.value }))}
-        />
-        <div className="audit-screen-actions">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={resetFilters}
-          >
-            Limpiar
-          </button>
-          <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? "Buscando..." : "Aplicar"}
-          </button>
+      <div className="audit-toolbar">
+        <div className="users-header-row audit-header-row">
+          <div className="roles-page-header-left">
+            <div className="module-title-with-icon">
+              <h2>Auditoria del sistema</h2>
+              <span className="module-title-icon audit-module-title-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M5.75 3h8.19a2.75 2.75 0 0 1 1.94.8l2.52 2.52a2.75 2.75 0 0 1 .8 1.95v10.98A2.75 2.75 0 0 1 16.45 22h-10.7A2.75 2.75 0 0 1 3 19.25V5.75A2.75 2.75 0 0 1 5.75 3m0 1.5c-.69 0-1.25.56-1.25 1.25v13.5c0 .69.56 1.25 1.25 1.25h10.7c.69 0 1.25-.56 1.25-1.25V8.5h-2.95A2.75 2.75 0 0 1 12 5.75V4.5zm7.75.31v.94c0 .69.56 1.25 1.25 1.25h.94zM7.5 10a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 10m0 3.5a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5a.75.75 0 0 1-.75-.75m0 3.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 7.5 17" />
+                </svg>
+              </span>
+            </div>
+            <p className="roles-subtitle audit-subtitle">
+              Explora eventos por actor, modulo, accion, entidad y rango de fechas.
+            </p>
+          </div>
+          <div className="audit-toolbar-meta">
+            <span className="audit-total-pill">{total} eventos</span>
+            <span className="audit-filter-summary">
+              {activeAuditFilterCount === 0
+                ? "Sin filtros activos"
+                : `${activeAuditFilterCount} filtros activos`}
+            </span>
+          </div>
         </div>
-      </form>
+
+        <div className="audit-screen-filters">
+          <label className="audit-filter-card audit-filter-search-card">
+            <span className="audit-filter-label">Busqueda rápida</span>
+            <span className="audit-filter-help">
+              Actor, modulo, accion, entidad o detalle
+            </span>
+            <div className="audit-search-input-wrap">
+              <span className="audit-search-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M10.5 4a6.5 6.5 0 1 1 0 13a6.5 6.5 0 0 1 0-13m0-1.5a8 8 0 1 0 4.94 14.29l4.13 4.12a.75.75 0 1 0 1.06-1.06l-4.12-4.13A8 8 0 0 0 10.5 2.5" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                placeholder="Ej. login_failed, Juan Perez o cuentas"
+                value={filters.q}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, q: e.target.value }))
+                }
+              />
+            </div>
+          </label>
+
+          <div className="audit-filter-grid">
+            <label className="audit-filter-card">
+              <span className="audit-filter-label">Modulo</span>
+              <select
+                value={filters.module}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, module: e.target.value }))
+                }
+              >
+                {auditModuleOptions.map((option) => (
+                  <option key={option.value || "all-modules"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="audit-filter-card">
+              <span className="audit-filter-label">Accion</span>
+              <select
+                value={filters.action}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, action: e.target.value }))
+                }
+              >
+                {auditActionOptions.map((option) => (
+                  <option key={option.value || "all-actions"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="audit-filter-card">
+              <span className="audit-filter-label">Entidad</span>
+              <select
+                value={filters.entityType}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, entityType: e.target.value }))
+                }
+              >
+                {auditEntityOptions.map((option) => (
+                  <option key={option.value || "all-entities"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="audit-filter-card audit-filter-status-card">
+              <span className="audit-filter-label">Estado</span>
+              <div className="audit-status-pills" role="group" aria-label="Filtrar auditoria por estado">
+                {[
+                  { value: "", label: "Todos", tone: "all" },
+                  { value: "success", label: "Exito", tone: "success" },
+                  { value: "error", label: "Error", tone: "error" },
+                ].map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    className={`audit-status-pill audit-status-pill-${option.tone}${filters.status === option.value ? " is-selected" : ""}`}
+                    aria-pressed={filters.status === option.value}
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, status: option.value }))
+                    }
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="audit-filter-card audit-filter-date-card">
+              <span className="audit-filter-label">Periodo</span>
+              <div className="audit-date-range-grid">
+                <label className="audit-date-field">
+                  <span>Desde</span>
+                  <DatePicker
+                    selected={parseDateFilterValue(filters.from)}
+                    onChange={(date) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        from: formatDateFilterValue(date),
+                      }))
+                    }
+                    selectsStart
+                    startDate={parseDateFilterValue(filters.from)}
+                    endDate={parseDateFilterValue(filters.to)}
+                    maxDate={parseDateFilterValue(filters.to) || undefined}
+                    placeholderText="Selecciona fecha"
+                    dateFormat="dd/MM/yyyy"
+                    locale={es}
+                    showMonthDropdown
+                    showYearDropdown
+                    dropdownMode="select"
+                    fixedHeight
+                    todayButton="Hoy"
+                    calendarClassName="audit-datepicker-calendar"
+                    popperClassName="audit-datepicker-popper"
+                    className="audit-date-input"
+                    autoComplete="off"
+                    isClearable={false}
+                    showPopperArrow={false}
+                  />
+                </label>
+                <label className="audit-date-field">
+                  <span>Hasta</span>
+                  <DatePicker
+                    selected={parseDateFilterValue(filters.to)}
+                    onChange={(date) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        to: formatDateFilterValue(date),
+                      }))
+                    }
+                    selectsEnd
+                    startDate={parseDateFilterValue(filters.from)}
+                    endDate={parseDateFilterValue(filters.to)}
+                    minDate={parseDateFilterValue(filters.from) || undefined}
+                    placeholderText="Selecciona fecha"
+                    dateFormat="dd/MM/yyyy"
+                    locale={es}
+                    showMonthDropdown
+                    showYearDropdown
+                    dropdownMode="select"
+                    fixedHeight
+                    todayButton="Hoy"
+                    calendarClassName="audit-datepicker-calendar"
+                    popperClassName="audit-datepicker-popper"
+                    className="audit-date-input"
+                    autoComplete="off"
+                    isClearable={false}
+                    showPopperArrow={false}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
 
       {error && <div className="toast toast-error">{error}</div>}
 
@@ -472,26 +683,47 @@ function SystemAuditPage() {
         </tbody>
       </table>
 
-      <div className="audit-pager">
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => changePage(filters.page - 1)}
-          disabled={filters.page <= 1 || loading}
-        >
-          Anterior
-        </button>
-        <span>
-          Pagina {filters.page} de {Math.max(1, totalPages)}
-        </span>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => changePage(filters.page + 1)}
-          disabled={filters.page >= totalPages || loading}
-        >
-          Siguiente
-        </button>
+      <div className="users-pagination">
+        <div className="users-pagination-left">
+          <span className="users-pagination-info">
+            {startItem}–{endItem} de {total}
+          </span>
+        </div>
+        <div className="users-pagination-center">
+          <button
+            type="button"
+            className="users-page-btn"
+            disabled={filters.page <= 1 || loading}
+            onClick={() => changePage(filters.page - 1)}
+          >
+            ‹
+          </button>
+          <span className="users-pagination-pages">
+            {filters.page} / {Math.max(1, totalPages)}
+          </span>
+          <button
+            type="button"
+            className="users-page-btn"
+            disabled={filters.page >= totalPages || loading}
+            onClick={() => changePage(filters.page + 1)}
+          >
+            ›
+          </button>
+        </div>
+        <div className="users-pagination-right">
+          <span className="users-pagination-label">Por página:</span>
+          {[10, 25, 50, 100].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`users-perpage-btn${filters.pageSize === n ? " is-active" : ""}`}
+              onClick={() => changePageSize(n)}
+              disabled={loading}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -5191,15 +5423,28 @@ function OpportunitiesPage({ can, currentUser }) {
                     <label>
                       Fecha de cierre <span className="required-mark">*</span>
                     </label>
-                    <input
-                      type="date"
-                      value={form.closeDate}
-                      onChange={(e) =>
+                    <DatePicker
+                      selected={parseDateFilterValue(form.closeDate)}
+                      onChange={(date) =>
                         setForm((prev) => ({
                           ...prev,
-                          closeDate: e.target.value,
+                          closeDate: formatDateFilterValue(date),
                         }))
                       }
+                      placeholderText="Selecciona fecha"
+                      dateFormat="dd/MM/yyyy"
+                      locale={es}
+                      showMonthDropdown
+                      showYearDropdown
+                      dropdownMode="select"
+                      fixedHeight
+                      todayButton="Hoy"
+                      calendarClassName="audit-datepicker-calendar"
+                      popperClassName="audit-datepicker-popper"
+                      className="audit-date-input"
+                      autoComplete="off"
+                      isClearable={false}
+                      showPopperArrow={false}
                       required
                     />
                   </div>
