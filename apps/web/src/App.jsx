@@ -5663,6 +5663,7 @@ function OpportunitiesPage({ can, currentUser }) {
 }
 
 function ContactsPage({ can, token, currentUser }) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
   const [contactStatusFilter, setContactStatusFilter] =
@@ -5675,6 +5676,15 @@ function ContactsPage({ can, token, currentUser }) {
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactAudit, setEditContactAudit] = useState(null);
+  const [editContactOpportunities, setEditContactOpportunities] = useState([]);
+  const [loadingContactOpportunities, setLoadingContactOpportunities] =
+    useState(false);
+  const [contactOppSectionStatusFilter, setContactOppSectionStatusFilter] =
+    useState("all");
+  const [contactOppSectionYearFilter, setContactOppSectionYearFilter] =
+    useState(String(new Date().getFullYear()));
+  const [contactOppsModalContact, setContactOppsModalContact] =
+    useState(null);
   const [openContactMenuId, setOpenContactMenuId] = useState(null);
   const [confirmContactStatusAction, setConfirmContactStatusAction] =
     useState(null);
@@ -6095,6 +6105,31 @@ function ContactsPage({ can, token, currentUser }) {
 
   function toggleContactMenu(contactId) {
     setOpenContactMenuId((prev) => (prev === contactId ? null : contactId));
+  }
+
+  async function openContactOppsModal(contact) {
+    setContactOppSectionStatusFilter("all");
+    setContactOppSectionYearFilter(String(new Date().getFullYear()));
+    setEditContactOpportunities([]);
+    setContactOppsModalContact(contact);
+    setLoadingContactOpportunities(true);
+    try {
+      const { data: opps } = await api.get(
+        `/api/opportunities?contactId=${contact.id}`,
+      );
+      setEditContactOpportunities(Array.isArray(opps) ? opps : []);
+    } catch {
+      setEditContactOpportunities([]);
+    } finally {
+      setLoadingContactOpportunities(false);
+    }
+  }
+
+  function closeContactOppsModal() {
+    setContactOppsModalContact(null);
+    setEditContactOpportunities([]);
+    setContactOppSectionStatusFilter("all");
+    setContactOppSectionYearFilter(String(new Date().getFullYear()));
   }
 
   async function runContactAction(action) {
@@ -6932,6 +6967,16 @@ function ContactsPage({ can, token, currentUser }) {
                         >
                           Desactivar
                         </button>
+                        {can("oportunidades.read") && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runContactAction(() => openContactOppsModal(c))
+                            }
+                          >
+                            Oportunidades
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -6993,6 +7038,199 @@ function ContactsPage({ can, token, currentUser }) {
           </div>
         </div>
       )}
+
+      {contactOppsModalContact &&
+        (() => {
+          const oppCloseYears = [
+            ...new Set(
+              editContactOpportunities
+                .map((o) =>
+                  o.close_date ? new Date(o.close_date).getFullYear() : null,
+                )
+                .filter(Boolean),
+            ),
+          ].sort((a, b) => b - a);
+
+          const visibleOpps = editContactOpportunities.filter((o) => {
+            if (
+              contactOppSectionStatusFilter !== "all" &&
+              normalizeText(o.activation_status) !==
+                normalizeText(contactOppSectionStatusFilter)
+            )
+              return false;
+            if (contactOppSectionYearFilter !== "all" && o.close_date) {
+              if (
+                String(new Date(o.close_date).getFullYear()) !==
+                contactOppSectionYearFilter
+              )
+                return false;
+            } else if (
+              contactOppSectionYearFilter !== "all" &&
+              !o.close_date
+            ) {
+              return false;
+            }
+            return true;
+          });
+
+          return (
+            <div
+              className="modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Oportunidades de ${contactOppsModalContact.full_name}`}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) closeContactOppsModal();
+              }}
+            >
+              <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+                <div className="modal-header">
+                  <h3 className="modal-title">
+                    Oportunidades &mdash;{" "}
+                    <span style={{ fontWeight: 400 }}>
+                      {contactOppsModalContact.full_name}
+                    </span>
+                  </h3>
+                </div>
+
+                {!loadingContactOpportunities &&
+                  editContactOpportunities.length > 0 && (
+                    <div className="account-opps-filters">
+                      <div
+                        className="account-opps-pills"
+                        role="group"
+                        aria-label="Filtrar por estado"
+                      >
+                        {[
+                          "activada",
+                          "pendiente de activacion",
+                          "desactivada",
+                          "all",
+                        ].map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            className={`account-opps-pill account-opps-pill--${s === "all" ? "all" : s === "activada" ? "active" : s === "pendiente de activacion" ? "pending" : "inactive"}${
+                              contactOppSectionStatusFilter === s
+                                ? " is-active"
+                                : ""
+                            }`}
+                            onClick={() => setContactOppSectionStatusFilter(s)}
+                          >
+                            {s === "all"
+                              ? "Todas"
+                              : s === "activada"
+                                ? "Activadas"
+                                : s === "pendiente de activacion"
+                                  ? "Pendientes"
+                                  : "Desactivadas"}
+                          </button>
+                        ))}
+                      </div>
+                      {oppCloseYears.length > 0 && (
+                        <select
+                          className="account-opps-year-select"
+                          value={contactOppSectionYearFilter}
+                          onChange={(e) =>
+                            setContactOppSectionYearFilter(e.target.value)
+                          }
+                          aria-label="Filtrar por año de cierre"
+                        >
+                          <option value="all">Todos los años</option>
+                          {oppCloseYears.map((y) => (
+                            <option key={y} value={String(y)}>
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                {loadingContactOpportunities ? (
+                  <p className="account-opps-empty">
+                    Cargando oportunidades...
+                  </p>
+                ) : editContactOpportunities.length === 0 ? (
+                  <p className="account-opps-empty">
+                    No hay oportunidades registradas para este contacto.
+                  </p>
+                ) : visibleOpps.length === 0 ? (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                ) : (
+                  <div className="account-opps-list">
+                    {visibleOpps.map((opp) => (
+                      <div
+                        key={opp.id}
+                        className="account-opp-row account-opp-row--clickable"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          closeContactOppsModal();
+                          navigate(`/opportunities?edit=${opp.id}`);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            closeContactOppsModal();
+                            navigate(`/opportunities?edit=${opp.id}`);
+                          }
+                        }}
+                      >
+                        <div className="account-opp-main">
+                          <span className="account-opp-name">{opp.name}</span>
+                          <span
+                            className={(() => {
+                              const s = normalizeText(opp.activation_status);
+                              if (s === "activada")
+                                return "user-status-badge active";
+                              if (s === "pendiente de activacion")
+                                return "user-status-badge pending";
+                              return "user-status-badge inactive";
+                            })()}
+                          >
+                            {opp.activation_status || "-"}
+                          </span>
+                        </div>
+                        <div className="account-opp-meta">
+                          <span>{opp.account_name}</span>
+                          <span>{opp.sales_stage}</span>
+                          <span>{opp.business_line}</span>
+                          <span>
+                            {Number(opp.amount_usd).toLocaleString("es-MX", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 0,
+                            })}
+                          </span>
+                          <span>
+                            Cierre:{" "}
+                            {opp.close_date
+                              ? new Date(opp.close_date).toLocaleDateString(
+                                  "es-MX",
+                                )
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="modal-buttons" style={{ marginTop: 16 }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={closeContactOppsModal}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </section>
   );
 }

@@ -203,6 +203,24 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
     params.push(accountIdFilter);
   }
 
+  const contactIdFilter = req.query.contactId
+    ? Number(req.query.contactId)
+    : null;
+  if (contactIdFilter !== null) {
+    if (!Number.isInteger(contactIdFilter) || contactIdFilter <= 0) {
+      return res.status(400).json({ message: "contactId invalido" });
+    }
+    params.push(contactIdFilter);
+  }
+
+  const whereClauses = [];
+  if (accountIdFilter !== null) {
+    whereClauses.push("o.account_id = ?");
+  }
+  if (contactIdFilter !== null) {
+    whereClauses.push("o.contact_id = ?");
+  }
+
   const rows = await query(
     `SELECT o.id, o.name, o.amount_usd, o.close_date,
             a.id AS account_id, a.name AS account_name,
@@ -227,7 +245,7 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
      INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
      INNER JOIN users u1 ON u1.id = o.created_by
      INNER JOIN users u2 ON u2.id = o.updated_by
-     ${accountIdFilter !== null ? "WHERE o.account_id = ?" : ""}
+     ${whereClauses.length ? `WHERE ${whereClauses.join(" AND ")}` : ""}
      ORDER BY o.id DESC`,
     params,
   );
