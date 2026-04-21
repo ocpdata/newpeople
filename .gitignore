@@ -3,3 +3,4 @@ apps/*/node_modules/
 .env
 apps/api/.env
 apps/web/.env
+.vscode/

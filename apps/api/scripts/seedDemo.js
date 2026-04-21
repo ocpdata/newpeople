@@ -745,7 +745,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       description: "Rol demo para preventa",
       permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
     });
-    await ensureRole(conn, {
+    const dirComercialRoleId = await ensureRole(conn, {
       name: "Director Comercial",
       description: "Acceso a cuentas, contactos y oportunidades",
       permissionCodes: [
@@ -763,12 +763,12 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "oportunidades.update",
       ],
     });
-    await ensureRole(conn, {
+    const ingOpsRoleId = await ensureRole(conn, {
       name: "Ingeniero Operaciones",
       description: "Acceso de lectura a cuentas, contactos y oportunidades",
       permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
     });
-    await ensureRole(conn, {
+    const contabilidadRoleId = await ensureRole(conn, {
       name: "Contabilidad",
       description: "Acceso de lectura a cuentas, contactos y oportunidades",
       permissionCodes: ["cuentas.read", "contactos.read", "oportunidades.read"],
@@ -777,7 +777,16 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       [ADMIN_ROLE_NAME, adminRoleId],
       [SELLER_ROLE_NAME, sellerRoleId],
       [PRESALES_ROLE_NAME, presalesRoleId],
+      [DIR_COMERCIAL_ROLE_NAME, dirComercialRoleId],
+      [ING_OPS_ROLE_NAME, ingOpsRoleId],
+      [CONTABILIDAD_ROLE_NAME, contabilidadRoleId],
     ]);
+
+    for (const user of userSpecs) {
+      if (!roleIdByName.has(user.roleName)) {
+        throw new Error(`Rol demo no resuelto para usuario ${user.email}: ${user.roleName}`);
+      }
+    }
 
     const now = new Date();
     const createdUsers = [];
