@@ -2366,6 +2366,41 @@ function CommercialCloseConfirmationModal({
   );
 }
 
+function CommercialStatusReasonModal({
+  isOpen,
+  statusLabel,
+  reason,
+  onClose,
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal-title">Motivo de oportunidad {statusLabel}</h3>
+        <p className="modal-message">
+          Este es el motivo registrado para el estado comercial actual.
+        </p>
+        <div className="field-group opportunity-bypass-confirm-group">
+          <label>Motivo</label>
+          <textarea
+            aria-label="Motivo del estado comercial"
+            rows={4}
+            value={reason || "Sin motivo registrado"}
+            disabled
+            autoFocus
+          />
+        </div>
+        <div className="modal-buttons">
+          <button className="btn-primary" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmationModal({
   isOpen,
   title,
@@ -3952,7 +3987,7 @@ function AccountsPage({ can, currentUser, token }) {
                 : "Completa primero los datos principales y despues asigna los propietarios para crear la cuenta."}
             </p>
             <form className="account-create-form in-modal" onSubmit={create}>
-              <section className="account-form-section">
+              <section className="account-form-section opportunity-main-data-section">
                 <h4>Datos principales</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
@@ -4824,6 +4859,8 @@ function OpportunitiesPage({ can, currentUser }) {
     useState(null);
   const [showCommercialCloseModal, setShowCommercialCloseModal] =
     useState(false);
+  const [showCommercialStatusReasonModal, setShowCommercialStatusReasonModal] =
+    useState(false);
   const [commercialCloseModalState, setCommercialCloseModalState] = useState({
     statusCode: "",
     reason: "",
@@ -5328,6 +5365,7 @@ function OpportunitiesPage({ can, currentUser }) {
     setCommercialCloseReason("");
     setPendingCommercialCloseAction(null);
     setShowCommercialCloseModal(false);
+    setShowCommercialStatusReasonModal(false);
     setCommercialCloseModalState({ statusCode: "", reason: "" });
     setShowStageBypassModal(false);
     setStageBypassReason("");
@@ -5643,10 +5681,20 @@ function OpportunitiesPage({ can, currentUser }) {
       (status) => normalizeText(status.code) === "en_proceso",
     )?.name ||
     "En proceso";
+  const isHeaderCommercialFlowClosed = isCommercialOpportunityClosed(
+    editOpportunityAudit?.commercialStatus,
+  );
+  const currentCommercialStatusCode =
+    commercialContext?.commercialStatus?.code ||
+    commercialContext?.commercialStatus?.name ||
+    "";
   const displayedCommercialCloseReason =
     pendingCommercialCloseAction?.reason ||
     commercialContext?.commercialStatus?.closeReason ||
     "";
+  const canOpenCommercialStatusReason = ["perdida", "anulada"].includes(
+    normalizeText(currentCommercialStatusCode),
+  );
   const pendingCommercialCloseStatusName = pendingCommercialCloseAction
     ? catalogs.commercialStatuses.find(
         (status) =>
@@ -5654,6 +5702,15 @@ function OpportunitiesPage({ can, currentUser }) {
           String(pendingCommercialCloseAction.statusCode),
       )?.name || pendingCommercialCloseAction.statusCode
     : "";
+
+  function openCommercialStatusReasonModal() {
+    if (!canOpenCommercialStatusReason) return;
+    setShowCommercialStatusReasonModal(true);
+  }
+
+  function closeCommercialStatusReasonModal() {
+    setShowCommercialStatusReasonModal(false);
+  }
 
   function updateCommercialAnswer(questionId, nextValue) {
     setCommercialContext((prev) => {
@@ -5937,11 +5994,34 @@ function OpportunitiesPage({ can, currentUser }) {
     }
     setSavingCommercialAction("validate-current-stage");
     try {
+      const saved = await saveCommercialAnswers({ silentSuccess: true });
+      if (!saved) return;
+
+      const isWaitingStage = isCommercialOpportunityWaiting(
+        currentCommercialStage?.code || currentCommercialStage?.name,
+      );
+
       const { data } = await api.post(
         `/api/opportunities/${editingOpportunityId}/validate-current-stage`,
         {},
       );
-      setSuccess(data?.message || "Etapa actual validada");
+
+      if (isWaitingStage) {
+        const closeResponse = await api.post(
+          `/api/opportunities/${editingOpportunityId}/commercial-close`,
+          {
+            statusCode: "ganada",
+            reason: null,
+          },
+        );
+        await refreshOpportunityCommercialView();
+        setSuccess(
+          closeResponse.data?.message || data?.message || "Oportunidad ganada",
+        );
+        return;
+      }
+
+      await previewStageDraftChange({ mode: "advance" });
     } catch (err) {
       setError(
         getApiErrorMessage(err, "No fue posible validar la etapa actual"),
@@ -6374,12 +6454,14 @@ function OpportunitiesPage({ can, currentUser }) {
                     </span>
                     {editingOpportunityId}
                   </span>
-                  <span className="record-id-badge" title="Etapa de venta">
-                    Etapa:{" "}
-                    {currentCommercialStage?.name ||
-                      currentSalesStageName ||
-                      "-"}
-                  </span>
+                  {!isHeaderCommercialFlowClosed ? (
+                    <span className="record-id-badge" title="Etapa de venta">
+                      Etapa:{" "}
+                      {currentCommercialStage?.name ||
+                        currentSalesStageName ||
+                        "-"}
+                    </span>
+                  ) : null}
                   <span
                     className={getOpportunityStatusIconBadgeClass(
                       editOpportunityAudit.activationStatus,
@@ -6420,7 +6502,7 @@ function OpportunitiesPage({ can, currentUser }) {
               className="account-create-form in-modal"
               onSubmit={saveOpportunity}
             >
-              <section className="account-form-section">
+              <section className="account-form-section opportunity-main-data-section">
                 <h4>Datos principales</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
@@ -6535,7 +6617,7 @@ function OpportunitiesPage({ can, currentUser }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section opportunity-sales-management-section">
                 <h4>Gestion comercial</h4>
                 <div className="grid-form account-grid-main">
                   {!editingOpportunityId ? (
@@ -6628,18 +6710,30 @@ function OpportunitiesPage({ can, currentUser }) {
                       </p>
                     </div>
                     <div className="opportunity-commercial-badges">
-                      <span className="record-id-badge">
-                        Etapa actual: {currentCommercialStage?.name || "-"}
-                      </span>
-                      <span
-                        className={getCommercialStatusIconBadgeClass(
+                      {!isCommercialFlowClosed ? (
+                        <span className="record-id-badge">
+                          Etapa actual: {currentCommercialStage?.name || "-"}
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={`${getCommercialStatusIconBadgeClass(
                           commercialContext.commercialStatus?.name,
-                        )}
+                        )} commercial-status-badge-button${
+                          canOpenCommercialStatusReason ? " is-clickable" : ""
+                        }`}
+                        onClick={openCommercialStatusReasonModal}
+                        disabled={!canOpenCommercialStatusReason}
+                        title={
+                          canOpenCommercialStatusReason
+                            ? "Ver motivo del estado comercial"
+                            : "Estado comercial"
+                        }
                       >
                         <span className="status-dot" aria-hidden="true" />
                         {commercialContext.commercialStatus?.name ||
                           "Sin estado comercial"}
-                      </span>
+                      </button>
                     </div>
                   </div>
 
@@ -6651,11 +6745,17 @@ function OpportunitiesPage({ can, currentUser }) {
                     {commercialContext.stages.map((stage) => {
                       const isSelected =
                         String(stage.id) === String(selectedCommercialStageId);
-                      const stateLabel = stage.isCurrent
-                        ? "Etapa actual"
-                        : stage.isPast
-                          ? "Solo lectura"
-                          : "Vista previa";
+                      const normalizedStageName = stage.name
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "")
+                        .toLowerCase();
+                      const stepperStageName =
+                        normalizedStageName === "contacto inicial"
+                          ? "Contacto"
+                          : normalizedStageName ===
+                                "identificacion de la oportunidad"
+                            ? "Identificacion"
+                            : stage.name;
                       const className = [
                         "opportunity-stage-step",
                         isSelected ? "is-selected" : "",
@@ -6682,8 +6782,7 @@ function OpportunitiesPage({ can, currentUser }) {
                             </span>
                           </span>
                           <span className="opportunity-stage-step-content">
-                            <strong>{stage.name}</strong>
-                            <small>{stateLabel}</small>
+                            <strong>{stepperStageName}</strong>
                           </span>
                         </button>
                       );
@@ -6723,6 +6822,113 @@ function OpportunitiesPage({ can, currentUser }) {
                       {currentCommercialStage?.name || "la etapa actual"}.
                     </p>
                   ) : null}
+
+                  <div className="opportunity-commercial-actions">
+                    {[
+                      {
+                        key: "validate-current-stage",
+                        tone: "success",
+                        icon:
+                          savingCommercialAction === "validate-current-stage"
+                            ? "..."
+                            : "✓",
+                        label: "Validar etapa actual",
+                        shortLabel: "Validar",
+                        onClick: handleCurrentStageValidation,
+                        disabled:
+                          Boolean(savingCommercialAction) ||
+                          isCommercialFlowClosed ||
+                          !commercialContext.isSelectedStageCurrent ||
+                          hasPendingStageChange ||
+                          hasPendingCommercialClose,
+                      },
+                      {
+                        key: "stage-bypass",
+                        tone: "warning",
+                        icon:
+                          savingCommercialAction === "stage-bypass"
+                            ? "..."
+                            : ">>",
+                        label: "Bypasear etapa",
+                        shortLabel: "Bypasear",
+                        onClick: handleStageBypass,
+                        disabled:
+                          Boolean(savingCommercialAction) ||
+                          isCommercialFlowClosed ||
+                          !commercialContext.isSelectedStageCurrent ||
+                          hasPendingStageChange ||
+                          hasPendingCommercialClose ||
+                          !canBypassCurrentStage,
+                      },
+                      {
+                        key: "retreat",
+                        tone: "neutral",
+                        icon:
+                          savingCommercialAction === "retreat" ? "..." : "←",
+                        label: canRetreatToSelectedStage
+                          ? "Regresar a etapa seleccionada"
+                          : "Regresar etapa anterior",
+                        shortLabel: "Regresar",
+                        onClick: () => handleStageTransition("retreat"),
+                        disabled:
+                          Boolean(savingCommercialAction) ||
+                          isCommercialFlowClosed ||
+                          hasPendingStageChange ||
+                          hasPendingCommercialClose ||
+                          (!commercialContext.isSelectedStageCurrent &&
+                            !canRetreatToSelectedStage) ||
+                          (!canRetreatToSelectedStage &&
+                            !hasImmediatePreviousStage),
+                      },
+                      {
+                        key: "perdida",
+                        tone: "danger",
+                        icon:
+                          savingCommercialAction === "perdida" ? "..." : "✕",
+                        label: "Marcar perdida",
+                        shortLabel: "Perdida",
+                        onClick: () => handleCommercialClose("perdida"),
+                        disabled:
+                          Boolean(savingCommercialAction) ||
+                          isCommercialFlowClosed ||
+                          !commercialContext.isSelectedStageCurrent ||
+                          hasPendingStageChange,
+                      },
+                      {
+                        key: "anulada",
+                        tone: "muted",
+                        icon:
+                          savingCommercialAction === "anulada" ? "..." : "⊘",
+                        label: "Marcar anulada",
+                        shortLabel: "Anulada",
+                        onClick: () => handleCommercialClose("anulada"),
+                        disabled:
+                          Boolean(savingCommercialAction) ||
+                          isCommercialFlowClosed ||
+                          !commercialContext.isSelectedStageCurrent ||
+                          hasPendingStageChange,
+                      },
+                    ].map((action) => (
+                      <div
+                        key={action.key}
+                        className="opportunity-commercial-action-item"
+                      >
+                        <button
+                          type="button"
+                          className={`opportunity-commercial-action-icon is-${action.tone}`}
+                          onClick={action.onClick}
+                          disabled={action.disabled}
+                          title={action.label}
+                          aria-label={action.label}
+                        >
+                          <span aria-hidden="true">{action.icon}</span>
+                        </button>
+                        <span className="opportunity-commercial-action-label">
+                          {action.shortLabel}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
 
                   {commercialContext.bypassInfo?.isBypassed ? (
                     <div className="opportunity-stage-bypass-summary">
@@ -6794,128 +7000,6 @@ function OpportunitiesPage({ can, currentUser }) {
                       />
                     </div>
                   ) : null}
-
-                  <div className="opportunity-commercial-actions">
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={handleCurrentStageValidation}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange ||
-                        hasPendingCommercialClose
-                      }
-                    >
-                      {savingCommercialAction === "validate-current-stage"
-                        ? "Validando..."
-                        : "Validar etapa actual"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={handleStageBypass}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange ||
-                        hasPendingCommercialClose ||
-                        !canBypassCurrentStage
-                      }
-                    >
-                      {savingCommercialAction === "stage-bypass"
-                        ? "Bypaseando..."
-                        : "Bypasear etapa"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => handleStageTransition("retreat")}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        hasPendingStageChange ||
-                        hasPendingCommercialClose ||
-                        (!commercialContext.isSelectedStageCurrent &&
-                          !canRetreatToSelectedStage) ||
-                        (!canRetreatToSelectedStage &&
-                          !hasImmediatePreviousStage)
-                      }
-                    >
-                      {savingCommercialAction === "retreat"
-                        ? "Retrocediendo..."
-                        : canRetreatToSelectedStage
-                          ? "Regresar a etapa seleccionada"
-                          : "Regresar etapa anterior"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => handleStageTransition("advance")}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange ||
-                        hasPendingCommercialClose
-                      }
-                    >
-                      {savingCommercialAction === "advance"
-                        ? "Avanzando..."
-                        : "Avanzar etapa"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => handleCommercialClose("ganada")}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange ||
-                        hasPendingCommercialClose ||
-                        !isCommercialOpportunityWaiting(
-                          currentCommercialStage?.code,
-                        )
-                      }
-                    >
-                      {savingCommercialAction === "ganada"
-                        ? "Cerrando..."
-                        : "Marcar ganada"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => handleCommercialClose("perdida")}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange
-                      }
-                    >
-                      {savingCommercialAction === "perdida"
-                        ? "Cerrando..."
-                        : "Marcar perdida"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => handleCommercialClose("anulada")}
-                      disabled={
-                        Boolean(savingCommercialAction) ||
-                        isCommercialFlowClosed ||
-                        !commercialContext.isSelectedStageCurrent ||
-                        hasPendingStageChange
-                      }
-                    >
-                      {savingCommercialAction === "anulada"
-                        ? "Cerrando..."
-                        : "Marcar anulada"}
-                    </button>
-                  </div>
                 </section>
               )}
 
@@ -6996,6 +7080,13 @@ function OpportunitiesPage({ can, currentUser }) {
         }
         onCancel={closeCommercialCloseModal}
         onConfirm={confirmCommercialCloseDraft}
+      />
+
+      <CommercialStatusReasonModal
+        isOpen={showCommercialStatusReasonModal}
+        statusLabel={currentCommercialStatusName}
+        reason={displayedCommercialCloseReason}
+        onClose={closeCommercialStatusReasonModal}
       />
 
       {error && <div className="toast toast-error">{error}</div>}

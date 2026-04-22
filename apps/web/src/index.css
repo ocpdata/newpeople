@@ -557,6 +557,74 @@ button:disabled {
   color: #345173;
 }
 
+.opportunity-main-data-section {
+  padding: 8px;
+}
+
+.opportunity-main-data-section h4 {
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.opportunity-main-data-section .grid-form {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.opportunity-main-data-section .field-group {
+  gap: 2px;
+}
+
+.opportunity-main-data-section .field-group label {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.opportunity-main-data-section .field-group input:not([type="checkbox"]):not([type="radio"]),
+.opportunity-main-data-section .field-group select,
+.opportunity-main-data-section .field-group .audit-date-input {
+  min-height: 32px;
+  height: 32px;
+  font-size: 11px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.opportunity-sales-management-section {
+  padding: 8px;
+}
+
+.opportunity-sales-management-section h4 {
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.opportunity-sales-management-section .grid-form {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.opportunity-sales-management-section .field-group {
+  gap: 2px;
+}
+
+.opportunity-sales-management-section .field-group label {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.opportunity-sales-management-section .field-group input:not([type="checkbox"]):not([type="radio"]),
+.opportunity-sales-management-section .field-group select,
+.opportunity-sales-management-section .field-group .audit-date-input {
+  min-height: 32px;
+  height: 32px;
+  font-size: 11px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
 /* Seccion oportunidades en modal de cuenta */
 .account-opps-empty {
   font-size: 13px;
@@ -2825,6 +2893,25 @@ td {
   white-space: nowrap;
 }
 
+.commercial-status-badge-button {
+  appearance: none;
+  cursor: default;
+}
+
+.commercial-status-badge-button.is-clickable {
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.commercial-status-badge-button.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(35, 64, 95, 0.12);
+}
+
+.commercial-status-badge-button:disabled {
+  opacity: 1;
+}
+
 .opportunity-modal-header-meta {
   display: flex;
   flex-direction: column;
@@ -2907,19 +2994,26 @@ td {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.opportunity-commercial-section h4 {
+  margin-bottom: 4px;
+  font-size: 11px;
 }
 
 .opportunity-commercial-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
 }
 
 .opportunity-commercial-hint {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .opportunity-stage-stepper {
@@ -2927,23 +3021,23 @@ td {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
   overflow-x: auto;
-  padding: 6px 0 2px;
+  padding: 2px 0 0;
 }
 
 .opportunity-stage-step {
   position: relative;
   display: flex;
   flex: 1 1 0;
-  min-width: 130px;
+  min-width: 72px;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   border: 0;
   background: transparent;
   color: #23405f;
-  padding: 0 8px;
+  padding: 0 2px;
   text-align: center;
 }
 
@@ -2953,9 +3047,9 @@ td {
 
 .opportunity-stage-step-line {
   position: absolute;
-  top: 18px;
-  left: calc(-50% + 18px);
-  width: calc(100% - 36px);
+  top: 13px;
+  left: calc(-50% + 13px);
+  width: calc(100% - 26px);
   height: 2px;
   background: #cfd9e6;
   pointer-events: none;
@@ -2978,19 +3072,20 @@ td {
   align-items: center;
   justify-content: center;
   background: #fff;
-  padding: 0 6px;
+  padding: 0 2px;
 }
 
 .opportunity-stage-step-order {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: 2px solid #b7c6d8;
   background: #fff;
   color: #5d738d;
+  font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
   transition:
@@ -3009,7 +3104,7 @@ td {
 
 .opportunity-stage-step.is-selected .opportunity-stage-step-order {
   border-color: #17365d;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 
 .opportunity-stage-step.is-future .opportunity-stage-step-order {
@@ -3021,53 +3116,177 @@ td {
 .opportunity-stage-step-content {
   display: flex;
   flex-direction: column;
-  gap: 3px;
   align-items: center;
-  max-width: 150px;
+  max-width: 74px;
 }
 
 .opportunity-stage-step-content strong {
-  font-size: 14px;
-  line-height: 1.2;
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.opportunity-stage-step-content small {
-  color: #5f7b9b;
+@media (max-width: 900px) {
+  .opportunity-stage-stepper {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px 2px;
+    overflow-x: visible;
+  }
+
+  .opportunity-stage-step {
+    flex: 0 0 calc(25% - 2px);
+    min-width: 0;
+  }
+
+  .opportunity-stage-step-line {
+    display: none;
+  }
+
+  .opportunity-stage-step-content {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .opportunity-stage-step {
+    flex-basis: calc(33.333% - 2px);
+  }
+
+  .opportunity-stage-step-order {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+  }
+
+  .opportunity-stage-step-content strong {
+    font-size: 9px;
+  }
 }
 
 .opportunity-stage-readonly-banner {
-  margin: 0 0 12px;
-  padding: 10px 12px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid #d6e3f5;
   background: #f8fbff;
   color: #31557e;
+  font-size: 12px;
 }
 
 .opportunity-stage-questions {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+}
+
+.opportunity-commercial-section .field-group label {
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .opportunity-stage-question textarea,
 .opportunity-close-reason-group textarea {
-  min-height: 88px;
+  min-height: 72px;
+  font-size: 11px;
   resize: vertical;
 }
 
 .opportunity-close-reason-group {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .opportunity-commercial-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
-  margin-top: 12px;
+  margin: 8px 0 10px;
 }
 
-.opportunity-commercial-actions button {
-  min-width: 160px;
+.opportunity-commercial-action-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 52px;
+}
+
+.opportunity-commercial-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d6e3f5;
+  border-radius: 999px;
+  background: #fff;
+  color: #23405f;
+  font-size: 16px;
+  line-height: 1;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.opportunity-commercial-action-icon.is-success {
+  border-color: #b9e6cb;
+  background: #f2fcf6;
+  color: #18794e;
+}
+
+.opportunity-commercial-action-icon.is-warning {
+  border-color: #f1d39a;
+  background: #fff8e8;
+  color: #9a5b00;
+}
+
+.opportunity-commercial-action-icon.is-neutral {
+  border-color: #d6e3f5;
+  background: #f8fbff;
+  color: #31557e;
+}
+
+.opportunity-commercial-action-icon.is-danger {
+  border-color: #f0b7b7;
+  background: #fff3f3;
+  color: #b42318;
+}
+
+.opportunity-commercial-action-icon.is-muted {
+  border-color: #d9d2e8;
+  background: #faf7ff;
+  color: #6941c6;
+}
+
+.opportunity-commercial-action-icon:hover:not(:disabled) {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.opportunity-commercial-action-icon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.opportunity-commercial-action-icon span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.opportunity-commercial-action-label {
+  font-size: 9px;
+  line-height: 1.15;
+  color: #516b89;
+  text-align: center;
+  max-width: 60px;
+  overflow-wrap: anywhere;
 }
 
 .question-admin-stage-strip {
@@ -3148,6 +3367,7 @@ td {
 @media (max-width: 768px) {
   .opportunity-commercial-section-header {
     flex-direction: column;
+    gap: 6px;
   }
 
   .opportunity-commercial-badges {
@@ -3160,7 +3380,7 @@ td {
 
   .opportunity-stage-stepper {
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     overflow: visible;
   }
 
@@ -3169,6 +3389,7 @@ td {
     flex-direction: row;
     justify-content: flex-start;
     text-align: left;
+    gap: 8px;
     padding: 0;
   }
 
