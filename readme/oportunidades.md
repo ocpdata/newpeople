@@ -8,9 +8,38 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - Edicion de oportunidad desde acciones por fila.
 - Asignacion de un vendedor.
 - Seleccion opcional de ingeniero preventa.
+- Gestion del proceso comercial por etapas con preguntas configurables.
+- Cierre comercial como Ganada, Perdida o Anulada.
 - Cambio de estado de activacion desde menu por fila.
 - Visualizacion en tabla con filtros y ordenamiento.
 - Auditoria visible en modo edicion.
+
+## Modelo funcional
+
+La UI distingue tres conceptos separados:
+
+- Etapa operativa: describe en qué punto del proceso comercial se encuentra la oportunidad.
+- Estado comercial: describe si la oportunidad sigue En proceso o ya fue cerrada como Ganada, Perdida o Anulada.
+- Estado de activacion: describe si el registro está Activado, Pendiente de activacion o Desactivado.
+
+Las 7 etapas operativas vigentes son:
+
+1. Contacto inicial
+2. Identificacion de oportunidad
+3. Desarrollo
+4. Cotizacion
+5. Demostracion
+6. Negociacion
+7. Waiting
+
+Los 4 estados comerciales vigentes son:
+
+1. En proceso
+2. Ganada
+3. Perdida
+4. Anulada
+
+`Ganada` ya no es una etapa operativa. Solo puede aplicarse como cierre comercial desde `Waiting`.
 
 ## Puntos clave de UX
 
@@ -18,29 +47,59 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - El boton aparece tanto con permiso de crear como de solicitar oportunidades.
 - Barra de filtros: pills de estado (Todos / Activadas / Pendientes / Desactivadas) + busqueda inline.
 - Creacion y edicion mediante ventana modal.
-- Badge de estado de activacion de solo lectura en encabezado del modal de edicion.
+- Badges separados de estado de activacion y estado comercial en el encabezado del modal de edicion.
+- El encabezado del modal de edicion muestra tambien la etapa operativa actual como badge independiente.
 - Secciones del formulario por contexto:
   - Datos principales.
   - Gestion comercial.
+  - Proceso comercial.
   - Auditoria en modo edicion.
+- El bloque `Proceso comercial` usa un stepper clickable con las 7 etapas operativas.
+- Al abrir una oportunidad en edicion, el step seleccionado coincide con la etapa actual de la oportunidad.
+- Se puede hacer clic en etapas pasadas o futuras para revisar sus preguntas y respuestas en modo solo lectura.
+- Solo la etapa actual permite guardar respuestas, avanzar, retroceder y cerrar sin mezclar estas acciones con la edicion de datos base.
+- La pantalla `Preguntas comerciales` permite administrar preguntas por etapa sin tocar código.
 - El listado muestra activadas y pendientes por defecto, y permite incluir desactivadas.
 - Busqueda por texto y ordenamiento por columnas con flechas.
+- El listado muestra por separado etapa operativa, estado comercial y estado de activacion.
 - Menu de acciones por fila con editar, activar, marcar pendiente y desactivar.
 - Paginacion con selector de 10 / 50 / 100 registros por pagina y navegacion previo/siguiente.
+
+## Reglas del flujo comercial
+
+- Toda oportunidad nueva inicia en `Contacto inicial` y `En proceso`, aunque el cliente intente enviar otros valores.
+- El avance de etapa exige que todas las preguntas obligatorias de la etapa actual tengan respuesta.
+- El retroceso solo está disponible mientras la oportunidad siga `En proceso`.
+- `Ganada` solo puede aplicarse desde `Waiting`.
+- `Perdida` y `Anulada` pueden aplicarse desde cualquier etapa, pero exigen motivo.
+- Una oportunidad cerrada como `Ganada`, `Perdida` o `Anulada` ya no puede avanzar, retroceder ni guardar nuevas respuestas.
+- El estado de activacion sigue siendo independiente del flujo comercial.
 
 ## API relacionada (resumen)
 
 - GET /api/opportunities
 - GET /api/opportunities/:id
+- GET /api/opportunities/:id/commercial-context
+- GET /api/opportunities/:id/stage-view/:salesStageId
 - POST /api/opportunities
 - PUT /api/opportunities/:id
+- POST /api/opportunities/:id/stage-answers
+- POST /api/opportunities/:id/stage-transition
+- POST /api/opportunities/:id/commercial-close
 - PATCH /api/opportunities/:id/status
 - GET /api/catalogs/opportunity-accounts
 - GET /api/catalogs/opportunity-contacts
 - GET /api/catalogs/opportunity-seller-users
 - GET /api/catalogs/opportunity-business-lines
 - GET /api/catalogs/opportunity-sales-stages
+- GET /api/catalogs/opportunity-commercial-statuses
 - GET /api/catalogs/opportunity-activation-statuses
+- GET /api/catalogs/opportunity-stage-questions
+- GET /api/catalogs/opportunity-stage-questions-admin
+- POST /api/catalogs/opportunity-stage-questions
+- PUT /api/catalogs/opportunity-stage-questions/:id
+- PATCH /api/catalogs/opportunity-stage-questions/:id/status
+- POST /api/catalogs/opportunity-stage-questions/reorder
 
 ## Consideraciones
 
@@ -52,7 +111,11 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - Preventa es opcional y corresponde a un usuario activo.
 - Con `oportunidades.create`, la oportunidad se registra activada automaticamente.
 - Con `oportunidades.request`, la oportunidad se registra en pendiente automaticamente.
+- El backend fuerza `Contacto inicial` y `En proceso` al crear la oportunidad.
 - Solo usuarios con `oportunidades.create` pueden cambiar el estado de activacion de una oportunidad.
 - El rol Administrador no sustituye esta regla: para oportunidades manda el permiso explicito.
 - Si el usuario no tiene `oportunidades.create` ni `oportunidades.request`, no puede crear ni solicitar oportunidades.
 - La auditoria se muestra en modo edicion al final del formulario.
+- Las respuestas por etapa se guardan con histórico; una nueva captura no sobrescribe la anterior.
+- `commercial-context` devuelve la etapa actual junto con el resumen de todas las etapas para pintar el stepper inicial.
+- `stage-view/:salesStageId` devuelve la vista de cualquier etapa activa de la oportunidad, manteniendo visible cuál sigue siendo la etapa actual.

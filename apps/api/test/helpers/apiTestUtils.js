@@ -43,7 +43,9 @@ export async function createRole({
     ],
   );
 
-  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [
+    name,
+  ]);
   const roleId = Number(roleRows[0].id);
 
   if (permissionCodes.length) {
@@ -60,7 +62,10 @@ export async function createRole({
 }
 
 export async function ensureNamedRole(name) {
-  const existingRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  const existingRows = await query(
+    "SELECT id FROM roles WHERE name = ? LIMIT 1",
+    [name],
+  );
   if (existingRows.length) {
     return { roleId: Number(existingRows[0].id), created: false };
   }
@@ -73,7 +78,9 @@ export async function ensureNamedRole(name) {
     [name, `Rol temporal requerido por pruebas: ${name}`, now, now],
   );
 
-  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [name]);
+  const roleRows = await query("SELECT id FROM roles WHERE name = ? LIMIT 1", [
+    name,
+  ]);
   return { roleId: Number(roleRows[0].id), created: true };
 }
 
@@ -152,7 +159,11 @@ export async function getStatusCodeById(tableName, entityId, statusColumn) {
   return rows.length ? String(rows[0].code) : null;
 }
 
-export async function createDirectAccount({ ownerUserId, actorUserId, suffix }) {
+export async function createDirectAccount({
+  ownerUserId,
+  actorUserId,
+  suffix,
+}) {
   const now = new Date();
   const result = await query(
     `INSERT INTO accounts
@@ -223,12 +234,24 @@ export async function createDirectContact({ accountId, actorUserId, suffix }) {
 }
 
 export async function cleanupArtifacts({
+  stageQuestionIds = [],
   opportunityIds = [],
   contactIds = [],
   accountIds = [],
   userIds = [],
   roleIds = [],
 }) {
+  if (stageQuestionIds.length) {
+    await query(
+      `DELETE FROM opportunity_stage_question_answers WHERE question_id IN (${placeholders(stageQuestionIds.length)})`,
+      stageQuestionIds,
+    );
+    await query(
+      `DELETE FROM opportunity_stage_questions WHERE id IN (${placeholders(stageQuestionIds.length)})`,
+      stageQuestionIds,
+    );
+  }
+
   if (opportunityIds.length) {
     await query(
       `DELETE FROM opportunities WHERE id IN (${placeholders(opportunityIds.length)})`,

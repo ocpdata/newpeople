@@ -474,6 +474,7 @@ async function fetchCatalogs() {
     businessLines,
     salesStages,
     opportunityStatuses,
+    opportunityCommercialStatuses,
   ] = await Promise.all([
     query(
       "SELECT id, iso2, name FROM countries WHERE is_active = 1 ORDER BY id",
@@ -503,10 +504,13 @@ async function fetchCatalogs() {
       "SELECT id, code, name FROM opportunity_business_lines WHERE is_active = 1 ORDER BY id",
     ),
     query(
-      "SELECT id, code, name FROM opportunity_sales_stages WHERE is_active = 1 ORDER BY id",
+      "SELECT id, code, name FROM opportunity_sales_stages WHERE is_active = 1 ORDER BY stage_order, id",
     ),
     query(
       "SELECT id, code, name FROM opportunity_activation_statuses WHERE is_active = 1 ORDER BY id",
+    ),
+    query(
+      "SELECT id, code, name FROM opportunity_commercial_statuses WHERE is_active = 1 ORDER BY id",
     ),
   ]);
 
@@ -528,6 +532,7 @@ async function fetchCatalogs() {
     businessLines,
     salesStages,
     opportunityStatuses,
+    opportunityCommercialStatuses,
   };
 }
 
@@ -784,7 +789,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
     for (const user of userSpecs) {
       if (!roleIdByName.has(user.roleName)) {
-        throw new Error(`Rol demo no resuelto para usuario ${user.email}: ${user.roleName}`);
+        throw new Error(
+          `Rol demo no resuelto para usuario ${user.email}: ${user.roleName}`,
+        );
       }
     }
 
@@ -1040,8 +1047,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         await conn.query(
           `INSERT INTO opportunities
             (name, amount_usd, account_id, close_date, contact_id, sales_stage_id, business_line_id,
-             seller_user_id, presales_user_id, activation_status_id, created_by, created_at, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             seller_user_id, presales_user_id, activation_status_id, commercial_status_id,
+             created_by, created_at, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             `${BUSINESS_NAMES[opportunityCounter % BUSINESS_NAMES.length]} ${account.accountName}`,
             15000 + opportunityCounter * 1250,
@@ -1053,6 +1061,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             account.primarySellerId,
             opportunityIndex % 2 === 0 ? presalesUser?.id || null : null,
             makeOpportunityStatusId(catalogs, opportunityCounter),
+            byCode(catalogs.opportunityCommercialStatuses, "en_proceso"),
             adminUserId,
             now,
             adminUserId,

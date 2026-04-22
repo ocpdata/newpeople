@@ -1670,6 +1670,24 @@ td {
   border-color: #f3d49a;
 }
 
+.user-status-badge.won {
+  color: #0b5e2a;
+  background: #e3f7ec;
+  border-color: #9fd7b4;
+}
+
+.user-status-badge.lost {
+  color: #8a3e00;
+  background: #fff0e4;
+  border-color: #f3c49c;
+}
+
+.user-status-badge.canceled {
+  color: #5b3b83;
+  background: #f3ecff;
+  border-color: #d7c2f4;
+}
+
 .audit-section {
   margin-top: 32px;
 }
@@ -1784,7 +1802,11 @@ td {
   border: 1px solid #dbe6f5;
   border-radius: 18px;
   background:
-    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 28%),
+    radial-gradient(
+      circle at top right,
+      rgba(37, 99, 235, 0.08),
+      transparent 28%
+    ),
     linear-gradient(180deg, #fbfdff 0%, #f4f8ff 100%);
   box-shadow: 0 14px 36px rgba(31, 53, 84, 0.06);
 }
@@ -2051,7 +2073,10 @@ td {
   border-radius: 10px;
   color: #27405f;
   font-size: 12px;
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .audit-datepicker-calendar .react-datepicker__day:hover {
@@ -2152,7 +2177,6 @@ td {
   .audit-filter-date-card {
     grid-column: span 2;
   }
-
 }
 
 @media (max-width: 720px) {
@@ -2177,7 +2201,6 @@ td {
   .audit-filter-date-card {
     grid-column: span 1;
   }
-
 }
 
 .role-toggle {
@@ -2860,6 +2883,322 @@ td {
   color: #8a5a00;
   background: #fff5db;
   border-color: #f2d28a;
+}
+
+.status-icon-badge.won {
+  color: #0b5e2a;
+  background: #e3f7ec;
+  border-color: #9fd7b4;
+}
+
+.status-icon-badge.lost {
+  color: #8a3e00;
+  background: #fff0e4;
+  border-color: #f3c49c;
+}
+
+.status-icon-badge.canceled {
+  color: #5b3b83;
+  background: #f3ecff;
+  border-color: #d7c2f4;
+}
+
+.opportunity-commercial-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.opportunity-commercial-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.opportunity-commercial-hint {
+  margin: 4px 0 0;
+}
+
+.opportunity-stage-stepper {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0;
+  margin-bottom: 18px;
+  overflow-x: auto;
+  padding: 6px 0 2px;
+}
+
+.opportunity-stage-step {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 130px;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: #23405f;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.opportunity-stage-step:disabled {
+  opacity: 0.7;
+}
+
+.opportunity-stage-step-line {
+  position: absolute;
+  top: 18px;
+  left: calc(-50% + 18px);
+  width: calc(100% - 36px);
+  height: 2px;
+  background: #cfd9e6;
+  pointer-events: none;
+}
+
+.opportunity-stage-step:first-child .opportunity-stage-step-line {
+  display: none;
+}
+
+.opportunity-stage-step.is-past .opportunity-stage-step-line,
+.opportunity-stage-step.is-current .opportunity-stage-step-line,
+.opportunity-stage-step.is-selected .opportunity-stage-step-line {
+  background: #2563eb;
+}
+
+.opportunity-stage-step-circle-wrap {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  padding: 0 6px;
+}
+
+.opportunity-stage-step-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid #b7c6d8;
+  background: #fff;
+  color: #5d738d;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.opportunity-stage-step.is-past .opportunity-stage-step-order,
+.opportunity-stage-step.is-current .opportunity-stage-step-order {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.opportunity-stage-step.is-selected .opportunity-stage-step-order {
+  border-color: #17365d;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+}
+
+.opportunity-stage-step.is-future .opportunity-stage-step-order {
+  border-color: #d3dbe6;
+  background: #fffdf6;
+  color: #8f7a39;
+}
+
+.opportunity-stage-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+  max-width: 150px;
+}
+
+.opportunity-stage-step-content strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.opportunity-stage-step-content small {
+  color: #5f7b9b;
+}
+
+.opportunity-stage-readonly-banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #d6e3f5;
+  background: #f8fbff;
+  color: #31557e;
+}
+
+.opportunity-stage-questions {
+  display: grid;
+  gap: 12px;
+}
+
+.opportunity-stage-question textarea,
+.opportunity-close-reason-group textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.opportunity-close-reason-group {
+  margin-top: 12px;
+}
+
+.opportunity-commercial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.opportunity-commercial-actions button {
+  min-width: 160px;
+}
+
+.question-admin-stage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.question-admin-stage-pill {
+  border: 1px solid #d6e3f5;
+  background: #fff;
+  color: #23405f;
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-width: 170px;
+  text-align: left;
+}
+
+.question-admin-stage-pill small {
+  display: block;
+  margin-top: 4px;
+  color: #7291b3;
+  font-size: 11px;
+}
+
+.question-admin-stage-pill.is-selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.question-admin-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.question-admin-summary-card strong {
+  display: block;
+  font-size: 20px;
+  color: #17365d;
+}
+
+.question-admin-summary-hint {
+  margin-top: 6px;
+}
+
+.question-admin-table-wrap {
+  overflow-x: auto;
+}
+
+.question-admin-prompt-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.question-admin-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.question-admin-order-btn {
+  min-width: 44px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.question-admin-modal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (max-width: 768px) {
+  .opportunity-commercial-section-header {
+    flex-direction: column;
+  }
+
+  .opportunity-commercial-badges {
+    justify-content: flex-start;
+  }
+
+  .opportunity-commercial-actions button {
+    width: 100%;
+  }
+
+  .opportunity-stage-stepper {
+    flex-direction: column;
+    gap: 12px;
+    overflow: visible;
+  }
+
+  .opportunity-stage-step {
+    min-width: 100%;
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 0;
+  }
+
+  .opportunity-stage-step-line {
+    top: -12px;
+    left: 18px;
+    width: 2px;
+    height: 12px;
+  }
+
+  .opportunity-stage-step:first-child .opportunity-stage-step-line {
+    display: none;
+  }
+
+  .opportunity-stage-step-circle-wrap {
+    padding: 0;
+  }
+
+  .opportunity-stage-step-content {
+    align-items: flex-start;
+    max-width: none;
+  }
+
+  .question-admin-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .question-admin-modal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .status-menu-dropdown {

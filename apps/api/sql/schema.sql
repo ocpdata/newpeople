@@ -350,6 +350,15 @@ CREATE TABLE IF NOT EXISTS opportunity_activation_statuses (
   CONSTRAINT uq_opportunity_activation_statuses_name UNIQUE (name)
 );
 
+CREATE TABLE IF NOT EXISTS opportunity_commercial_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_opportunity_commercial_statuses_code UNIQUE (code),
+  CONSTRAINT uq_opportunity_commercial_statuses_name UNIQUE (name)
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
@@ -439,6 +448,9 @@ CREATE TABLE IF NOT EXISTS opportunities (
   seller_user_id BIGINT UNSIGNED NULL,
   presales_user_id BIGINT UNSIGNED NULL,
   activation_status_id BIGINT UNSIGNED NOT NULL,
+  commercial_status_id BIGINT UNSIGNED NOT NULL,
+  commercial_closed_at DATETIME(3) NULL,
+  commercial_close_reason TEXT NULL,
   created_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_by BIGINT UNSIGNED NOT NULL,
@@ -450,8 +462,86 @@ CREATE TABLE IF NOT EXISTS opportunities (
   CONSTRAINT fk_opportunities_seller_user FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_opportunities_presales_user FOREIGN KEY (presales_user_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_opportunities_activation_status FOREIGN KEY (activation_status_id) REFERENCES opportunity_activation_statuses(id),
+  CONSTRAINT fk_opportunities_commercial_status FOREIGN KEY (commercial_status_id) REFERENCES opportunity_commercial_statuses(id),
   CONSTRAINT fk_opportunities_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_opportunities_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
+);
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD COLUMN commercial_status_id BIGINT UNSIGNED NULL AFTER activation_status_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'commercial_status_id'
+);
+PREPARE s_opportunities_commercial_status_col FROM @stmt;
+EXECUTE s_opportunities_commercial_status_col;
+DEALLOCATE PREPARE s_opportunities_commercial_status_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD COLUMN commercial_closed_at DATETIME(3) NULL AFTER commercial_status_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'commercial_closed_at'
+);
+PREPARE s_opportunities_commercial_closed_at_col FROM @stmt;
+EXECUTE s_opportunities_commercial_closed_at_col;
+DEALLOCATE PREPARE s_opportunities_commercial_closed_at_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD COLUMN commercial_close_reason TEXT NULL AFTER commercial_closed_at',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'commercial_close_reason'
+);
+PREPARE s_opportunities_commercial_close_reason_col FROM @stmt;
+EXECUTE s_opportunities_commercial_close_reason_col;
+DEALLOCATE PREPARE s_opportunities_commercial_close_reason_col;
+
+CREATE TABLE IF NOT EXISTS opportunity_stage_questions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  sales_stage_id BIGINT UNSIGNED NOT NULL,
+  code VARCHAR(80) NOT NULL,
+  prompt TEXT NOT NULL,
+  response_type VARCHAR(40) NOT NULL,
+  display_order TINYINT UNSIGNED NOT NULL,
+  is_required TINYINT(1) NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_opportunity_stage_questions_code UNIQUE (code),
+  CONSTRAINT uq_opportunity_stage_questions_stage_order UNIQUE (sales_stage_id, display_order),
+  CONSTRAINT fk_opportunity_stage_questions_stage FOREIGN KEY (sales_stage_id) REFERENCES opportunity_sales_stages(id)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_stage_question_answers (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  opportunity_id BIGINT UNSIGNED NOT NULL,
+  sales_stage_id BIGINT UNSIGNED NOT NULL,
+  question_id BIGINT UNSIGNED NOT NULL,
+  question_code_snapshot VARCHAR(80) NOT NULL,
+  question_prompt_snapshot TEXT NOT NULL,
+  answer_value TEXT NULL,
+  answered_by_user_id BIGINT UNSIGNED NULL,
+  answered_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_opportunity_stage_answers_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_stage_answers_stage FOREIGN KEY (sales_stage_id) REFERENCES opportunity_sales_stages(id),
+  CONSTRAINT fk_opportunity_stage_answers_question FOREIGN KEY (question_id) REFERENCES opportunity_stage_questions(id),
+  CONSTRAINT fk_opportunity_stage_answers_user FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_opportunity_stage_answers_opportunity_stage (opportunity_id, sales_stage_id, answered_at),
+  INDEX idx_opportunity_stage_answers_question (question_id, answered_at)
 );
 
 SET @stmt := (
@@ -514,6 +604,21 @@ SET @stmt := (
 PREPARE s_opportunities_drop_idx FROM @stmt;
 EXECUTE s_opportunities_drop_idx;
 DEALLOCATE PREPARE s_opportunities_drop_idx;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE opportunities ADD CONSTRAINT fk_opportunities_commercial_status FOREIGN KEY (commercial_status_id) REFERENCES opportunity_commercial_statuses(id)',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND CONSTRAINT_NAME = 'fk_opportunities_commercial_status'
+);
+PREPARE s_opportunities_commercial_status_fk FROM @stmt;
+EXECUTE s_opportunities_commercial_status_fk;
+DEALLOCATE PREPARE s_opportunities_commercial_status_fk;
 
 SET @stmt := (
   SELECT IF(
@@ -672,17 +777,88 @@ INSERT INTO opportunity_sales_stages (code, name, stage_order, is_active) VALUES
   ('demostracion', 'Demostración', 5, 1),
   ('negociacion', 'Negociación', 6, 1),
   ('waiting', 'Waiting', 7, 1),
-  ('ganada', 'Ganada', 8, 1)
+  ('ganada', 'Ganada', 8, 0)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   stage_order = VALUES(stage_order),
   is_active = VALUES(is_active);
+
+INSERT INTO opportunity_commercial_statuses (code, name, is_active) VALUES
+  ('en_proceso', 'En proceso', 1),
+  ('ganada', 'Ganada', 1),
+  ('perdida', 'Perdida', 1),
+  ('anulada', 'Anulada', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 
 INSERT INTO opportunity_activation_statuses (code, name, is_active) VALUES
   ('activada', 'Activada', 1),
   ('desactivada', 'Desactivada', 1),
   ('pendiente_activacion', 'Pendiente de activacion', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+UPDATE opportunities o
+INNER JOIN opportunity_sales_stages won_stage ON won_stage.id = o.sales_stage_id AND won_stage.code = 'ganada'
+INNER JOIN opportunity_sales_stages waiting_stage ON waiting_stage.code = 'waiting'
+INNER JOIN opportunity_commercial_statuses won_status ON won_status.code = 'ganada'
+SET o.sales_stage_id = waiting_stage.id,
+    o.commercial_status_id = won_status.id,
+    o.commercial_closed_at = COALESCE(o.commercial_closed_at, o.updated_at, o.created_at, NOW(3))
+WHERE o.sales_stage_id = won_stage.id;
+
+UPDATE opportunities o
+INNER JOIN opportunity_commercial_statuses in_progress_status ON in_progress_status.code = 'en_proceso'
+SET o.commercial_status_id = in_progress_status.id
+WHERE o.commercial_status_id IS NULL;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 1,
+    'ALTER TABLE opportunities MODIFY COLUMN commercial_status_id BIGINT UNSIGNED NOT NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'opportunities'
+    AND COLUMN_NAME = 'commercial_status_id'
+    AND IS_NULLABLE = 'YES'
+);
+PREPARE s_opportunities_commercial_status_not_null FROM @stmt;
+EXECUTE s_opportunities_commercial_status_not_null;
+DEALLOCATE PREPARE s_opportunities_commercial_status_not_null;
+
+INSERT INTO opportunity_stage_questions (sales_stage_id, code, prompt, response_type, display_order, is_required, is_active) VALUES
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'contacto_inicial' LIMIT 1), 'contacto_inicial_interes_cliente', '¿En qué está interesado el cliente?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_requerimiento_tecnico', '¿Cuál es el requerimiento técnico?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_motivacion_principal', '¿Cuál es la motivación principal de este requerimiento?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_presupuesto_cliente', '¿Sabe el presupuesto que tiene el cliente? Si el cliente no lo tiene como lo conseguirá?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_fecha_adquisicion', '¿Cuándo debe adquirirse la solución, porque en tal fecha y cuál es el impacto si no lo hace en la fecha indicada?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_decisor_proceso_compra', '¿Quién decidirá esta adquisición y como es el proceso de compra?', 'long_text', 5, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_ventajas_fortalezas', '¿Qué ventajas o fortalezas tenemos para esta oportunidad?', 'long_text', 6, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_estrategia', '¿Qué estrategia se seguirá?', 'long_text', 7, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_informacion_adicional', '¿Qué información adicional se obtuvo en las reuniones de desarrollo?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_presentacion_solucion', '¿Cómo se presentó la solución técnica?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_propuesta', '¿Qué se ha propuesto?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_puntos_tecnicos', '¿Qué puntos técnicos son los mas importantes para el proyecto?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_aceptacion_propuesta', '¿El cliente aceptó la propuesta técnica?', 'long_text', 5, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_observaciones_condiciones', '¿El cliente hizo alguna observación o indicó ciertas condiciones como requisito para aceptar la propuesta técnica?', 'long_text', 6, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_riesgo_tecnico', '¿Hay algún riesgo técnico?', 'long_text', 7, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_propuesta_economica', '¿La propuesta económica se acerca a lo esperado por el cliente?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_condiciones_comerciales', '¿Las condiciones comerciales coinciden con las que el cliente tiene para este proyecto?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_motivo', '¿Por qué el cliente solicitó una demostración?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_criterios_exito', '¿Cuáles son los criterios de éxito?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_siguientes_pasos', '¿Cuáles son los siguientes pasos después de cumplir los criterios de éxito?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_resultado', '¿Cuál fue el resultado de la demostración?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_precio_condiciones', '¿Cuál es precio mas bajo y las mejores condiciones para el cliente a los que podemos llegar en la negociación?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_cliente', '¿Cuáles son los puntos que el cliente aprecia mas?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_nosotros', '¿Cuáles son los puntos más importantes para nosotros?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'waiting' LIMIT 1), 'waiting_acuerdo_o_postores', '¿Se llegó a un acuerdo, o el cliente decidirá de entre varios postores?', 'long_text', 1, 1, 1)
+ON DUPLICATE KEY UPDATE
+  sales_stage_id = VALUES(sales_stage_id),
+  prompt = VALUES(prompt),
+  response_type = VALUES(response_type),
+  display_order = VALUES(display_order),
+  is_required = VALUES(is_required),
+  is_active = VALUES(is_active);
 
 INSERT INTO currencies (code, name, symbol, decimals, is_active, created_at, updated_at) VALUES
   ('USD', 'Dolar estadounidense', '$', 2, 1, NOW(3), NOW(3)),

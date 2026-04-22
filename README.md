@@ -156,14 +156,33 @@ Endpoints relevantes:
 - Catalogos maestros (paises, monedas, tipos de cuenta, sectores, estados de activacion).
 - Usuarios con gestion de estado y auditoria.
 - Cuentas con propietarios multiples.
-- Oportunidades con linea de negocio, etapa de venta, vendedor y preventa opcional.
+- Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
+- Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
 - Auditoria de acciones de usuario.
+
+## Flujo comercial de oportunidades
+
+Resumen visible del módulo:
+
+- Toda oportunidad nueva inicia en `Contacto inicial` y `En proceso`.
+- `Ganada` ya no es etapa; es un estado comercial y solo puede aplicarse desde `Waiting`.
+- `Perdida` y `Anulada` exigen motivo.
+- El estado comercial es independiente del estado de activacion del registro.
+- La UI permite guardar respuestas por etapa, avanzar, retroceder y cerrar comercialmente.
+- La edicion de oportunidades muestra el proceso comercial como stepper clickable: cualquier etapa puede consultarse y solo la actual es editable.
+- La pantalla `Preguntas comerciales` permite ajustar el cuestionario por etapa sin tocar código.
+
+Cobertura automatizada:
+
+- `npm run test:api` valida reglas de creación, transición, cierre e histórico en backend.
+- `npm run test:web:e2e` cubre el camino visible del flujo comercial y el reflejo del catálogo en oportunidades.
 
 ## Documentacion funcional
 
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
+- Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
 
 ## Troubleshooting rapido
 

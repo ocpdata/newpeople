@@ -11,6 +11,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { api, getApiErrorMessage, setAuthToken } from "./api";
+import OpportunityQuestionAdminPage from "./OpportunityQuestionAdminPage";
 
 const DEFAULT_STATUS_FILTER = "active";
 const VALID_STATUS_FILTERS = new Set(["active", "pending", "inactive", "all"]);
@@ -174,7 +175,14 @@ function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
           {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
           {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
           {can("oportunidades.read") && (
-            <NavLink to="/opportunities">Oportunidades</NavLink>
+            <NavLink to="/opportunities" end>
+              Oportunidades
+            </NavLink>
+          )}
+          {can("oportunidades.update") && (
+            <NavLink to="/opportunities/questions">
+              Preguntas comerciales
+            </NavLink>
           )}
           {can("contactos.read") && <NavLink to="/contacts">Contactos</NavLink>}
           {can("audit.read") && <NavLink to="/audit">Auditoria</NavLink>}
@@ -232,6 +240,16 @@ function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
                   currentUser={currentUser}
                   token={token}
                 />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+          <Route
+            path="/opportunities/questions"
+            element={
+              can("oportunidades.update") ? (
+                <OpportunityQuestionAdminPage />
               ) : (
                 <Navigate to="/" />
               )
@@ -418,7 +436,8 @@ function SystemAuditPage() {
   }
 
   const startItem = total === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
-  const endItem = total === 0 ? 0 : Math.min(filters.page * filters.pageSize, total);
+  const endItem =
+    total === 0 ? 0 : Math.min(filters.page * filters.pageSize, total);
   const activeAuditFilterCount = [
     filters.q,
     filters.module,
@@ -436,14 +455,18 @@ function SystemAuditPage() {
           <div className="roles-page-header-left">
             <div className="module-title-with-icon">
               <h2>Auditoria del sistema</h2>
-              <span className="module-title-icon audit-module-title-icon" aria-hidden="true">
+              <span
+                className="module-title-icon audit-module-title-icon"
+                aria-hidden="true"
+              >
                 <svg viewBox="0 0 24 24" focusable="false">
                   <path d="M5.75 3h8.19a2.75 2.75 0 0 1 1.94.8l2.52 2.52a2.75 2.75 0 0 1 .8 1.95v10.98A2.75 2.75 0 0 1 16.45 22h-10.7A2.75 2.75 0 0 1 3 19.25V5.75A2.75 2.75 0 0 1 5.75 3m0 1.5c-.69 0-1.25.56-1.25 1.25v13.5c0 .69.56 1.25 1.25 1.25h10.7c.69 0 1.25-.56 1.25-1.25V8.5h-2.95A2.75 2.75 0 0 1 12 5.75V4.5zm7.75.31v.94c0 .69.56 1.25 1.25 1.25h.94zM7.5 10a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 10m0 3.5a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5a.75.75 0 0 1-.75-.75m0 3.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 7.5 17" />
                 </svg>
               </span>
             </div>
             <p className="roles-subtitle audit-subtitle">
-              Explora eventos por actor, modulo, accion, entidad y rango de fechas.
+              Explora eventos por actor, modulo, accion, entidad y rango de
+              fechas.
             </p>
           </div>
           <div className="audit-toolbar-meta">
@@ -489,7 +512,10 @@ function SystemAuditPage() {
                 }
               >
                 {auditModuleOptions.map((option) => (
-                  <option key={option.value || "all-modules"} value={option.value}>
+                  <option
+                    key={option.value || "all-modules"}
+                    value={option.value}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -505,7 +531,10 @@ function SystemAuditPage() {
                 }
               >
                 {auditActionOptions.map((option) => (
-                  <option key={option.value || "all-actions"} value={option.value}>
+                  <option
+                    key={option.value || "all-actions"}
+                    value={option.value}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -517,11 +546,17 @@ function SystemAuditPage() {
               <select
                 value={filters.entityType}
                 onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, entityType: e.target.value }))
+                  setFilters((prev) => ({
+                    ...prev,
+                    entityType: e.target.value,
+                  }))
                 }
               >
                 {auditEntityOptions.map((option) => (
-                  <option key={option.value || "all-entities"} value={option.value}>
+                  <option
+                    key={option.value || "all-entities"}
+                    value={option.value}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -530,7 +565,11 @@ function SystemAuditPage() {
 
             <div className="audit-filter-card audit-filter-status-card">
               <span className="audit-filter-label">Estado</span>
-              <div className="audit-status-pills" role="group" aria-label="Filtrar auditoria por estado">
+              <div
+                className="audit-status-pills"
+                role="group"
+                aria-label="Filtrar auditoria por estado"
+              >
                 {[
                   { value: "", label: "Todos", tone: "all" },
                   { value: "success", label: "Exito", tone: "success" },
@@ -617,7 +656,6 @@ function SystemAuditPage() {
               </div>
             </div>
           </div>
-
         </div>
       </div>
 
@@ -2237,6 +2275,97 @@ function UsersPage({ can }) {
   );
 }
 
+function StageBypassConfirmationModal({
+  isOpen,
+  reason,
+  onReasonChange,
+  onCancel,
+  onConfirm,
+  isSubmitting,
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal-title">Confirmar bypass de etapa</h3>
+        <p className="modal-message">
+          Confirma que deseas omitir la etapa actual. La oportunidad quedará con
+          un cambio pendiente hasta que presiones Guardar cambios.
+        </p>
+        <div className="field-group opportunity-bypass-confirm-group">
+          <label>
+            Motivo del bypass <span className="required-mark">*</span>
+          </label>
+          <textarea
+            aria-label="Motivo del bypass"
+            rows={4}
+            placeholder="Describe por qué se omitirá esta etapa"
+            value={reason}
+            onChange={(e) => onReasonChange(e.target.value)}
+            disabled={isSubmitting}
+            autoFocus
+          />
+        </div>
+        <div className="modal-buttons">
+          <button className="btn-secondary" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="btn-primary" onClick={onConfirm}>
+            {isSubmitting ? "Bypaseando..." : "Confirmar bypass"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommercialCloseConfirmationModal({
+  isOpen,
+  statusCode,
+  reason,
+  onReasonChange,
+  onCancel,
+  onConfirm,
+}) {
+  if (!isOpen) return null;
+
+  const statusLabel = statusCode === "anulada" ? "anulada" : "perdida";
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal-title">Confirmar oportunidad {statusLabel}</h3>
+        <p className="modal-message">
+          Confirma que deseas marcar la oportunidad como {statusLabel}. El
+          cambio quedará pendiente hasta que presiones Guardar cambios.
+        </p>
+        <div className="field-group opportunity-bypass-confirm-group">
+          <label>
+            Motivo del cierre <span className="required-mark">*</span>
+          </label>
+          <textarea
+            aria-label="Motivo del cierre comercial"
+            rows={4}
+            placeholder={`Describe por qué la oportunidad se marcará como ${statusLabel}`}
+            value={reason}
+            onChange={(e) => onReasonChange(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div className="modal-buttons">
+          <button className="btn-secondary" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="btn-primary" onClick={onConfirm}>
+            Confirmar cierre
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmationModal({
   isOpen,
   title,
@@ -3161,9 +3290,13 @@ function AccountsPage({ can, currentUser, token }) {
     });
 
     return Array.from(merged.values()).sort((left, right) =>
-      String(left.full_name || "").localeCompare(String(right.full_name || ""), "es", {
-        sensitivity: "base",
-      }),
+      String(left.full_name || "").localeCompare(
+        String(right.full_name || ""),
+        "es",
+        {
+          sensitivity: "base",
+        },
+      ),
     );
   }
 
@@ -4679,8 +4812,27 @@ function OpportunitiesPage({ can, currentUser }) {
   const [showOpportunityModal, setShowOpportunityModal] = useState(false);
   const [editingOpportunityId, setEditingOpportunityId] = useState(null);
   const [editOpportunityAudit, setEditOpportunityAudit] = useState(null);
+  const [commercialContext, setCommercialContext] = useState(null);
+  const [commercialStageViewsById, setCommercialStageViewsById] = useState({});
+  const [draftStageAction, setDraftStageAction] = useState(null);
+  const [selectedCommercialStageId, setSelectedCommercialStageId] =
+    useState("");
+  const [loadingCommercialStageView, setLoadingCommercialStageView] =
+    useState(false);
+  const [commercialCloseReason, setCommercialCloseReason] = useState("");
+  const [pendingCommercialCloseAction, setPendingCommercialCloseAction] =
+    useState(null);
+  const [showCommercialCloseModal, setShowCommercialCloseModal] =
+    useState(false);
+  const [commercialCloseModalState, setCommercialCloseModalState] = useState({
+    statusCode: "",
+    reason: "",
+  });
+  const [showStageBypassModal, setShowStageBypassModal] = useState(false);
+  const [stageBypassReason, setStageBypassReason] = useState("");
   const [openOpportunityMenuId, setOpenOpportunityMenuId] = useState(null);
   const [savingOpportunity, setSavingOpportunity] = useState(false);
+  const [savingCommercialAction, setSavingCommercialAction] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const explicitOpportunityPermissions = useMemo(
@@ -4700,6 +4852,7 @@ function OpportunitiesPage({ can, currentUser }) {
     businessLines: [],
     stages: [],
     statuses: [],
+    commercialStatuses: [],
   });
 
   const [form, setForm] = useState({
@@ -4763,6 +4916,7 @@ function OpportunitiesPage({ can, currentUser }) {
         businessLinesRes,
         stagesRes,
         statusesRes,
+        commercialStatusesRes,
       ] = await Promise.all([
         api.get("/api/opportunities"),
         api.get("/api/catalogs/opportunity-accounts"),
@@ -4772,6 +4926,7 @@ function OpportunitiesPage({ can, currentUser }) {
         api.get("/api/catalogs/opportunity-business-lines"),
         api.get("/api/catalogs/opportunity-sales-stages"),
         api.get("/api/catalogs/opportunity-activation-statuses"),
+        api.get("/api/catalogs/opportunity-commercial-statuses"),
       ]);
 
       setOpportunities(opportunitiesRes.data || []);
@@ -4783,6 +4938,7 @@ function OpportunitiesPage({ can, currentUser }) {
         businessLines: businessLinesRes.data || [],
         stages: stagesRes.data || [],
         statuses: statusesRes.data || [],
+        commercialStatuses: commercialStatusesRes.data || [],
       });
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar oportunidades"));
@@ -4828,6 +4984,213 @@ function OpportunitiesPage({ can, currentUser }) {
     };
   }
 
+  function buildDefaultCommercialContext() {
+    const defaultStage = catalogs.stages.find(
+      (stage) => normalizeText(stage.code) === "contacto_inicial",
+    );
+    const defaultCommercialStatus = catalogs.commercialStatuses.find(
+      (status) => normalizeText(status.code) === "en_proceso",
+    );
+
+    return {
+      salesStage: defaultStage
+        ? {
+            id: Number(defaultStage.id),
+            code: String(defaultStage.code),
+            name: String(defaultStage.name),
+            order: Number(defaultStage.stage_order || 0),
+          }
+        : null,
+      currentSalesStage: defaultStage
+        ? {
+            id: Number(defaultStage.id),
+            code: String(defaultStage.code),
+            name: String(defaultStage.name),
+            order: Number(defaultStage.stage_order || 0),
+          }
+        : null,
+      commercialStatus: defaultCommercialStatus
+        ? {
+            id: Number(defaultCommercialStatus.id),
+            code: String(defaultCommercialStatus.code),
+            name: String(defaultCommercialStatus.name),
+            closedAt: null,
+            closeReason: null,
+          }
+        : null,
+      isSelectedStageCurrent: true,
+      stages: defaultStage
+        ? catalogs.stages.map((stage) => ({
+            id: Number(stage.id),
+            code: String(stage.code || ""),
+            name: String(stage.name || ""),
+            order: Number(stage.stage_order || 0),
+            isCurrent: Number(stage.id) === Number(defaultStage.id),
+            isSelected: Number(stage.id) === Number(defaultStage.id),
+            isPast: false,
+            isFuture:
+              Number(stage.stage_order || 0) >
+              Number(defaultStage.stage_order || 0),
+            isClosed: false,
+          }))
+        : [],
+      answers: [],
+    };
+  }
+
+  function normalizeCommercialContext(data) {
+    if (!data) return null;
+    const normalizedSalesStage = data.salesStage
+      ? {
+          id: Number(data.salesStage.id),
+          code: String(data.salesStage.code || ""),
+          name: String(data.salesStage.name || ""),
+          order: Number(
+            data.salesStage.order || data.salesStage.stage_order || 0,
+          ),
+        }
+      : null;
+    const normalizedCurrentSalesStage = data.currentSalesStage
+      ? {
+          id: Number(data.currentSalesStage.id),
+          code: String(data.currentSalesStage.code || ""),
+          name: String(data.currentSalesStage.name || ""),
+          order: Number(
+            data.currentSalesStage.order ||
+              data.currentSalesStage.stage_order ||
+              0,
+          ),
+        }
+      : normalizedSalesStage;
+    const normalizedStages = Array.isArray(data.stages)
+      ? data.stages.map((stage) => ({
+          id: Number(stage.id),
+          code: String(stage.code || ""),
+          name: String(stage.name || ""),
+          order: Number(stage.order || stage.stage_order || 0),
+          isCurrent: Boolean(stage.isCurrent),
+          isSelected: Boolean(stage.isSelected),
+          isPast: Boolean(stage.isPast),
+          isFuture: Boolean(stage.isFuture),
+          isClosed: Boolean(stage.isClosed),
+        }))
+      : [];
+
+    return {
+      salesStage: normalizedSalesStage,
+      currentSalesStage: normalizedCurrentSalesStage,
+      bypassInfo: data.bypassInfo
+        ? {
+            isBypassed: Boolean(data.bypassInfo.isBypassed),
+            reason: data.bypassInfo.reason || null,
+          }
+        : {
+            isBypassed: false,
+            reason: null,
+          },
+      commercialStatus: data.commercialStatus
+        ? {
+            id: Number(data.commercialStatus.id),
+            code: String(data.commercialStatus.code || ""),
+            name: String(data.commercialStatus.name || ""),
+            closedAt: data.commercialStatus.closedAt || null,
+            closeReason: data.commercialStatus.closeReason || null,
+          }
+        : null,
+      isSelectedStageCurrent:
+        data.isSelectedStageCurrent !== undefined
+          ? Boolean(data.isSelectedStageCurrent)
+          : Number(normalizedSalesStage?.id) ===
+            Number(normalizedCurrentSalesStage?.id),
+      stages:
+        normalizedStages.length > 0
+          ? normalizedStages
+          : normalizedSalesStage
+            ? [
+                {
+                  ...normalizedSalesStage,
+                  isCurrent: true,
+                  isSelected: true,
+                  isPast: false,
+                  isFuture: false,
+                  isClosed: isCommercialOpportunityClosed(
+                    data.commercialStatus?.code,
+                  ),
+                },
+              ]
+            : [],
+      answers: Array.isArray(data.answers)
+        ? data.answers.map((answer) => ({
+            ...answer,
+            question_id: Number(answer.question_id),
+            answer_value:
+              answer.answer_value === null || answer.answer_value === undefined
+                ? ""
+                : String(answer.answer_value),
+          }))
+        : [],
+    };
+  }
+
+  function buildCommercialContextForDraftStage(
+    baseContext,
+    { currentStageId, selectedStageId = currentStageId },
+  ) {
+    if (!baseContext) return null;
+
+    const currentStage =
+      baseContext.stages.find(
+        (stage) => Number(stage.id) === Number(currentStageId),
+      ) ||
+      baseContext.currentSalesStage ||
+      baseContext.salesStage;
+    const selectedStage =
+      baseContext.stages.find(
+        (stage) => Number(stage.id) === Number(selectedStageId),
+      ) ||
+      baseContext.salesStage ||
+      currentStage;
+    const currentOrder = Number(currentStage?.order || 0);
+
+    return {
+      ...baseContext,
+      salesStage: selectedStage
+        ? {
+            id: Number(selectedStage.id),
+            code: String(selectedStage.code || ""),
+            name: String(selectedStage.name || ""),
+            order: Number(selectedStage.order || 0),
+          }
+        : null,
+      currentSalesStage: currentStage
+        ? {
+            id: Number(currentStage.id),
+            code: String(currentStage.code || ""),
+            name: String(currentStage.name || ""),
+            order: Number(currentStage.order || 0),
+          }
+        : null,
+      bypassInfo: baseContext.bypassInfo
+        ? {
+            isBypassed: Boolean(baseContext.bypassInfo.isBypassed),
+            reason: baseContext.bypassInfo.reason || null,
+          }
+        : {
+            isBypassed: false,
+            reason: null,
+          },
+      isSelectedStageCurrent:
+        Number(selectedStage?.id) === Number(currentStage?.id),
+      stages: (baseContext.stages || []).map((stage) => ({
+        ...stage,
+        isCurrent: Number(stage.id) === Number(currentStage?.id),
+        isSelected: Number(stage.id) === Number(selectedStage?.id),
+        isPast: Number(stage.order || 0) < currentOrder,
+        isFuture: Number(stage.order || 0) > currentOrder,
+      })),
+    };
+  }
+
   useEffect(() => {
     if (!showOpportunityModal || editingOpportunityId) return;
     const defaults = buildDefaultOpportunityForm();
@@ -4838,6 +5201,22 @@ function OpportunitiesPage({ can, currentUser }) {
       activationStatusId:
         prev.activationStatusId || defaults.activationStatusId,
     }));
+    const defaultCommercialContext = buildDefaultCommercialContext();
+    setCommercialContext(defaultCommercialContext);
+    setCommercialStageViewsById({});
+    setDraftStageAction(null);
+    setSelectedCommercialStageId(
+      defaultCommercialContext?.salesStage?.id
+        ? String(defaultCommercialContext.salesStage.id)
+        : "",
+    );
+    setLoadingCommercialStageView(false);
+    setCommercialCloseReason("");
+    setPendingCommercialCloseAction(null);
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+    setShowStageBypassModal(false);
+    setStageBypassReason("");
   }, [showOpportunityModal, editingOpportunityId, catalogs, currentUser]);
 
   function openCreateOpportunityModal() {
@@ -4845,7 +5224,84 @@ function OpportunitiesPage({ can, currentUser }) {
     setSuccess("");
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
+    const defaultCommercialContext = buildDefaultCommercialContext();
+    setCommercialContext(defaultCommercialContext);
+    setCommercialStageViewsById({});
+    setDraftStageAction(null);
+    setSelectedCommercialStageId(
+      defaultCommercialContext?.salesStage?.id
+        ? String(defaultCommercialContext.salesStage.id)
+        : "",
+    );
+    setLoadingCommercialStageView(false);
+    setCommercialCloseReason("");
+    setPendingCommercialCloseAction(null);
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+    setShowStageBypassModal(false);
+    setStageBypassReason("");
     setForm(buildDefaultOpportunityForm());
+    setShowOpportunityModal(true);
+  }
+
+  async function hydrateOpportunityModal(opportunityId) {
+    const [{ data }, { data: commercialData }] = await Promise.all([
+      api.get(`/api/opportunities/${opportunityId}`),
+      api.get(`/api/opportunities/${opportunityId}/commercial-context`),
+    ]);
+
+    setForm({
+      name: data.name || "",
+      amountUsd:
+        data.amount_usd === null || data.amount_usd === undefined
+          ? ""
+          : formatOpportunityAmountInput(String(data.amount_usd)),
+      accountId: String(data.account_id || ""),
+      closeDate: data.close_date ? String(data.close_date).slice(0, 10) : "",
+      contactId: String(data.contact_id || ""),
+      salesStageId: String(data.sales_stage_id || ""),
+      businessLineId: String(data.business_line_id || ""),
+      sellerUserId: String(data.seller_user_id || ""),
+      presalesUserId: data.presales_user_id
+        ? String(data.presales_user_id)
+        : "",
+      activationStatusId: String(data.activation_status_id || ""),
+    });
+    setEditOpportunityAudit({
+      createdByName: data.created_by_name || "",
+      createdAt: data.created_at || "",
+      updatedByName: data.updated_by_name || "",
+      updatedAt: data.updated_at || "",
+      activationStatus: data.activation_status || "",
+      commercialStatus: data.commercial_status || "",
+    });
+    const normalizedCommercialContext =
+      normalizeCommercialContext(commercialData);
+    setCommercialContext(normalizedCommercialContext);
+    setDraftStageAction(null);
+    setCommercialStageViewsById(
+      normalizedCommercialContext?.salesStage?.id
+        ? {
+            [String(normalizedCommercialContext.salesStage.id)]:
+              normalizedCommercialContext,
+          }
+        : {},
+    );
+    setSelectedCommercialStageId(
+      normalizedCommercialContext?.salesStage?.id
+        ? String(normalizedCommercialContext.salesStage.id)
+        : "",
+    );
+    setLoadingCommercialStageView(false);
+    setCommercialCloseReason(
+      normalizedCommercialContext?.commercialStatus?.closeReason || "",
+    );
+    setPendingCommercialCloseAction(null);
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+    setShowStageBypassModal(false);
+    setStageBypassReason("");
+    setEditingOpportunityId(Number(opportunityId));
     setShowOpportunityModal(true);
   }
 
@@ -4853,47 +5309,36 @@ function OpportunitiesPage({ can, currentUser }) {
     setError("");
     setSuccess("");
     try {
-      const { data } = await api.get(`/api/opportunities/${opportunityId}`);
-      setForm({
-        name: data.name || "",
-        amountUsd:
-          data.amount_usd === null || data.amount_usd === undefined
-            ? ""
-            : formatOpportunityAmountInput(String(data.amount_usd)),
-        accountId: String(data.account_id || ""),
-        closeDate: data.close_date ? String(data.close_date).slice(0, 10) : "",
-        contactId: String(data.contact_id || ""),
-        salesStageId: String(data.sales_stage_id || ""),
-        businessLineId: String(data.business_line_id || ""),
-        sellerUserId: String(data.seller_user_id || ""),
-        presalesUserId: data.presales_user_id
-          ? String(data.presales_user_id)
-          : "",
-        activationStatusId: String(data.activation_status_id || ""),
-      });
-      setEditOpportunityAudit({
-        createdByName: data.created_by_name || "",
-        createdAt: data.created_at || "",
-        updatedByName: data.updated_by_name || "",
-        updatedAt: data.updated_at || "",
-        activationStatus: data.activation_status || "",
-      });
-      setEditingOpportunityId(Number(opportunityId));
-      setShowOpportunityModal(true);
+      await hydrateOpportunityModal(opportunityId);
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar la oportunidad"));
     }
   }
 
   function closeOpportunityModal() {
-    if (savingOpportunity) return;
+    if (savingOpportunity || savingCommercialAction) return;
     setShowOpportunityModal(false);
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
+    setCommercialContext(null);
+    setCommercialStageViewsById({});
+    setDraftStageAction(null);
+    setSelectedCommercialStageId("");
+    setLoadingCommercialStageView(false);
+    setCommercialCloseReason("");
+    setPendingCommercialCloseAction(null);
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+    setShowStageBypassModal(false);
+    setStageBypassReason("");
   }
 
   function getOpportunityStatusLabel(opportunity) {
     return opportunity.activation_status || "-";
+  }
+
+  function getOpportunityCommercialStatusLabel(opportunity) {
+    return opportunity.commercial_status || "-";
   }
 
   function isOpportunityActive(opportunity) {
@@ -4928,6 +5373,53 @@ function OpportunitiesPage({ can, currentUser }) {
       return "status-icon-badge pending";
     }
     return "status-icon-badge inactive";
+  }
+
+  function getCommercialStatusBadgeClass(statusValue) {
+    const normalized = normalizeText(statusValue);
+    if (normalized === "en_proceso" || normalized === "en proceso") {
+      return "user-status-badge pending";
+    }
+    if (normalized === "ganada") {
+      return "user-status-badge won";
+    }
+    if (normalized === "perdida") {
+      return "user-status-badge lost";
+    }
+    if (normalized === "anulada") {
+      return "user-status-badge canceled";
+    }
+    return "user-status-badge inactive";
+  }
+
+  function getCommercialStatusIconBadgeClass(statusValue) {
+    const normalized = normalizeText(statusValue);
+    if (normalized === "en_proceso" || normalized === "en proceso") {
+      return "status-icon-badge pending";
+    }
+    if (normalized === "ganada") {
+      return "status-icon-badge won";
+    }
+    if (normalized === "perdida") {
+      return "status-icon-badge lost";
+    }
+    if (normalized === "anulada") {
+      return "status-icon-badge canceled";
+    }
+    return "status-icon-badge inactive";
+  }
+
+  function isCommercialOpportunityClosed(statusValue) {
+    const normalized = normalizeText(statusValue);
+    return (
+      normalized === "ganada" ||
+      normalized === "perdida" ||
+      normalized === "anulada"
+    );
+  }
+
+  function isCommercialOpportunityWaiting(statusValue) {
+    return normalizeText(statusValue) === "waiting";
   }
 
   const filteredOpportunities = useMemo(() => {
@@ -4981,6 +5473,8 @@ function OpportunitiesPage({ can, currentUser }) {
         return String(opportunity.presales_user_name || "");
       if (opportunitySortField === "etapa")
         return String(opportunity.sales_stage || "");
+      if (opportunitySortField === "estado_comercial")
+        return String(getOpportunityCommercialStatusLabel(opportunity));
       if (opportunitySortField === "importe")
         return Number(opportunity.amount_usd) || 0;
       if (opportunitySortField === "cierre")
@@ -5025,6 +5519,7 @@ function OpportunitiesPage({ can, currentUser }) {
         opportunity.business_line,
         opportunity.presales_user_name,
         opportunity.activation_status,
+        opportunity.commercial_status,
       ]
         .filter(Boolean)
         .join(" ")
@@ -5106,6 +5601,491 @@ function OpportunitiesPage({ can, currentUser }) {
       (stage) => String(stage.id) === String(form.salesStageId),
     )?.name || "";
 
+  const currentCommercialStage =
+    commercialContext?.currentSalesStage ||
+    commercialContext?.salesStage ||
+    null;
+  const selectedCommercialStage = commercialContext?.salesStage || null;
+  const hasPendingStageChange = Boolean(
+    draftStageAction &&
+    Number(draftStageAction.fromStageId) !== Number(draftStageAction.toStageId),
+  );
+  const hasPendingCommercialClose = Boolean(pendingCommercialCloseAction);
+  const canRetreatToSelectedStage = Boolean(
+    selectedCommercialStage &&
+    currentCommercialStage &&
+    Number(selectedCommercialStage.order || 0) <
+      Number(currentCommercialStage.order || 0),
+  );
+  const currentCommercialStageIndex = (
+    commercialContext?.stages || []
+  ).findIndex(
+    (stage) => Number(stage.id) === Number(currentCommercialStage?.id),
+  );
+  const canBypassCurrentStage =
+    currentCommercialStageIndex > -1 &&
+    currentCommercialStageIndex < (commercialContext?.stages || []).length - 1;
+  const hasImmediatePreviousStage =
+    normalizeText(currentCommercialStage?.code) !== "contacto_inicial";
+
+  const isSelectedCommercialStageReadOnly =
+    Boolean(editingOpportunityId) &&
+    Boolean(commercialContext) &&
+    !commercialContext.isSelectedStageCurrent;
+
+  const isCommercialFlowClosed = isCommercialOpportunityClosed(
+    commercialContext?.commercialStatus?.code,
+  );
+
+  const currentCommercialStatusName =
+    commercialContext?.commercialStatus?.name ||
+    catalogs.commercialStatuses.find(
+      (status) => normalizeText(status.code) === "en_proceso",
+    )?.name ||
+    "En proceso";
+  const displayedCommercialCloseReason =
+    pendingCommercialCloseAction?.reason ||
+    commercialContext?.commercialStatus?.closeReason ||
+    "";
+  const pendingCommercialCloseStatusName = pendingCommercialCloseAction
+    ? catalogs.commercialStatuses.find(
+        (status) =>
+          String(status.code) ===
+          String(pendingCommercialCloseAction.statusCode),
+      )?.name || pendingCommercialCloseAction.statusCode
+    : "";
+
+  function updateCommercialAnswer(questionId, nextValue) {
+    setCommercialContext((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        answers: prev.answers.map((answer) =>
+          Number(answer.question_id) === Number(questionId)
+            ? { ...answer, answer_value: nextValue }
+            : answer,
+        ),
+      };
+    });
+  }
+
+  function buildStageAnswersPayload() {
+    if (
+      !commercialContext?.answers?.length ||
+      !commercialContext.isSelectedStageCurrent
+    ) {
+      return [];
+    }
+    return commercialContext.answers
+      .map((answer) => ({
+        questionId: Number(answer.question_id),
+        answerValue: String(answer.answer_value || "").trim(),
+      }))
+      .filter((answer) => answer.answerValue);
+  }
+
+  async function refreshOpportunityCommercialView() {
+    if (!editingOpportunityId) return;
+    await hydrateOpportunityModal(editingOpportunityId);
+    await load();
+  }
+
+  async function handleCommercialStageSelect(salesStageId) {
+    const nextStageId = String(salesStageId || "");
+    if (!editingOpportunityId || !nextStageId) return;
+    if (nextStageId === String(commercialContext?.salesStage?.id || "")) {
+      setSelectedCommercialStageId(nextStageId);
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setSelectedCommercialStageId(nextStageId);
+
+    const cachedStageView = commercialStageViewsById[nextStageId];
+    const draftCurrentStageId = Number(
+      form.salesStageId ||
+        commercialContext?.currentSalesStage?.id ||
+        nextStageId,
+    );
+    if (cachedStageView) {
+      setCommercialContext(
+        buildCommercialContextForDraftStage(cachedStageView, {
+          currentStageId: draftCurrentStageId,
+          selectedStageId: Number(nextStageId),
+        }),
+      );
+      return;
+    }
+
+    setLoadingCommercialStageView(true);
+    try {
+      const { data } = await api.get(
+        `/api/opportunities/${editingOpportunityId}/stage-view/${nextStageId}`,
+      );
+      const normalizedStageView = normalizeCommercialContext(data);
+      setCommercialContext(
+        buildCommercialContextForDraftStage(normalizedStageView, {
+          currentStageId: draftCurrentStageId,
+          selectedStageId: Number(nextStageId),
+        }),
+      );
+      setCommercialStageViewsById((prev) => ({
+        ...prev,
+        [nextStageId]: normalizedStageView,
+      }));
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible cargar la etapa seleccionada"),
+      );
+      setSelectedCommercialStageId(
+        String(commercialContext?.salesStage?.id || ""),
+      );
+    } finally {
+      setLoadingCommercialStageView(false);
+    }
+  }
+
+  async function previewStageDraftChange({
+    mode,
+    reason = null,
+    targetStageId = null,
+  }) {
+    const orderedStages = [...(commercialContext?.stages || [])].sort(
+      (left, right) => Number(left.order || 0) - Number(right.order || 0),
+    );
+    const currentStageIndex = orderedStages.findIndex(
+      (stage) => Number(stage.id) === Number(currentCommercialStage?.id),
+    );
+    if (currentStageIndex === -1) {
+      setError("No fue posible determinar la etapa actual");
+      return false;
+    }
+
+    const targetStage =
+      mode === "advance" || mode === "bypass"
+        ? orderedStages[currentStageIndex + 1] || null
+        : targetStageId
+          ? orderedStages.find(
+              (stage) => Number(stage.id) === Number(targetStageId),
+            ) || null
+          : orderedStages[currentStageIndex - 1] || null;
+
+    if (!targetStage) {
+      setError(
+        mode === "retreat"
+          ? "La oportunidad ya esta en la primera etapa operativa"
+          : "La oportunidad ya esta en la ultima etapa operativa",
+      );
+      return false;
+    }
+
+    if (
+      mode === "retreat" &&
+      Number(targetStage.order || 0) >=
+        Number(currentCommercialStage?.order || 0)
+    ) {
+      setError("Selecciona una etapa anterior para regresar la oportunidad");
+      return false;
+    }
+
+    const nextStageId = String(targetStage.id);
+    const cachedStageView = commercialStageViewsById[nextStageId];
+
+    setLoadingCommercialStageView(true);
+    try {
+      const normalizedStageView = cachedStageView
+        ? cachedStageView
+        : normalizeCommercialContext(
+            (
+              await api.get(
+                `/api/opportunities/${editingOpportunityId}/stage-view/${nextStageId}`,
+              )
+            ).data,
+          );
+
+      if (!cachedStageView) {
+        setCommercialStageViewsById((prev) => ({
+          ...prev,
+          [nextStageId]: normalizedStageView,
+        }));
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        salesStageId: nextStageId,
+      }));
+      setDraftStageAction({
+        mode,
+        fromStageId: Number(currentCommercialStage?.id),
+        toStageId: Number(targetStage.id),
+        reason: reason || null,
+      });
+      setSelectedCommercialStageId(nextStageId);
+      setCommercialContext(
+        buildCommercialContextForDraftStage(normalizedStageView, {
+          currentStageId: Number(targetStage.id),
+          selectedStageId: Number(targetStage.id),
+        }),
+      );
+      setSuccess(
+        `Cambio de etapa pendiente. Presiona Guardar cambios para grabar ${targetStage.name}.`,
+      );
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible preparar el cambio de etapa"),
+      );
+      return false;
+    } finally {
+      setLoadingCommercialStageView(false);
+    }
+  }
+
+  async function saveCommercialAnswers({ silentSuccess = false } = {}) {
+    if (!editingOpportunityId || !commercialContext) return true;
+    if (!commercialContext.isSelectedStageCurrent) {
+      setError("Selecciona la etapa actual para editar respuestas");
+      return false;
+    }
+    const answersPayload = buildStageAnswersPayload();
+    if (!answersPayload.length) {
+      setError("Debes capturar al menos una respuesta para guardar la etapa");
+      return false;
+    }
+
+    try {
+      await api.post(
+        `/api/opportunities/${editingOpportunityId}/stage-answers`,
+        {
+          answers: answersPayload,
+        },
+      );
+      await refreshOpportunityCommercialView();
+      if (!silentSuccess) {
+        setSuccess("Respuestas de etapa guardadas");
+      }
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar las respuestas de etapa",
+        ),
+      );
+      return false;
+    }
+  }
+
+  async function handleStageTransition(direction) {
+    setError("");
+    setSuccess("");
+    if (hasPendingStageChange) {
+      setError(
+        "Ya hay un cambio de etapa pendiente. Presiona Guardar cambios o cancela la edición.",
+      );
+      return;
+    }
+    if (direction !== "retreat" && !commercialContext?.isSelectedStageCurrent) {
+      setError("Selecciona la etapa actual para mover la oportunidad");
+      return;
+    }
+    if (
+      direction === "retreat" &&
+      !canRetreatToSelectedStage &&
+      !hasImmediatePreviousStage
+    ) {
+      setError("Selecciona una etapa anterior para regresar la oportunidad");
+      return;
+    }
+    setSavingCommercialAction(direction);
+    try {
+      if (direction === "advance") {
+        const saved = await saveCommercialAnswers({ silentSuccess: true });
+        if (!saved) return;
+      }
+      await previewStageDraftChange({
+        mode: direction,
+        targetStageId:
+          direction === "retreat" && canRetreatToSelectedStage
+            ? Number(selectedCommercialStage?.id)
+            : null,
+      });
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible actualizar la etapa comercial"),
+      );
+    } finally {
+      setSavingCommercialAction("");
+    }
+  }
+
+  async function handleCurrentStageValidation() {
+    setError("");
+    setSuccess("");
+    if (hasPendingStageChange) {
+      setError("Guarda cambios antes de validar la nueva etapa seleccionada.");
+      return;
+    }
+    if (hasPendingCommercialClose) {
+      setError("Guarda cambios antes de validar la oportunidad cerrada.");
+      return;
+    }
+    if (!commercialContext?.isSelectedStageCurrent) {
+      setError("Selecciona la etapa actual para validarla");
+      return;
+    }
+    setSavingCommercialAction("validate-current-stage");
+    try {
+      const { data } = await api.post(
+        `/api/opportunities/${editingOpportunityId}/validate-current-stage`,
+        {},
+      );
+      setSuccess(data?.message || "Etapa actual validada");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible validar la etapa actual"),
+      );
+    } finally {
+      setSavingCommercialAction("");
+    }
+  }
+
+  async function handleStageBypass() {
+    setError("");
+    setSuccess("");
+    if (hasPendingStageChange) {
+      setError(
+        "Ya hay un cambio de etapa pendiente. Presiona Guardar cambios o cancela la edición.",
+      );
+      return;
+    }
+    if (hasPendingCommercialClose) {
+      setError(
+        "Guarda cambios antes de intentar otra acción del proceso comercial.",
+      );
+      return;
+    }
+    if (!commercialContext?.isSelectedStageCurrent) {
+      setError("Selecciona la etapa actual para bypasearla");
+      return;
+    }
+    if (!canBypassCurrentStage) {
+      setError("La oportunidad ya esta en la ultima etapa operativa");
+      return;
+    }
+
+    setStageBypassReason("");
+    setShowStageBypassModal(true);
+  }
+
+  function closeStageBypassModal() {
+    if (savingCommercialAction === "stage-bypass") return;
+    setShowStageBypassModal(false);
+    setStageBypassReason("");
+  }
+
+  async function confirmStageBypass() {
+    const reason = String(stageBypassReason || "").trim();
+    if (!reason) {
+      setError("Debes indicar un motivo para bypasear la etapa");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setSavingCommercialAction("stage-bypass");
+    try {
+      await previewStageDraftChange({ mode: "bypass", reason });
+      setShowStageBypassModal(false);
+      setStageBypassReason("");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible bypasear la etapa actual"),
+      );
+    } finally {
+      setSavingCommercialAction("");
+    }
+  }
+
+  async function handleCommercialClose(statusCode) {
+    setError("");
+    setSuccess("");
+    if (hasPendingStageChange) {
+      setError("Guarda cambios antes de cerrar comercialmente la oportunidad.");
+      return;
+    }
+    if (!commercialContext?.isSelectedStageCurrent) {
+      setError("Selecciona la etapa actual para cerrar comercialmente");
+      return;
+    }
+    if (statusCode === "perdida" || statusCode === "anulada") {
+      setCommercialCloseModalState({
+        statusCode,
+        reason:
+          pendingCommercialCloseAction?.statusCode === statusCode
+            ? pendingCommercialCloseAction.reason
+            : "",
+      });
+      setShowCommercialCloseModal(true);
+      return;
+    }
+    setSavingCommercialAction(statusCode);
+    try {
+      const payload = {
+        statusCode,
+        reason:
+          statusCode === "perdida" || statusCode === "anulada"
+            ? commercialCloseReason
+            : null,
+      };
+      const { data } = await api.post(
+        `/api/opportunities/${editingOpportunityId}/commercial-close`,
+        payload,
+      );
+      await refreshOpportunityCommercialView();
+      setSuccess(data?.message || "Cierre comercial actualizado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cerrar comercialmente la oportunidad",
+        ),
+      );
+    } finally {
+      setSavingCommercialAction("");
+    }
+  }
+
+  function closeCommercialCloseModal() {
+    if (savingCommercialAction === "commercial-close-draft") return;
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+  }
+
+  function confirmCommercialCloseDraft() {
+    const reason = String(commercialCloseModalState.reason || "").trim();
+    if (!reason) {
+      setError("Debes indicar un motivo para cerrar la oportunidad");
+      return;
+    }
+
+    const statusCode = commercialCloseModalState.statusCode;
+    const statusName =
+      catalogs.commercialStatuses.find(
+        (status) => String(status.code) === String(statusCode),
+      )?.name || statusCode;
+
+    setError("");
+    setSuccess(
+      `Cierre comercial pendiente como ${statusName}. Presiona Guardar cambios para grabarlo.`,
+    );
+    setPendingCommercialCloseAction({ statusCode, reason });
+    setCommercialCloseReason(reason);
+    setShowCommercialCloseModal(false);
+    setCommercialCloseModalState({ statusCode: "", reason: "" });
+  }
+
   async function saveOpportunity(e) {
     e.preventDefault();
     setError("");
@@ -5117,13 +6097,29 @@ function OpportunitiesPage({ can, currentUser }) {
 
     setSavingOpportunity(true);
     try {
+      if (
+        editingOpportunityId &&
+        commercialContext?.isSelectedStageCurrent &&
+        !isCommercialFlowClosed &&
+        !hasPendingStageChange &&
+        !hasPendingCommercialClose &&
+        buildStageAnswersPayload().length
+      ) {
+        const savedAnswers = await saveCommercialAnswers({
+          silentSuccess: true,
+        });
+        if (!savedAnswers) {
+          setSavingOpportunity(false);
+          return;
+        }
+      }
+
       const payload = {
         name: form.name,
         amountUsd: parseOpportunityAmountInput(form.amountUsd),
         accountId: Number(form.accountId),
         closeDate: form.closeDate,
         contactId: Number(form.contactId),
-        salesStageId: Number(form.salesStageId),
         businessLineId: Number(form.businessLineId),
         sellerUserId: Number(form.sellerUserId),
         presalesUserId: form.presalesUserId
@@ -5131,6 +6127,22 @@ function OpportunitiesPage({ can, currentUser }) {
           : null,
         activationStatusId: Number(form.activationStatusId),
       };
+
+      if (!editingOpportunityId) {
+        payload.salesStageId = Number(form.salesStageId);
+      } else if (form.salesStageId) {
+        payload.salesStageId = Number(form.salesStageId);
+      }
+
+      if (editingOpportunityId && hasPendingStageChange) {
+        payload.stageChangeMode = draftStageAction.mode;
+        payload.stageChangeReason = draftStageAction.reason || null;
+      }
+
+      if (editingOpportunityId && hasPendingCommercialClose) {
+        payload.commercialStatusCode = pendingCommercialCloseAction.statusCode;
+        payload.commercialCloseReason = pendingCommercialCloseAction.reason;
+      }
 
       const { data } = editingOpportunityId
         ? await api.put(`/api/opportunities/${editingOpportunityId}`, payload)
@@ -5145,6 +6157,16 @@ function OpportunitiesPage({ can, currentUser }) {
       setShowOpportunityModal(false);
       setEditingOpportunityId(null);
       setEditOpportunityAudit(null);
+      setCommercialContext(null);
+      setCommercialStageViewsById({});
+      setDraftStageAction(null);
+      setSelectedCommercialStageId("");
+      setCommercialCloseReason("");
+      setPendingCommercialCloseAction(null);
+      setShowCommercialCloseModal(false);
+      setCommercialCloseModalState({ statusCode: "", reason: "" });
+      setShowStageBypassModal(false);
+      setStageBypassReason("");
       await load();
     } catch (err) {
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
@@ -5352,6 +6374,12 @@ function OpportunitiesPage({ can, currentUser }) {
                     </span>
                     {editingOpportunityId}
                   </span>
+                  <span className="record-id-badge" title="Etapa de venta">
+                    Etapa:{" "}
+                    {currentCommercialStage?.name ||
+                      currentSalesStageName ||
+                      "-"}
+                  </span>
                   <span
                     className={getOpportunityStatusIconBadgeClass(
                       editOpportunityAudit.activationStatus,
@@ -5360,6 +6388,16 @@ function OpportunitiesPage({ can, currentUser }) {
                   >
                     <span className="status-dot" aria-hidden="true" />
                     {editOpportunityAudit.activationStatus || "Sin estado"}
+                  </span>
+                  <span
+                    className={getCommercialStatusIconBadgeClass(
+                      editOpportunityAudit.commercialStatus,
+                    )}
+                    title="Estado comercial"
+                  >
+                    <span className="status-dot" aria-hidden="true" />
+                    {editOpportunityAudit.commercialStatus ||
+                      "Sin estado comercial"}
                   </span>
                 </div>
               ) : null}
@@ -5500,37 +6538,18 @@ function OpportunitiesPage({ can, currentUser }) {
               <section className="account-form-section">
                 <h4>Gestion comercial</h4>
                 <div className="grid-form account-grid-main">
-                  {editingOpportunityId ? (
+                  {!editingOpportunityId ? (
                     <div className="field-group">
                       <label>
                         Etapa de venta <span className="required-mark">*</span>
                       </label>
-                      <select
-                        value={form.salesStageId}
-                        onChange={(e) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            salesStageId: e.target.value,
-                          }))
-                        }
-                        required
-                      >
-                        <option value="">Selecciona etapa</option>
-                        {catalogs.stages.map((stage) => (
-                          <option key={stage.id} value={stage.id}>
-                            {stage.name}
-                          </option>
-                        ))}
-                      </select>
+                      <input
+                        aria-label="Etapa de venta"
+                        value={currentSalesStageName}
+                        readOnly
+                      />
                     </div>
-                  ) : (
-                    <div className="field-group">
-                      <label>
-                        Etapa de venta <span className="required-mark">*</span>
-                      </label>
-                      <input value={currentSalesStageName} readOnly />
-                    </div>
-                  )}
+                  ) : null}
                   <div className="field-group">
                     <label>
                       Linea de negocio <span className="required-mark">*</span>
@@ -5597,6 +6616,309 @@ function OpportunitiesPage({ can, currentUser }) {
                 </div>
               </section>
 
+              {editingOpportunityId && commercialContext && (
+                <section className="account-form-section opportunity-commercial-section">
+                  <div className="opportunity-commercial-section-header">
+                    <div>
+                      <h4>Proceso comercial</h4>
+                      <p className="field-hint opportunity-commercial-hint">
+                        Haz clic en una etapa para revisar sus preguntas. Solo
+                        la etapa actual permite editar respuestas, mover la
+                        oportunidad o cerrar el proceso comercial.
+                      </p>
+                    </div>
+                    <div className="opportunity-commercial-badges">
+                      <span className="record-id-badge">
+                        Etapa actual: {currentCommercialStage?.name || "-"}
+                      </span>
+                      <span
+                        className={getCommercialStatusIconBadgeClass(
+                          commercialContext.commercialStatus?.name,
+                        )}
+                      >
+                        <span className="status-dot" aria-hidden="true" />
+                        {commercialContext.commercialStatus?.name ||
+                          "Sin estado comercial"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    className="opportunity-stage-stepper"
+                    role="tablist"
+                    aria-label="Etapas del proceso comercial"
+                  >
+                    {commercialContext.stages.map((stage) => {
+                      const isSelected =
+                        String(stage.id) === String(selectedCommercialStageId);
+                      const stateLabel = stage.isCurrent
+                        ? "Etapa actual"
+                        : stage.isPast
+                          ? "Solo lectura"
+                          : "Vista previa";
+                      const className = [
+                        "opportunity-stage-step",
+                        isSelected ? "is-selected" : "",
+                        stage.isCurrent ? "is-current" : "",
+                        stage.isPast ? "is-past" : "",
+                        stage.isFuture ? "is-future" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ");
+
+                      return (
+                        <button
+                          key={stage.id}
+                          type="button"
+                          className={className}
+                          onClick={() => handleCommercialStageSelect(stage.id)}
+                          aria-pressed={isSelected}
+                          disabled={loadingCommercialStageView && isSelected}
+                        >
+                          <span className="opportunity-stage-step-line" />
+                          <span className="opportunity-stage-step-circle-wrap">
+                            <span className="opportunity-stage-step-order">
+                              {stage.order}
+                            </span>
+                          </span>
+                          <span className="opportunity-stage-step-content">
+                            <strong>{stage.name}</strong>
+                            <small>{stateLabel}</small>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {loadingCommercialStageView ? (
+                    <p className="field-hint opportunity-commercial-hint">
+                      Cargando etapa seleccionada...
+                    </p>
+                  ) : null}
+
+                  {hasPendingStageChange ? (
+                    <p className="field-hint opportunity-stage-readonly-banner">
+                      Hay un cambio de etapa pendiente hacia{" "}
+                      {currentCommercialStage?.name || "la etapa seleccionada"}.
+                      Presiona Guardar cambios para grabarlo o cierra el modal
+                      para descartarlo.
+                    </p>
+                  ) : null}
+
+                  {hasPendingCommercialClose ? (
+                    <p className="field-hint opportunity-stage-readonly-banner">
+                      Hay un cierre comercial pendiente como{" "}
+                      {pendingCommercialCloseStatusName ||
+                        "estado seleccionado"}
+                      . Presiona Guardar cambios para grabarlo o cierra el modal
+                      para descartarlo.
+                    </p>
+                  ) : null}
+
+                  {isSelectedCommercialStageReadOnly ? (
+                    <p className="field-hint opportunity-stage-readonly-banner">
+                      Estás revisando la etapa{" "}
+                      {commercialContext.salesStage?.name || "seleccionada"}.
+                      Esta vista es solo lectura porque la oportunidad sigue en{" "}
+                      {currentCommercialStage?.name || "la etapa actual"}.
+                    </p>
+                  ) : null}
+
+                  {commercialContext.bypassInfo?.isBypassed ? (
+                    <div className="opportunity-stage-bypass-summary">
+                      <p className="field-hint opportunity-stage-readonly-banner">
+                        Esta etapa fue bypaseada. Solo se muestra el motivo del
+                        bypass.
+                      </p>
+                      <div className="field-group opportunity-stage-question">
+                        <label>Motivo del bypass</label>
+                        <textarea
+                          aria-label="Motivo del bypass aplicado"
+                          rows={3}
+                          value={
+                            commercialContext.bypassInfo.reason ||
+                            "Sin motivo registrado"
+                          }
+                          disabled
+                        />
+                      </div>
+                    </div>
+                  ) : commercialContext.answers.length > 0 ? (
+                    <div className="opportunity-stage-questions">
+                      {commercialContext.answers.map((answer) => (
+                        <div
+                          key={answer.question_id}
+                          className="field-group opportunity-stage-question"
+                        >
+                          <label>
+                            {answer.prompt}{" "}
+                            {answer.is_required ? (
+                              <span className="required-mark">*</span>
+                            ) : null}
+                          </label>
+                          <textarea
+                            aria-label={`${answer.prompt}${
+                              answer.is_required ? " *" : ""
+                            }`}
+                            rows={3}
+                            value={answer.answer_value}
+                            onChange={(e) =>
+                              updateCommercialAnswer(
+                                answer.question_id,
+                                e.target.value,
+                              )
+                            }
+                            disabled={
+                              isCommercialFlowClosed ||
+                              !commercialContext.isSelectedStageCurrent ||
+                              hasPendingStageChange
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="field-hint opportunity-commercial-hint">
+                      Esta etapa no tiene preguntas activas configuradas.
+                    </p>
+                  )}
+
+                  {displayedCommercialCloseReason ? (
+                    <div className="field-group opportunity-close-reason-group">
+                      <label>Motivo de cierre comercial</label>
+                      <textarea
+                        aria-label="Motivo de cierre comercial"
+                        rows={3}
+                        value={displayedCommercialCloseReason}
+                        disabled
+                      />
+                    </div>
+                  ) : null}
+
+                  <div className="opportunity-commercial-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={handleCurrentStageValidation}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange ||
+                        hasPendingCommercialClose
+                      }
+                    >
+                      {savingCommercialAction === "validate-current-stage"
+                        ? "Validando..."
+                        : "Validar etapa actual"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={handleStageBypass}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange ||
+                        hasPendingCommercialClose ||
+                        !canBypassCurrentStage
+                      }
+                    >
+                      {savingCommercialAction === "stage-bypass"
+                        ? "Bypaseando..."
+                        : "Bypasear etapa"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleStageTransition("retreat")}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        hasPendingStageChange ||
+                        hasPendingCommercialClose ||
+                        (!commercialContext.isSelectedStageCurrent &&
+                          !canRetreatToSelectedStage) ||
+                        (!canRetreatToSelectedStage &&
+                          !hasImmediatePreviousStage)
+                      }
+                    >
+                      {savingCommercialAction === "retreat"
+                        ? "Retrocediendo..."
+                        : canRetreatToSelectedStage
+                          ? "Regresar a etapa seleccionada"
+                          : "Regresar etapa anterior"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => handleStageTransition("advance")}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange ||
+                        hasPendingCommercialClose
+                      }
+                    >
+                      {savingCommercialAction === "advance"
+                        ? "Avanzando..."
+                        : "Avanzar etapa"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => handleCommercialClose("ganada")}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange ||
+                        hasPendingCommercialClose ||
+                        !isCommercialOpportunityWaiting(
+                          currentCommercialStage?.code,
+                        )
+                      }
+                    >
+                      {savingCommercialAction === "ganada"
+                        ? "Cerrando..."
+                        : "Marcar ganada"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleCommercialClose("perdida")}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange
+                      }
+                    >
+                      {savingCommercialAction === "perdida"
+                        ? "Cerrando..."
+                        : "Marcar perdida"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleCommercialClose("anulada")}
+                      disabled={
+                        Boolean(savingCommercialAction) ||
+                        isCommercialFlowClosed ||
+                        !commercialContext.isSelectedStageCurrent ||
+                        hasPendingStageChange
+                      }
+                    >
+                      {savingCommercialAction === "anulada"
+                        ? "Cerrando..."
+                        : "Marcar anulada"}
+                    </button>
+                  </div>
+                </section>
+              )}
+
               {editingOpportunityId && editOpportunityAudit && (
                 <section className="account-form-section modal-audit-strip">
                   <h4>Auditoria</h4>
@@ -5655,6 +6977,26 @@ function OpportunitiesPage({ can, currentUser }) {
           </div>
         </div>
       )}
+
+      <StageBypassConfirmationModal
+        isOpen={showStageBypassModal}
+        reason={stageBypassReason}
+        onReasonChange={setStageBypassReason}
+        onCancel={closeStageBypassModal}
+        onConfirm={confirmStageBypass}
+        isSubmitting={savingCommercialAction === "stage-bypass"}
+      />
+
+      <CommercialCloseConfirmationModal
+        isOpen={showCommercialCloseModal}
+        statusCode={commercialCloseModalState.statusCode}
+        reason={commercialCloseModalState.reason}
+        onReasonChange={(reason) =>
+          setCommercialCloseModalState((prev) => ({ ...prev, reason }))
+        }
+        onCancel={closeCommercialCloseModal}
+        onConfirm={confirmCommercialCloseDraft}
+      />
 
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
@@ -5738,6 +7080,16 @@ function OpportunitiesPage({ can, currentUser }) {
               <button
                 type="button"
                 className="sort-header-btn"
+                onClick={() => toggleOpportunitySort("estado_comercial")}
+              >
+                Estado comercial{" "}
+                <span>{getOpportunitySortArrow("estado_comercial")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
                 onClick={() => toggleOpportunitySort("estado")}
               >
                 Estado <span>{getOpportunitySortArrow("estado")}</span>
@@ -5763,6 +7115,15 @@ function OpportunitiesPage({ can, currentUser }) {
                   })}
                 </td>
                 <td>{formatCloseDate(opportunity.close_date)}</td>
+                <td>
+                  <span
+                    className={getCommercialStatusBadgeClass(
+                      opportunity.commercial_status,
+                    )}
+                  >
+                    {getOpportunityCommercialStatusLabel(opportunity)}
+                  </span>
+                </td>
                 <td>
                   <span className={getOpportunityStatusBadgeClass(opportunity)}>
                     {getOpportunityStatusLabel(opportunity)}
@@ -5847,7 +7208,7 @@ function OpportunitiesPage({ can, currentUser }) {
             ))
           ) : (
             <tr>
-              <td colSpan={10} className="empty-state">
+              <td colSpan={11} className="empty-state">
                 No hay oportunidades que coincidan con los filtros
               </td>
             </tr>
@@ -5928,8 +7289,7 @@ function ContactsPage({ can, token, currentUser }) {
     useState("all");
   const [contactOppSectionYearFilter, setContactOppSectionYearFilter] =
     useState(String(new Date().getFullYear()));
-  const [contactOppsModalContact, setContactOppsModalContact] =
-    useState(null);
+  const [contactOppsModalContact, setContactOppsModalContact] = useState(null);
   const [openContactMenuId, setOpenContactMenuId] = useState(null);
   const [confirmContactStatusAction, setConfirmContactStatusAction] =
     useState(null);
@@ -7309,10 +8669,7 @@ function ContactsPage({ can, token, currentUser }) {
                 contactOppSectionYearFilter
               )
                 return false;
-            } else if (
-              contactOppSectionYearFilter !== "all" &&
-              !o.close_date
-            ) {
+            } else if (contactOppSectionYearFilter !== "all" && !o.close_date) {
               return false;
             }
             return true;
