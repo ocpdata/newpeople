@@ -7,6 +7,8 @@ import {
   cleanupArtifacts,
   createDirectAccount,
   createDirectContact,
+  createDirectProvider,
+  createDirectProviderPriceItem,
   createRole,
   createUser,
   ensureNamedRole,
@@ -25,6 +27,8 @@ describe("API integration baseline", () => {
     accountIds: [],
     userIds: [],
     roleIds: [],
+    providerPriceItemIds: [],
+    providerIds: [],
   };
 
   const ctx = {};
@@ -55,6 +59,17 @@ describe("API integration baseline", () => {
     ctx.contactCreateRoleId = await createRole({
       name: `${TEST_PREFIX}_contacts_create`,
       permissionCodes: ["contactos.create", "contactos.update"],
+    });
+    ctx.providerManagerRoleId = await createRole({
+      name: `${TEST_PREFIX}_providers_manager`,
+      permissionCodes: [
+        "proveedores.read",
+        "proveedores.create",
+        "proveedores.update",
+        "proveedores_precios.read",
+        "proveedores_precios.create",
+        "proveedores_precios.update",
+      ],
     });
     ctx.opportunityRequestRoleId = await createRole({
       name: `${TEST_PREFIX}_opps_request`,
@@ -87,6 +102,7 @@ describe("API integration baseline", () => {
       ctx.accountReadRoleId,
       ctx.contactRequestRoleId,
       ctx.contactCreateRoleId,
+      ctx.providerManagerRoleId,
       ctx.opportunityRequestRoleId,
       ctx.opportunityFlowRoleId,
       ctx.roleManagerRoleId,
@@ -127,6 +143,23 @@ describe("API integration baseline", () => {
         "contact_activation_statuses",
         "pendiente_activacion",
       ),
+      providerActiveStatusId: await getCatalogId(
+        "provider_activation_statuses",
+        "activado",
+      ),
+      providerInactiveStatusId: await getCatalogId(
+        "provider_activation_statuses",
+        "desactivado",
+      ),
+      providerPriceItemActiveStatusId: await getCatalogId(
+        "provider_price_list_item_statuses",
+        "activo",
+      ),
+      providerPriceItemInactiveStatusId: await getCatalogId(
+        "provider_price_list_item_statuses",
+        "inactivo",
+      ),
+      currencyUsdId: await getCatalogId("currencies", "USD"),
       salesStageInitialId: await getCatalogId(
         "opportunity_sales_stages",
         "contacto_inicial",
@@ -195,6 +228,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.contacts.create@example.com`,
       roleIds: [ctx.contactCreateRoleId],
     });
+    ctx.providerManagerUserId = await createUser({
+      fullName: "API Provider Manager",
+      email: `${TEST_PREFIX}.providers.manager@example.com`,
+      roleIds: [ctx.providerManagerRoleId],
+    });
     ctx.opportunityRequestUserId = await createUser({
       fullName: "API Opportunity Request",
       email: `${TEST_PREFIX}.opps.request@example.com`,
@@ -232,6 +270,7 @@ describe("API integration baseline", () => {
       ctx.accountReadUserId,
       ctx.contactRequestUserId,
       ctx.contactCreateUserId,
+      ctx.providerManagerUserId,
       ctx.opportunityRequestUserId,
       ctx.opportunityFlowUserId,
       ctx.sellerUserId,
@@ -1325,6 +1364,157 @@ describe("API integration baseline", () => {
       column: "activation_status_id",
     });
     expect(statusCode).toBe("activado");
+  });
+  test("proveedores.create crea un proveedor activado y proveedores.read lo lista", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.providers.manager@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/providers")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Proveedor API ${TEST_PREFIX}`,
+        registrationCode: `PROV-${TEST_PREFIX}`,
+        addressLine: "Direccion proveedor prueba",
+        countryId: ctx.catalogIds.countryMxId,
+        city: "Ciudad de Mexico",
+        postalCode: "01010",
+        stateRegion: "CDMX",
+        activationStatusId: ctx.catalogIds.providerActiveStatusId,
+      });
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.message).toBe("Proveedor creado");
+    cleanup.providerIds.push(Number(createResponse.body.id));
+
+    const statusCode = await getStatusCodeById(
+      "providers",
+      createResponse.body.id,
+      {
+        table: "provider_activation_statuses",
+        column: "activation_status_id",
+      },
+    );
+    expect(statusCode).toBe("activado");
+
+    const listResponse = await request(app)
+      .get("/api/providers")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    const createdProvider = listResponse.body.find(
+      (provider) => Number(provider.id) === Number(createResponse.body.id),
+    );
+    expect(createdProvider).toBeTruthy();
+    expect(createdProvider.name).toBe(`Proveedor API ${TEST_PREFIX}`);
+    expect(createdProvider.activation_status_code).toBe("activado");
+  });
+
+  test("proveedores.update bloquea desactivar un proveedor con precios activos", async () => {
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_provider_active_prices`,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const priceItemId = await createDirectProviderPriceItem({
+      providerId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_provider_active_prices`,
+    });
+    cleanup.providerPriceItemIds.push(priceItemId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.providers.manager@example.com`,
+    );
+
+    const patchResponse = await request(app)
+      .patch(`/api/providers/${providerId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "desactivado" });
+
+    expect(patchResponse.status).toBe(409);
+    expect(patchResponse.body.message).toBe(
+      "No es posible desactivar el proveedor porque tiene precios activos",
+    );
+
+    const statusCode = await getStatusCodeById("providers", providerId, {
+      table: "provider_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activado");
+  });
+
+  test("proveedores_precios.create crea un precio y bloquea reactivar un precio si el proveedor esta desactivado", async () => {
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_provider_price_flow`,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.providers.manager@example.com`,
+    );
+
+    const createPriceResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-list-items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-${TEST_PREFIX}`,
+        description: "Precio creado por prueba automatica",
+        price: 3450.75,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+      });
+
+    expect(createPriceResponse.status).toBe(201);
+    expect(createPriceResponse.body.message).toBe("Precio agregado");
+    cleanup.providerPriceItemIds.push(Number(createPriceResponse.body.id));
+
+    const listResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-list-items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toHaveLength(1);
+    expect(listResponse.body[0].code).toBe(`PRICE-${TEST_PREFIX}`);
+    expect(listResponse.body[0].activation_status_code).toBe("activo");
+
+    const deactivatePriceResponse = await request(app)
+      .patch(
+        `/api/providers/${providerId}/price-list-items/${createPriceResponse.body.id}/status`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "inactivo" });
+
+    expect(deactivatePriceResponse.status).toBe(200);
+    expect(deactivatePriceResponse.body.message).toBe("Precio desactivado");
+
+    const deactivateProviderResponse = await request(app)
+      .patch(`/api/providers/${providerId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "desactivado" });
+
+    expect(deactivateProviderResponse.status).toBe(200);
+    expect(deactivateProviderResponse.body.message).toBe(
+      "Proveedor desactivado",
+    );
+
+    const reactivatePriceResponse = await request(app)
+      .patch(
+        `/api/providers/${providerId}/price-list-items/${createPriceResponse.body.id}/status`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "activo" });
+
+    expect(reactivatePriceResponse.status).toBe(409);
+    expect(reactivatePriceResponse.body.message).toBe(
+      "No es posible activar precios en un proveedor desactivado",
+    );
   });
 
   test("oportunidades.request crea pendiente y no permite activar sin oportunidades.create", async () => {

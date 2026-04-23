@@ -174,6 +174,9 @@ function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
           {can("usuarios.read") && <NavLink to="/users">Usuarios</NavLink>}
           {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
           {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
+          {can("proveedores.read") && (
+            <NavLink to="/providers">Proveedores</NavLink>
+          )}
           {can("oportunidades.read") && (
             <NavLink to="/opportunities" end>
               Oportunidades
@@ -240,6 +243,16 @@ function Shell({ currentUser, token, onLogout, onRefreshCurrentUser }) {
                   currentUser={currentUser}
                   token={token}
                 />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+          <Route
+            path="/providers"
+            element={
+              can("proveedores.read") ? (
+                <ProvidersPage can={can} currentUser={currentUser} />
               ) : (
                 <Navigate to="/" />
               )
@@ -2366,30 +2379,61 @@ function CommercialCloseConfirmationModal({
   );
 }
 
-function CommercialStatusReasonModal({
-  isOpen,
-  statusLabel,
-  reason,
-  onClose,
-}) {
+function CommercialStatusReasonModal({ isOpen, statusLabel, reason, onClose }) {
   if (!isOpen) return null;
+
+  const normalizedStatus = String(statusLabel || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const statusTone =
+    normalizedStatus === "anulada"
+      ? "canceled"
+      : normalizedStatus === "perdida"
+        ? "lost"
+        : "pending";
+  const statusIcon = normalizedStatus === "anulada" ? "⊘" : "✕";
+  const hasReason = Boolean(String(reason || "").trim());
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3 className="modal-title">Motivo de oportunidad {statusLabel}</h3>
-        <p className="modal-message">
-          Este es el motivo registrado para el estado comercial actual.
-        </p>
-        <div className="field-group opportunity-bypass-confirm-group">
-          <label>Motivo</label>
-          <textarea
+      <div
+        className="modal-dialog commercial-status-reason-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="commercial-status-reason-header">
+          <div className={`commercial-status-reason-icon is-${statusTone}`}>
+            <span aria-hidden="true">{statusIcon}</span>
+          </div>
+          <div className="commercial-status-reason-copy">
+            <span
+              className={`status-icon-badge commercial-status-reason-badge ${statusTone}`}
+            >
+              <span className="status-dot" aria-hidden="true" />
+              {statusLabel || "Estado comercial"}
+            </span>
+            <h3 className="modal-title">Detalle del cierre comercial</h3>
+            <p className="modal-message">
+              Consulta el motivo registrado cuando la oportunidad fue marcada
+              como {statusLabel || "cerrada"}.
+            </p>
+          </div>
+        </div>
+
+        <div className="commercial-status-reason-panel">
+          <div className="commercial-status-reason-panel-label">
+            Motivo registrado
+          </div>
+          <div
+            className={`commercial-status-reason-body${
+              hasReason ? "" : " is-empty"
+            }`}
             aria-label="Motivo del estado comercial"
-            rows={4}
-            value={reason || "Sin motivo registrado"}
-            disabled
-            autoFocus
-          />
+          >
+            {hasReason
+              ? reason
+              : "No se registró un motivo para este cierre comercial."}
+          </div>
         </div>
         <div className="modal-buttons">
           <button className="btn-primary" onClick={onClose}>
@@ -2410,12 +2454,14 @@ function ConfirmationModal({
   confirmText = "Aceptar",
   cancelText = "Cancelar",
   isDangerous = false,
+  overlayClassName = "",
+  dialogClassName = "",
 }) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-dialog">
+    <div className={`modal-overlay ${overlayClassName}`.trim()}>
+      <div className={`modal-dialog ${dialogClassName}`.trim()}>
         <h3 className="modal-title">{title}</h3>
         <p className="modal-message">{message}</p>
         <div className="modal-buttons">
@@ -3960,9 +4006,16 @@ function AccountsPage({ can, currentUser, token }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 className="modal-title">
-                {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
-              </h3>
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {editingAccountId
+                    ? "Actualiza los datos necesarios y guarda los cambios."
+                    : "Completa primero los datos principales y despues asigna los propietarios para crear la cuenta."}
+                </p>
+              </div>
               {editingAccountId && (
                 <div className="opportunity-modal-header-meta">
                   <span className="record-id-badge" title="ID de la cuenta">
@@ -3981,13 +4034,8 @@ function AccountsPage({ can, currentUser, token }) {
                 </div>
               )}
             </div>
-            <p className="modal-message account-modal-message">
-              {editingAccountId
-                ? "Actualiza los datos necesarios y guarda los cambios."
-                : "Completa primero los datos principales y despues asigna los propietarios para crear la cuenta."}
-            </p>
             <form className="account-create-form in-modal" onSubmit={create}>
-              <section className="account-form-section opportunity-main-data-section">
+              <section className="account-form-section account-modal-section account-main-data-section">
                 <h4>Datos principales</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
@@ -4054,7 +4102,7 @@ function AccountsPage({ can, currentUser, token }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section account-modal-section account-location-section">
                 <h4>Ubicacion y contacto</h4>
                 <div className="grid-form account-grid-location">
                   <div className="field-group">
@@ -4139,7 +4187,7 @@ function AccountsPage({ can, currentUser, token }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section account-modal-section account-description-section">
                 <h4>Descripcion</h4>
                 <div className="field-group">
                   <textarea
@@ -4152,7 +4200,7 @@ function AccountsPage({ can, currentUser, token }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section account-modal-section account-owners-section">
                 <h4>
                   Propietarios <span className="required-mark">*</span>
                 </h4>
@@ -4224,7 +4272,7 @@ function AccountsPage({ can, currentUser, token }) {
               </section>
 
               {editingAccountId && (
-                <section className="account-form-section modal-audit-strip">
+                <section className="account-form-section account-modal-section modal-audit-strip">
                   <h4>Auditoria de la cuenta</h4>
                   <div className="role-audit-grid">
                     <div className="audit-item">
@@ -6438,11 +6486,18 @@ function OpportunitiesPage({ can, currentUser }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 className="modal-title">
-                {editingOpportunityId
-                  ? "Editar oportunidad"
-                  : "Crear oportunidad"}
-              </h3>
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {editingOpportunityId
+                    ? "Editar oportunidad"
+                    : "Crear oportunidad"}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {editingOpportunityId
+                    ? "Actualiza la información de la oportunidad y guarda los cambios."
+                    : "Completa la información principal para registrar la oportunidad."}
+                </p>
+              </div>
               {editingOpportunityId && editOpportunityAudit ? (
                 <div className="opportunity-modal-header-meta">
                   <span
@@ -6484,12 +6539,6 @@ function OpportunitiesPage({ can, currentUser }) {
                 </div>
               ) : null}
             </div>
-
-            <p className="modal-message account-modal-message">
-              {editingOpportunityId
-                ? "Actualiza la información de la oportunidad y guarda los cambios."
-                : "Completa la información principal para registrar la oportunidad."}
-            </p>
 
             {!editingOpportunityId && (
               <p className="field-hint">
@@ -6753,7 +6802,7 @@ function OpportunitiesPage({ can, currentUser }) {
                         normalizedStageName === "contacto inicial"
                           ? "Contacto"
                           : normalizedStageName ===
-                                "identificacion de la oportunidad"
+                              "identificacion de la oportunidad"
                             ? "Identificacion"
                             : stage.name;
                       const className = [
@@ -6988,18 +7037,6 @@ function OpportunitiesPage({ can, currentUser }) {
                       Esta etapa no tiene preguntas activas configuradas.
                     </p>
                   )}
-
-                  {displayedCommercialCloseReason ? (
-                    <div className="field-group opportunity-close-reason-group">
-                      <label>Motivo de cierre comercial</label>
-                      <textarea
-                        aria-label="Motivo de cierre comercial"
-                        rows={3}
-                        value={displayedCommercialCloseReason}
-                        disabled
-                      />
-                    </div>
-                  ) : null}
                 </section>
               )}
 
@@ -8119,9 +8156,16 @@ function ContactsPage({ can, token, currentUser }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 className="modal-title">
-                {editingContactId ? "Editar contacto" : "Crear contacto"}
-              </h3>
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {editingContactId ? "Editar contacto" : "Crear contacto"}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {editingContactId
+                    ? "Actualiza los datos necesarios y guarda los cambios."
+                    : "Completa la información principal y guarda para crear el contacto."}
+                </p>
+              </div>
               {editingContactId &&
                 (() => {
                   const c = contacts.find(
@@ -8146,17 +8190,12 @@ function ContactsPage({ can, token, currentUser }) {
                   ) : null;
                 })()}
             </div>
-            <p className="modal-message account-modal-message">
-              {editingContactId
-                ? "Actualiza los datos necesarios y guarda los cambios."
-                : "Completa la información principal y guarda para crear el contacto."}
-            </p>
 
             <form
               className="account-create-form in-modal"
               onSubmit={saveContact}
             >
-              <section className="account-form-section">
+              <section className="account-form-section contact-modal-section contact-main-data-section">
                 <h4>Datos principales</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
@@ -8283,7 +8322,7 @@ function ContactsPage({ can, token, currentUser }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section contact-modal-section contact-commercial-section">
                 <h4>Relacion comercial</h4>
                 <div className="grid-form account-grid-main">
                   <div className="field-group">
@@ -8396,7 +8435,7 @@ function ContactsPage({ can, token, currentUser }) {
                 </div>
               </section>
 
-              <section className="account-form-section">
+              <section className="account-form-section contact-modal-section contact-location-section">
                 <h4>Ubicacion (si difiere de la cuenta)</h4>
                 <div className="grid-form account-grid-location">
                   <div className="field-group">
@@ -8467,7 +8506,7 @@ function ContactsPage({ can, token, currentUser }) {
               </section>
 
               {editingContactId && editContactAudit && (
-                <section className="account-form-section modal-audit-strip">
+                <section className="account-form-section contact-modal-section modal-audit-strip">
                   <h4>Auditoria del contacto</h4>
                   <div className="role-audit-grid">
                     <div className="audit-item">
@@ -8924,6 +8963,1677 @@ function ContactsPage({ can, token, currentUser }) {
             </div>
           );
         })()}
+    </section>
+  );
+}
+
+function ProvidersPage({ can, currentUser }) {
+  const [providers, setProviders] = useState([]);
+  const [providerStatusFilter, setProviderStatusFilter] =
+    usePersistedStatusFilter("crm.providers.statusFilter");
+  const [providerQuery, setProviderQuery] = useState("");
+  const [providerSortField, setProviderSortField] = useState("id");
+  const [providerSortDirection, setProviderSortDirection] = useState("asc");
+  const [providersPerPage, setProvidersPerPage] = useState(10);
+  const [providersPage, setProvidersPage] = useState(1);
+  const [showProviderModal, setShowProviderModal] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState(null);
+  const [editProviderAudit, setEditProviderAudit] = useState(null);
+  const [providerPriceListModalProvider, setProviderPriceListModalProvider] =
+    useState(null);
+  const [providerPriceListItems, setProviderPriceListItems] = useState([]);
+  const [loadingProviderPriceListItems, setLoadingProviderPriceListItems] =
+    useState(false);
+  const [showPriceItemModal, setShowPriceItemModal] = useState(false);
+  const [editingPriceItemId, setEditingPriceItemId] = useState(null);
+  const [openProviderMenuId, setOpenProviderMenuId] = useState(null);
+  const [openPriceItemMenuId, setOpenPriceItemMenuId] = useState(null);
+  const [confirmProviderStatusAction, setConfirmProviderStatusAction] =
+    useState(null);
+  const [confirmPriceItemStatusAction, setConfirmPriceItemStatusAction] =
+    useState(null);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [savingPriceItem, setSavingPriceItem] = useState(false);
+  const [catalogs, setCatalogs] = useState({
+    countries: [],
+    providerStatuses: [],
+    priceItemStatuses: [],
+    currencies: [],
+  });
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const explicitProviderPermissions = useMemo(
+    () => new Set(currentUser?.permissions || []),
+    [currentUser],
+  );
+  const canCreateProviders =
+    explicitProviderPermissions.has("proveedores.create");
+  const canUpdateProviders =
+    explicitProviderPermissions.has("proveedores.update");
+  const canReadProviderPrices =
+    explicitProviderPermissions.has("proveedores_precios.read") ||
+    canCreateProviders ||
+    canUpdateProviders;
+  const canCreateProviderPrices = explicitProviderPermissions.has(
+    "proveedores_precios.create",
+  );
+  const canUpdateProviderPrices = explicitProviderPermissions.has(
+    "proveedores_precios.update",
+  );
+
+  const [form, setForm] = useState({
+    name: "",
+    registrationCode: "",
+    addressLine: "",
+    countryId: "",
+    city: "",
+    postalCode: "",
+    stateRegion: "",
+    activationStatusId: "",
+  });
+  const [priceItemForm, setPriceItemForm] = useState({
+    code: "",
+    description: "",
+    price: "",
+    currencyId: "",
+    activationStatusId: "",
+  });
+
+  function normalizeText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function findCatalogIdByCode(options, expectedCode) {
+    const target = normalizeText(expectedCode);
+    const found = options.find((opt) => normalizeText(opt.code) === target);
+    return found ? String(found.id) : "";
+  }
+
+  function buildDefaultProviderForm() {
+    const defaultCountryId = catalogs.countries.find(
+      (country) => normalizeText(country.name) === "mexico",
+    );
+    return {
+      name: "",
+      registrationCode: "",
+      addressLine: "",
+      countryId: defaultCountryId ? String(defaultCountryId.id) : "",
+      city: "",
+      postalCode: "",
+      stateRegion: "",
+      activationStatusId:
+        findCatalogIdByCode(catalogs.providerStatuses, "activado") ||
+        String(catalogs.providerStatuses?.[0]?.id || ""),
+    };
+  }
+
+  function buildDefaultPriceItemForm() {
+    return {
+      code: "",
+      description: "",
+      price: "",
+      currencyId: String(catalogs.currencies?.[0]?.id || ""),
+      activationStatusId:
+        findCatalogIdByCode(catalogs.priceItemStatuses, "activo") ||
+        String(catalogs.priceItemStatuses?.[0]?.id || ""),
+    };
+  }
+
+  useEffect(() => {
+    if (!error && !success) return;
+    const timeoutId = window.setTimeout(() => {
+      setError("");
+      setSuccess("");
+    }, 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [error, success]);
+
+  useEffect(() => {
+    if (openProviderMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".providers-kebab-wrap")) return;
+      setOpenProviderMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openProviderMenuId]);
+
+  useEffect(() => {
+    if (openPriceItemMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".provider-price-items-kebab-wrap")) return;
+      setOpenPriceItemMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openPriceItemMenuId]);
+
+  async function load() {
+    try {
+      const [
+        providersRes,
+        countriesRes,
+        providerStatusesRes,
+        priceItemStatusesRes,
+        currenciesRes,
+      ] = await Promise.all([
+        api.get("/api/providers"),
+        api.get("/api/catalogs/provider-countries"),
+        api.get("/api/catalogs/provider-activation-statuses"),
+        api.get("/api/catalogs/provider-price-list-item-statuses"),
+        api.get("/api/catalogs/provider-price-list-currencies"),
+      ]);
+
+      setProviders(providersRes.data || []);
+      setCatalogs({
+        countries: countriesRes.data || [],
+        providerStatuses: providerStatusesRes.data || [],
+        priceItemStatuses: priceItemStatusesRes.data || [],
+        currencies: currenciesRes.data || [],
+      });
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar proveedores"));
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  useEffect(() => {
+    if (!showProviderModal || editingProviderId) return;
+    setForm((prev) => ({
+      ...buildDefaultProviderForm(),
+      ...prev,
+      countryId: prev.countryId || buildDefaultProviderForm().countryId,
+      activationStatusId:
+        prev.activationStatusId ||
+        buildDefaultProviderForm().activationStatusId,
+    }));
+  }, [showProviderModal, editingProviderId, catalogs]);
+
+  useEffect(() => {
+    if (!showPriceItemModal || editingPriceItemId) return;
+    setPriceItemForm((prev) => ({
+      ...buildDefaultPriceItemForm(),
+      ...prev,
+      currencyId: prev.currencyId || buildDefaultPriceItemForm().currencyId,
+      activationStatusId:
+        prev.activationStatusId ||
+        buildDefaultPriceItemForm().activationStatusId,
+    }));
+  }, [showPriceItemModal, editingPriceItemId, catalogs]);
+
+  function openCreateProviderModal() {
+    setError("");
+    setSuccess("");
+    setEditingProviderId(null);
+    setEditProviderAudit(null);
+    setForm(buildDefaultProviderForm());
+    setShowProviderModal(true);
+  }
+
+  async function openEditProviderModal(providerId) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.get(`/api/providers/${providerId}`);
+      setForm({
+        name: data.name || "",
+        registrationCode: data.registration_code || "",
+        addressLine: data.address_line || "",
+        countryId: String(data.country_id || ""),
+        city: data.city || "",
+        postalCode: data.postal_code || "",
+        stateRegion: data.state_region || "",
+        activationStatusId: String(data.activation_status_id || ""),
+      });
+      setEditProviderAudit({
+        createdByName: data.created_by_name || "",
+        createdAt: data.created_at || "",
+        updatedByName: data.updated_by_name || "",
+        updatedAt: data.updated_at || "",
+      });
+      setEditingProviderId(Number(providerId));
+      setShowProviderModal(true);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar el proveedor"));
+    }
+  }
+
+  function closeProviderModal() {
+    if (savingProvider) return;
+    setShowProviderModal(false);
+    setEditingProviderId(null);
+    setEditProviderAudit(null);
+  }
+
+  function isProviderActive(provider) {
+    return (
+      normalizeText(
+        provider.activation_status_code || provider.activation_status,
+      ) === "activado"
+    );
+  }
+
+  function isProviderInactive(provider) {
+    return (
+      normalizeText(
+        provider.activation_status_code || provider.activation_status,
+      ) === "desactivado"
+    );
+  }
+
+  function getProviderStatusLabel(provider) {
+    return isProviderActive(provider) ? "Activado" : "Desactivado";
+  }
+
+  function getProviderStatusBadgeClass(provider) {
+    return isProviderActive(provider)
+      ? "user-status-badge active"
+      : "user-status-badge inactive";
+  }
+
+  function getProviderStatusIconBadgeClassById(statusId) {
+    const selectedStatus = catalogs.providerStatuses.find(
+      (status) => String(status.id) === String(statusId),
+    );
+    return normalizeText(selectedStatus?.code || selectedStatus?.name) ===
+      "activado"
+      ? "status-icon-badge active"
+      : "status-icon-badge inactive";
+  }
+
+  const filteredProviders = useMemo(() => {
+    return providers.filter((provider) => {
+      if (providerStatusFilter === "all") return true;
+      if (providerStatusFilter === "inactive")
+        return isProviderInactive(provider);
+      return isProviderActive(provider);
+    });
+  }, [providers, providerStatusFilter]);
+
+  const providerStatusCounts = useMemo(() => {
+    return providers.reduce(
+      (totals, provider) => {
+        if (isProviderInactive(provider)) {
+          totals.inactive += 1;
+          return totals;
+        }
+        totals.active += 1;
+        return totals;
+      },
+      { active: 0, inactive: 0 },
+    );
+  }, [providers]);
+
+  const totalProvidersCount =
+    providerStatusCounts.active + providerStatusCounts.inactive;
+
+  const sortedProviders = useMemo(() => {
+    const list = [...filteredProviders];
+
+    const readValue = (provider) => {
+      if (providerSortField === "id") return Number(provider.id) || 0;
+      if (providerSortField === "nombre") return String(provider.name || "");
+      if (providerSortField === "registro") {
+        return String(provider.registration_code || "");
+      }
+      if (providerSortField === "pais") return String(provider.country || "");
+      if (providerSortField === "ciudad") return String(provider.city || "");
+      if (providerSortField === "estado")
+        return getProviderStatusLabel(provider);
+      if (providerSortField === "precios") {
+        return Number(provider.total_price_items || 0);
+      }
+      return "";
+    };
+
+    list.sort((a, b) => {
+      const aValue = readValue(a);
+      const bValue = readValue(b);
+
+      let result = 0;
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        result = aValue - bValue;
+      } else {
+        result = String(aValue).localeCompare(String(bValue), "es", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return providerSortDirection === "asc" ? result : -result;
+    });
+
+    return list;
+  }, [filteredProviders, providerSortField, providerSortDirection]);
+
+  const visibleProviders = useMemo(() => {
+    const q = providerQuery.trim().toLowerCase();
+    if (!q) return sortedProviders;
+
+    return sortedProviders.filter((provider) => {
+      const haystack = [
+        provider.id,
+        provider.name,
+        provider.registration_code,
+        provider.country,
+        provider.city,
+        getProviderStatusLabel(provider),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    });
+  }, [sortedProviders, providerQuery]);
+
+  useEffect(() => {
+    setProvidersPage(1);
+  }, [providerQuery, providerStatusFilter, providersPerPage]);
+
+  const totalProviderPages = Math.max(
+    1,
+    Math.ceil(visibleProviders.length / providersPerPage),
+  );
+  const pagedProviders = visibleProviders.slice(
+    (providersPage - 1) * providersPerPage,
+    providersPage * providersPerPage,
+  );
+
+  function toggleProviderSort(field) {
+    if (providerSortField === field) {
+      setProviderSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setProviderSortField(field);
+    setProviderSortDirection("asc");
+  }
+
+  function getProviderSortArrow(field) {
+    if (providerSortField !== field) return "↕";
+    return providerSortDirection === "asc" ? "↑" : "↓";
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "No registrado";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "No registrado";
+    return date.toLocaleString("es-ES");
+  }
+
+  function formatPriceValue(price, currencyCode) {
+    const code = String(currencyCode || "USD").toUpperCase();
+    try {
+      return new Intl.NumberFormat("es-MX", {
+        style: "currency",
+        currency: code,
+      }).format(Number(price || 0));
+    } catch {
+      return `${code} ${Number(price || 0).toFixed(2)}`;
+    }
+  }
+
+  function toggleProviderMenu(providerId) {
+    setOpenProviderMenuId((prev) => (prev === providerId ? null : providerId));
+  }
+
+  async function runProviderAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenProviderMenuId(null);
+    }
+  }
+
+  async function updateProviderStatus(provider, statusCode) {
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.patch(`/api/providers/${provider.id}/status`, {
+        statusCode,
+      });
+      setSuccess(data?.message || "Estado de proveedor actualizado");
+      await load();
+      if (
+        providerPriceListModalProvider &&
+        Number(providerPriceListModalProvider.id) === Number(provider.id)
+      ) {
+        await openProviderPriceListModal({
+          ...providerPriceListModalProvider,
+          activation_status_code: statusCode,
+          activation_status:
+            statusCode === "activado" ? "Activado" : "Desactivado",
+        });
+      }
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del proveedor",
+        ),
+      );
+    }
+  }
+
+  function openProviderStatusConfirmation(provider, statusCode) {
+    setConfirmProviderStatusAction({ provider, statusCode });
+    setOpenProviderMenuId(null);
+  }
+
+  function closeProviderStatusConfirmation() {
+    setConfirmProviderStatusAction(null);
+  }
+
+  async function confirmSelectedProviderStatusChange() {
+    if (!confirmProviderStatusAction) return;
+
+    await updateProviderStatus(
+      confirmProviderStatusAction.provider,
+      confirmProviderStatusAction.statusCode,
+    );
+    setConfirmProviderStatusAction(null);
+  }
+
+  function getProviderStatusConfirmationMeta() {
+    const providerName = confirmProviderStatusAction?.provider?.name || "";
+
+    if (confirmProviderStatusAction?.statusCode === "activado") {
+      return {
+        title: "Activar proveedor",
+        message: `Seguro que deseas activar el proveedor "${providerName}"?`,
+        confirmText: "Activar",
+        isDangerous: false,
+      };
+    }
+
+    return {
+      title: "Desactivar proveedor",
+      message: `Seguro que deseas desactivar el proveedor "${providerName}"?`,
+      confirmText: "Desactivar",
+      isDangerous: true,
+    };
+  }
+
+  async function saveProvider(e) {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setSavingProvider(true);
+
+    try {
+      const payload = {
+        name: form.name,
+        registrationCode: String(form.registrationCode || "").trim(),
+        addressLine: form.addressLine || undefined,
+        countryId: Number(form.countryId),
+        city: form.city || undefined,
+        postalCode: form.postalCode || undefined,
+        stateRegion: form.stateRegion || undefined,
+        activationStatusId: Number(form.activationStatusId),
+      };
+
+      const { data } = editingProviderId
+        ? await api.put(`/api/providers/${editingProviderId}`, payload)
+        : await api.post("/api/providers", payload);
+
+      setSuccess(
+        data?.message ||
+          (editingProviderId
+            ? "Proveedor actualizado correctamente"
+            : "Proveedor creado correctamente"),
+      );
+      setShowProviderModal(false);
+      setEditingProviderId(null);
+      setEditProviderAudit(null);
+      await load();
+    } catch (err) {
+      const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+      if (fieldErrors && typeof fieldErrors === "object") {
+        const firstError = Object.entries(fieldErrors).find(
+          ([, messages]) => Array.isArray(messages) && messages.length > 0,
+        );
+        if (firstError) {
+          const [fieldName, messages] = firstError;
+          setError(`${fieldName}: ${messages[0]}`);
+          setSavingProvider(false);
+          return;
+        }
+      }
+      setError(getApiErrorMessage(err, "No fue posible guardar el proveedor"));
+    } finally {
+      setSavingProvider(false);
+    }
+  }
+
+  async function openProviderPriceListModal(provider) {
+    setError("");
+    setSuccess("");
+    setProviderPriceListModalProvider(provider);
+    setProviderPriceListItems([]);
+    setLoadingProviderPriceListItems(true);
+    try {
+      const { data } = await api.get(
+        `/api/providers/${provider.id}/price-list-items`,
+      );
+      setProviderPriceListItems(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setProviderPriceListItems([]);
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar la lista de precios del proveedor",
+        ),
+      );
+    } finally {
+      setLoadingProviderPriceListItems(false);
+    }
+  }
+
+  function closeProviderPriceListModal() {
+    if (savingPriceItem) return;
+    setProviderPriceListModalProvider(null);
+    setProviderPriceListItems([]);
+    setShowPriceItemModal(false);
+    setEditingPriceItemId(null);
+    setOpenPriceItemMenuId(null);
+  }
+
+  function openCreatePriceItemModal() {
+    setError("");
+    setSuccess("");
+    setEditingPriceItemId(null);
+    setPriceItemForm(buildDefaultPriceItemForm());
+    setShowPriceItemModal(true);
+  }
+
+  function openEditPriceItemModal(item) {
+    setError("");
+    setSuccess("");
+    setEditingPriceItemId(Number(item.id));
+    setPriceItemForm({
+      code: item.code || "",
+      description: item.description || "",
+      price: item.price ?? "",
+      currencyId: String(item.currency_id || ""),
+      activationStatusId: String(item.activation_status_id || ""),
+    });
+    setShowPriceItemModal(true);
+  }
+
+  function closePriceItemModal() {
+    if (savingPriceItem) return;
+    setShowPriceItemModal(false);
+    setEditingPriceItemId(null);
+  }
+
+  function togglePriceItemMenu(itemId) {
+    setOpenPriceItemMenuId((prev) => (prev === itemId ? null : itemId));
+  }
+
+  async function runPriceItemAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenPriceItemMenuId(null);
+    }
+  }
+
+  function isPriceItemActive(item) {
+    return (
+      normalizeText(item.activation_status_code || item.activation_status) ===
+      "activo"
+    );
+  }
+
+  function isPriceItemInactive(item) {
+    return (
+      normalizeText(item.activation_status_code || item.activation_status) ===
+      "inactivo"
+    );
+  }
+
+  function getPriceItemStatusLabel(item) {
+    return isPriceItemActive(item) ? "Activo" : "Inactivo";
+  }
+
+  function getPriceItemStatusBadgeClass(item) {
+    return isPriceItemActive(item)
+      ? "user-status-badge active"
+      : "user-status-badge inactive";
+  }
+
+  async function refreshProviderPriceListItems() {
+    if (!providerPriceListModalProvider) return;
+    await openProviderPriceListModal(providerPriceListModalProvider);
+    await load();
+  }
+
+  async function savePriceItem(e) {
+    e.preventDefault();
+    if (!providerPriceListModalProvider) return;
+
+    setError("");
+    setSuccess("");
+    setSavingPriceItem(true);
+
+    try {
+      const payload = {
+        code: String(priceItemForm.code || "").trim(),
+        description: priceItemForm.description || undefined,
+        price: Number(priceItemForm.price),
+        currencyId: Number(priceItemForm.currencyId),
+        activationStatusId: Number(priceItemForm.activationStatusId),
+      };
+
+      const { data } = editingPriceItemId
+        ? await api.put(
+            `/api/providers/${providerPriceListModalProvider.id}/price-list-items/${editingPriceItemId}`,
+            payload,
+          )
+        : await api.post(
+            `/api/providers/${providerPriceListModalProvider.id}/price-list-items`,
+            payload,
+          );
+
+      setSuccess(
+        data?.message ||
+          (editingPriceItemId
+            ? "Precio actualizado correctamente"
+            : "Precio creado correctamente"),
+      );
+      setShowPriceItemModal(false);
+      setEditingPriceItemId(null);
+      await refreshProviderPriceListItems();
+    } catch (err) {
+      const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+      if (fieldErrors && typeof fieldErrors === "object") {
+        const firstError = Object.entries(fieldErrors).find(
+          ([, messages]) => Array.isArray(messages) && messages.length > 0,
+        );
+        if (firstError) {
+          const [fieldName, messages] = firstError;
+          setError(`${fieldName}: ${messages[0]}`);
+          setSavingPriceItem(false);
+          return;
+        }
+      }
+      setError(getApiErrorMessage(err, "No fue posible guardar el precio"));
+    } finally {
+      setSavingPriceItem(false);
+    }
+  }
+
+  async function updatePriceItemStatus(item, statusCode) {
+    if (!providerPriceListModalProvider) return;
+
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.patch(
+        `/api/providers/${providerPriceListModalProvider.id}/price-list-items/${item.id}/status`,
+        { statusCode },
+      );
+      setSuccess(data?.message || "Estado del precio actualizado");
+      await refreshProviderPriceListItems();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del precio",
+        ),
+      );
+    }
+  }
+
+  function openPriceItemStatusConfirmation(item, statusCode) {
+    setConfirmPriceItemStatusAction({ item, statusCode });
+    setOpenPriceItemMenuId(null);
+  }
+
+  function closePriceItemStatusConfirmation() {
+    setConfirmPriceItemStatusAction(null);
+  }
+
+  async function confirmSelectedPriceItemStatusChange() {
+    if (!confirmPriceItemStatusAction) return;
+
+    await updatePriceItemStatus(
+      confirmPriceItemStatusAction.item,
+      confirmPriceItemStatusAction.statusCode,
+    );
+    setConfirmPriceItemStatusAction(null);
+  }
+
+  function getPriceItemStatusConfirmationMeta() {
+    const itemCode = confirmPriceItemStatusAction?.item?.code || "";
+
+    if (confirmPriceItemStatusAction?.statusCode === "activo") {
+      return {
+        title: "Activar precio",
+        message: `Seguro que deseas activar el precio "${itemCode}"?`,
+        confirmText: "Activar",
+        isDangerous: false,
+      };
+    }
+
+    return {
+      title: "Desactivar precio",
+      message: `Seguro que deseas desactivar el precio "${itemCode}"?`,
+      confirmText: "Desactivar",
+      isDangerous: true,
+    };
+  }
+
+  const currentProviderForPriceList = useMemo(() => {
+    if (!providerPriceListModalProvider) return null;
+    return (
+      providers.find(
+        (provider) =>
+          Number(provider.id) === Number(providerPriceListModalProvider.id),
+      ) || providerPriceListModalProvider
+    );
+  }, [providerPriceListModalProvider, providers]);
+
+  const activePriceItemsCount = useMemo(
+    () =>
+      providerPriceListItems.filter((item) => isPriceItemActive(item)).length,
+    [providerPriceListItems],
+  );
+
+  return (
+    <section className="panel">
+      <ConfirmationModal
+        isOpen={Boolean(confirmProviderStatusAction)}
+        title={getProviderStatusConfirmationMeta().title}
+        message={getProviderStatusConfirmationMeta().message}
+        onConfirm={confirmSelectedProviderStatusChange}
+        onCancel={closeProviderStatusConfirmation}
+        confirmText={getProviderStatusConfirmationMeta().confirmText}
+        isDangerous={getProviderStatusConfirmationMeta().isDangerous}
+        overlayClassName="modal-overlay-elevated"
+      />
+
+      <ConfirmationModal
+        isOpen={Boolean(confirmPriceItemStatusAction)}
+        title={getPriceItemStatusConfirmationMeta().title}
+        message={getPriceItemStatusConfirmationMeta().message}
+        onConfirm={confirmSelectedPriceItemStatusChange}
+        onCancel={closePriceItemStatusConfirmation}
+        confirmText={getPriceItemStatusConfirmationMeta().confirmText}
+        isDangerous={getPriceItemStatusConfirmationMeta().isDangerous}
+        overlayClassName="modal-overlay-elevated"
+      />
+
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Proveedores</h2>
+            <span
+              className="module-title-icon module-title-icon-providers"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M4.75 5A1.75 1.75 0 0 0 3 6.75v10.5C3 18.22 3.78 19 4.75 19h14.5c.97 0 1.75-.78 1.75-1.75V6.75C21 5.78 20.22 5 19.25 5zm.25 1.5h14a.5.5 0 0 1 .5.5V8H4.5v-1a.5.5 0 0 1 .5-.5m-.5 3h15v7.75a.25.25 0 0 1-.25.25H4.75a.25.25 0 0 1-.25-.25z" />
+                <path d="M7 11h4v1.5H7zm0 3h6v1.5H7zm8-3h2v4h-2z" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Gestiona proveedores y las listas de precios asociadas a cada uno
+          </p>
+        </div>
+        {canCreateProviders && (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openCreateProviderModal}
+          >
+            + Crear proveedor
+          </button>
+        )}
+      </div>
+
+      <div className="roles-pills-bar accounts-pills-bar-row">
+        <div
+          className="accounts-status-pills"
+          role="group"
+          aria-label="Filtrar proveedores por estado"
+        >
+          <button
+            type="button"
+            className={
+              providerStatusFilter === "active"
+                ? "status-filter-pill status-filter-pill-active is-selected"
+                : "status-filter-pill status-filter-pill-active"
+            }
+            aria-pressed={providerStatusFilter === "active"}
+            onClick={() => setProviderStatusFilter("active")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Activos</span>
+            <span className="status-filter-pill-count">
+              {providerStatusCounts.active}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              providerStatusFilter === "inactive"
+                ? "status-filter-pill status-filter-pill-inactive is-selected"
+                : "status-filter-pill status-filter-pill-inactive"
+            }
+            aria-pressed={providerStatusFilter === "inactive"}
+            onClick={() => setProviderStatusFilter("inactive")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Desactivados</span>
+            <span className="status-filter-pill-count">
+              {providerStatusCounts.inactive}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              providerStatusFilter === "all"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={providerStatusFilter === "all"}
+            onClick={() => setProviderStatusFilter("all")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Todos</span>
+            <span className="status-filter-pill-count">
+              {totalProvidersCount}
+            </span>
+          </button>
+        </div>
+        <input
+          className="accounts-search-inline"
+          type="text"
+          placeholder="Buscar por ID, nombre, registro, país, ciudad o estado"
+          value={providerQuery}
+          onChange={(e) => setProviderQuery(e.target.value)}
+        />
+      </div>
+
+      {showProviderModal && (
+        <div className="modal-overlay" onClick={closeProviderModal}>
+          <div
+            className="modal-dialog modal-dialog-account"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {editingProviderId ? "Editar proveedor" : "Crear proveedor"}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {editingProviderId
+                    ? "Actualiza los datos necesarios y guarda los cambios."
+                    : "Completa la información principal para registrar el proveedor."}
+                </p>
+              </div>
+              {editingProviderId && (
+                <div className="opportunity-modal-header-meta">
+                  <span className="record-id-badge" title="ID del proveedor">
+                    <span className="record-id-icon" aria-hidden="true">
+                      #
+                    </span>
+                    {editingProviderId}
+                  </span>
+                  <span
+                    className={getProviderStatusIconBadgeClassById(
+                      form.activationStatusId,
+                    )}
+                    title="Estado de activacion"
+                  >
+                    <span className="status-dot" aria-hidden="true" />
+                    {catalogs.providerStatuses.find(
+                      (status) =>
+                        String(status.id) === String(form.activationStatusId),
+                    )?.name || "Sin estado"}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <form
+              className="account-create-form in-modal"
+              onSubmit={saveProvider}
+            >
+              <section className="account-form-section account-modal-section">
+                <h4>Datos principales</h4>
+                <div className="grid-form account-grid-main">
+                  <div className="field-group">
+                    <label>
+                      Nombre <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={form.name}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, name: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Registro <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={form.registrationCode}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          registrationCode: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section account-location-section">
+                <h4>Ubicacion</h4>
+                <div className="grid-form account-grid-location">
+                  <div className="field-group">
+                    <label>
+                      Pais <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={form.countryId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          countryId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona pais</option>
+                      {catalogs.countries.map((country) => (
+                        <option key={country.id} value={country.id}>
+                          {country.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>Ciudad</label>
+                    <input
+                      value={form.city}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, city: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Estado</label>
+                    <input
+                      value={form.stateRegion}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          stateRegion: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Direccion</label>
+                    <input
+                      value={form.addressLine}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          addressLine: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Codigo postal</label>
+                    <input
+                      value={form.postalCode}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          postalCode: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  {editingProviderId && (
+                    <div className="field-group">
+                      <label>Estado de activacion</label>
+                      <select
+                        value={form.activationStatusId}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            activationStatusId: e.target.value,
+                          }))
+                        }
+                      >
+                        {catalogs.providerStatuses.map((status) => (
+                          <option key={status.id} value={status.id}>
+                            {status.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {editingProviderId && editProviderAudit && (
+                <section className="account-form-section account-modal-section modal-audit-strip">
+                  <h4>Auditoria del proveedor</h4>
+                  <div className="role-audit-grid">
+                    <div className="audit-item">
+                      <span className="audit-label">Creado por</span>
+                      <span className="audit-value">
+                        {editProviderAudit.createdByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de creacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editProviderAudit.createdAt)}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Modificado por</span>
+                      <span className="audit-value">
+                        {editProviderAudit.updatedByName || "No registrado"}
+                      </span>
+                    </div>
+                    <div className="audit-item">
+                      <span className="audit-label">Fecha de modificacion</span>
+                      <span className="audit-value">
+                        {formatDateTime(editProviderAudit.updatedAt)}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              <div className="modal-buttons" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeProviderModal}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingProvider}
+                >
+                  {savingProvider
+                    ? editingProviderId
+                      ? "Guardando..."
+                      : "Creando..."
+                    : editingProviderId
+                      ? "Guardar cambios"
+                      : "Crear proveedor"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {providerPriceListModalProvider && (
+        <div className="modal-overlay" onClick={closeProviderPriceListModal}>
+          <div
+            className="modal-dialog modal-dialog-account modal-dialog-provider-prices"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">Lista de precios</h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {currentProviderForPriceList?.name || "Proveedor"} ·{" "}
+                  {activePriceItemsCount} activos de{" "}
+                  {providerPriceListItems.length}
+                </p>
+              </div>
+              <div className="opportunity-modal-header-meta">
+                <span className="record-id-badge" title="ID del proveedor">
+                  <span className="record-id-icon" aria-hidden="true">
+                    #
+                  </span>
+                  {currentProviderForPriceList?.id}
+                </span>
+                <span
+                  className={getProviderStatusBadgeClass(
+                    currentProviderForPriceList || {},
+                  )}
+                >
+                  {getProviderStatusLabel(currentProviderForPriceList || {})}
+                </span>
+              </div>
+            </div>
+
+            <div className="provider-price-list-toolbar">
+              <div className="provider-price-list-summary">
+                <span className="record-id-badge">
+                  Registro:{" "}
+                  {currentProviderForPriceList?.registration_code || "-"}
+                </span>
+              </div>
+              {canCreateProviderPrices &&
+                isProviderActive(currentProviderForPriceList || {}) && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={openCreatePriceItemModal}
+                  >
+                    + Agregar precio
+                  </button>
+                )}
+            </div>
+
+            {loadingProviderPriceListItems ? (
+              <p className="field-hint provider-price-list-empty">
+                Cargando lista de precios...
+              </p>
+            ) : providerPriceListItems.length > 0 ? (
+              <div className="provider-price-list-table-wrap">
+                <table className="provider-price-list-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Codigo</th>
+                      <th>Descripcion</th>
+                      <th>Precio</th>
+                      <th>Moneda</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {providerPriceListItems.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.id}</td>
+                        <td>{item.code}</td>
+                        <td>{item.description || "-"}</td>
+                        <td>
+                          {formatPriceValue(item.price, item.currency_code)}
+                        </td>
+                        <td>{item.currency_code}</td>
+                        <td>
+                          <span className={getPriceItemStatusBadgeClass(item)}>
+                            {getPriceItemStatusLabel(item)}
+                          </span>
+                        </td>
+                        <td className="accounts-actions-cell">
+                          <div className="user-kebab-wrap provider-price-items-kebab-wrap">
+                            <button
+                              type="button"
+                              className="kebab-btn"
+                              onClick={() => togglePriceItemMenu(item.id)}
+                              aria-label="Abrir acciones"
+                            >
+                              ⋮
+                            </button>
+                            {openPriceItemMenuId === item.id && (
+                              <div className="user-kebab-menu">
+                                <button
+                                  type="button"
+                                  disabled={!canUpdateProviderPrices}
+                                  onClick={() =>
+                                    runPriceItemAction(() =>
+                                      openEditPriceItemModal(item),
+                                    )
+                                  }
+                                >
+                                  Editar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !canUpdateProviderPrices ||
+                                    isPriceItemActive(item)
+                                  }
+                                  onClick={() =>
+                                    openPriceItemStatusConfirmation(
+                                      item,
+                                      "activo",
+                                    )
+                                  }
+                                >
+                                  Activar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !canUpdateProviderPrices ||
+                                    isPriceItemInactive(item)
+                                  }
+                                  onClick={() =>
+                                    openPriceItemStatusConfirmation(
+                                      item,
+                                      "inactivo",
+                                    )
+                                  }
+                                >
+                                  Desactivar
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="field-hint provider-price-list-empty">
+                Este proveedor todavía no tiene precios registrados.
+              </p>
+            )}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeProviderPriceListModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPriceItemModal && providerPriceListModalProvider && (
+        <div className="modal-overlay" onClick={closePriceItemModal}>
+          <div
+            className="modal-dialog modal-dialog-account provider-price-item-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {editingPriceItemId ? "Editar precio" : "Agregar precio"}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {providerPriceListModalProvider.name}
+                </p>
+              </div>
+              {editingPriceItemId && (
+                <div className="opportunity-modal-header-meta">
+                  <span className="record-id-badge" title="ID del precio">
+                    <span className="record-id-icon" aria-hidden="true">
+                      #
+                    </span>
+                    {editingPriceItemId}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <form
+              className="account-create-form in-modal"
+              onSubmit={savePriceItem}
+            >
+              <section className="account-form-section account-modal-section">
+                <h4>Datos del precio</h4>
+                <div className="grid-form account-grid-main">
+                  <div className="field-group">
+                    <label>
+                      Codigo <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={priceItemForm.code}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          code: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Precio <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={priceItemForm.price}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          price: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Moneda <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={priceItemForm.currencyId}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          currencyId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona moneda</option>
+                      {catalogs.currencies.map((currency) => (
+                        <option key={currency.id} value={currency.id}>
+                          {currency.code} - {currency.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Estado <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={priceItemForm.activationStatusId}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          activationStatusId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      {catalogs.priceItemStatuses.map((status) => (
+                        <option key={status.id} value={status.id}>
+                          {status.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section account-description-section">
+                <h4>Descripcion</h4>
+                <div className="field-group">
+                  <textarea
+                    value={priceItemForm.description}
+                    onChange={(e) =>
+                      setPriceItemForm((prev) => ({
+                        ...prev,
+                        description: e.target.value,
+                      }))
+                    }
+                    placeholder="Descripción del precio o alcance del ítem"
+                  />
+                </div>
+              </section>
+
+              <div className="modal-buttons" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closePriceItemModal}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingPriceItem}
+                >
+                  {savingPriceItem
+                    ? editingPriceItemId
+                      ? "Guardando..."
+                      : "Creando..."
+                    : editingPriceItemId
+                      ? "Guardar cambios"
+                      : "Agregar precio"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {error && <div className="toast toast-error">{error}</div>}
+      {success && <div className="toast toast-success">{success}</div>}
+
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("id")}
+              >
+                ID <span>{getProviderSortArrow("id")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("nombre")}
+              >
+                Nombre <span>{getProviderSortArrow("nombre")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("registro")}
+              >
+                Registro <span>{getProviderSortArrow("registro")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("pais")}
+              >
+                Pais <span>{getProviderSortArrow("pais")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("ciudad")}
+              >
+                Ciudad <span>{getProviderSortArrow("ciudad")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("precios")}
+              >
+                Precios <span>{getProviderSortArrow("precios")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleProviderSort("estado")}
+              >
+                Estado <span>{getProviderSortArrow("estado")}</span>
+              </button>
+            </th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleProviders.length > 0 ? (
+            pagedProviders.map((provider) => (
+              <tr key={provider.id}>
+                <td>{provider.id}</td>
+                <td>{provider.name}</td>
+                <td>{provider.registration_code}</td>
+                <td>{provider.country}</td>
+                <td>{provider.city || "-"}</td>
+                <td>{provider.total_price_items || 0}</td>
+                <td>
+                  <span className={getProviderStatusBadgeClass(provider)}>
+                    {getProviderStatusLabel(provider)}
+                  </span>
+                </td>
+                <td className="accounts-actions-cell">
+                  <div className="user-kebab-wrap providers-kebab-wrap">
+                    <button
+                      type="button"
+                      className="kebab-btn"
+                      onClick={() => toggleProviderMenu(provider.id)}
+                      aria-label="Abrir acciones"
+                    >
+                      ⋮
+                    </button>
+                    {openProviderMenuId === provider.id && (
+                      <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          disabled={!canUpdateProviders}
+                          onClick={() =>
+                            runProviderAction(() =>
+                              openEditProviderModal(provider.id),
+                            )
+                          }
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canUpdateProviders || isProviderActive(provider)
+                          }
+                          onClick={() =>
+                            openProviderStatusConfirmation(provider, "activado")
+                          }
+                        >
+                          Activar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            !canUpdateProviders || isProviderInactive(provider)
+                          }
+                          onClick={() =>
+                            openProviderStatusConfirmation(
+                              provider,
+                              "desactivado",
+                            )
+                          }
+                        >
+                          Desactivar
+                        </button>
+                        {canReadProviderPrices && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runProviderAction(() =>
+                                openProviderPriceListModal(provider),
+                              )
+                            }
+                          >
+                            Lista de precios
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8} className="empty-state">
+                No hay proveedores que coincidan con los filtros
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {visibleProviders.length > 0 && (
+        <div className="users-pagination">
+          <div className="users-pagination-left">
+            <span className="users-pagination-info">
+              {(providersPage - 1) * providersPerPage + 1}–
+              {Math.min(
+                providersPage * providersPerPage,
+                visibleProviders.length,
+              )}{" "}
+              de {visibleProviders.length}
+            </span>
+          </div>
+          <div className="users-pagination-center">
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={providersPage === 1}
+              onClick={() => setProvidersPage((page) => page - 1)}
+            >
+              ‹
+            </button>
+            <span className="users-pagination-pages">
+              {providersPage} / {totalProviderPages}
+            </span>
+            <button
+              type="button"
+              className="users-page-btn"
+              disabled={providersPage === totalProviderPages}
+              onClick={() => setProvidersPage((page) => page + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="users-pagination-right">
+            <span className="users-pagination-label">Por página:</span>
+            {[10, 50, 100].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`users-perpage-btn${providersPerPage === n ? " is-active" : ""}`}
+                onClick={() => setProvidersPerPage(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

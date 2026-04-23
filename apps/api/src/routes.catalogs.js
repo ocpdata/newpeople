@@ -1,6 +1,6 @@
 import express from "express";
 import { query, withTransaction } from "./db.js";
-import { requirePermission } from "./auth.js";
+import { requireAnyPermission, requirePermission } from "./auth.js";
 
 const router = express.Router();
 const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
@@ -363,6 +363,50 @@ router.get(
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name FROM contact_activation_statuses WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/provider-countries",
+  requirePermission("proveedores.read"),
+  async (_req, res) => {
+    const rows = await query(
+      "SELECT id, iso2, iso3, name FROM countries WHERE is_active = 1 ORDER BY name",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/provider-activation-statuses",
+  requirePermission("proveedores.read"),
+  async (_req, res) => {
+    const rows = await query(
+      "SELECT id, code, name FROM provider_activation_statuses WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/provider-price-list-item-statuses",
+  requireAnyPermission(["proveedores.read", "proveedores_precios.read"]),
+  async (_req, res) => {
+    const rows = await query(
+      "SELECT id, code, name FROM provider_price_list_item_statuses WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/provider-price-list-currencies",
+  requireAnyPermission(["proveedores.read", "proveedores_precios.read"]),
+  async (_req, res) => {
+    const rows = await query(
+      "SELECT id, code, name, symbol, decimals FROM currencies WHERE is_active = 1 ORDER BY name",
     );
     res.json(rows);
   },

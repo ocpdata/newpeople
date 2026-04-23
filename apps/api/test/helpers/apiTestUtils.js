@@ -233,11 +233,65 @@ export async function createDirectContact({ accountId, actorUserId, suffix }) {
   return Number(result.insertId);
 }
 
+export async function createDirectProvider({ actorUserId, suffix }) {
+  const now = new Date();
+  const result = await query(
+    `INSERT INTO providers
+      (name, registration_code, address_line, country_id, city, postal_code,
+       state_region, activation_status_id, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `Proveedor fixture ${suffix}`,
+      `PROV-${suffix}`,
+      "Direccion fixture proveedor",
+      await getCatalogId("countries", "MX", "iso2"),
+      "Ciudad de Mexico",
+      "01000",
+      "CDMX",
+      await getCatalogId("provider_activation_statuses", "activado"),
+      actorUserId,
+      now,
+      actorUserId,
+      now,
+    ],
+  );
+  return Number(result.insertId);
+}
+
+export async function createDirectProviderPriceItem({
+  providerId,
+  actorUserId,
+  suffix,
+}) {
+  const now = new Date();
+  const result = await query(
+    `INSERT INTO provider_price_list_items
+      (provider_id, code, description, price, currency_id, activation_status_id,
+       created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      providerId,
+      `PRICE-${suffix}`,
+      `Precio fixture ${suffix}`,
+      1234.56,
+      await getFirstId("currencies"),
+      await getCatalogId("provider_price_list_item_statuses", "activo"),
+      actorUserId,
+      now,
+      actorUserId,
+      now,
+    ],
+  );
+  return Number(result.insertId);
+}
+
 export async function cleanupArtifacts({
   stageQuestionIds = [],
   opportunityIds = [],
   contactIds = [],
   accountIds = [],
+  providerPriceItemIds = [],
+  providerIds = [],
   userIds = [],
   roleIds = [],
 }) {
@@ -270,6 +324,20 @@ export async function cleanupArtifacts({
     await query(
       `DELETE FROM accounts WHERE id IN (${placeholders(accountIds.length)})`,
       accountIds,
+    );
+  }
+
+  if (providerPriceItemIds.length) {
+    await query(
+      `DELETE FROM provider_price_list_items WHERE id IN (${placeholders(providerPriceItemIds.length)})`,
+      providerPriceItemIds,
+    );
+  }
+
+  if (providerIds.length) {
+    await query(
+      `DELETE FROM providers WHERE id IN (${placeholders(providerIds.length)})`,
+      providerIds,
     );
   }
 

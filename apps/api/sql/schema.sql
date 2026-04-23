@@ -321,6 +321,24 @@ CREATE TABLE IF NOT EXISTS contact_activation_statuses (
   CONSTRAINT uq_contact_activation_statuses_name UNIQUE (name)
 );
 
+CREATE TABLE IF NOT EXISTS provider_activation_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_provider_activation_statuses_code UNIQUE (code),
+  CONSTRAINT uq_provider_activation_statuses_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS provider_price_list_item_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT uq_provider_price_list_item_statuses_code UNIQUE (code),
+  CONSTRAINT uq_provider_price_list_item_statuses_name UNIQUE (name)
+);
+
 CREATE TABLE IF NOT EXISTS opportunity_business_lines (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(60) NOT NULL,
@@ -434,6 +452,47 @@ CREATE TABLE IF NOT EXISTS contacts (
   CONSTRAINT fk_contacts_influences_contact FOREIGN KEY (influences_contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
   CONSTRAINT fk_contacts_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS providers (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(180) NOT NULL,
+  registration_code VARCHAR(80) NOT NULL,
+  address_line VARCHAR(255) NULL,
+  country_id BIGINT UNSIGNED NOT NULL,
+  city VARCHAR(120) NULL,
+  postal_code VARCHAR(20) NULL,
+  state_region VARCHAR(120) NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_providers_country FOREIGN KEY (country_id) REFERENCES countries(id),
+  CONSTRAINT fk_providers_activation_status FOREIGN KEY (activation_status_id) REFERENCES provider_activation_statuses(id),
+  CONSTRAINT fk_providers_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_providers_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT uq_providers_registration UNIQUE (registration_code)
+);
+
+CREATE TABLE IF NOT EXISTS provider_price_list_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  code VARCHAR(80) NOT NULL,
+  description TEXT NULL,
+  price DECIMAL(12, 2) NOT NULL,
+  currency_id BIGINT UNSIGNED NOT NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_provider_price_list_items_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_list_items_currency FOREIGN KEY (currency_id) REFERENCES currencies(id),
+  CONSTRAINT fk_provider_price_list_items_activation_status FOREIGN KEY (activation_status_id) REFERENCES provider_price_list_item_statuses(id),
+  CONSTRAINT fk_provider_price_list_items_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_provider_price_list_items_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT uq_provider_price_list_items_provider_code UNIQUE (provider_id, code)
 );
 
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -686,6 +745,12 @@ VALUES
   ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),
   ('contactos.request', 'contactos', 'request', 'Solicitar creacion de contactos', NOW(3), NOW(3)),
   ('contactos.update', 'contactos', 'update', 'Actualizar contactos', NOW(3), NOW(3)),
+  ('proveedores.read', 'proveedores', 'read', 'Ver proveedores', NOW(3), NOW(3)),
+  ('proveedores.create', 'proveedores', 'create', 'Crear proveedores', NOW(3), NOW(3)),
+  ('proveedores.update', 'proveedores', 'update', 'Actualizar proveedores', NOW(3), NOW(3)),
+  ('proveedores_precios.read', 'proveedores_precios', 'read', 'Ver listas de precios de proveedores', NOW(3), NOW(3)),
+  ('proveedores_precios.create', 'proveedores_precios', 'create', 'Crear listas de precios de proveedores', NOW(3), NOW(3)),
+  ('proveedores_precios.update', 'proveedores_precios', 'update', 'Actualizar listas de precios de proveedores', NOW(3), NOW(3)),
   ('oportunidades.read', 'oportunidades', 'read', 'Ver oportunidades', NOW(3), NOW(3)),
   ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
   ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
@@ -753,6 +818,16 @@ INSERT INTO contact_activation_statuses (code, name, is_active) VALUES
   ('activado', 'Activado', 1),
   ('desactivado', 'Desactivado', 1),
   ('pendiente_activacion', 'Pendiente de activacion', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO provider_activation_statuses (code, name, is_active) VALUES
+  ('activado', 'Activado', 1),
+  ('desactivado', 'Desactivado', 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO provider_price_list_item_statuses (code, name, is_active) VALUES
+  ('activo', 'Activo', 1),
+  ('inactivo', 'Inactivo', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 
 INSERT INTO opportunity_business_lines (code, name, is_active) VALUES
