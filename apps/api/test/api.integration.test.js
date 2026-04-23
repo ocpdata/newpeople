@@ -1466,6 +1466,7 @@ describe("API integration baseline", () => {
       .send({
         code: `PRICE-${TEST_PREFIX}`,
         description: "Precio creado por prueba automatica",
+        itemType: "producto",
         price: 3450.75,
         currencyId: ctx.catalogIds.currencyUsdId,
         activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
@@ -1482,7 +1483,32 @@ describe("API integration baseline", () => {
     expect(listResponse.status).toBe(200);
     expect(listResponse.body).toHaveLength(1);
     expect(listResponse.body[0].code).toBe(`PRICE-${TEST_PREFIX}`);
+    expect(listResponse.body[0].item_type).toBe("producto");
     expect(listResponse.body[0].activation_status_code).toBe("activo");
+
+    const updatePriceResponse = await request(app)
+      .put(
+        `/api/providers/${providerId}/price-list-items/${createPriceResponse.body.id}`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-${TEST_PREFIX}`,
+        description: "Precio actualizado por prueba automatica",
+        itemType: "servicio_propio",
+        price: 3899.99,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+      });
+
+    expect(updatePriceResponse.status).toBe(200);
+    expect(updatePriceResponse.body.message).toBe("Precio actualizado");
+
+    const updatedListResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-list-items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(updatedListResponse.status).toBe(200);
+    expect(updatedListResponse.body[0].item_type).toBe("servicio_propio");
 
     const deactivatePriceResponse = await request(app)
       .patch(
@@ -1515,6 +1541,21 @@ describe("API integration baseline", () => {
     expect(reactivatePriceResponse.body.message).toBe(
       "No es posible activar precios en un proveedor desactivado",
     );
+
+    const invalidTypeResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-list-items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-${TEST_PREFIX}-INVALID`,
+        description: "Tipo invalido",
+        itemType: "servicio_tercero",
+        price: 123,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+      });
+
+    expect(invalidTypeResponse.status).toBe(400);
+    expect(invalidTypeResponse.body.message).toBe("Datos invalidos");
   });
 
   test("oportunidades.request crea pendiente y no permite activar sin oportunidades.create", async () => {

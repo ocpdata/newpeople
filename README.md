@@ -156,6 +156,7 @@ Endpoints relevantes:
 - Catalogos maestros (paises, monedas, tipos de cuenta, sectores, estados de activacion).
 - Usuarios con gestion de estado y auditoria.
 - Cuentas con propietarios multiples.
+- Proveedores con precios tipificados como `Productos` o `Servicios Propios`.
 - Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
 - Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
@@ -194,6 +195,13 @@ Cobertura automatizada:
   revisa `APP_PASSWORD_SETUP_TOKEN_MINUTES`, genera una nueva invitacion y confirma que el token no haya sido reutilizado.
 - Frontend no conecta con backend:
   confirma que VITE_API_URL apunte al host/puerto correcto.
+
+## Proveedores y listas de precios
+
+- Cada proveedor maneja una sola lista de precios visible desde la UI.
+- Cada item de precio ahora incluye un tipo obligatorio: `Productos` o `Servicios Propios`.
+- El tipo se guarda por item, no a nivel proveedor, para permitir mezclar ambos tipos dentro de la misma lista.
+- La vista de lista de precios permite filtrar por tipo para revisar rapidamente cada grupo.
 
 ## Datos demo manuales
 

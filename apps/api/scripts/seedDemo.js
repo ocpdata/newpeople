@@ -1879,11 +1879,12 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       for (let itemIndex = 0; itemIndex < totalItems; itemIndex += 1) {
         const currency = pickRow(catalogs.currencies, index + itemIndex);
         const familyName = pickRow(PROVIDER_PRICE_FAMILIES, index + itemIndex);
+        const itemType = itemIndex % 2 === 0 ? "producto" : "servicio_propio";
         await conn.query(
           `INSERT INTO provider_price_list_items
-            (provider_id, code, description, price, currency_id, activation_status_id,
+            (provider_id, code, description, item_type, price, currency_id, activation_status_id,
              created_by, created_at, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             providerId,
             buildProviderPriceItemCode(index, itemIndex),
@@ -1892,6 +1893,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
               familyName,
               currencyCode: currency.code,
             }),
+            itemType,
             850 + index * 115 + itemIndex * 47.5,
             Number(currency.id),
             makeProviderPriceItemStatusId({

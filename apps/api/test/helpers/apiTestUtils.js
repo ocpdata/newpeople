@@ -262,17 +262,19 @@ export async function createDirectProviderPriceItem({
   providerId,
   actorUserId,
   suffix,
+  itemType = "producto",
 }) {
   const now = new Date();
   const result = await query(
     `INSERT INTO provider_price_list_items
-      (provider_id, code, description, price, currency_id, activation_status_id,
+      (provider_id, code, description, item_type, price, currency_id, activation_status_id,
        created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       providerId,
       `PRICE-${suffix}`,
       `Precio fixture ${suffix}`,
+      itemType,
       1234.56,
       await getFirstId("currencies"),
       await getCatalogId("provider_price_list_item_statuses", "activo"),

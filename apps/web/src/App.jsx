@@ -8986,6 +8986,7 @@ function ProvidersPage({ can, currentUser }) {
     useState(false);
   const [showPriceItemModal, setShowPriceItemModal] = useState(false);
   const [editingPriceItemId, setEditingPriceItemId] = useState(null);
+  const [priceItemTypeFilter, setPriceItemTypeFilter] = useState("all");
   const [openProviderMenuId, setOpenProviderMenuId] = useState(null);
   const [openPriceItemMenuId, setOpenPriceItemMenuId] = useState(null);
   const [confirmProviderStatusAction, setConfirmProviderStatusAction] =
@@ -9034,6 +9035,7 @@ function ProvidersPage({ can, currentUser }) {
   const [priceItemForm, setPriceItemForm] = useState({
     code: "",
     description: "",
+    itemType: "producto",
     price: "",
     currencyId: "",
     activationStatusId: "",
@@ -9075,6 +9077,7 @@ function ProvidersPage({ can, currentUser }) {
     return {
       code: "",
       description: "",
+      itemType: "producto",
       price: "",
       currencyId: String(catalogs.currencies?.[0]?.id || ""),
       activationStatusId:
@@ -9388,6 +9391,12 @@ function ProvidersPage({ can, currentUser }) {
     }
   }
 
+  function getPriceItemTypeLabel(itemType) {
+    return String(itemType) === "servicio_propio"
+      ? "Servicios Propios"
+      : "Productos";
+  }
+
   function toggleProviderMenu(providerId) {
     setOpenProviderMenuId((prev) => (prev === providerId ? null : providerId));
   }
@@ -9523,6 +9532,7 @@ function ProvidersPage({ can, currentUser }) {
   async function openProviderPriceListModal(provider) {
     setError("");
     setSuccess("");
+    setPriceItemTypeFilter("all");
     setProviderPriceListModalProvider(provider);
     setProviderPriceListItems([]);
     setLoadingProviderPriceListItems(true);
@@ -9546,6 +9556,7 @@ function ProvidersPage({ can, currentUser }) {
 
   function closeProviderPriceListModal() {
     if (savingPriceItem) return;
+    setPriceItemTypeFilter("all");
     setProviderPriceListModalProvider(null);
     setProviderPriceListItems([]);
     setShowPriceItemModal(false);
@@ -9568,6 +9579,7 @@ function ProvidersPage({ can, currentUser }) {
     setPriceItemForm({
       code: item.code || "",
       description: item.description || "",
+      itemType: item.item_type || "producto",
       price: item.price ?? "",
       currencyId: String(item.currency_id || ""),
       activationStatusId: String(item.activation_status_id || ""),
@@ -9635,6 +9647,7 @@ function ProvidersPage({ can, currentUser }) {
       const payload = {
         code: String(priceItemForm.code || "").trim(),
         description: priceItemForm.description || undefined,
+        itemType: priceItemForm.itemType,
         price: Number(priceItemForm.price),
         currencyId: Number(priceItemForm.currencyId),
         activationStatusId: Number(priceItemForm.activationStatusId),
@@ -9754,6 +9767,34 @@ function ProvidersPage({ can, currentUser }) {
       providerPriceListItems.filter((item) => isPriceItemActive(item)).length,
     [providerPriceListItems],
   );
+
+  const priceItemTypeCounts = useMemo(
+    () =>
+      providerPriceListItems.reduce(
+        (totals, item) => {
+          const itemType = String(item.item_type || "producto");
+          totals.all += 1;
+          if (itemType === "servicio_propio") {
+            totals.servicio_propio += 1;
+          } else {
+            totals.producto += 1;
+          }
+          return totals;
+        },
+        { all: 0, producto: 0, servicio_propio: 0 },
+      ),
+    [providerPriceListItems],
+  );
+
+  const visibleProviderPriceListItems = useMemo(() => {
+    if (priceItemTypeFilter === "all") {
+      return providerPriceListItems;
+    }
+
+    return providerPriceListItems.filter(
+      (item) => String(item.item_type || "producto") === priceItemTypeFilter,
+    );
+  }, [providerPriceListItems, priceItemTypeFilter]);
 
   return (
     <section className="panel">
@@ -10153,11 +10194,67 @@ function ProvidersPage({ can, currentUser }) {
                 )}
             </div>
 
+            {!loadingProviderPriceListItems && providerPriceListItems.length > 0 && (
+              <div className="roles-pills-bar accounts-pills-bar-row">
+                <div
+                  className="accounts-status-pills"
+                  role="group"
+                  aria-label="Filtrar precios por tipo"
+                >
+                  <button
+                    type="button"
+                    className={
+                      priceItemTypeFilter === "all"
+                        ? "status-filter-pill status-filter-pill-all is-selected"
+                        : "status-filter-pill status-filter-pill-all"
+                    }
+                    aria-pressed={priceItemTypeFilter === "all"}
+                    onClick={() => setPriceItemTypeFilter("all")}
+                  >
+                    <span className="status-filter-pill-text">Todos</span>
+                    <span className="status-filter-pill-count">
+                      {priceItemTypeCounts.all}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      priceItemTypeFilter === "producto"
+                        ? "status-filter-pill status-filter-pill-active is-selected"
+                        : "status-filter-pill status-filter-pill-active"
+                    }
+                    aria-pressed={priceItemTypeFilter === "producto"}
+                    onClick={() => setPriceItemTypeFilter("producto")}
+                  >
+                    <span className="status-filter-pill-text">Productos</span>
+                    <span className="status-filter-pill-count">
+                      {priceItemTypeCounts.producto}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      priceItemTypeFilter === "servicio_propio"
+                        ? "status-filter-pill status-filter-pill-inactive is-selected"
+                        : "status-filter-pill status-filter-pill-inactive"
+                    }
+                    aria-pressed={priceItemTypeFilter === "servicio_propio"}
+                    onClick={() => setPriceItemTypeFilter("servicio_propio")}
+                  >
+                    <span className="status-filter-pill-text">Servicios Propios</span>
+                    <span className="status-filter-pill-count">
+                      {priceItemTypeCounts.servicio_propio}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {loadingProviderPriceListItems ? (
               <p className="field-hint provider-price-list-empty">
                 Cargando lista de precios...
               </p>
-            ) : providerPriceListItems.length > 0 ? (
+            ) : visibleProviderPriceListItems.length > 0 ? (
               <div className="provider-price-list-table-wrap">
                 <table className="provider-price-list-table">
                   <thead>
@@ -10165,6 +10262,7 @@ function ProvidersPage({ can, currentUser }) {
                       <th>ID</th>
                       <th>Codigo</th>
                       <th>Descripcion</th>
+                      <th>Tipo</th>
                       <th>Precio</th>
                       <th>Moneda</th>
                       <th>Estado</th>
@@ -10172,11 +10270,16 @@ function ProvidersPage({ can, currentUser }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {providerPriceListItems.map((item) => (
+                    {visibleProviderPriceListItems.map((item) => (
                       <tr key={item.id}>
                         <td>{item.id}</td>
                         <td>{item.code}</td>
                         <td>{item.description || "-"}</td>
+                        <td>
+                          <span className="record-id-badge">
+                            {getPriceItemTypeLabel(item.item_type)}
+                          </span>
+                        </td>
                         <td>
                           {formatPriceValue(item.price, item.currency_code)}
                         </td>
@@ -10250,7 +10353,9 @@ function ProvidersPage({ can, currentUser }) {
               </div>
             ) : (
               <p className="field-hint provider-price-list-empty">
-                Este proveedor todavía no tiene precios registrados.
+                {providerPriceListItems.length > 0
+                  ? "No hay precios para el tipo seleccionado."
+                  : "Este proveedor todavía no tiene precios registrados."}
               </p>
             )}
 
@@ -10333,6 +10438,24 @@ function ProvidersPage({ can, currentUser }) {
                       }
                       required
                     />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Tipo <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={priceItemForm.itemType}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          itemType: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="producto">Productos</option>
+                      <option value="servicio_propio">Servicios Propios</option>
+                    </select>
                   </div>
                   <div className="field-group">
                     <label>

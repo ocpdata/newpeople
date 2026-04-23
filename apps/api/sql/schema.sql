@@ -480,6 +480,7 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
   provider_id BIGINT UNSIGNED NOT NULL,
   code VARCHAR(80) NOT NULL,
   description TEXT NULL,
+  item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto',
   price DECIMAL(12, 2) NOT NULL,
   currency_id BIGINT UNSIGNED NOT NULL,
   activation_status_id BIGINT UNSIGNED NOT NULL,
@@ -494,6 +495,21 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
   CONSTRAINT fk_provider_price_list_items_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_provider_price_list_items_provider_code UNIQUE (provider_id, code)
 );
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    "ALTER TABLE provider_price_list_items ADD COLUMN item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto' AFTER description",
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND COLUMN_NAME = 'item_type'
+);
+PREPARE s_provider_price_list_items_item_type_col FROM @stmt;
+EXECUTE s_provider_price_list_items_item_type_col;
+DEALLOCATE PREPARE s_provider_price_list_items_item_type_col;
 
 CREATE TABLE IF NOT EXISTS opportunities (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

@@ -65,6 +65,7 @@ function createProvidersFixture() {
           provider_id: 1,
           code: "PRICE-DEMO-001",
           description: "Precio inicial demo",
+          item_type: "producto",
           price: "1999.99",
           currency_id: 1,
           currency_code: "USD",
@@ -172,6 +173,7 @@ function createProvidersFixture() {
         provider_id: Number(providerId),
         code: body.code,
         description: body.description || null,
+        item_type: body.itemType || "producto",
         price: String(Number(body.price).toFixed(2)),
         currency_id: body.currencyId,
         currency_code: currency?.code || "USD",
@@ -202,6 +204,7 @@ function createProvidersFixture() {
           ...item,
           code: body.code,
           description: body.description || null,
+          item_type: body.itemType || item.item_type,
           price: String(Number(body.price).toFixed(2)),
           currency_id: body.currencyId,
           currency_code: currency?.code || item.currency_code,
@@ -424,6 +427,7 @@ test.describe("providers", () => {
 
     await priceModal.locator("input").nth(0).fill("PRICE-QA-01");
     await priceModal.locator('input[type="number"]').fill("2500.50");
+    await priceModal.locator("select").nth(0).selectOption("servicio_propio");
     await priceModal.locator("textarea").fill("Precio agregado por prueba E2E");
     await priceModal
       .getByRole("button", { name: "Agregar precio", exact: true })
@@ -439,6 +443,7 @@ test.describe("providers", () => {
       .locator(".provider-price-list-table tbody tr")
       .filter({ has: page.getByText("PRICE-QA-01", { exact: true }) })
       .first();
+    await expect(createdPriceRow.getByText("Servicios Propios")).toBeVisible();
 
     await createdPriceRow
       .getByRole("button", { name: "Abrir acciones" })
@@ -449,6 +454,7 @@ test.describe("providers", () => {
     ).toBeVisible();
 
     const editPriceModal = page.locator(".provider-price-item-modal").first();
+    await editPriceModal.locator("select").nth(0).selectOption("producto");
     await editPriceModal
       .locator("textarea")
       .fill("Precio editado por prueba E2E");
@@ -462,10 +468,19 @@ test.describe("providers", () => {
         () =>
           fixture.priceItemsByProviderId
             .get(Number(createdProvider?.id))
+            ?.find((item) => item.code === "PRICE-QA-01")?.item_type,
+      )
+      .toBe("producto");
+    await expect
+      .poll(
+        () =>
+          fixture.priceItemsByProviderId
+            .get(Number(createdProvider?.id))
             ?.find((item) => item.code === "PRICE-QA-01")?.description,
       )
       .toBe("Precio editado por prueba E2E");
     await expect(page.getByText("Precio editado por prueba E2E")).toBeVisible();
+    await expect(createdPriceRow.getByText("Productos")).toBeVisible();
     await expect(createdPriceRow.getByText("PRICE-QA-01")).toBeVisible();
 
     await createdPriceRow

@@ -6,6 +6,8 @@ import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
 
+const providerPriceItemTypeSchema = z.enum(["producto", "servicio_propio"]);
+
 const providerSchema = z.object({
   name: z.string().min(2).max(180),
   registrationCode: z
@@ -32,6 +34,7 @@ const priceListItemSchema = z.object({
     .max(80)
     .transform((value) => String(value || "").trim()),
   description: z.string().max(10000).optional(),
+  itemType: providerPriceItemTypeSchema,
   price: z.number().nonnegative(),
   currencyId: z.number().int().positive(),
   activationStatusId: z.number().int().positive(),
@@ -130,7 +133,7 @@ async function requireProviderOr404(providerId) {
 
 async function requireProviderPriceItemOr404(providerId, itemId) {
   const rows = await query(
-    `SELECT id, provider_id, activation_status_id
+    `SELECT id, provider_id, item_type, activation_status_id
      FROM provider_price_list_items
      WHERE id = ? AND provider_id = ?
      LIMIT 1`,
@@ -483,7 +486,7 @@ router.get(
     }
 
     const rows = await query(
-      `SELECT ppli.id, ppli.provider_id, ppli.code, ppli.description, ppli.price,
+      `SELECT ppli.id, ppli.provider_id, ppli.code, ppli.description, ppli.item_type, ppli.price,
               ppli.currency_id, curr.code AS currency_code, curr.name AS currency_name,
               curr.symbol AS currency_symbol,
               ppli.activation_status_id,
@@ -537,13 +540,14 @@ router.post(
     try {
       const insertResult = await query(
         `INSERT INTO provider_price_list_items
-          (provider_id, code, description, price, currency_id, activation_status_id,
+          (provider_id, code, description, item_type, price, currency_id, activation_status_id,
            created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           providerId,
           body.code,
           body.description || null,
+          body.itemType,
           body.price,
           body.currencyId,
           body.activationStatusId,
@@ -565,6 +569,7 @@ router.post(
           provider_id: providerId,
           code: body.code,
           description: body.description || null,
+          item_type: body.itemType,
           price: body.price,
           currency_id: body.currencyId,
           activation_status_id: body.activationStatusId,
@@ -633,7 +638,7 @@ router.put(
     }
 
     const beforeRows = await query(
-      `SELECT id, provider_id, code, description, price, currency_id, activation_status_id
+      `SELECT id, provider_id, code, description, item_type, price, currency_id, activation_status_id
        FROM provider_price_list_items
        WHERE id = ? AND provider_id = ?
        LIMIT 1`,
@@ -645,12 +650,13 @@ router.put(
     try {
       await query(
         `UPDATE provider_price_list_items
-         SET code = ?, description = ?, price = ?, currency_id = ?, activation_status_id = ?,
+         SET code = ?, description = ?, item_type = ?, price = ?, currency_id = ?, activation_status_id = ?,
              updated_by = ?, updated_at = ?
          WHERE id = ? AND provider_id = ?`,
         [
           parsed.data.code,
           parsed.data.description || null,
+          parsed.data.itemType,
           parsed.data.price,
           parsed.data.currencyId,
           parsed.data.activationStatusId,
@@ -674,7 +680,7 @@ router.put(
     }
 
     const afterRows = await query(
-      `SELECT id, provider_id, code, description, price, currency_id, activation_status_id
+      `SELECT id, provider_id, code, description, item_type, price, currency_id, activation_status_id
        FROM provider_price_list_items
        WHERE id = ? AND provider_id = ?
        LIMIT 1`,
