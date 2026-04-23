@@ -258,20 +258,60 @@ export async function createDirectProvider({ actorUserId, suffix }) {
   return Number(result.insertId);
 }
 
+export async function createDirectProviderPriceList({
+  providerId,
+  actorUserId,
+  suffix,
+  name,
+  currencyId,
+  itemType = "producto",
+  isActive = false,
+}) {
+  const now = new Date();
+  const resolvedCurrencyId = currencyId || (await getFirstId("currencies"));
+  const result = await query(
+    `INSERT INTO provider_price_lists
+      (provider_id, name, currency_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      providerId,
+      name || `Lista fixture ${suffix}`,
+      resolvedCurrencyId,
+      itemType,
+      isActive ? 1 : 0,
+      actorUserId,
+      now,
+      actorUserId,
+      now,
+    ],
+  );
+  return Number(result.insertId);
+}
+
 export async function createDirectProviderPriceItem({
   providerId,
   actorUserId,
   suffix,
   itemType = "producto",
+  listId = null,
 }) {
   const now = new Date();
+  const resolvedListId =
+    listId ||
+    (await createDirectProviderPriceList({
+      providerId,
+      actorUserId,
+      suffix: `${suffix}_list`,
+      isActive: true,
+    }));
   const result = await query(
     `INSERT INTO provider_price_list_items
-      (provider_id, code, description, item_type, price, currency_id, activation_status_id,
+      (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
        created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       providerId,
+      resolvedListId,
       `PRICE-${suffix}`,
       `Precio fixture ${suffix}`,
       itemType,
@@ -293,6 +333,7 @@ export async function cleanupArtifacts({
   contactIds = [],
   accountIds = [],
   providerPriceItemIds = [],
+  providerPriceListIds = [],
   providerIds = [],
   userIds = [],
   roleIds = [],
@@ -333,6 +374,13 @@ export async function cleanupArtifacts({
     await query(
       `DELETE FROM provider_price_list_items WHERE id IN (${placeholders(providerPriceItemIds.length)})`,
       providerPriceItemIds,
+    );
+  }
+
+  if (providerPriceListIds.length) {
+    await query(
+      `DELETE FROM provider_price_lists WHERE id IN (${placeholders(providerPriceListIds.length)})`,
+      providerPriceListIds,
     );
   }
 

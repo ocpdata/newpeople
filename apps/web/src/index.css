@@ -768,7 +768,7 @@ button:disabled {
 .provider-price-list-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -777,6 +777,82 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.provider-price-list-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.provider-price-list-action-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 60px;
+}
+
+.provider-price-list-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.provider-price-list-icon-btn:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.provider-price-list-icon-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.provider-price-list-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.provider-price-list-action-label {
+  font-size: 9px;
+  line-height: 1.1;
+  font-weight: 700;
+  text-align: center;
+  color: #516b89;
+  max-width: 64px;
+  overflow-wrap: anywhere;
+}
+
+.provider-price-list-icon-btn-primary {
+  background: #1f5fbf;
+  border-color: #1f5fbf;
+  color: #fff;
+}
+
+.provider-price-list-icon-btn-primary:hover:not(:disabled) {
+  background: #184f9f;
+  border-color: #184f9f;
+  color: #fff;
 }
 
 .provider-price-list-empty {
@@ -788,6 +864,10 @@ button:disabled {
   border-radius: 10px;
   overflow: auto;
   background: #fff;
+}
+
+.provider-price-lists-compact-wrap {
+  max-height: 212px;
 }
 
 .provider-price-list-table {
@@ -817,10 +897,62 @@ button:disabled {
   border-bottom: none;
 }
 
+.provider-price-list-row-selected td {
+  background: #eef5ff;
+}
+
+.provider-price-list-table tbody tr {
+  cursor: pointer;
+}
+
+.provider-price-list-table tbody tr:hover td {
+  background: #f7fbff;
+}
+
+.provider-price-list-table tbody tr.provider-price-list-row-selected:hover td {
+  background: #eef5ff;
+}
+
+.provider-price-list-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.provider-price-list-selection-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 8px;
+}
+
+.provider-price-list-selection-header h4 {
+  margin: 0;
+}
+
+.provider-price-items-pagination {
+  margin-top: 10px;
+}
+
+.btn-secondary-sm {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 @media (max-width: 640px) {
   .provider-price-list-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .provider-price-list-actions {
+    justify-content: stretch;
+  }
+
+  .provider-price-list-selection-header {
+    flex-direction: column;
   }
 }
 
@@ -3064,6 +3196,46 @@ td {
   width: min(96vw, 920px);
 }
 
+.provider-price-list-create-modal {
+  max-width: 560px;
+  width: min(92vw, 560px);
+  padding: 18px;
+}
+
+.provider-price-list-create-form {
+  gap: 10px;
+}
+
+.provider-price-list-create-form .account-modal-section {
+  padding: 0;
+}
+
+.provider-price-list-create-note {
+  margin: 0 0 8px;
+}
+
+.provider-price-list-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.provider-price-list-create-name-field {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .provider-price-list-create-modal {
+    width: min(96vw, 560px);
+    padding: 16px;
+  }
+
+  .provider-price-list-create-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal-dialog-account-opps {
   max-width: 680px;
   width: min(96vw, 680px);
@@ -3262,6 +3434,13 @@ td {
   line-height: 1;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.provider-active-price-list-badge {
+  max-width: 100%;
+  font-weight: 600;
+  white-space: normal;
+  line-height: 1.2;
 }
 
 .record-id-icon {

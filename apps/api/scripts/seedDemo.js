@@ -15,6 +15,7 @@ const DEFAULT_COUNTS = {
   providerPriceItemsMin: 4,
   providerPriceItemsMax: 6,
 };
+const SERVICE_ONLY_PROVIDER_INDEX = 3;
 const DEMO_CLOSED_OPPORTUNITY_TARGETS = {
   ganada: 10,
   perdida: 4,
@@ -1874,28 +1875,54 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         ],
       );
       const providerId = Number(providerInsert.insertId);
+      const providerPriceListName = `Lista base demo ${String(index + 1).padStart(2, "0")}`;
+      const providerPriceListIsActive =
+        Number(providerStatusId) ===
+        Number(byCode(catalogs.providerStatuses, "activado"))
+          ? 1
+          : 0;
+      const listCurrency = pickRow(catalogs.currencies, index);
+      const listItemType =
+        index === SERVICE_ONLY_PROVIDER_INDEX ? "servicio_propio" : "producto";
+
+      const [priceListInsert] = await conn.query(
+        `INSERT INTO provider_price_lists
+          (provider_id, name, currency_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          providerId,
+          providerPriceListName,
+          Number(listCurrency.id),
+          listItemType,
+          providerPriceListIsActive,
+          adminUserId,
+          now,
+          adminUserId,
+          now,
+        ],
+      );
+      const providerPriceListId = Number(priceListInsert.insertId);
 
       const totalItems = makeProviderPriceItemsCount(index);
       for (let itemIndex = 0; itemIndex < totalItems; itemIndex += 1) {
-        const currency = pickRow(catalogs.currencies, index + itemIndex);
         const familyName = pickRow(PROVIDER_PRICE_FAMILIES, index + itemIndex);
-        const itemType = itemIndex % 2 === 0 ? "producto" : "servicio_propio";
         await conn.query(
           `INSERT INTO provider_price_list_items
-            (provider_id, code, description, item_type, price, currency_id, activation_status_id,
+            (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
              created_by, created_at, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             providerId,
+            providerPriceListId,
             buildProviderPriceItemCode(index, itemIndex),
             buildProviderPriceItemDescription({
               providerName,
               familyName,
-              currencyCode: currency.code,
+              currencyCode: listCurrency.code,
             }),
-            itemType,
+            listItemType,
             850 + index * 115 + itemIndex * 47.5,
-            Number(currency.id),
+            Number(listCurrency.id),
             makeProviderPriceItemStatusId({
               catalogs,
               providerStatusId,

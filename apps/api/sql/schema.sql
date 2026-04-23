@@ -457,7 +457,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE TABLE IF NOT EXISTS providers (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
-  registration_code VARCHAR(80) NOT NULL,
+  registration_code VARCHAR(80) NULL,
   address_line VARCHAR(255) NULL,
   country_id BIGINT UNSIGNED NOT NULL,
   city VARCHAR(120) NULL,
@@ -475,9 +475,73 @@ CREATE TABLE IF NOT EXISTS providers (
   CONSTRAINT uq_providers_registration UNIQUE (registration_code)
 );
 
+CREATE TABLE IF NOT EXISTS provider_price_lists (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(180) NOT NULL,
+  currency_id BIGINT UNSIGNED NULL,
+  item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto',
+  is_active TINYINT(1) NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_provider_price_lists_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_lists_currency FOREIGN KEY (currency_id) REFERENCES currencies(id),
+  CONSTRAINT fk_provider_price_lists_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_provider_price_lists_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT uq_provider_price_lists_provider_name UNIQUE (provider_id, name)
+);
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_lists ADD COLUMN currency_id BIGINT UNSIGNED NULL AFTER name',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND COLUMN_NAME = 'currency_id'
+);
+PREPARE s_provider_price_lists_currency_col FROM @stmt;
+EXECUTE s_provider_price_lists_currency_col;
+DEALLOCATE PREPARE s_provider_price_lists_currency_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_lists ADD CONSTRAINT fk_provider_price_lists_currency FOREIGN KEY (currency_id) REFERENCES currencies(id)',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND CONSTRAINT_NAME = 'fk_provider_price_lists_currency'
+);
+PREPARE s_provider_price_lists_currency_fk FROM @stmt;
+EXECUTE s_provider_price_lists_currency_fk;
+DEALLOCATE PREPARE s_provider_price_lists_currency_fk;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    "ALTER TABLE provider_price_lists ADD COLUMN item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto' AFTER currency_id",
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND COLUMN_NAME = 'item_type'
+);
+PREPARE s_provider_price_lists_item_type_col FROM @stmt;
+EXECUTE s_provider_price_lists_item_type_col;
+DEALLOCATE PREPARE s_provider_price_lists_item_type_col;
+
 CREATE TABLE IF NOT EXISTS provider_price_list_items (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   provider_id BIGINT UNSIGNED NOT NULL,
+  price_list_id BIGINT UNSIGNED NULL,
   code VARCHAR(80) NOT NULL,
   description TEXT NULL,
   item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto',
@@ -489,11 +553,12 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
   updated_by BIGINT UNSIGNED NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_provider_price_list_items_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_list_items_price_list FOREIGN KEY (price_list_id) REFERENCES provider_price_lists(id) ON DELETE CASCADE,
   CONSTRAINT fk_provider_price_list_items_currency FOREIGN KEY (currency_id) REFERENCES currencies(id),
   CONSTRAINT fk_provider_price_list_items_activation_status FOREIGN KEY (activation_status_id) REFERENCES provider_price_list_item_statuses(id),
   CONSTRAINT fk_provider_price_list_items_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_provider_price_list_items_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
-  CONSTRAINT uq_provider_price_list_items_provider_code UNIQUE (provider_id, code)
+  CONSTRAINT uq_provider_price_list_items_list_code UNIQUE (price_list_id, code)
 );
 
 SET @stmt := (
@@ -510,6 +575,122 @@ SET @stmt := (
 PREPARE s_provider_price_list_items_item_type_col FROM @stmt;
 EXECUTE s_provider_price_list_items_item_type_col;
 DEALLOCATE PREPARE s_provider_price_list_items_item_type_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items ADD COLUMN price_list_id BIGINT UNSIGNED NULL AFTER provider_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND COLUMN_NAME = 'price_list_id'
+);
+PREPARE s_provider_price_list_items_price_list_id_col FROM @stmt;
+EXECUTE s_provider_price_list_items_price_list_id_col;
+DEALLOCATE PREPARE s_provider_price_list_items_price_list_id_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items ADD CONSTRAINT fk_provider_price_list_items_price_list FOREIGN KEY (price_list_id) REFERENCES provider_price_lists(id) ON DELETE CASCADE',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND CONSTRAINT_NAME = 'fk_provider_price_list_items_price_list'
+);
+PREPARE s_provider_price_list_items_price_list_fk FROM @stmt;
+EXECUTE s_provider_price_list_items_price_list_fk;
+DEALLOCATE PREPARE s_provider_price_list_items_price_list_fk;
+
+INSERT INTO provider_price_lists (
+  provider_id,
+  name,
+  currency_id,
+  item_type,
+  is_active,
+  created_by,
+  created_at,
+  updated_by,
+  updated_at
+)
+SELECT legacy.provider_id,
+       'Lista legacy',
+       legacy.currency_id,
+  legacy.item_type,
+       0,
+       legacy.actor_user_id,
+       legacy.first_created_at,
+       legacy.actor_user_id,
+       legacy.last_updated_at
+FROM (
+  SELECT ppli.provider_id,
+         COALESCE(MIN(ppli.created_by), MIN(ppli.updated_by)) AS actor_user_id,
+      MIN(ppli.currency_id) AS currency_id,
+      MIN(ppli.item_type) AS item_type,
+         MIN(ppli.created_at) AS first_created_at,
+         MAX(ppli.updated_at) AS last_updated_at
+  FROM provider_price_list_items ppli
+  WHERE ppli.price_list_id IS NULL
+  GROUP BY ppli.provider_id
+) legacy
+LEFT JOIN provider_price_lists ppl
+  ON ppl.provider_id = legacy.provider_id
+ AND ppl.name = 'Lista legacy'
+WHERE ppl.id IS NULL;
+
+UPDATE provider_price_list_items ppli
+INNER JOIN provider_price_lists ppl
+  ON ppl.provider_id = ppli.provider_id
+ AND ppl.name = 'Lista legacy'
+SET ppli.price_list_id = ppl.id
+WHERE ppli.price_list_id IS NULL;
+
+UPDATE provider_price_lists ppl
+INNER JOIN (
+  SELECT ppli.price_list_id,
+         MIN(ppli.currency_id) AS currency_id,
+         MIN(ppli.item_type) AS item_type
+  FROM provider_price_list_items ppli
+  WHERE ppli.price_list_id IS NOT NULL
+  GROUP BY ppli.price_list_id
+) item_stats ON item_stats.price_list_id = ppl.id
+SET ppl.currency_id = COALESCE(ppl.currency_id, item_stats.currency_id),
+    ppl.item_type = item_stats.item_type
+WHERE ppl.currency_id IS NULL OR ppl.item_type = 'producto';
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) > 0,
+    'ALTER TABLE provider_price_list_items DROP INDEX uq_provider_price_list_items_provider_code',
+    'SELECT 1'
+  )
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND INDEX_NAME = 'uq_provider_price_list_items_provider_code'
+);
+PREPARE s_provider_price_list_items_drop_old_unique FROM @stmt;
+EXECUTE s_provider_price_list_items_drop_old_unique;
+DEALLOCATE PREPARE s_provider_price_list_items_drop_old_unique;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items ADD CONSTRAINT uq_provider_price_list_items_list_code UNIQUE (price_list_id, code)',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND CONSTRAINT_NAME = 'uq_provider_price_list_items_list_code'
+);
+PREPARE s_provider_price_list_items_add_list_unique FROM @stmt;
+EXECUTE s_provider_price_list_items_add_list_unique;
+DEALLOCATE PREPARE s_provider_price_list_items_add_list_unique;
 
 CREATE TABLE IF NOT EXISTS opportunities (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

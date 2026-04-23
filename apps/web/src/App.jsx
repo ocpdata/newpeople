@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DatePicker from "react-datepicker";
 import { es } from "date-fns/locale";
+import * as XLSX from "xlsx";
 import {
   NavLink,
   Navigate,
@@ -8981,20 +8982,31 @@ function ProvidersPage({ can, currentUser }) {
   const [editProviderAudit, setEditProviderAudit] = useState(null);
   const [providerPriceListModalProvider, setProviderPriceListModalProvider] =
     useState(null);
+  const [providerPriceLists, setProviderPriceLists] = useState([]);
+  const [loadingProviderPriceLists, setLoadingProviderPriceLists] =
+    useState(false);
+  const [selectedProviderPriceListId, setSelectedProviderPriceListId] =
+    useState(null);
   const [providerPriceListItems, setProviderPriceListItems] = useState([]);
   const [loadingProviderPriceListItems, setLoadingProviderPriceListItems] =
     useState(false);
+  const [showProviderPriceListCreateModal, setShowProviderPriceListCreateModal] =
+    useState(false);
   const [showPriceItemModal, setShowPriceItemModal] = useState(false);
   const [editingPriceItemId, setEditingPriceItemId] = useState(null);
-  const [priceItemTypeFilter, setPriceItemTypeFilter] = useState("all");
+  const [priceItemStatusFilter, setPriceItemStatusFilter] = useState("all");
+  const [priceItemsPage, setPriceItemsPage] = useState(1);
   const [openProviderMenuId, setOpenProviderMenuId] = useState(null);
+  const [openPriceListMenuId, setOpenPriceListMenuId] = useState(null);
   const [openPriceItemMenuId, setOpenPriceItemMenuId] = useState(null);
   const [confirmProviderStatusAction, setConfirmProviderStatusAction] =
     useState(null);
   const [confirmPriceItemStatusAction, setConfirmPriceItemStatusAction] =
     useState(null);
   const [savingProvider, setSavingProvider] = useState(false);
+  const [savingProviderPriceList, setSavingProviderPriceList] = useState(false);
   const [savingPriceItem, setSavingPriceItem] = useState(false);
+  const [exportingPriceList, setExportingPriceList] = useState(false);
   const [catalogs, setCatalogs] = useState({
     countries: [],
     providerStatuses: [],
@@ -9039,6 +9051,11 @@ function ProvidersPage({ can, currentUser }) {
     price: "",
     currencyId: "",
     activationStatusId: "",
+  });
+  const [providerPriceListForm, setProviderPriceListForm] = useState({
+    name: "",
+    currencyId: "",
+    itemType: "producto",
   });
 
   function normalizeText(value) {
@@ -9086,6 +9103,14 @@ function ProvidersPage({ can, currentUser }) {
     };
   }
 
+  function buildDefaultProviderPriceListForm() {
+    return {
+      name: "",
+      currencyId: String(catalogs.currencies?.[0]?.id || ""),
+      itemType: "producto",
+    };
+  }
+
   useEffect(() => {
     if (!error && !success) return;
     const timeoutId = window.setTimeout(() => {
@@ -9108,6 +9133,20 @@ function ProvidersPage({ can, currentUser }) {
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [openProviderMenuId]);
+
+  useEffect(() => {
+    if (openPriceListMenuId === null) return undefined;
+
+    function handlePointerDown(event) {
+      if (event.target.closest(".provider-price-lists-kebab-wrap")) return;
+      setOpenPriceListMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openPriceListMenuId]);
 
   useEffect(() => {
     if (openPriceItemMenuId === null) return undefined;
@@ -9291,16 +9330,12 @@ function ProvidersPage({ can, currentUser }) {
     const readValue = (provider) => {
       if (providerSortField === "id") return Number(provider.id) || 0;
       if (providerSortField === "nombre") return String(provider.name || "");
-      if (providerSortField === "registro") {
-        return String(provider.registration_code || "");
-      }
       if (providerSortField === "pais") return String(provider.country || "");
-      if (providerSortField === "ciudad") return String(provider.city || "");
+      if (providerSortField === "lista_activa") {
+        return String(provider.active_price_list_name || "");
+      }
       if (providerSortField === "estado")
         return getProviderStatusLabel(provider);
-      if (providerSortField === "precios") {
-        return Number(provider.total_price_items || 0);
-      }
       return "";
     };
 
@@ -9332,9 +9367,8 @@ function ProvidersPage({ can, currentUser }) {
       const haystack = [
         provider.id,
         provider.name,
-        provider.registration_code,
         provider.country,
-        provider.city,
+        provider.active_price_list_name,
         getProviderStatusLabel(provider),
       ]
         .filter(Boolean)
@@ -9395,6 +9429,93 @@ function ProvidersPage({ can, currentUser }) {
     return String(itemType) === "servicio_propio"
       ? "Servicios Propios"
       : "Productos";
+  }
+
+  function buildProviderPriceListExportFileName(provider, priceList, filter) {
+    const normalizedName = String(provider?.name || "proveedor")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filterSuffix =
+      filter === "all"
+        ? "todos"
+        : filter === "servicio_propio"
+          ? "servicios-propios"
+          : "productos";
+    const listSuffix = String(priceList?.name || "lista")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32);
+
+    return `lista-precios-${normalizedName || "proveedor"}-${listSuffix || "lista"}-${filterSuffix}-${dateStamp}.xlsx`;
+  }
+
+  async function exportProviderPriceListToExcel() {
+    if (!currentProviderForPriceList || visibleProviderPriceListItems.length === 0) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setExportingPriceList(true);
+
+    try {
+      const rows = visibleProviderPriceListItems.map((item) => ({
+        ID: item.id,
+        Codigo: item.code || "",
+        Descripcion: item.description || "",
+        Tipo: getPriceItemTypeLabel(item.item_type),
+        Precio: Number(item.price || 0),
+        Moneda: item.currency_code || "",
+        Estado: getPriceItemStatusLabel(item),
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet["!cols"] = [
+        { wch: 10 },
+        { wch: 18 },
+        { wch: 42 },
+        { wch: 22 },
+        { wch: 14 },
+        { wch: 12 },
+        { wch: 14 },
+      ];
+
+      const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:G1");
+      for (let rowIndex = 1; rowIndex <= range.e.r; rowIndex += 1) {
+        const priceCellAddress = XLSX.utils.encode_cell({ c: 4, r: rowIndex });
+        if (worksheet[priceCellAddress]) {
+          worksheet[priceCellAddress].z = "#,##0.00";
+        }
+      }
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Lista de precios");
+      XLSX.writeFile(
+        workbook,
+        buildProviderPriceListExportFileName(
+          currentProviderForPriceList,
+          selectedProviderPriceList,
+          priceItemStatusFilter,
+        ),
+      );
+
+      setSuccess("Lista exportada a Excel correctamente");
+    } catch (err) {
+      console.error(err);
+      setError("No fue posible exportar la lista de precios a Excel");
+    } finally {
+      setExportingPriceList(false);
+    }
   }
 
   function toggleProviderMenu(providerId) {
@@ -9487,7 +9608,7 @@ function ProvidersPage({ can, currentUser }) {
     try {
       const payload = {
         name: form.name,
-        registrationCode: String(form.registrationCode || "").trim(),
+        registrationCode: String(form.registrationCode || "").trim() || null,
         addressLine: form.addressLine || undefined,
         countryId: Number(form.countryId),
         city: form.city || undefined,
@@ -9529,25 +9650,117 @@ function ProvidersPage({ can, currentUser }) {
     }
   }
 
-  async function openProviderPriceListModal(provider) {
+  async function loadProviderPriceLists(providerId) {
+    const { data } = await api.get(`/api/providers/${providerId}/price-lists`);
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function loadProviderPriceListItems(providerId, listId) {
+    const { data } = await api.get(
+      `/api/providers/${providerId}/price-lists/${listId}/items`,
+    );
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function refreshProviderPriceLists(options = {}) {
+    if (!providerPriceListModalProvider) return;
+
+    const preferredListId =
+      options.preferredListId === undefined
+        ? selectedProviderPriceListId
+        : options.preferredListId;
+
+    setLoadingProviderPriceLists(true);
+    setLoadingProviderPriceListItems(true);
+
+    try {
+      const lists = await loadProviderPriceLists(providerPriceListModalProvider.id);
+      setProviderPriceLists(lists);
+
+      const nextSelectedList =
+        lists.find((list) => Number(list.id) === Number(preferredListId)) ||
+        lists.find((list) => Number(list.is_active) === 1) ||
+        lists[0] ||
+        null;
+
+      setSelectedProviderPriceListId(nextSelectedList ? Number(nextSelectedList.id) : null);
+
+      if (!nextSelectedList) {
+        setProviderPriceListItems([]);
+        return;
+      }
+
+      const items = await loadProviderPriceListItems(
+        providerPriceListModalProvider.id,
+        nextSelectedList.id,
+      );
+      setProviderPriceListItems(items);
+    } finally {
+      setLoadingProviderPriceLists(false);
+      setLoadingProviderPriceListItems(false);
+    }
+  }
+
+  async function openProviderPriceListModal(provider, preferredListId = null) {
     setError("");
     setSuccess("");
-    setPriceItemTypeFilter("all");
+    setPriceItemStatusFilter("all");
     setProviderPriceListModalProvider(provider);
+    setProviderPriceLists([]);
+    setSelectedProviderPriceListId(null);
     setProviderPriceListItems([]);
+    setLoadingProviderPriceLists(true);
     setLoadingProviderPriceListItems(true);
     try {
-      const { data } = await api.get(
-        `/api/providers/${provider.id}/price-list-items`,
-      );
-      setProviderPriceListItems(Array.isArray(data) ? data : []);
+      const lists = await loadProviderPriceLists(provider.id);
+      setProviderPriceLists(lists);
+
+      const nextSelectedList =
+        lists.find((list) => Number(list.id) === Number(preferredListId)) ||
+        lists.find((list) => Number(list.is_active) === 1) ||
+        lists[0] ||
+        null;
+
+      setSelectedProviderPriceListId(nextSelectedList ? Number(nextSelectedList.id) : null);
+
+      if (nextSelectedList) {
+        const items = await loadProviderPriceListItems(provider.id, nextSelectedList.id);
+        setProviderPriceListItems(items);
+      }
     } catch (err) {
+      setProviderPriceLists([]);
       setProviderPriceListItems([]);
       setError(
         getApiErrorMessage(
           err,
-          "No fue posible cargar la lista de precios del proveedor",
+          "No fue posible cargar las listas de precios del proveedor",
         ),
+      );
+    } finally {
+      setLoadingProviderPriceLists(false);
+      setLoadingProviderPriceListItems(false);
+    }
+  }
+
+  async function selectProviderPriceList(listId) {
+    if (!providerPriceListModalProvider) return;
+
+    setError("");
+    setSuccess("");
+    setSelectedProviderPriceListId(Number(listId));
+    setLoadingProviderPriceListItems(true);
+
+    try {
+      const items = await loadProviderPriceListItems(
+        providerPriceListModalProvider.id,
+        listId,
+      );
+      setProviderPriceListItems(items);
+      setPriceItemStatusFilter("all");
+    } catch (err) {
+      setProviderPriceListItems([]);
+      setError(
+        getApiErrorMessage(err, "No fue posible cargar los precios de la lista"),
       );
     } finally {
       setLoadingProviderPriceListItems(false);
@@ -9555,20 +9768,91 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   function closeProviderPriceListModal() {
-    if (savingPriceItem) return;
-    setPriceItemTypeFilter("all");
+    if (savingPriceItem || savingProviderPriceList) return;
+    setPriceItemStatusFilter("all");
     setProviderPriceListModalProvider(null);
+    setProviderPriceLists([]);
+    setSelectedProviderPriceListId(null);
     setProviderPriceListItems([]);
+    setShowProviderPriceListCreateModal(false);
     setShowPriceItemModal(false);
     setEditingPriceItemId(null);
+    setOpenPriceListMenuId(null);
     setOpenPriceItemMenuId(null);
   }
 
+  function openCreateProviderPriceListModal(provider = null) {
+    const targetProvider = provider || providerPriceListModalProvider;
+    if (!targetProvider) return;
+
+    setError("");
+    setSuccess("");
+    setProviderPriceListModalProvider(targetProvider);
+    setProviderPriceListForm(buildDefaultProviderPriceListForm());
+    setShowProviderPriceListCreateModal(true);
+  }
+
+  function closeProviderPriceListCreateModal() {
+    if (savingProviderPriceList) return;
+    setShowProviderPriceListCreateModal(false);
+    setProviderPriceListForm(buildDefaultProviderPriceListForm());
+  }
+
+  async function saveProviderPriceList(e) {
+    e.preventDefault();
+    if (!providerPriceListModalProvider) return;
+
+    setError("");
+    setSuccess("");
+    setSavingProviderPriceList(true);
+
+    try {
+      const { data } = await api.post(
+        `/api/providers/${providerPriceListModalProvider.id}/price-lists`,
+        {
+          name: String(providerPriceListForm.name || "").trim(),
+          currencyId: Number(providerPriceListForm.currencyId),
+          itemType: providerPriceListForm.itemType,
+        },
+      );
+
+      setSuccess(data?.message || "Lista de precios creada correctamente");
+      setShowProviderPriceListCreateModal(false);
+      setProviderPriceListForm(buildDefaultProviderPriceListForm());
+      await openProviderPriceListModal(
+        providerPriceListModalProvider,
+        Number(data?.id || 0) || null,
+      );
+      await load();
+    } catch (err) {
+      const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+      if (fieldErrors?.name?.length) {
+        setError(`name: ${fieldErrors.name[0]}`);
+      } else if (fieldErrors?.currencyId?.length) {
+        setError(`currencyId: ${fieldErrors.currencyId[0]}`);
+      } else if (fieldErrors?.itemType?.length) {
+        setError(`itemType: ${fieldErrors.itemType[0]}`);
+      } else {
+        setError(
+          getApiErrorMessage(err, "No fue posible crear la lista de precios"),
+        );
+      }
+    } finally {
+      setSavingProviderPriceList(false);
+    }
+  }
+
   function openCreatePriceItemModal() {
+    if (!selectedProviderPriceList) return;
     setError("");
     setSuccess("");
     setEditingPriceItemId(null);
-    setPriceItemForm(buildDefaultPriceItemForm());
+    const defaultForm = buildDefaultPriceItemForm();
+    setPriceItemForm({
+      ...defaultForm,
+      itemType: selectedProviderPriceList.item_type || defaultForm.itemType,
+      currencyId: lockedPriceItemCurrencyId || defaultForm.currencyId,
+    });
     setShowPriceItemModal(true);
   }
 
@@ -9579,9 +9863,10 @@ function ProvidersPage({ can, currentUser }) {
     setPriceItemForm({
       code: item.code || "",
       description: item.description || "",
-      itemType: item.item_type || "producto",
+      itemType:
+        selectedProviderPriceList?.item_type || item.item_type || "producto",
       price: item.price ?? "",
-      currencyId: String(item.currency_id || ""),
+      currencyId: String(lockedPriceItemCurrencyId || item.currency_id || ""),
       activationStatusId: String(item.activation_status_id || ""),
     });
     setShowPriceItemModal(true);
@@ -9595,6 +9880,18 @@ function ProvidersPage({ can, currentUser }) {
 
   function togglePriceItemMenu(itemId) {
     setOpenPriceItemMenuId((prev) => (prev === itemId ? null : itemId));
+  }
+
+  function togglePriceListMenu(listId) {
+    setOpenPriceListMenuId((prev) => (prev === listId ? null : listId));
+  }
+
+  async function runPriceListAction(action) {
+    try {
+      await action();
+    } finally {
+      setOpenPriceListMenuId(null);
+    }
   }
 
   async function runPriceItemAction(action) {
@@ -9629,15 +9926,38 @@ function ProvidersPage({ can, currentUser }) {
       : "user-status-badge inactive";
   }
 
+  async function updateProviderPriceListStatus(priceList, statusCode) {
+    if (!providerPriceListModalProvider) return;
+
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.patch(
+        `/api/providers/${providerPriceListModalProvider.id}/price-lists/${priceList.id}/status`,
+        { statusCode },
+      );
+      setSuccess(data?.message || "Estado de la lista actualizado");
+      await refreshProviderPriceLists({ preferredListId: priceList.id });
+      await load();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado de la lista de precios",
+        ),
+      );
+    }
+  }
+
   async function refreshProviderPriceListItems() {
     if (!providerPriceListModalProvider) return;
-    await openProviderPriceListModal(providerPriceListModalProvider);
+    await refreshProviderPriceLists();
     await load();
   }
 
   async function savePriceItem(e) {
     e.preventDefault();
-    if (!providerPriceListModalProvider) return;
+    if (!providerPriceListModalProvider || !selectedProviderPriceList) return;
 
     setError("");
     setSuccess("");
@@ -9655,11 +9975,11 @@ function ProvidersPage({ can, currentUser }) {
 
       const { data } = editingPriceItemId
         ? await api.put(
-            `/api/providers/${providerPriceListModalProvider.id}/price-list-items/${editingPriceItemId}`,
+            `/api/providers/${providerPriceListModalProvider.id}/price-lists/${selectedProviderPriceList.id}/items/${editingPriceItemId}`,
             payload,
           )
         : await api.post(
-            `/api/providers/${providerPriceListModalProvider.id}/price-list-items`,
+            `/api/providers/${providerPriceListModalProvider.id}/price-lists/${selectedProviderPriceList.id}/items`,
             payload,
           );
 
@@ -9692,13 +10012,13 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   async function updatePriceItemStatus(item, statusCode) {
-    if (!providerPriceListModalProvider) return;
+    if (!providerPriceListModalProvider || !selectedProviderPriceList) return;
 
     setError("");
     setSuccess("");
     try {
       const { data } = await api.patch(
-        `/api/providers/${providerPriceListModalProvider.id}/price-list-items/${item.id}/status`,
+        `/api/providers/${providerPriceListModalProvider.id}/price-lists/${selectedProviderPriceList.id}/items/${item.id}/status`,
         { statusCode },
       );
       setSuccess(data?.message || "Estado del precio actualizado");
@@ -9762,39 +10082,90 @@ function ProvidersPage({ can, currentUser }) {
     );
   }, [providerPriceListModalProvider, providers]);
 
+  const selectedProviderPriceList = useMemo(
+    () =>
+      providerPriceLists.find(
+        (priceList) =>
+          Number(priceList.id) === Number(selectedProviderPriceListId),
+      ) || null,
+    [providerPriceLists, selectedProviderPriceListId],
+  );
+
   const activePriceItemsCount = useMemo(
     () =>
       providerPriceListItems.filter((item) => isPriceItemActive(item)).length,
     [providerPriceListItems],
   );
 
-  const priceItemTypeCounts = useMemo(
+  const priceItemStatusCounts = useMemo(
     () =>
       providerPriceListItems.reduce(
         (totals, item) => {
-          const itemType = String(item.item_type || "producto");
           totals.all += 1;
-          if (itemType === "servicio_propio") {
-            totals.servicio_propio += 1;
+          if (isPriceItemActive(item)) {
+            totals.active += 1;
           } else {
-            totals.producto += 1;
+            totals.inactive += 1;
           }
           return totals;
         },
-        { all: 0, producto: 0, servicio_propio: 0 },
+        { all: 0, active: 0, inactive: 0 },
       ),
     [providerPriceListItems],
   );
 
   const visibleProviderPriceListItems = useMemo(() => {
-    if (priceItemTypeFilter === "all") {
+    if (priceItemStatusFilter === "all") {
       return providerPriceListItems;
     }
 
     return providerPriceListItems.filter(
-      (item) => String(item.item_type || "producto") === priceItemTypeFilter,
+      (item) =>
+        priceItemStatusFilter === "active"
+          ? isPriceItemActive(item)
+          : isPriceItemInactive(item),
     );
-  }, [providerPriceListItems, priceItemTypeFilter]);
+  }, [providerPriceListItems, priceItemStatusFilter]);
+
+  const priceItemsPerPage = 10;
+  const totalPriceItemPages = Math.max(
+    1,
+    Math.ceil(visibleProviderPriceListItems.length / priceItemsPerPage),
+  );
+  const pagedProviderPriceListItems = visibleProviderPriceListItems.slice(
+    (priceItemsPage - 1) * priceItemsPerPage,
+    priceItemsPage * priceItemsPerPage,
+  );
+
+  useEffect(() => {
+    setPriceItemsPage(1);
+  }, [selectedProviderPriceListId, priceItemStatusFilter, providerPriceListItems.length]);
+
+  const lockedPriceItemCurrencyId = useMemo(() => {
+    if (selectedProviderPriceList?.currency_id) {
+      return String(selectedProviderPriceList.currency_id);
+    }
+
+    if (!editingPriceItemId) {
+      return String(providerPriceListItems[0]?.currency_id || "");
+    }
+
+    const siblingItem = providerPriceListItems.find(
+      (item) => Number(item.id) !== Number(editingPriceItemId),
+    );
+
+    return String(siblingItem?.currency_id || "");
+  }, [selectedProviderPriceList, providerPriceListItems, editingPriceItemId]);
+
+  const lockedPriceItemCurrency = useMemo(
+    () =>
+      catalogs.currencies.find(
+        (currency) => String(currency.id) === String(lockedPriceItemCurrencyId),
+      ) || null,
+    [catalogs.currencies, lockedPriceItemCurrencyId],
+  );
+
+  const isPriceItemCurrencyLocked = Boolean(lockedPriceItemCurrencyId);
 
   return (
     <section className="panel">
@@ -9907,7 +10278,7 @@ function ProvidersPage({ can, currentUser }) {
         <input
           className="accounts-search-inline"
           type="text"
-          placeholder="Buscar por ID, nombre, registro, país, ciudad o estado"
+          placeholder="Buscar por ID, nombre, país, lista activa o estado"
           value={providerQuery}
           onChange={(e) => setProviderQuery(e.target.value)}
         />
@@ -9974,9 +10345,7 @@ function ProvidersPage({ can, currentUser }) {
                     />
                   </div>
                   <div className="field-group">
-                    <label>
-                      Registro <span className="required-mark">*</span>
-                    </label>
+                    <label>Registro</label>
                     <input
                       value={form.registrationCode}
                       onChange={(e) =>
@@ -9985,7 +10354,6 @@ function ProvidersPage({ can, currentUser }) {
                           registrationCode: e.target.value,
                         }))
                       }
-                      required
                     />
                   </div>
                 </div>
@@ -10151,11 +10519,9 @@ function ProvidersPage({ can, currentUser }) {
           >
             <div className="modal-header">
               <div className="opportunity-modal-header-copy">
-                <h3 className="modal-title">Lista de precios</h3>
+                <h3 className="modal-title">Listas de precios</h3>
                 <p className="field-hint opportunity-modal-subtitle">
-                  {currentProviderForPriceList?.name || "Proveedor"} ·{" "}
-                  {activePriceItemsCount} activos de{" "}
-                  {providerPriceListItems.length}
+                  {currentProviderForPriceList?.name || "Proveedor"} · {providerPriceLists.length} listas
                 </p>
               </div>
               <div className="opportunity-modal-header-meta">
@@ -10176,187 +10542,389 @@ function ProvidersPage({ can, currentUser }) {
             </div>
 
             <div className="provider-price-list-toolbar">
-              <div className="provider-price-list-summary">
-                <span className="record-id-badge">
-                  Registro:{" "}
-                  {currentProviderForPriceList?.registration_code || "-"}
-                </span>
-              </div>
-              {canCreateProviderPrices &&
-                isProviderActive(currentProviderForPriceList || {}) && (
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={openCreatePriceItemModal}
-                  >
-                    + Agregar precio
-                  </button>
+              <div className="provider-price-list-actions">
+                {canCreateProviderPrices && (
+                  <div className="provider-price-list-action-item">
+                    <button
+                      type="button"
+                      className="provider-price-list-icon-btn"
+                      onClick={() => openCreateProviderPriceListModal()}
+                      aria-label="Crear lista de precios"
+                      title="Crear lista de precios"
+                    >
+                      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                        <path d="M12 5a.75.75 0 0 1 .75.75v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5A.75.75 0 0 1 12 5Z" />
+                      </svg>
+                    </button>
+                    <span className="provider-price-list-action-label">Crear lista</span>
+                  </div>
                 )}
+                {!loadingProviderPriceListItems &&
+                  selectedProviderPriceList &&
+                  visibleProviderPriceListItems.length > 0 &&
+                  canReadProviderPrices && (
+                    <div className="provider-price-list-action-item">
+                      <button
+                        type="button"
+                        className="provider-price-list-icon-btn"
+                        onClick={exportProviderPriceListToExcel}
+                        disabled={exportingPriceList}
+                        aria-label={exportingPriceList ? "Exportando a Excel" : "Exportar a Excel"}
+                        title={exportingPriceList ? "Exportando a Excel" : "Exportar a Excel"}
+                      >
+                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                          <path d="M12 4a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.75A.75.75 0 0 1 12 4Z" />
+                          <path d="M5.75 16a.75.75 0 0 1 .75.75v1.5c0 .14.11.25.25.25h10.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 17.25 20H6.75A1.75 1.75 0 0 1 5 18.25v-1.5a.75.75 0 0 1 .75-.75Z" />
+                        </svg>
+                      </button>
+                      <span className="provider-price-list-action-label">
+                        {exportingPriceList ? "Exportando" : "Exportar"}
+                      </span>
+                    </div>
+                  )}
+                {canCreateProviderPrices &&
+                  selectedProviderPriceList &&
+                  isProviderActive(currentProviderForPriceList || {}) && (
+                    <div className="provider-price-list-action-item">
+                      <button
+                        type="button"
+                        className="provider-price-list-icon-btn provider-price-list-icon-btn-primary"
+                        onClick={openCreatePriceItemModal}
+                        aria-label="Agregar producto"
+                        title="Agregar producto"
+                      >
+                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                          <path d="M6.75 5A1.75 1.75 0 0 0 5 6.75v10.5C5 18.22 5.78 19 6.75 19h10.5c.97 0 1.75-.78 1.75-1.75V6.75C19 5.78 18.22 5 17.25 5zm0 1.5h10.5a.25.25 0 0 1 .25.25v10.5a.25.25 0 0 1-.25.25H6.75a.25.25 0 0 1-.25-.25V6.75c0-.14.11-.25.25-.25Z" />
+                          <path d="M12 8.25a.75.75 0 0 1 .75.75v2.25H15a.75.75 0 0 1 0 1.5h-2.25V15a.75.75 0 0 1-1.5 0v-2.25H9a.75.75 0 0 1 0-1.5h2.25V9a.75.75 0 0 1 .75-.75Z" />
+                        </svg>
+                      </button>
+                      <span className="provider-price-list-action-label">Agregar producto</span>
+                    </div>
+                  )}
+              </div>
             </div>
 
-            {!loadingProviderPriceListItems && providerPriceListItems.length > 0 && (
-              <div className="roles-pills-bar accounts-pills-bar-row">
-                <div
-                  className="accounts-status-pills"
-                  role="group"
-                  aria-label="Filtrar precios por tipo"
-                >
-                  <button
-                    type="button"
-                    className={
-                      priceItemTypeFilter === "all"
-                        ? "status-filter-pill status-filter-pill-all is-selected"
-                        : "status-filter-pill status-filter-pill-all"
-                    }
-                    aria-pressed={priceItemTypeFilter === "all"}
-                    onClick={() => setPriceItemTypeFilter("all")}
-                  >
-                    <span className="status-filter-pill-text">Todos</span>
-                    <span className="status-filter-pill-count">
-                      {priceItemTypeCounts.all}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      priceItemTypeFilter === "producto"
-                        ? "status-filter-pill status-filter-pill-active is-selected"
-                        : "status-filter-pill status-filter-pill-active"
-                    }
-                    aria-pressed={priceItemTypeFilter === "producto"}
-                    onClick={() => setPriceItemTypeFilter("producto")}
-                  >
-                    <span className="status-filter-pill-text">Productos</span>
-                    <span className="status-filter-pill-count">
-                      {priceItemTypeCounts.producto}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      priceItemTypeFilter === "servicio_propio"
-                        ? "status-filter-pill status-filter-pill-inactive is-selected"
-                        : "status-filter-pill status-filter-pill-inactive"
-                    }
-                    aria-pressed={priceItemTypeFilter === "servicio_propio"}
-                    onClick={() => setPriceItemTypeFilter("servicio_propio")}
-                  >
-                    <span className="status-filter-pill-text">Servicios Propios</span>
-                    <span className="status-filter-pill-count">
-                      {priceItemTypeCounts.servicio_propio}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {loadingProviderPriceListItems ? (
+            {loadingProviderPriceLists ? (
               <p className="field-hint provider-price-list-empty">
-                Cargando lista de precios...
+                Cargando listas de precios...
               </p>
-            ) : visibleProviderPriceListItems.length > 0 ? (
-              <div className="provider-price-list-table-wrap">
-                <table className="provider-price-list-table">
+            ) : providerPriceLists.length > 0 ? (
+              <div className="provider-price-list-table-wrap provider-price-lists-compact-wrap">
+                <table className="provider-price-list-table provider-price-lists-table">
                   <thead>
                     <tr>
                       <th>ID</th>
-                      <th>Codigo</th>
-                      <th>Descripcion</th>
-                      <th>Tipo</th>
-                      <th>Precio</th>
-                      <th>Moneda</th>
+                      <th>Nombre</th>
                       <th>Estado</th>
+                      <th>Productos</th>
+                      <th>Moneda</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleProviderPriceListItems.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.id}</td>
-                        <td>{item.code}</td>
-                        <td>{item.description || "-"}</td>
-                        <td>
-                          <span className="record-id-badge">
-                            {getPriceItemTypeLabel(item.item_type)}
-                          </span>
-                        </td>
-                        <td>
-                          {formatPriceValue(item.price, item.currency_code)}
-                        </td>
-                        <td>{item.currency_code}</td>
-                        <td>
-                          <span className={getPriceItemStatusBadgeClass(item)}>
-                            {getPriceItemStatusLabel(item)}
-                          </span>
-                        </td>
-                        <td className="accounts-actions-cell">
-                          <div className="user-kebab-wrap provider-price-items-kebab-wrap">
-                            <button
-                              type="button"
-                              className="kebab-btn"
-                              onClick={() => togglePriceItemMenu(item.id)}
-                              aria-label="Abrir acciones"
+                    {providerPriceLists.map((priceList) => {
+                      const isSelected =
+                        Number(priceList.id) === Number(selectedProviderPriceListId);
+
+                      return (
+                        <tr
+                          key={priceList.id}
+                          className={isSelected ? "provider-price-list-row-selected" : ""}
+                          onClick={() => selectProviderPriceList(priceList.id)}
+                        >
+                          <td>{priceList.id}</td>
+                          <td>{priceList.name}</td>
+                          <td>
+                            <span
+                              className={
+                                Number(priceList.is_active) === 1
+                                  ? "user-status-badge active"
+                                  : "user-status-badge inactive"
+                              }
                             >
-                              ⋮
-                            </button>
-                            {openPriceItemMenuId === item.id && (
-                              <div className="user-kebab-menu">
-                                <button
-                                  type="button"
-                                  disabled={!canUpdateProviderPrices}
-                                  onClick={() =>
-                                    runPriceItemAction(() =>
-                                      openEditPriceItemModal(item),
-                                    )
-                                  }
-                                >
-                                  Editar
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    !canUpdateProviderPrices ||
-                                    isPriceItemActive(item)
-                                  }
-                                  onClick={() =>
-                                    openPriceItemStatusConfirmation(
-                                      item,
-                                      "activo",
-                                    )
-                                  }
-                                >
-                                  Activar
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    !canUpdateProviderPrices ||
-                                    isPriceItemInactive(item)
-                                  }
-                                  onClick={() =>
-                                    openPriceItemStatusConfirmation(
-                                      item,
-                                      "inactivo",
-                                    )
-                                  }
-                                >
-                                  Desactivar
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {Number(priceList.is_active) === 1 ? "Activa" : "Inactiva"}
+                            </span>
+                          </td>
+                          <td>
+                            {priceList.active_price_items || 0} activos de {priceList.total_price_items || 0} productos
+                          </td>
+                          <td>{priceList.currency_code || "-"}</td>
+                          <td
+                            className="provider-price-list-inline-actions"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <div className="user-kebab-wrap provider-price-lists-kebab-wrap">
+                              <button
+                                type="button"
+                                className="kebab-btn"
+                                onClick={() => togglePriceListMenu(priceList.id)}
+                                aria-label="Abrir acciones"
+                              >
+                                ⋮
+                              </button>
+                              {openPriceListMenuId === priceList.id && (
+                                <div className="user-kebab-menu">
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      !canUpdateProviderPrices ||
+                                      Number(priceList.is_active) === 1
+                                    }
+                                    onClick={() =>
+                                      runPriceListAction(() =>
+                                        updateProviderPriceListStatus(priceList, "activa"),
+                                      )
+                                    }
+                                  >
+                                    Activar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      !canUpdateProviderPrices ||
+                                      Number(priceList.is_active) !== 1
+                                    }
+                                    onClick={() =>
+                                      runPriceListAction(() =>
+                                        updateProviderPriceListStatus(priceList, "inactiva"),
+                                      )
+                                    }
+                                  >
+                                    Desactivar
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             ) : (
               <p className="field-hint provider-price-list-empty">
-                {providerPriceListItems.length > 0
-                  ? "No hay precios para el tipo seleccionado."
-                  : "Este proveedor todavía no tiene precios registrados."}
+                Este proveedor todavia no tiene listas de precios registradas.
               </p>
+            )}
+
+            {selectedProviderPriceList && (
+              <>
+                <div className="provider-price-list-selection-header">
+                  <div>
+                    <h4>Precios de {selectedProviderPriceList.name}</h4>
+                    <p className="field-hint provider-price-list-empty">
+                      {activePriceItemsCount} activos de {providerPriceListItems.length} · {getPriceItemTypeLabel(selectedProviderPriceList.item_type)}
+                    </p>
+                  </div>
+                  <span
+                    className={
+                      Number(selectedProviderPriceList.is_active) === 1
+                        ? "user-status-badge active"
+                        : "user-status-badge inactive"
+                    }
+                  >
+                    {Number(selectedProviderPriceList.is_active) === 1 ? "Activa" : "Inactiva"}
+                  </span>
+                </div>
+
+                {!loadingProviderPriceListItems && providerPriceListItems.length > 0 && (
+                  <div className="roles-pills-bar accounts-pills-bar-row">
+                    <div
+                      className="accounts-status-pills"
+                      role="group"
+                      aria-label="Filtrar precios por estado"
+                    >
+                      <button
+                        type="button"
+                        className={
+                          priceItemStatusFilter === "all"
+                            ? "status-filter-pill status-filter-pill-all is-selected"
+                            : "status-filter-pill status-filter-pill-all"
+                        }
+                        aria-pressed={priceItemStatusFilter === "all"}
+                        onClick={() => setPriceItemStatusFilter("all")}
+                      >
+                        <span className="status-filter-pill-text">Todos</span>
+                        <span className="status-filter-pill-count">{priceItemStatusCounts.all}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          priceItemStatusFilter === "active"
+                            ? "status-filter-pill status-filter-pill-active is-selected"
+                            : "status-filter-pill status-filter-pill-active"
+                        }
+                        aria-pressed={priceItemStatusFilter === "active"}
+                        onClick={() => setPriceItemStatusFilter("active")}
+                      >
+                        <span className="status-filter-pill-text">Activos</span>
+                        <span className="status-filter-pill-count">{priceItemStatusCounts.active}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          priceItemStatusFilter === "inactive"
+                            ? "status-filter-pill status-filter-pill-inactive is-selected"
+                            : "status-filter-pill status-filter-pill-inactive"
+                        }
+                        aria-pressed={priceItemStatusFilter === "inactive"}
+                        onClick={() => setPriceItemStatusFilter("inactive")}
+                      >
+                        <span className="status-filter-pill-text">Inactivos</span>
+                        <span className="status-filter-pill-count">
+                          {priceItemStatusCounts.inactive}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {loadingProviderPriceListItems ? (
+                  <p className="field-hint provider-price-list-empty">
+                    Cargando precios de la lista...
+                  </p>
+                ) : visibleProviderPriceListItems.length > 0 ? (
+                  <>
+                    <div className="provider-price-list-table-wrap">
+                      <table className="provider-price-list-table">
+                        <thead>
+                          <tr>
+                            <th>ID</th>
+                            <th>Codigo</th>
+                            <th>Descripcion</th>
+                            <th>Tipo</th>
+                            <th>Precio</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedProviderPriceListItems.map((item) => (
+                            <tr key={item.id}>
+                              <td>{item.id}</td>
+                              <td>{item.code}</td>
+                              <td>{item.description || "-"}</td>
+                              <td>
+                                <span className="record-id-badge">
+                                  {getPriceItemTypeLabel(item.item_type)}
+                                </span>
+                              </td>
+                              <td>{formatPriceValue(item.price, item.currency_code)}</td>
+                              <td>
+                                <span className={getPriceItemStatusBadgeClass(item)}>
+                                  {getPriceItemStatusLabel(item)}
+                                </span>
+                              </td>
+                              <td className="accounts-actions-cell">
+                                <div className="user-kebab-wrap provider-price-items-kebab-wrap">
+                                  <button
+                                    type="button"
+                                    className="kebab-btn"
+                                    onClick={() => togglePriceItemMenu(item.id)}
+                                    aria-label="Abrir acciones"
+                                  >
+                                    ⋮
+                                  </button>
+                                  {openPriceItemMenuId === item.id && (
+                                    <div className="user-kebab-menu">
+                                      <button
+                                        type="button"
+                                        disabled={!canUpdateProviderPrices}
+                                        onClick={() =>
+                                          runPriceItemAction(() =>
+                                            openEditPriceItemModal(item),
+                                          )
+                                        }
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canUpdateProviderPrices ||
+                                          isPriceItemActive(item)
+                                        }
+                                        onClick={() =>
+                                          openPriceItemStatusConfirmation(item, "activo")
+                                        }
+                                      >
+                                        Activar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canUpdateProviderPrices ||
+                                          isPriceItemInactive(item)
+                                        }
+                                        onClick={() =>
+                                          openPriceItemStatusConfirmation(item, "inactivo")
+                                        }
+                                      >
+                                        Desactivar
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="users-pagination provider-price-items-pagination">
+                      <div className="users-pagination-left">
+                        <span className="users-pagination-info">
+                          {(priceItemsPage - 1) * priceItemsPerPage + 1}–
+                          {Math.min(
+                            priceItemsPage * priceItemsPerPage,
+                            visibleProviderPriceListItems.length,
+                          )}{" "}
+                          de {visibleProviderPriceListItems.length}
+                        </span>
+                      </div>
+                      <div className="users-pagination-center">
+                        <button
+                          type="button"
+                          className="users-page-btn"
+                          disabled={priceItemsPage === 1}
+                          onClick={() => setPriceItemsPage((page) => page - 1)}
+                        >
+                          ‹
+                        </button>
+                        <span className="users-pagination-pages">
+                          {priceItemsPage} / {totalPriceItemPages}
+                        </span>
+                        <button
+                          type="button"
+                          className="users-page-btn"
+                          disabled={priceItemsPage === totalPriceItemPages}
+                          onClick={() => setPriceItemsPage((page) => page + 1)}
+                        >
+                          ›
+                        </button>
+                      </div>
+                      <div className="users-pagination-right">
+                        <span className="users-pagination-label">Por página:</span>
+                        <button
+                          type="button"
+                          className="users-perpage-btn is-active"
+                          disabled
+                        >
+                          {priceItemsPerPage}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="field-hint provider-price-list-empty">
+                    {providerPriceListItems.length > 0
+                      ? "No hay precios para el estado seleccionado."
+                      : "La lista seleccionada todavia no tiene precios registrados."}
+                  </p>
+                )}
+              </>
             )}
 
             <div className="modal-buttons" style={{ marginTop: 16 }}>
@@ -10368,6 +10936,110 @@ function ProvidersPage({ can, currentUser }) {
                 Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showProviderPriceListCreateModal && providerPriceListModalProvider && (
+        <div className="modal-overlay" onClick={closeProviderPriceListCreateModal}>
+          <div
+            className="modal-dialog modal-dialog-account provider-price-list-create-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">Crear lista de precios</h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  {providerPriceListModalProvider.name}
+                </p>
+              </div>
+            </div>
+
+            <form
+              className="account-create-form in-modal provider-price-list-create-form"
+              onSubmit={saveProviderPriceList}
+            >
+              <section className="account-form-section account-modal-section">
+                <p className="field-hint provider-price-list-create-note">
+                  La lista se crea inactiva y usa una sola moneda y un solo tipo.
+                </p>
+                <div className="provider-price-list-create-grid">
+                  <div className="field-group provider-price-list-create-name-field">
+                    <label>
+                      Nombre <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      value={providerPriceListForm.name}
+                      onChange={(e) =>
+                        setProviderPriceListForm((prev) => ({
+                          ...prev,
+                          name: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. Lista mayo 2026"
+                      required
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Moneda <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={providerPriceListForm.currencyId}
+                      onChange={(e) =>
+                        setProviderPriceListForm((prev) => ({
+                          ...prev,
+                          currencyId: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Selecciona moneda</option>
+                      {catalogs.currencies.map((currency) => (
+                        <option key={currency.id} value={currency.id}>
+                          {currency.code} - {currency.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Tipo <span className="required-mark">*</span>
+                    </label>
+                    <select
+                      value={providerPriceListForm.itemType}
+                      onChange={(e) =>
+                        setProviderPriceListForm((prev) => ({
+                          ...prev,
+                          itemType: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="producto">Productos</option>
+                      <option value="servicio_propio">Servicios Propios</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <div className="modal-buttons" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeProviderPriceListCreateModal}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={savingProviderPriceList}
+                >
+                  {savingProviderPriceList ? "Creando..." : "Crear lista"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -10385,6 +11057,9 @@ function ProvidersPage({ can, currentUser }) {
                 </h3>
                 <p className="field-hint opportunity-modal-subtitle">
                   {providerPriceListModalProvider.name}
+                  {selectedProviderPriceList
+                    ? ` · ${selectedProviderPriceList.name}`
+                    : ""}
                 </p>
               </div>
               {editingPriceItemId && (
@@ -10445,17 +11120,17 @@ function ProvidersPage({ can, currentUser }) {
                     </label>
                     <select
                       value={priceItemForm.itemType}
-                      onChange={(e) =>
-                        setPriceItemForm((prev) => ({
-                          ...prev,
-                          itemType: e.target.value,
-                        }))
-                      }
+                      disabled
                       required
                     >
                       <option value="producto">Productos</option>
                       <option value="servicio_propio">Servicios Propios</option>
                     </select>
+                    {selectedProviderPriceList && (
+                      <p className="field-hint">
+                        La lista de precios usa un solo tipo: {getPriceItemTypeLabel(selectedProviderPriceList.item_type)}.
+                      </p>
+                    )}
                   </div>
                   <div className="field-group">
                     <label>
@@ -10463,6 +11138,7 @@ function ProvidersPage({ can, currentUser }) {
                     </label>
                     <select
                       value={priceItemForm.currencyId}
+                      disabled={isPriceItemCurrencyLocked}
                       onChange={(e) =>
                         setPriceItemForm((prev) => ({
                           ...prev,
@@ -10478,6 +11154,12 @@ function ProvidersPage({ can, currentUser }) {
                         </option>
                       ))}
                     </select>
+                    {isPriceItemCurrencyLocked && lockedPriceItemCurrency && (
+                      <p className="field-hint">
+                        La lista de precios usa una sola moneda: {" "}
+                        {lockedPriceItemCurrency.code} - {lockedPriceItemCurrency.name}.
+                      </p>
+                    )}
                   </div>
                   <div className="field-group">
                     <label>
@@ -10574,15 +11256,6 @@ function ProvidersPage({ can, currentUser }) {
               <button
                 type="button"
                 className="sort-header-btn"
-                onClick={() => toggleProviderSort("registro")}
-              >
-                Registro <span>{getProviderSortArrow("registro")}</span>
-              </button>
-            </th>
-            <th>
-              <button
-                type="button"
-                className="sort-header-btn"
                 onClick={() => toggleProviderSort("pais")}
               >
                 Pais <span>{getProviderSortArrow("pais")}</span>
@@ -10592,18 +11265,9 @@ function ProvidersPage({ can, currentUser }) {
               <button
                 type="button"
                 className="sort-header-btn"
-                onClick={() => toggleProviderSort("ciudad")}
+                onClick={() => toggleProviderSort("lista_activa")}
               >
-                Ciudad <span>{getProviderSortArrow("ciudad")}</span>
-              </button>
-            </th>
-            <th>
-              <button
-                type="button"
-                className="sort-header-btn"
-                onClick={() => toggleProviderSort("precios")}
-              >
-                Precios <span>{getProviderSortArrow("precios")}</span>
+                Lista activa <span>{getProviderSortArrow("lista_activa")}</span>
               </button>
             </th>
             <th>
@@ -10624,10 +11288,18 @@ function ProvidersPage({ can, currentUser }) {
               <tr key={provider.id}>
                 <td>{provider.id}</td>
                 <td>{provider.name}</td>
-                <td>{provider.registration_code}</td>
                 <td>{provider.country}</td>
-                <td>{provider.city || "-"}</td>
-                <td>{provider.total_price_items || 0}</td>
+                <td>
+                  {provider.active_price_list_name ? (
+                    <span className="record-id-badge provider-active-price-list-badge">
+                      {provider.active_price_list_name}
+                    </span>
+                  ) : (
+                    <span className="user-status-badge inactive">
+                      Sin lista activa
+                    </span>
+                  )}
+                </td>
                 <td>
                   <span className={getProviderStatusBadgeClass(provider)}>
                     {getProviderStatusLabel(provider)}
@@ -10690,7 +11362,20 @@ function ProvidersPage({ can, currentUser }) {
                               )
                             }
                           >
-                            Lista de precios
+                            Listas de precios
+                          </button>
+                        )}
+                        {canCreateProviderPrices && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runProviderAction(async () => {
+                                await openProviderPriceListModal(provider);
+                                openCreateProviderPriceListModal(provider);
+                              })
+                            }
+                          >
+                            Crear lista de precios
                           </button>
                         )}
                       </div>
@@ -10701,7 +11386,7 @@ function ProvidersPage({ can, currentUser }) {
             ))
           ) : (
             <tr>
-              <td colSpan={8} className="empty-state">
+              <td colSpan={6} className="empty-state">
                 No hay proveedores que coincidan con los filtros
               </td>
             </tr>

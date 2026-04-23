@@ -2,7 +2,11 @@ import axios from "axios";
 import { pool, query } from "../src/db.js";
 
 const EXPECTED_DEMO_PROVIDERS = 12;
+const EXPECTED_DEMO_PROVIDER_PRICE_LISTS = 12;
 const EXPECTED_DEMO_PROVIDER_PRICE_ITEMS = 60;
+const EXPECTED_DEMO_SERVICE_PRICE_LISTS = 1;
+const EXPECTED_DEMO_PRODUCT_PRICE_LISTS =
+  EXPECTED_DEMO_PROVIDER_PRICE_LISTS - EXPECTED_DEMO_SERVICE_PRICE_LISTS;
 
 function assertEqual(label, actual, expected) {
   if (Number(actual) !== Number(expected)) {
@@ -22,6 +26,7 @@ async function printCounts() {
     "contacts",
     "opportunities",
     "providers",
+    "provider_price_lists",
     "provider_price_list_items",
   ]) {
     const rows = await query(`SELECT COUNT(*) AS count FROM ${table}`);
@@ -58,6 +63,18 @@ async function verifyProviderSeed() {
     EXPECTED_DEMO_PROVIDER_PRICE_ITEMS,
   );
 
+  const [demoProviderPriceLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_lists ppl
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'`,
+  );
+  assertEqual(
+    "demo_provider_price_lists",
+    Number(demoProviderPriceLists.count),
+    EXPECTED_DEMO_PROVIDER_PRICE_LISTS,
+  );
+
   const [providersWithoutPrices] = await query(
     `SELECT COUNT(*) AS count
      FROM providers p
@@ -83,6 +100,100 @@ async function verifyProviderSeed() {
   assertZero(
     "inactive_demo_providers_with_active_prices",
     Number(inactiveProvidersWithActivePrices.count),
+  );
+
+  const [providersWithoutLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM providers p
+     LEFT JOIN provider_price_lists ppl ON ppl.provider_id = p.id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND ppl.id IS NULL`,
+  );
+  assertZero("demo_providers_without_price_lists", Number(providersWithoutLists.count));
+
+  const [providersWithMultipleActiveLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppl.provider_id
+       FROM provider_price_lists ppl
+       INNER JOIN providers p ON p.id = ppl.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+         AND ppl.is_active = 1
+       GROUP BY ppl.provider_id
+       HAVING COUNT(*) > 1
+     ) invalid_lists`,
+  );
+  assertZero(
+    "demo_providers_with_multiple_active_lists",
+    Number(providersWithMultipleActiveLists.count),
+  );
+
+  const [listsWithMultipleCurrencies] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppi.price_list_id
+       FROM provider_price_list_items ppi
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY ppi.price_list_id
+       HAVING COUNT(DISTINCT ppi.currency_id) > 1
+     ) invalid_currencies`,
+  );
+  assertZero(
+    "demo_price_lists_with_multiple_currencies",
+    Number(listsWithMultipleCurrencies.count),
+  );
+
+  const [listsWithMixedTypes] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppi.price_list_id
+       FROM provider_price_list_items ppi
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY ppi.price_list_id
+       HAVING COUNT(DISTINCT ppi.item_type) > 1
+     ) invalid_item_types`,
+  );
+  assertZero(
+    "demo_price_lists_with_mixed_item_types",
+    Number(listsWithMixedTypes.count),
+  );
+
+  const [serviceOnlyLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppi.price_list_id
+       FROM provider_price_list_items ppi
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY ppi.price_list_id
+       HAVING COUNT(DISTINCT ppi.item_type) = 1
+          AND MIN(ppi.item_type) = 'servicio_propio'
+     ) service_only_lists`,
+  );
+  assertEqual(
+    "demo_service_only_price_lists",
+    Number(serviceOnlyLists.count),
+    EXPECTED_DEMO_SERVICE_PRICE_LISTS,
+  );
+
+  const [productOnlyLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppi.price_list_id
+       FROM provider_price_list_items ppi
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY ppi.price_list_id
+       HAVING COUNT(DISTINCT ppi.item_type) = 1
+          AND MIN(ppi.item_type) = 'producto'
+     ) product_only_lists`,
+  );
+  assertEqual(
+    "demo_product_only_price_lists",
+    Number(productOnlyLists.count),
+    EXPECTED_DEMO_PRODUCT_PRICE_LISTS,
   );
 
   const demoProviderItemSpread = await query(

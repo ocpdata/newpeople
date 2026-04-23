@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import * as XLSX from "xlsx";
 
 function bootstrapAuthenticatedSession(page, token = "jwt-token") {
   return page.addInitScript((value) => {
@@ -31,6 +33,7 @@ function createProvidersFixture() {
   ];
 
   let providerIdSeq = 2;
+  let priceListIdSeq = 2;
   let priceItemIdSeq = 2;
 
   const providers = [
@@ -46,23 +49,49 @@ function createProvidersFixture() {
       country_id: 1,
       activation_status: "Activado",
       activation_status_code: "activado",
+      activation_status_id: 1,
+      active_price_lists: 1,
+      total_price_lists: 1,
       active_price_items: 1,
       total_price_items: 1,
       created_by_name: "Demo Seller",
       updated_by_name: "Demo Seller",
       created_at: "2026-04-21T10:00:00.000Z",
       updated_at: "2026-04-21T10:00:00.000Z",
-      activation_status_id: 1,
     },
   ];
 
-  const priceItemsByProviderId = new Map([
+  const priceListsByProviderId = new Map([
     [
       1,
       [
         {
           id: 1,
           provider_id: 1,
+          name: "Lista vigente",
+          is_active: 1,
+          active_price_items: 1,
+          total_price_items: 1,
+          currency_id: 1,
+          currency_code: "USD",
+          currency_name: "Dolar estadounidense",
+          created_by_name: "Demo Seller",
+          updated_by_name: "Demo Seller",
+          created_at: "2026-04-21T10:00:00.000Z",
+          updated_at: "2026-04-21T10:00:00.000Z",
+        },
+      ],
+    ],
+  ]);
+
+  const priceItemsByListId = new Map([
+    [
+      1,
+      [
+        {
+          id: 1,
+          provider_id: 1,
+          price_list_id: 1,
           code: "PRICE-DEMO-001",
           description: "Precio inicial demo",
           item_type: "producto",
@@ -74,6 +103,8 @@ function createProvidersFixture() {
           activation_status_id: 1,
           activation_status_code: "activo",
           activation_status: "Activo",
+          price_list_name: "Lista vigente",
+          price_list_is_active: 1,
           created_by_name: "Demo Seller",
           updated_by_name: "Demo Seller",
           created_at: "2026-04-21T10:00:00.000Z",
@@ -83,40 +114,331 @@ function createProvidersFixture() {
     ],
   ]);
 
-  function getProviderStatus(statusId) {
-    return providerStatuses.find(
-      (status) => Number(status.id) === Number(statusId),
-    );
-  }
-
-  function getPriceItemStatus(statusId) {
-    return priceItemStatuses.find(
-      (status) => Number(status.id) === Number(statusId),
-    );
+  function getProvider(providerId) {
+    return providers.find((provider) => Number(provider.id) === Number(providerId));
   }
 
   function getCountry(countryId) {
-    return countries.find(
-      (country) => Number(country.id) === Number(countryId),
-    );
+    return countries.find((country) => Number(country.id) === Number(countryId));
+  }
+
+  function getProviderStatus(statusId) {
+    return providerStatuses.find((status) => Number(status.id) === Number(statusId));
+  }
+
+  function getPriceItemStatus(statusId) {
+    return priceItemStatuses.find((status) => Number(status.id) === Number(statusId));
   }
 
   function getCurrency(currencyId) {
-    return currencies.find(
-      (currency) => Number(currency.id) === Number(currencyId),
+    return currencies.find((currency) => Number(currency.id) === Number(currencyId));
+  }
+
+  function listPriceLists(providerId) {
+    return [...(priceListsByProviderId.get(Number(providerId)) || [])].sort(
+      (left, right) => {
+        if (Number(right.is_active) !== Number(left.is_active)) {
+          return Number(right.is_active) - Number(left.is_active);
+        }
+        return Number(right.id) - Number(left.id);
+      },
     );
   }
 
-  function recomputeProviderStats(providerId) {
-    const items = priceItemsByProviderId.get(Number(providerId)) || [];
-    const provider = providers.find(
-      (row) => Number(row.id) === Number(providerId),
+  function getPriceList(providerId, listId) {
+    return (priceListsByProviderId.get(Number(providerId)) || []).find(
+      (priceList) => Number(priceList.id) === Number(listId),
     );
-    if (!provider) return;
-    provider.total_price_items = items.length;
-    provider.active_price_items = items.filter(
+  }
+
+  function listPriceItems(providerId, listId) {
+    const priceList = getPriceList(providerId, listId);
+    const items = [...(priceItemsByListId.get(Number(listId)) || [])].sort(
+      (left, right) => Number(right.id) - Number(left.id),
+    );
+
+    return items.map((item) => ({
+      ...item,
+      price_list_name: priceList?.name || item.price_list_name,
+      price_list_is_active: Number(priceList?.is_active || 0),
+    }));
+  }
+
+  function recomputePriceListStats(providerId, listId) {
+    const priceList = getPriceList(providerId, listId);
+    if (!priceList) return;
+
+    const items = priceItemsByListId.get(Number(listId)) || [];
+    priceList.total_price_items = items.length;
+    priceList.active_price_items = items.filter(
       (item) => String(item.activation_status_code) === "activo",
     ).length;
+    priceList.updated_at = new Date().toISOString();
+  }
+
+  function recomputeProviderStats(providerId) {
+    const provider = getProvider(providerId);
+    if (!provider) return;
+
+    const lists = priceListsByProviderId.get(Number(providerId)) || [];
+    provider.total_price_lists = lists.length;
+    provider.active_price_lists = lists.filter(
+      (priceList) => Number(priceList.is_active) === 1,
+    ).length;
+    provider.total_price_items = lists.reduce(
+      (sum, priceList) => sum + Number(priceList.total_price_items || 0),
+      0,
+    );
+    provider.active_price_items = lists.reduce(
+      (sum, priceList) => sum + Number(priceList.active_price_items || 0),
+      0,
+    );
+    provider.updated_at = new Date().toISOString();
+  }
+
+  function createProvider(body) {
+    const status = getProviderStatus(body.activationStatusId);
+    const country = getCountry(body.countryId);
+    const provider = {
+      id: providerIdSeq,
+      name: body.name,
+      registration_code: body.registrationCode,
+      address_line: body.addressLine || null,
+      city: body.city || null,
+      postal_code: body.postalCode || null,
+      state_region: body.stateRegion || null,
+      country: country?.name || "",
+      country_id: body.countryId,
+      activation_status: status?.name || "Activado",
+      activation_status_code: status?.code || "activado",
+      activation_status_id: body.activationStatusId,
+      active_price_lists: 0,
+      total_price_lists: 0,
+      active_price_items: 0,
+      total_price_items: 0,
+      created_by_name: "Demo Seller",
+      updated_by_name: "Demo Seller",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    providerIdSeq += 1;
+    providers.unshift(provider);
+    priceListsByProviderId.set(Number(provider.id), []);
+    return provider;
+  }
+
+  function createPriceList(providerId, body) {
+    const lists = priceListsByProviderId.get(Number(providerId)) || [];
+    const currency = getCurrency(body.currencyId);
+    const priceList = {
+      id: priceListIdSeq,
+      provider_id: Number(providerId),
+      name: body.name,
+      is_active: 0,
+      active_price_items: 0,
+      total_price_items: 0,
+      currency_id: body.currencyId,
+      currency_code: currency?.code || null,
+      currency_name: currency?.name || null,
+      created_by_name: "Demo Seller",
+      updated_by_name: "Demo Seller",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    priceListIdSeq += 1;
+    priceListsByProviderId.set(Number(providerId), [priceList, ...lists]);
+    priceItemsByListId.set(Number(priceList.id), []);
+    recomputeProviderStats(providerId);
+    return priceList;
+  }
+
+  function updatePriceListStatus(providerId, listId, statusCode) {
+    const lists = priceListsByProviderId.get(Number(providerId)) || [];
+    const nextIsActive = statusCode === "activa" ? 1 : 0;
+    const currentActive = lists.find(
+      (priceList) =>
+        Number(priceList.id) !== Number(listId) && Number(priceList.is_active) === 1,
+    );
+
+    if (nextIsActive === 1 && currentActive) {
+      return {
+        error: {
+          status: 409,
+          body: {
+            message: "Ya existe una lista de precios activa para el proveedor.",
+            activeListId: currentActive.id,
+            activeListName: currentActive.name,
+          },
+        },
+      };
+    }
+
+    const targetList = getPriceList(providerId, listId);
+    if (!targetList) {
+      return {
+        error: {
+          status: 404,
+          body: { message: "Lista de precios no encontrada" },
+        },
+      };
+    }
+
+    targetList.is_active = nextIsActive;
+    targetList.updated_at = new Date().toISOString();
+
+    if (nextIsActive === 0) {
+      const inactiveStatus = priceItemStatuses.find(
+        (status) => String(status.code) === "inactivo",
+      );
+      const items = priceItemsByListId.get(Number(listId)) || [];
+      priceItemsByListId.set(
+        Number(listId),
+        items.map((item) => ({
+          ...item,
+          activation_status_id: inactiveStatus?.id || item.activation_status_id,
+          activation_status_code: inactiveStatus?.code || item.activation_status_code,
+          activation_status: inactiveStatus?.name || item.activation_status,
+          price_list_is_active: 0,
+          updated_at: new Date().toISOString(),
+        })),
+      );
+    }
+
+    recomputePriceListStats(providerId, listId);
+    recomputeProviderStats(providerId);
+    return { body: { message: nextIsActive ? "Lista de precios activada" : "Lista de precios desactivada" } };
+  }
+
+  function createPriceItem(providerId, listId, body) {
+    const currency = getCurrency(body.currencyId);
+    const status = getPriceItemStatus(body.activationStatusId);
+    const priceList = getPriceList(providerId, listId);
+    const items = priceItemsByListId.get(Number(listId)) || [];
+    const enforcedCurrency = priceList?.currency_id
+      ? getCurrency(priceList.currency_id)
+      : items[0]
+        ? getCurrency(items[0].currency_id)
+        : null;
+
+    if (enforcedCurrency && Number(enforcedCurrency.id) !== Number(body.currencyId)) {
+      return {
+        error: {
+          status: 409,
+          body: {
+            message: `La lista de precios solo permite una moneda. Usa ${enforcedCurrency.code}.`,
+            currencyId: enforcedCurrency.id,
+            currencyCode: enforcedCurrency.code,
+          },
+        },
+      };
+    }
+
+    const item = {
+      id: priceItemIdSeq,
+      provider_id: Number(providerId),
+      price_list_id: Number(listId),
+      code: body.code,
+      description: body.description || null,
+      item_type: body.itemType || "producto",
+      price: String(Number(body.price).toFixed(2)),
+      currency_id: body.currencyId,
+      currency_code: currency?.code || "USD",
+      currency_name: currency?.name || "Dolar estadounidense",
+      currency_symbol: currency?.symbol || "$",
+      activation_status_id: body.activationStatusId,
+      activation_status_code: status?.code || "activo",
+      activation_status: status?.name || "Activo",
+      price_list_name: priceList?.name || "",
+      price_list_is_active: Number(priceList?.is_active || 0),
+      created_by_name: "Demo Seller",
+      updated_by_name: "Demo Seller",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    priceItemIdSeq += 1;
+    priceItemsByListId.set(Number(listId), [item, ...items]);
+    recomputePriceListStats(providerId, listId);
+    recomputeProviderStats(providerId);
+    return { item };
+  }
+
+  function updatePriceItem(providerId, listId, itemId, body) {
+    const currency = getCurrency(body.currencyId);
+    const status = getPriceItemStatus(body.activationStatusId);
+    const priceList = getPriceList(providerId, listId);
+    const items = priceItemsByListId.get(Number(listId)) || [];
+    const enforcedCurrencyItem = items.find((item) => Number(item.id) !== Number(itemId));
+    const enforcedCurrency = priceList?.currency_id
+      ? getCurrency(priceList.currency_id)
+      : enforcedCurrencyItem
+        ? getCurrency(enforcedCurrencyItem.currency_id)
+        : null;
+
+    if (enforcedCurrency && Number(enforcedCurrency.id) !== Number(body.currencyId)) {
+      return {
+        error: {
+          status: 409,
+          body: {
+            message: `La lista de precios solo permite una moneda. Usa ${enforcedCurrency.code}.`,
+            currencyId: enforcedCurrency.id,
+            currencyCode: enforcedCurrency.code,
+          },
+        },
+      };
+    }
+
+    const updatedItems = items.map((item) => {
+      if (Number(item.id) !== Number(itemId)) {
+        return item;
+      }
+
+      return {
+        ...item,
+        code: body.code,
+        description: body.description || null,
+        item_type: body.itemType || item.item_type,
+        price: String(Number(body.price).toFixed(2)),
+        currency_id: body.currencyId,
+        currency_code: currency?.code || item.currency_code,
+        currency_name: currency?.name || item.currency_name,
+        currency_symbol: currency?.symbol || item.currency_symbol,
+        activation_status_id: body.activationStatusId,
+        activation_status_code: status?.code || item.activation_status_code,
+        activation_status: status?.name || item.activation_status,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    priceItemsByListId.set(Number(listId), updatedItems);
+    recomputePriceListStats(providerId, listId);
+    recomputeProviderStats(providerId);
+    return { item: updatedItems.find((item) => Number(item.id) === Number(itemId)) };
+  }
+
+  function updatePriceItemStatus(providerId, listId, itemId, statusCode) {
+    const status = priceItemStatuses.find((row) => String(row.code) === String(statusCode));
+    const items = priceItemsByListId.get(Number(listId)) || [];
+    const updatedItems = items.map((item) => {
+      if (Number(item.id) !== Number(itemId)) {
+        return item;
+      }
+
+      return {
+        ...item,
+        activation_status_id: status?.id || item.activation_status_id,
+        activation_status_code: status?.code || item.activation_status_code,
+        activation_status: status?.name || item.activation_status,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    priceItemsByListId.set(Number(listId), updatedItems);
+    recomputePriceListStats(providerId, listId);
+    recomputeProviderStats(providerId);
+    return { item: updatedItems.find((item) => Number(item.id) === Number(itemId)) };
   }
 
   return {
@@ -125,122 +447,20 @@ function createProvidersFixture() {
     priceItemStatuses,
     countries,
     currencies,
-    priceItemsByProviderId,
+    priceListsByProviderId,
+    priceItemsByListId,
     listProviders() {
-      return [...providers].sort(
-        (left, right) => Number(right.id) - Number(left.id),
-      );
+      return [...providers].sort((left, right) => Number(right.id) - Number(left.id));
     },
-    getProvider(providerId) {
-      return providers.find(
-        (provider) => Number(provider.id) === Number(providerId),
-      );
-    },
-    createProvider(body) {
-      const status = getProviderStatus(body.activationStatusId);
-      const country = getCountry(body.countryId);
-      const provider = {
-        id: providerIdSeq,
-        name: body.name,
-        registration_code: body.registrationCode,
-        address_line: body.addressLine || null,
-        city: body.city || null,
-        postal_code: body.postalCode || null,
-        state_region: body.stateRegion || null,
-        country: country?.name || "",
-        country_id: body.countryId,
-        activation_status: status?.name || "Activado",
-        activation_status_code: status?.code || "activado",
-        activation_status_id: body.activationStatusId,
-        active_price_items: 0,
-        total_price_items: 0,
-        created_by_name: "Demo Seller",
-        updated_by_name: "Demo Seller",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      providerIdSeq += 1;
-      providers.unshift(provider);
-      priceItemsByProviderId.set(Number(provider.id), []);
-      return provider;
-    },
-    createPriceItem(providerId, body) {
-      const currency = getCurrency(body.currencyId);
-      const status = getPriceItemStatus(body.activationStatusId);
-      const items = priceItemsByProviderId.get(Number(providerId)) || [];
-      const item = {
-        id: priceItemIdSeq,
-        provider_id: Number(providerId),
-        code: body.code,
-        description: body.description || null,
-        item_type: body.itemType || "producto",
-        price: String(Number(body.price).toFixed(2)),
-        currency_id: body.currencyId,
-        currency_code: currency?.code || "USD",
-        currency_name: currency?.name || "Dolar estadounidense",
-        currency_symbol: currency?.symbol || "$",
-        activation_status_id: body.activationStatusId,
-        activation_status_code: status?.code || "activo",
-        activation_status: status?.name || "Activo",
-        created_by_name: "Demo Seller",
-        updated_by_name: "Demo Seller",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      priceItemIdSeq += 1;
-      priceItemsByProviderId.set(Number(providerId), [item, ...items]);
-      recomputeProviderStats(providerId);
-      return item;
-    },
-    updatePriceItem(providerId, itemId, body) {
-      const currency = getCurrency(body.currencyId);
-      const status = getPriceItemStatus(body.activationStatusId);
-      const items = priceItemsByProviderId.get(Number(providerId)) || [];
-      const updatedItems = items.map((item) => {
-        if (Number(item.id) !== Number(itemId)) {
-          return item;
-        }
-        return {
-          ...item,
-          code: body.code,
-          description: body.description || null,
-          item_type: body.itemType || item.item_type,
-          price: String(Number(body.price).toFixed(2)),
-          currency_id: body.currencyId,
-          currency_code: currency?.code || item.currency_code,
-          currency_name: currency?.name || item.currency_name,
-          currency_symbol: currency?.symbol || item.currency_symbol,
-          activation_status_id: body.activationStatusId,
-          activation_status_code: status?.code || item.activation_status_code,
-          activation_status: status?.name || item.activation_status,
-          updated_at: new Date().toISOString(),
-        };
-      });
-      priceItemsByProviderId.set(Number(providerId), updatedItems);
-      recomputeProviderStats(providerId);
-      return updatedItems.find((item) => Number(item.id) === Number(itemId));
-    },
-    updatePriceItemStatus(providerId, itemId, statusCode) {
-      const status = priceItemStatuses.find(
-        (row) => String(row.code) === String(statusCode),
-      );
-      const items = priceItemsByProviderId.get(Number(providerId)) || [];
-      const updatedItems = items.map((item) => {
-        if (Number(item.id) !== Number(itemId)) {
-          return item;
-        }
-        return {
-          ...item,
-          activation_status_id: status?.id || item.activation_status_id,
-          activation_status_code: status?.code || item.activation_status_code,
-          activation_status: status?.name || item.activation_status,
-          updated_at: new Date().toISOString(),
-        };
-      });
-      priceItemsByProviderId.set(Number(providerId), updatedItems);
-      recomputeProviderStats(providerId);
-      return updatedItems.find((item) => Number(item.id) === Number(itemId));
-    },
+    getProvider,
+    listPriceLists,
+    listPriceItems,
+    createProvider,
+    createPriceList,
+    updatePriceListStatus,
+    createPriceItem,
+    updatePriceItem,
+    updatePriceItemStatus,
   };
 }
 
@@ -289,12 +509,8 @@ async function mockProvidersApi(page, fixture) {
       return json({ id: provider.id, message: "Proveedor creado" }, 201);
     }
 
-    if (
-      pathname.startsWith("/api/providers/") &&
-      !pathname.includes("price-list-items") &&
-      method === "GET"
-    ) {
-      const providerId = Number(pathname.split("/").pop());
+    if (/^\/api\/providers\/\d+$/.test(pathname) && method === "GET") {
+      const providerId = Number(pathname.split("/")[3]);
       const provider = fixture.getProvider(providerId);
       return json(
         provider || { message: "Proveedor no encontrado" },
@@ -318,51 +534,76 @@ async function mockProvidersApi(page, fixture) {
       return json(fixture.currencies);
     }
 
-    if (
-      /^\/api\/providers\/\d+\/price-list-items$/.test(pathname) &&
-      method === "GET"
-    ) {
+    if (/^\/api\/providers\/\d+\/price-lists$/.test(pathname) && method === "GET") {
       const providerId = Number(pathname.split("/")[3]);
-      return json(fixture.priceItemsByProviderId.get(providerId) || []);
+      return json(fixture.listPriceLists(providerId));
     }
 
-    if (
-      /^\/api\/providers\/\d+\/price-list-items$/.test(pathname) &&
-      method === "POST"
-    ) {
+    if (/^\/api\/providers\/\d+\/price-lists$/.test(pathname) && method === "POST") {
       const providerId = Number(pathname.split("/")[3]);
       const body = route.request().postDataJSON();
-      const item = fixture.createPriceItem(providerId, body);
-      return json({ id: item.id, message: "Precio agregado" }, 201);
+      const priceList = fixture.createPriceList(providerId, body);
+      return json({ id: priceList.id, message: "Lista de precios creada" }, 201);
     }
 
     if (
-      /^\/api\/providers\/\d+\/price-list-items\/\d+$/.test(pathname) &&
-      method === "PUT"
-    ) {
-      const [, , , providerId, , itemId] = pathname.split("/");
-      const body = route.request().postDataJSON();
-      const item = fixture.updatePriceItem(providerId, itemId, body);
-      return json({ id: item.id, message: "Precio actualizado" });
-    }
-
-    if (
-      /^\/api\/providers\/\d+\/price-list-items\/\d+\/status$/.test(pathname) &&
+      /^\/api\/providers\/\d+\/price-lists\/\d+\/status$/.test(pathname) &&
       method === "PATCH"
     ) {
-      const [, , , providerId, , itemId] = pathname.split("/");
+      const [, , , providerId, , listId] = pathname.split("/");
       const body = route.request().postDataJSON();
-      const item = fixture.updatePriceItemStatus(
-        providerId,
-        itemId,
-        body.statusCode,
-      );
+      const result = fixture.updatePriceListStatus(providerId, listId, body.statusCode);
+      if (result.error) {
+        return json(result.error.body, result.error.status);
+      }
+      return json(result.body);
+    }
+
+    if (
+      /^\/api\/providers\/\d+\/price-lists\/\d+\/items$/.test(pathname) &&
+      method === "GET"
+    ) {
+      const [, , , providerId, , listId] = pathname.split("/");
+      return json(fixture.listPriceItems(providerId, listId));
+    }
+
+    if (
+      /^\/api\/providers\/\d+\/price-lists\/\d+\/items$/.test(pathname) &&
+      method === "POST"
+    ) {
+      const [, , , providerId, , listId] = pathname.split("/");
+      const body = route.request().postDataJSON();
+      const result = fixture.createPriceItem(providerId, listId, body);
+      if (result.error) {
+        return json(result.error.body, result.error.status);
+      }
+      return json({ id: result.item.id, message: "Precio agregado" }, 201);
+    }
+
+    if (
+      /^\/api\/providers\/\d+\/price-lists\/\d+\/items\/\d+$/.test(pathname) &&
+      method === "PUT"
+    ) {
+      const [, , , providerId, , listId, , itemId] = pathname.split("/");
+      const body = route.request().postDataJSON();
+      const result = fixture.updatePriceItem(providerId, listId, itemId, body);
+      if (result.error) {
+        return json(result.error.body, result.error.status);
+      }
+      return json({ id: result.item.id, message: "Precio actualizado" });
+    }
+
+    if (
+      /^\/api\/providers\/\d+\/price-lists\/\d+\/items\/\d+\/status$/.test(pathname) &&
+      method === "PATCH"
+    ) {
+      const [, , , providerId, , listId, , itemId] = pathname.split("/");
+      const body = route.request().postDataJSON();
+      const result = fixture.updatePriceItemStatus(providerId, listId, itemId, body.statusCode);
       return json({
-        id: item.id,
+        id: result.item.id,
         message:
-          body.statusCode === "activo"
-            ? "Precio activado"
-            : "Precio desactivado",
+          body.statusCode === "activo" ? "Precio activado" : "Precio desactivado",
       });
     }
 
@@ -371,7 +612,7 @@ async function mockProvidersApi(page, fixture) {
 }
 
 test.describe("providers", () => {
-  test("permite crear un proveedor y agregar un precio desde la UI", async ({
+  test("permite crear listas padre, activar una sola y gestionar precios desde la UI", async ({
     page,
   }) => {
     const fixture = createProvidersFixture();
@@ -380,18 +621,13 @@ test.describe("providers", () => {
     await mockProvidersApi(page, fixture);
     await page.goto("/providers");
 
-    await expect(
-      page.getByRole("heading", { name: "Proveedores" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Proveedores" })).toBeVisible();
     await expect(page.getByText("Proveedor Demo")).toBeVisible();
 
     await page.getByRole("button", { name: "+ Crear proveedor" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Crear proveedor" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Crear proveedor" })).toBeVisible();
 
     const providerModal = page.locator(".modal-dialog-account").first();
-
     await providerModal.locator("input").nth(0).fill("Proveedor Nuevo QA");
     await providerModal.locator("input").nth(1).fill("PROV-QA-900");
     await providerModal.locator("select").nth(0).selectOption("1");
@@ -413,18 +649,59 @@ test.describe("providers", () => {
       .first();
 
     await providerRow.getByRole("button", { name: "Abrir acciones" }).click();
-    await page.getByRole("button", { name: "Lista de precios" }).click();
+    await page.getByRole("button", { name: "Crear lista de precios" }).click();
 
+    await expect(page.getByRole("heading", { name: "Crear lista de precios" })).toBeVisible();
+    await page.locator(".modal-dialog-account").last().locator("input").fill("Lista QA 2026");
+    await page.locator(".modal-dialog-account").last().locator("select").selectOption("1");
+    await page.getByRole("button", { name: "Crear lista", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Listas de precios" })).toBeVisible();
+
+    const createdList = fixture
+      .listPriceLists(Number(createdProvider?.id))
+      .find((priceList) => priceList.name === "Lista QA 2026");
+    expect(createdList).toBeTruthy();
+
+    const listsTable = page.locator(".provider-price-lists-table");
+    const firstListRow = listsTable
+      .locator("tbody tr")
+      .filter({ has: page.getByText("Lista QA 2026", { exact: true }) })
+      .first();
+
+    await firstListRow
+      .getByRole("button", { name: "Activar", exact: true })
+      .click();
+    await expect
+      .poll(
+        () =>
+          fixture
+            .listPriceLists(Number(createdProvider?.id))
+            .find((priceList) => priceList.name === "Lista QA 2026")?.is_active,
+      )
+      .toBe(1);
+
+    await page.getByRole("button", { name: "+ Crear lista de precios" }).click();
+    await page.locator(".modal-dialog-account").last().locator("input").fill("Lista Secundaria QA");
+    await page.locator(".modal-dialog-account").last().locator("select").selectOption("2");
+    await page.getByRole("button", { name: "Crear lista", exact: true }).click();
+
+    const secondListRow = listsTable
+      .locator("tbody tr")
+      .filter({ has: page.getByText("Lista Secundaria QA", { exact: true }) })
+      .first();
+    await secondListRow
+      .getByRole("button", { name: "Activar", exact: true })
+      .click();
     await expect(
-      page.getByRole("heading", { name: "Lista de precios" }),
+      page.getByText("Ya existe una lista de precios activa para el proveedor."),
     ).toBeVisible();
+
+    await firstListRow.getByRole("button", { name: "Ver precios" }).click();
     await page.getByRole("button", { name: "+ Agregar precio" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Agregar precio" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Agregar precio" })).toBeVisible();
 
     const priceModal = page.locator(".provider-price-item-modal").first();
-
     await priceModal.locator("input").nth(0).fill("PRICE-QA-01");
     await priceModal.locator('input[type="number"]').fill("2500.50");
     await priceModal.locator("select").nth(0).selectOption("servicio_propio");
@@ -435,9 +712,38 @@ test.describe("providers", () => {
 
     await expect(page.getByText("Precio agregado")).toBeVisible();
     await expect(page.getByText("PRICE-QA-01")).toBeVisible();
-    await expect(
-      page.getByText("Precio agregado por prueba E2E"),
-    ).toBeVisible();
+    await expect(page.getByText("Precio agregado por prueba E2E")).toBeVisible();
+
+    const priceTypeFilters = page.getByRole("group", {
+      name: "Filtrar precios por tipo",
+    });
+    await priceTypeFilters.getByRole("button", { name: "Servicios Propios" }).click();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Exportar a Excel" }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toContain("servicios-propios");
+
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+
+    const workbook = XLSX.read(await readFile(downloadPath));
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const exportedRows = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+
+    expect(exportedRows).toEqual([
+      {
+        ID: "2",
+        Codigo: "PRICE-QA-01",
+        Descripcion: "Precio agregado por prueba E2E",
+        Tipo: "Servicios Propios",
+        Precio: "2,500.50",
+        Moneda: "USD",
+        Estado: "Activo",
+      },
+    ]);
+
+    await priceTypeFilters.getByRole("button", { name: "Todos" }).click();
 
     const createdPriceRow = page
       .locator(".provider-price-list-table tbody tr")
@@ -445,19 +751,28 @@ test.describe("providers", () => {
       .first();
     await expect(createdPriceRow.getByText("Servicios Propios")).toBeVisible();
 
-    await createdPriceRow
-      .getByRole("button", { name: "Abrir acciones" })
-      .click();
-    await page.getByRole("button", { name: "Editar", exact: true }).click();
+    await page.getByRole("button", { name: "+ Agregar precio" }).click();
+    const secondPriceModal = page.locator(".provider-price-item-modal").first();
+    const currencySelect = secondPriceModal.locator("select").nth(1);
+    await expect(currencySelect).toBeDisabled();
+    await expect(currencySelect).toHaveValue("1");
     await expect(
-      page.getByRole("heading", { name: "Editar precio" }),
+      secondPriceModal.getByText(
+        "La lista de precios usa una sola moneda: USD - Dolar estadounidense.",
+      ),
     ).toBeVisible();
+    await secondPriceModal.getByRole("button", { name: "Cancelar" }).click();
+
+    await createdPriceRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await createdPriceRow
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Editar", exact: true })
+      .click();
+    await expect(page.getByRole("heading", { name: "Editar precio" })).toBeVisible();
 
     const editPriceModal = page.locator(".provider-price-item-modal").first();
     await editPriceModal.locator("select").nth(0).selectOption("producto");
-    await editPriceModal
-      .locator("textarea")
-      .fill("Precio editado por prueba E2E");
+    await editPriceModal.locator("textarea").fill("Precio editado por prueba E2E");
     await editPriceModal.locator('input[type="number"]').fill("2750.00");
     await editPriceModal
       .getByRole("button", { name: "Guardar cambios", exact: true })
@@ -466,30 +781,20 @@ test.describe("providers", () => {
     await expect
       .poll(
         () =>
-          fixture.priceItemsByProviderId
-            .get(Number(createdProvider?.id))
-            ?.find((item) => item.code === "PRICE-QA-01")?.item_type,
+          fixture
+            .listPriceItems(Number(createdProvider?.id), Number(createdList?.id))
+            .find((item) => item.code === "PRICE-QA-01")?.item_type,
       )
       .toBe("producto");
-    await expect
-      .poll(
-        () =>
-          fixture.priceItemsByProviderId
-            .get(Number(createdProvider?.id))
-            ?.find((item) => item.code === "PRICE-QA-01")?.description,
-      )
-      .toBe("Precio editado por prueba E2E");
     await expect(page.getByText("Precio editado por prueba E2E")).toBeVisible();
     await expect(createdPriceRow.getByText("Productos")).toBeVisible();
-    await expect(createdPriceRow.getByText("PRICE-QA-01")).toBeVisible();
 
+    await createdPriceRow.getByRole("button", { name: "Abrir acciones" }).click();
     await createdPriceRow
-      .getByRole("button", { name: "Abrir acciones" })
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Desactivar", exact: true })
       .click();
-    await page.getByRole("button", { name: "Desactivar", exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: "Desactivar precio" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Desactivar precio" })).toBeVisible();
 
     const deactivateModal = page.locator(".modal-dialog").filter({
       has: page.getByRole("heading", { name: "Desactivar precio" }),
@@ -501,25 +806,22 @@ test.describe("providers", () => {
     await expect
       .poll(
         () =>
-          fixture.priceItemsByProviderId
-            .get(Number(createdProvider?.id))
-            ?.find((item) => item.code === "PRICE-QA-01")
-            ?.activation_status_code,
+          fixture
+            .listPriceItems(Number(createdProvider?.id), Number(createdList?.id))
+            .find((item) => item.code === "PRICE-QA-01")?.activation_status_code,
       )
       .toBe("inactivo");
-    await expect(createdPriceRow.getByText("PRICE-QA-01")).toBeVisible();
 
+    await createdPriceRow.getByRole("button", { name: "Abrir acciones" }).click();
     await createdPriceRow
-      .getByRole("button", { name: "Abrir acciones" })
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Activar", exact: true })
       .click();
-    await page.getByRole("button", { name: "Activar", exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: "Activar precio" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Activar precio" })).toBeVisible();
 
-    const activateModal = page
-      .locator(".modal-dialog")
-      .filter({ has: page.getByRole("heading", { name: "Activar precio" }) });
+    const activateModal = page.locator(".modal-dialog").filter({
+      has: page.getByRole("heading", { name: "Activar precio" }),
+    });
     await activateModal
       .getByRole("button", { name: "Activar", exact: true })
       .evaluate((element) => element.click());
@@ -527,12 +829,10 @@ test.describe("providers", () => {
     await expect
       .poll(
         () =>
-          fixture.priceItemsByProviderId
-            .get(Number(createdProvider?.id))
-            ?.find((item) => item.code === "PRICE-QA-01")
-            ?.activation_status_code,
+          fixture
+            .listPriceItems(Number(createdProvider?.id), Number(createdList?.id))
+            .find((item) => item.code === "PRICE-QA-01")?.activation_status_code,
       )
       .toBe("activo");
-    await expect(createdPriceRow.getByText("PRICE-QA-01")).toBeVisible();
   });
 });

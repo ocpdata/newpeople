@@ -198,10 +198,13 @@ Cobertura automatizada:
 
 ## Proveedores y listas de precios
 
-- Cada proveedor maneja una sola lista de precios visible desde la UI.
+- Cada proveedor puede tener multiples listas de precios visibles desde la UI.
+- Cada lista nueva se crea inactiva.
+- Cada proveedor puede tener cero o una lista activa al mismo tiempo.
+- Cada lista de precios usa una sola moneda compartida por todos sus items.
 - Cada item de precio ahora incluye un tipo obligatorio: `Productos` o `Servicios Propios`.
 - El tipo se guarda por item, no a nivel proveedor, para permitir mezclar ambos tipos dentro de la misma lista.
-- La vista de lista de precios permite filtrar por tipo para revisar rapidamente cada grupo.
+- La vista de listas de precios permite crear listas nuevas desde el menu kebab del proveedor, activar o desactivar una lista y filtrar los items por tipo.
 
 ## Datos demo manuales
 
