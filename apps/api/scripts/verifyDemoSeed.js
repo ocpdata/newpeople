@@ -1,12 +1,26 @@
 import axios from "axios";
 import { pool, query } from "../src/db.js";
 
-const EXPECTED_DEMO_PROVIDERS = 12;
-const EXPECTED_DEMO_PROVIDER_PRICE_LISTS = 12;
-const EXPECTED_DEMO_PROVIDER_PRICE_ITEMS = 60;
+const EXPECTED_DEMO_PROVIDER_NAMES = [
+  "F5 Networks",
+  "Bluecat Networks",
+  "Cisco",
+  "Servicios Access Quality",
+  "Otros",
+  "Bundles",
+];
+const EXPECTED_DEMO_PROVIDERS = EXPECTED_DEMO_PROVIDER_NAMES.length;
+const EXPECTED_DEMO_PROVIDER_PRICE_LISTS = EXPECTED_DEMO_PROVIDERS;
+const EXPECTED_BUNDLES_GROUP_ITEMS = 20;
+const EXPECTED_DEMO_PROVIDER_PRICE_ITEMS =
+  (EXPECTED_DEMO_PROVIDERS - 1) * 50 + EXPECTED_BUNDLES_GROUP_ITEMS;
 const EXPECTED_DEMO_SERVICE_PRICE_LISTS = 1;
+const EXPECTED_DEMO_GROUP_PRICE_LISTS = 1;
 const EXPECTED_DEMO_PRODUCT_PRICE_LISTS =
-  EXPECTED_DEMO_PROVIDER_PRICE_LISTS - EXPECTED_DEMO_SERVICE_PRICE_LISTS;
+  EXPECTED_DEMO_PROVIDER_PRICE_LISTS -
+  EXPECTED_DEMO_SERVICE_PRICE_LISTS -
+  EXPECTED_DEMO_GROUP_PRICE_LISTS;
+const EXPECTED_CURRENCY_CODE = "USD";
 
 function assertEqual(label, actual, expected) {
   if (Number(actual) !== Number(expected)) {
@@ -109,7 +123,32 @@ async function verifyProviderSeed() {
      WHERE p.registration_code LIKE 'DEMO-PROV-%'
        AND ppl.id IS NULL`,
   );
-  assertZero("demo_providers_without_price_lists", Number(providersWithoutLists.count));
+  assertZero(
+    "demo_providers_without_price_lists",
+    Number(providersWithoutLists.count),
+  );
+
+  const providerNames = await query(
+    `SELECT name
+     FROM providers
+     WHERE registration_code LIKE 'DEMO-PROV-%'
+     ORDER BY registration_code`,
+  );
+  assertEqual(
+    "demo_provider_names_count",
+    providerNames.length,
+    EXPECTED_DEMO_PROVIDER_NAMES.length,
+  );
+  for (let index = 0; index < EXPECTED_DEMO_PROVIDER_NAMES.length; index += 1) {
+    const actualName = String(providerNames[index]?.name || "");
+    const expectedName = EXPECTED_DEMO_PROVIDER_NAMES[index];
+    if (actualName !== expectedName) {
+      throw new Error(
+        `demo_provider_name_${index + 1}: esperado ${expectedName}, recibido ${actualName}`,
+      );
+    }
+    console.log(`demo_provider_name_${index + 1}_ok`, actualName);
+  }
 
   const [providersWithMultipleActiveLists] = await query(
     `SELECT COUNT(*) AS count
@@ -128,6 +167,29 @@ async function verifyProviderSeed() {
     Number(providersWithMultipleActiveLists.count),
   );
 
+  const [providersWithoutActiveLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM providers p
+     LEFT JOIN provider_price_lists ppl
+       ON ppl.provider_id = p.id
+      AND ppl.is_active = 1
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND ppl.id IS NULL`,
+  );
+  assertZero(
+    "demo_providers_without_active_price_lists",
+    Number(providersWithoutActiveLists.count),
+  );
+
+  const [inactiveDemoProviders] = await query(
+    `SELECT COUNT(*) AS count
+     FROM providers p
+     INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND pas.code <> 'activado'`,
+  );
+  assertZero("inactive_demo_providers", Number(inactiveDemoProviders.count));
+
   const [listsWithMultipleCurrencies] = await query(
     `SELECT COUNT(*) AS count
      FROM (
@@ -143,6 +205,28 @@ async function verifyProviderSeed() {
     "demo_price_lists_with_multiple_currencies",
     Number(listsWithMultipleCurrencies.count),
   );
+
+  const [nonUsdLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_lists ppl
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     INNER JOIN currencies c ON c.id = ppl.currency_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND c.code <> ?`,
+    [EXPECTED_CURRENCY_CODE],
+  );
+  assertZero("demo_price_lists_non_usd", Number(nonUsdLists.count));
+
+  const [nonUsdItems] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN providers p ON p.id = ppi.provider_id
+     INNER JOIN currencies c ON c.id = ppi.currency_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND c.code <> ?`,
+    [EXPECTED_CURRENCY_CODE],
+  );
+  assertZero("demo_price_items_non_usd", Number(nonUsdItems.count));
 
   const [listsWithMixedTypes] = await query(
     `SELECT COUNT(*) AS count
@@ -178,6 +262,24 @@ async function verifyProviderSeed() {
     EXPECTED_DEMO_SERVICE_PRICE_LISTS,
   );
 
+  const [groupOnlyLists] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT ppi.price_list_id
+       FROM provider_price_list_items ppi
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY ppi.price_list_id
+       HAVING COUNT(DISTINCT ppi.item_type) = 1
+          AND MIN(ppi.item_type) = 'grupo_productos'
+     ) group_only_lists`,
+  );
+  assertEqual(
+    "demo_group_only_price_lists",
+    Number(groupOnlyLists.count),
+    EXPECTED_DEMO_GROUP_PRICE_LISTS,
+  );
+
   const [productOnlyLists] = await query(
     `SELECT COUNT(*) AS count
      FROM (
@@ -194,6 +296,70 @@ async function verifyProviderSeed() {
     "demo_product_only_price_lists",
     Number(productOnlyLists.count),
     EXPECTED_DEMO_PRODUCT_PRICE_LISTS,
+  );
+
+  const [bundlesGroupItems] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN providers p ON p.id = ppi.provider_id
+     WHERE p.name = 'Bundles'
+       AND p.registration_code LIKE 'DEMO-PROV-%'
+       AND ppi.item_type = 'grupo_productos'`,
+  );
+  assertEqual(
+    "demo_bundles_group_items",
+    Number(bundlesGroupItems.count),
+    EXPECTED_BUNDLES_GROUP_ITEMS,
+  );
+
+  const [bundlesGroupsOutsideComponentRange] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT c.grupo_item_id, COUNT(*) AS component_count
+       FROM provider_price_list_item_components c
+       INNER JOIN provider_price_list_items ppi ON ppi.id = c.grupo_item_id
+       INNER JOIN providers p ON p.id = ppi.provider_id
+       WHERE p.name = 'Bundles'
+         AND p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY c.grupo_item_id
+       HAVING COUNT(*) < 3 OR COUNT(*) > 7
+     ) invalid_group_components`,
+  );
+  assertZero(
+    "demo_bundles_groups_outside_component_range",
+    Number(bundlesGroupsOutsideComponentRange.count),
+  );
+
+  const [bundlesGroupsWithoutServiceComponent] = await query(
+    `SELECT COUNT(*) AS count
+     FROM (
+       SELECT c.grupo_item_id
+       FROM provider_price_list_item_components c
+       INNER JOIN provider_price_list_items group_item ON group_item.id = c.grupo_item_id
+       INNER JOIN providers p ON p.id = group_item.provider_id
+       INNER JOIN provider_price_list_items child ON child.id = c.component_item_id
+       WHERE p.name = 'Bundles'
+         AND p.registration_code LIKE 'DEMO-PROV-%'
+       GROUP BY c.grupo_item_id
+       HAVING SUM(CASE WHEN child.item_type = 'servicio_propio' THEN 1 ELSE 0 END) = 0
+     ) groups_without_service`,
+  );
+  assertZero(
+    "demo_bundles_groups_without_service_component",
+    Number(bundlesGroupsWithoutServiceComponent.count),
+  );
+
+  const [inactivePriceItems] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN providers p ON p.id = ppi.provider_id
+     INNER JOIN provider_price_list_item_statuses pist ON pist.id = ppi.activation_status_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+       AND pist.code <> 'activo'`,
+  );
+  assertZero(
+    "inactive_demo_provider_price_items",
+    Number(inactivePriceItems.count),
   );
 
   const demoProviderItemSpread = await query(

@@ -10,6 +10,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
+- [Proveedores](./proveedores.md)
 - [Auditoria](./auditoria.md)
 - [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
@@ -36,6 +37,9 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
   edicion, filtro de desactivados;
   paginacion con selector 10 / 50 / 100 registros por pagina.
+- Proveedores: modulo documentado con reglas de proveedor, listas de precios,
+  moneda y tipo unico por lista, y composicion/reactivacion automatica de
+  `Grupo Productos`.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
   subtitulo, boton primario, barra pills + busqueda inline).

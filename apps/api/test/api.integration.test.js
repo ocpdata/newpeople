@@ -1512,7 +1512,9 @@ describe("API integration baseline", () => {
       });
 
     expect(createLegacyListResponse.status).toBe(201);
-    expect(createLegacyListResponse.body.message).toBe("Lista de precios creada");
+    expect(createLegacyListResponse.body.message).toBe(
+      "Lista de precios creada",
+    );
     const firstListId = Number(createLegacyListResponse.body.id);
     cleanup.providerPriceListIds.push(firstListId);
 
@@ -1535,20 +1537,24 @@ describe("API integration baseline", () => {
 
     expect(listsResponse.status).toBe(200);
     expect(listsResponse.body).toHaveLength(2);
-    expect(listsResponse.body.every((list) => Number(list.is_active) === 0)).toBe(
-      true,
-    );
     expect(
-      listsResponse.body.find((list) => Number(list.id) === firstListId)?.currency_code,
+      listsResponse.body.every((list) => Number(list.is_active) === 0),
+    ).toBe(true);
+    expect(
+      listsResponse.body.find((list) => Number(list.id) === firstListId)
+        ?.currency_code,
     ).toBe("USD");
     expect(
-      listsResponse.body.find((list) => Number(list.id) === firstListId)?.item_type,
+      listsResponse.body.find((list) => Number(list.id) === firstListId)
+        ?.item_type,
     ).toBe("producto");
     expect(
-      listsResponse.body.find((list) => Number(list.id) === secondListId)?.currency_code,
+      listsResponse.body.find((list) => Number(list.id) === secondListId)
+        ?.currency_code,
     ).toBe("MXN");
     expect(
-      listsResponse.body.find((list) => Number(list.id) === secondListId)?.item_type,
+      listsResponse.body.find((list) => Number(list.id) === secondListId)
+        ?.item_type,
     ).toBe("servicio_propio");
 
     const activateFirstListResponse = await request(app)
@@ -1686,7 +1692,9 @@ describe("API integration baseline", () => {
       });
 
     expect(createSecondListPriceResponse.status).toBe(201);
-    cleanup.providerPriceItemIds.push(Number(createSecondListPriceResponse.body.id));
+    cleanup.providerPriceItemIds.push(
+      Number(createSecondListPriceResponse.body.id),
+    );
 
     const invalidMixedCurrencyUpdateResponse = await request(app)
       .put(
@@ -1713,7 +1721,9 @@ describe("API integration baseline", () => {
       .send({ statusCode: "inactivo" });
 
     expect(deactivateSecondPriceResponse.status).toBe(200);
-    expect(deactivateSecondPriceResponse.body.message).toBe("Precio desactivado");
+    expect(deactivateSecondPriceResponse.body.message).toBe(
+      "Precio desactivado",
+    );
 
     const deactivatePriceResponse = await request(app)
       .patch(
@@ -1755,7 +1765,9 @@ describe("API integration baseline", () => {
       .send({ statusCode: "desactivado" });
 
     expect(deactivateProviderResponse.status).toBe(200);
-    expect(deactivateProviderResponse.body.message).toBe("Proveedor desactivado");
+    expect(deactivateProviderResponse.body.message).toBe(
+      "Proveedor desactivado",
+    );
 
     const reactivatePriceResponse = await request(app)
       .patch(
@@ -1783,6 +1795,225 @@ describe("API integration baseline", () => {
 
     expect(invalidTypeResponse.status).toBe(400);
     expect(invalidTypeResponse.body.message).toBe("Datos invalidos");
+  });
+
+  test("proveedores_precios acepta grupo_productos y mantiene el tipo unico por lista", async () => {
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_provider_price_group_products`,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const productComponentProviderId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_component_product_provider`,
+    });
+    cleanup.providerIds.push(productComponentProviderId);
+
+    const productComponentItemId = await createDirectProviderPriceItem({
+      providerId: productComponentProviderId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_component_product_item`,
+      itemType: "producto",
+    });
+    cleanup.providerPriceItemIds.push(productComponentItemId);
+
+    const serviceComponentProviderId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_component_service_provider`,
+    });
+    cleanup.providerIds.push(serviceComponentProviderId);
+
+    const serviceComponentListId = await createDirectProviderPriceList({
+      providerId: serviceComponentProviderId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_component_service_list`,
+      currencyId: ctx.catalogIds.currencyUsdId,
+      itemType: "servicio_propio",
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(serviceComponentListId);
+
+    const serviceComponentItemId = await createDirectProviderPriceItem({
+      providerId: serviceComponentProviderId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${TEST_PREFIX}_component_service_item`,
+      itemType: "servicio_propio",
+      listId: serviceComponentListId,
+    });
+    cleanup.providerPriceItemIds.push(serviceComponentItemId);
+
+    const [productComponentRow] = await query(
+      `SELECT price FROM provider_price_list_items WHERE id = ? LIMIT 1`,
+      [productComponentItemId],
+    );
+    const [serviceComponentRow] = await query(
+      `SELECT price FROM provider_price_list_items WHERE id = ? LIMIT 1`,
+      [serviceComponentItemId],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.providers.manager@example.com`,
+    );
+
+    const createPriceListResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-lists`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Lista Grupo ${TEST_PREFIX}`,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        itemType: "grupo_productos",
+      });
+
+    expect(createPriceListResponse.status).toBe(201);
+    const priceListId = Number(createPriceListResponse.body.id);
+    cleanup.providerPriceListIds.push(priceListId);
+
+    const createPriceResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-GROUP-${TEST_PREFIX}`,
+        description: "Precio grupo productos",
+        itemType: "grupo_productos",
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+        components: [
+          {
+            componentItemId: productComponentItemId,
+            quantity: 2,
+          },
+          {
+            componentItemId: serviceComponentItemId,
+            quantity: 3,
+          },
+        ],
+      });
+
+    expect(createPriceResponse.status).toBe(201);
+    cleanup.providerPriceItemIds.push(Number(createPriceResponse.body.id));
+
+    const listResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-lists`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toHaveLength(1);
+    expect(listResponse.body[0].item_type).toBe("grupo_productos");
+
+    const itemsResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(itemsResponse.status).toBe(200);
+    expect(itemsResponse.body).toHaveLength(1);
+    expect(itemsResponse.body[0].item_type).toBe("grupo_productos");
+    expect(itemsResponse.body[0].components).toHaveLength(2);
+    expect(Number(itemsResponse.body[0].price)).toBe(
+      Number(
+        (
+          Number(productComponentRow.price) * 2 +
+          Number(serviceComponentRow.price) * 3
+        ).toFixed(2),
+      ),
+    );
+
+    const invalidMixedTypeResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-GROUP-MIX-${TEST_PREFIX}`,
+        description: "Intento con tipo distinto",
+        itemType: "producto",
+        price: 2600,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+      });
+
+    expect(invalidMixedTypeResponse.status).toBe(409);
+    expect(invalidMixedTypeResponse.body.message).toBe(
+      "La lista de precios solo permite items de tipo Grupo Productos.",
+    );
+    expect(invalidMixedTypeResponse.body.itemType).toBe("grupo_productos");
+
+    const activateGroupListResponse = await request(app)
+      .patch(`/api/providers/${providerId}/price-lists/${priceListId}/status`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "activa" });
+
+    expect(activateGroupListResponse.status).toBe(200);
+
+    const invalidNestedGroupResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: `PRICE-GROUP-NEST-${TEST_PREFIX}`,
+        description: "Intento con grupo anidado",
+        itemType: "grupo_productos",
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+        components: [
+          {
+            componentItemId: Number(createPriceResponse.body.id),
+            quantity: 1,
+          },
+        ],
+      });
+
+    expect(invalidNestedGroupResponse.status).toBe(409);
+    expect(invalidNestedGroupResponse.body.message).toBe(
+      "Los componentes de un Grupo Productos solo pueden ser Productos o Servicios Propios",
+    );
+
+    const [productComponentItemRow] = await query(
+      `SELECT price_list_id FROM provider_price_list_items WHERE id = ? LIMIT 1`,
+      [productComponentItemId],
+    );
+
+    const deactivateProductComponentResponse = await request(app)
+      .patch(
+        `/api/providers/${productComponentProviderId}/price-lists/${productComponentItemRow.price_list_id}/items/${productComponentItemId}/status`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "inactivo" });
+
+    expect(deactivateProductComponentResponse.status).toBe(200);
+    expect(deactivateProductComponentResponse.body.message).toBe(
+      "Precio desactivado",
+    );
+
+    const groupItemsAfterComponentDeactivationResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(groupItemsAfterComponentDeactivationResponse.status).toBe(200);
+    expect(
+      groupItemsAfterComponentDeactivationResponse.body[0]
+        .activation_status_code,
+    ).toBe("inactivo");
+
+    const reactivateProductComponentResponse = await request(app)
+      .patch(
+        `/api/providers/${productComponentProviderId}/price-lists/${productComponentItemRow.price_list_id}/items/${productComponentItemId}/status`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({ statusCode: "activo" });
+
+    expect(reactivateProductComponentResponse.status).toBe(200);
+    expect(reactivateProductComponentResponse.body.message).toBe(
+      "Precio activado",
+    );
+
+    const groupItemsAfterComponentReactivationResponse = await request(app)
+      .get(`/api/providers/${providerId}/price-lists/${priceListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(groupItemsAfterComponentReactivationResponse.status).toBe(200);
+    expect(
+      groupItemsAfterComponentReactivationResponse.body[0]
+        .activation_status_code,
+    ).toBe("activo");
   });
 
   test("oportunidades.request crea pendiente y no permite activar sin oportunidades.create", async () => {

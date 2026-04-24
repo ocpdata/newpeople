@@ -480,7 +480,7 @@ CREATE TABLE IF NOT EXISTS provider_price_lists (
   provider_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(180) NOT NULL,
   currency_id BIGINT UNSIGNED NULL,
-  item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto',
+  item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto',
   is_active TINYINT(1) NOT NULL DEFAULT 0,
   created_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME(3) NOT NULL,
@@ -526,7 +526,7 @@ DEALLOCATE PREPARE s_provider_price_lists_currency_fk;
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,
-    "ALTER TABLE provider_price_lists ADD COLUMN item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto' AFTER currency_id",
+    "ALTER TABLE provider_price_lists ADD COLUMN item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto' AFTER currency_id",
     'SELECT 1'
   )
   FROM information_schema.COLUMNS
@@ -538,13 +538,29 @@ PREPARE s_provider_price_lists_item_type_col FROM @stmt;
 EXECUTE s_provider_price_lists_item_type_col;
 DEALLOCATE PREPARE s_provider_price_lists_item_type_col;
 
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    "ALTER TABLE provider_price_lists MODIFY COLUMN item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto'",
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND COLUMN_NAME = 'item_type'
+    AND COLUMN_TYPE = "enum('producto','servicio_propio','grupo_productos')"
+);
+PREPARE s_provider_price_lists_item_type_enum FROM @stmt;
+EXECUTE s_provider_price_lists_item_type_enum;
+DEALLOCATE PREPARE s_provider_price_lists_item_type_enum;
+
 CREATE TABLE IF NOT EXISTS provider_price_list_items (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   provider_id BIGINT UNSIGNED NOT NULL,
   price_list_id BIGINT UNSIGNED NULL,
   code VARCHAR(80) NOT NULL,
   description TEXT NULL,
-  item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto',
+  item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto',
   price DECIMAL(12, 2) NOT NULL,
   currency_id BIGINT UNSIGNED NOT NULL,
   activation_status_id BIGINT UNSIGNED NOT NULL,
@@ -564,7 +580,7 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,
-    "ALTER TABLE provider_price_list_items ADD COLUMN item_type ENUM('producto', 'servicio_propio') NOT NULL DEFAULT 'producto' AFTER description",
+    "ALTER TABLE provider_price_list_items ADD COLUMN item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto' AFTER description",
     'SELECT 1'
   )
   FROM information_schema.COLUMNS
@@ -575,6 +591,22 @@ SET @stmt := (
 PREPARE s_provider_price_list_items_item_type_col FROM @stmt;
 EXECUTE s_provider_price_list_items_item_type_col;
 DEALLOCATE PREPARE s_provider_price_list_items_item_type_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    "ALTER TABLE provider_price_list_items MODIFY COLUMN item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto'",
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND COLUMN_NAME = 'item_type'
+    AND COLUMN_TYPE = "enum('producto','servicio_propio','grupo_productos')"
+);
+PREPARE s_provider_price_list_items_item_type_enum FROM @stmt;
+EXECUTE s_provider_price_list_items_item_type_enum;
+DEALLOCATE PREPARE s_provider_price_list_items_item_type_enum;
 
 SET @stmt := (
   SELECT IF(
@@ -605,6 +637,23 @@ SET @stmt := (
 PREPARE s_provider_price_list_items_price_list_fk FROM @stmt;
 EXECUTE s_provider_price_list_items_price_list_fk;
 DEALLOCATE PREPARE s_provider_price_list_items_price_list_fk;
+
+CREATE TABLE IF NOT EXISTS provider_price_list_item_components (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  grupo_item_id BIGINT UNSIGNED NOT NULL,
+  component_item_id BIGINT UNSIGNED NOT NULL,
+  quantity DECIMAL(12, 2) NOT NULL,
+  sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_provider_price_list_item_components_grupo_item FOREIGN KEY (grupo_item_id) REFERENCES provider_price_list_items(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_list_item_components_component_item FOREIGN KEY (component_item_id) REFERENCES provider_price_list_items(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_list_item_components_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_provider_price_list_item_components_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT uq_provider_price_list_item_components_pair UNIQUE (grupo_item_id, component_item_id)
+);
 
 INSERT INTO provider_price_lists (
   provider_id,

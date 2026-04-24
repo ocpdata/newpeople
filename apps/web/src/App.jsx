@@ -8990,11 +8990,17 @@ function ProvidersPage({ can, currentUser }) {
   const [providerPriceListItems, setProviderPriceListItems] = useState([]);
   const [loadingProviderPriceListItems, setLoadingProviderPriceListItems] =
     useState(false);
-  const [showProviderPriceListCreateModal, setShowProviderPriceListCreateModal] =
-    useState(false);
+  const [
+    showProviderPriceListCreateModal,
+    setShowProviderPriceListCreateModal,
+  ] = useState(false);
   const [showPriceItemModal, setShowPriceItemModal] = useState(false);
   const [editingPriceItemId, setEditingPriceItemId] = useState(null);
+  const [priceListStatusFilter, setPriceListStatusFilter] = useState("all");
   const [priceItemStatusFilter, setPriceItemStatusFilter] = useState("all");
+  const [priceItemQuery, setPriceItemQuery] = useState("");
+  const [priceItemSortField, setPriceItemSortField] = useState("id");
+  const [priceItemSortDirection, setPriceItemSortDirection] = useState("desc");
   const [priceItemsPage, setPriceItemsPage] = useState(1);
   const [openProviderMenuId, setOpenProviderMenuId] = useState(null);
   const [openPriceListMenuId, setOpenPriceListMenuId] = useState(null);
@@ -9052,6 +9058,27 @@ function ProvidersPage({ can, currentUser }) {
     currencyId: "",
     activationStatusId: "",
   });
+  const [groupBaseQuery, setGroupBaseQuery] = useState("");
+  const [groupBaseResults, setGroupBaseResults] = useState([]);
+  const [loadingGroupBaseResults, setLoadingGroupBaseResults] = useState(false);
+  const [selectedGroupBaseItem, setSelectedGroupBaseItem] = useState(null);
+  const [groupBaseProviderId, setGroupBaseProviderId] = useState("");
+  const [groupBaseActiveList, setGroupBaseActiveList] = useState(null);
+  const [groupBaseProviderItems, setGroupBaseProviderItems] = useState([]);
+  const [groupBaseItemFilter, setGroupBaseItemFilter] = useState("");
+  const [loadingGroupBaseProviderItems, setLoadingGroupBaseProviderItems] =
+    useState(false);
+  const [groupComponentProviderId, setGroupComponentProviderId] = useState("");
+  const [groupComponentActiveList, setGroupComponentActiveList] =
+    useState(null);
+  const [groupComponentProviderItems, setGroupComponentProviderItems] =
+    useState([]);
+  const [groupComponentItemFilter, setGroupComponentItemFilter] = useState("");
+  const [
+    loadingGroupComponentProviderItems,
+    setLoadingGroupComponentProviderItems,
+  ] = useState(false);
+  const [groupPriceItemComponents, setGroupPriceItemComponents] = useState([]);
   const [providerPriceListForm, setProviderPriceListForm] = useState({
     name: "",
     currencyId: "",
@@ -9109,6 +9136,208 @@ function ProvidersPage({ can, currentUser }) {
       currencyId: String(catalogs.currencies?.[0]?.id || ""),
       itemType: "producto",
     };
+  }
+
+  function resetGroupPriceItemState() {
+    setGroupBaseQuery("");
+    setGroupBaseResults([]);
+    setLoadingGroupBaseResults(false);
+    setSelectedGroupBaseItem(null);
+    setGroupBaseProviderId("");
+    setGroupBaseActiveList(null);
+    setGroupBaseProviderItems([]);
+    setGroupBaseItemFilter("");
+    setLoadingGroupBaseProviderItems(false);
+    setGroupComponentProviderId("");
+    setGroupComponentActiveList(null);
+    setGroupComponentProviderItems([]);
+    setGroupComponentItemFilter("");
+    setLoadingGroupComponentProviderItems(false);
+    setGroupPriceItemComponents([]);
+  }
+
+  function normalizeGroupComponentSelection(item, overrides = {}) {
+    const componentItemId = Number(
+      overrides.componentItemId ?? item.component_item_id ?? item.id ?? 0,
+    );
+    return {
+      componentItemId,
+      quantity: Number(overrides.quantity ?? item.quantity ?? 1),
+      providerId: Number(item.provider_id || 0),
+      providerName: item.provider_name || "",
+      priceListId: Number(item.price_list_id || 0),
+      priceListName: item.price_list_name || "",
+      code: item.code || "",
+      description: item.description || "",
+      itemType: item.item_type || "producto",
+      itemTypeLabel:
+        item.item_type_label ||
+        getPriceItemTypeLabel(item.item_type || "producto"),
+      price: Number(item.price || 0),
+      currencyId: Number(item.currency_id || 0),
+      currencyCode: item.currency_code || "USD",
+    };
+  }
+
+  async function searchActivePriceItems(searchValue, limit = 8, options = {}) {
+    const trimmedQuery = String(searchValue || "").trim();
+    const allowEmptyQuery = Boolean(options.allowEmptyQuery);
+    if (
+      (!allowEmptyQuery && trimmedQuery.length < 2) ||
+      !selectedPriceListCurrencyId
+    ) {
+      return [];
+    }
+
+    const { data } = await api.get("/api/providers/price-items/search", {
+      params: {
+        q: trimmedQuery,
+        currencyId: Number(selectedPriceListCurrencyId),
+        limit,
+      },
+    });
+
+    return Array.isArray(data) ? data : [];
+  }
+
+  function applyBaseItemToGroup(candidate) {
+    setSelectedGroupBaseItem(candidate);
+    setGroupBaseProviderId(String(candidate.provider_id || ""));
+    setGroupBaseActiveList({
+      id: Number(candidate.price_list_id || 0),
+      name: candidate.price_list_name || "",
+    });
+    setGroupBaseQuery(candidate.code || "");
+    setGroupBaseItemFilter(candidate.code || "");
+    setPriceItemForm((prev) => ({
+      ...prev,
+      code: candidate.code || prev.code,
+      description: candidate.description || prev.description,
+    }));
+  }
+
+  function clearSelectedGroupBaseItem() {
+    setSelectedGroupBaseItem(null);
+    setGroupBaseQuery("");
+  }
+
+  const activeProvidersForGroupBase = useMemo(
+    () =>
+      providers
+        .filter((provider) => isProviderActive(provider))
+        .sort((left, right) =>
+          String(left.name || "").localeCompare(
+            String(right.name || ""),
+            "es",
+            {
+              sensitivity: "base",
+              numeric: true,
+            },
+          ),
+        ),
+    [providers],
+  );
+
+  const filteredGroupBaseProviderItems = useMemo(() => {
+    const trimmedFilter = normalizeText(groupBaseItemFilter);
+    if (!trimmedFilter) return groupBaseProviderItems;
+
+    return groupBaseProviderItems.filter((item) => {
+      const haystack = [
+        item.code,
+        item.description,
+        item.provider_name,
+        item.price_list_name,
+        item.currency_code,
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      return normalizeText(haystack).includes(trimmedFilter);
+    });
+  }, [groupBaseProviderItems, groupBaseItemFilter]);
+
+  function addGroupComponent(candidate) {
+    const normalizedComponent = normalizeGroupComponentSelection(candidate);
+    setGroupPriceItemComponents((prev) => {
+      if (
+        prev.some(
+          (component) =>
+            Number(component.componentItemId) ===
+            Number(normalizedComponent.componentItemId),
+        )
+      ) {
+        return prev;
+      }
+      return [...prev, normalizedComponent];
+    });
+  }
+
+  function updateGroupComponentQuantity(componentItemId, nextValue) {
+    const quantity = Number(nextValue);
+    const normalizedQuantity = Number.isFinite(quantity)
+      ? Math.max(0, Math.round(quantity * 100) / 100)
+      : 0;
+    setGroupPriceItemComponents((prev) =>
+      prev.map((component) =>
+        Number(component.componentItemId) === Number(componentItemId)
+          ? {
+              ...component,
+              quantity: normalizedQuantity,
+            }
+          : component,
+      ),
+    );
+  }
+
+  function stepGroupComponentQuantity(componentItemId, delta) {
+    setGroupPriceItemComponents((prev) =>
+      prev.map((component) => {
+        if (Number(component.componentItemId) !== Number(componentItemId)) {
+          return component;
+        }
+
+        return {
+          ...component,
+          quantity: Math.max(
+            0,
+            Math.round((Number(component.quantity || 0) + delta) * 100) / 100,
+          ),
+        };
+      }),
+    );
+  }
+
+  function removeGroupComponent(componentItemId) {
+    setGroupPriceItemComponents((prev) =>
+      prev.filter(
+        (component) =>
+          Number(component.componentItemId) !== Number(componentItemId),
+      ),
+    );
+  }
+
+  function moveGroupComponent(componentItemId, direction) {
+    setGroupPriceItemComponents((prev) => {
+      const currentIndex = prev.findIndex(
+        (component) =>
+          Number(component.componentItemId) === Number(componentItemId),
+      );
+
+      if (currentIndex < 0) return prev;
+
+      const targetIndex =
+        direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+      if (targetIndex < 0 || targetIndex >= prev.length) {
+        return prev;
+      }
+
+      const next = [...prev];
+      const [movedComponent] = next.splice(currentIndex, 1);
+      next.splice(targetIndex, 0, movedComponent);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -9217,6 +9446,240 @@ function ProvidersPage({ can, currentUser }) {
         buildDefaultPriceItemForm().activationStatusId,
     }));
   }, [showPriceItemModal, editingPriceItemId, catalogs]);
+
+  const selectedPriceListItemType =
+    providerPriceLists.find(
+      (priceList) =>
+        Number(priceList.id) === Number(selectedProviderPriceListId),
+    )?.item_type || null;
+
+  const selectedPriceListCurrencyId =
+    providerPriceLists.find(
+      (priceList) =>
+        Number(priceList.id) === Number(selectedProviderPriceListId),
+    )?.currency_id || null;
+
+  const isGroupProductsPriceList =
+    selectedPriceListItemType === "grupo_productos" ||
+    priceItemForm.itemType === "grupo_productos";
+
+  useEffect(() => {
+    if (!showPriceItemModal || !isGroupProductsPriceList) {
+      setGroupBaseResults([]);
+      setLoadingGroupBaseResults(false);
+      return undefined;
+    }
+
+    const trimmedQuery = groupBaseQuery.trim();
+    if (trimmedQuery.length < 2 || !selectedPriceListCurrencyId) {
+      setGroupBaseResults([]);
+      setLoadingGroupBaseResults(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setLoadingGroupBaseResults(true);
+      try {
+        const results = await searchActivePriceItems(trimmedQuery);
+        if (!cancelled) {
+          setGroupBaseResults(results);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGroupBaseResults([]);
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible buscar productos de referencia",
+            ),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingGroupBaseResults(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    showPriceItemModal,
+    isGroupProductsPriceList,
+    groupBaseQuery,
+    selectedPriceListCurrencyId,
+  ]);
+
+  useEffect(() => {
+    if (!showPriceItemModal || !isGroupProductsPriceList) {
+      setGroupBaseActiveList(null);
+      setGroupBaseProviderItems([]);
+      setLoadingGroupBaseProviderItems(false);
+      return undefined;
+    }
+
+    if (!groupBaseProviderId || !selectedPriceListCurrencyId) {
+      setGroupBaseActiveList(null);
+      setGroupBaseProviderItems([]);
+      setLoadingGroupBaseProviderItems(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadGroupBaseProviderItems() {
+      setLoadingGroupBaseProviderItems(true);
+      try {
+        const lists = await loadProviderPriceLists(groupBaseProviderId);
+        const activeList =
+          lists.find(
+            (list) =>
+              Number(list.is_active) === 1 &&
+              Number(list.currency_id) === Number(selectedPriceListCurrencyId),
+          ) || null;
+
+        if (!activeList) {
+          if (!cancelled) {
+            setGroupBaseActiveList(null);
+            setGroupBaseProviderItems([]);
+          }
+          return;
+        }
+
+        const items = await loadProviderPriceListItems(
+          groupBaseProviderId,
+          activeList.id,
+        );
+
+        if (!cancelled) {
+          setGroupBaseActiveList({
+            id: Number(activeList.id),
+            name: activeList.name || "",
+          });
+          setGroupBaseProviderItems(
+            items.filter(
+              (item) =>
+                isPriceItemActive(item) &&
+                String(item.item_type) !== "grupo_productos",
+            ),
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGroupBaseActiveList(null);
+          setGroupBaseProviderItems([]);
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible cargar la lista activa del proveedor seleccionado",
+            ),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingGroupBaseProviderItems(false);
+        }
+      }
+    }
+
+    loadGroupBaseProviderItems();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showPriceItemModal,
+    isGroupProductsPriceList,
+    groupBaseProviderId,
+    selectedPriceListCurrencyId,
+  ]);
+
+  useEffect(() => {
+    if (!showPriceItemModal || !isGroupProductsPriceList) {
+      setGroupComponentActiveList(null);
+      setGroupComponentProviderItems([]);
+      setLoadingGroupComponentProviderItems(false);
+      return undefined;
+    }
+
+    if (!groupComponentProviderId || !selectedPriceListCurrencyId) {
+      setGroupComponentActiveList(null);
+      setGroupComponentProviderItems([]);
+      setLoadingGroupComponentProviderItems(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadGroupComponentProviderItems() {
+      setLoadingGroupComponentProviderItems(true);
+      try {
+        const lists = await loadProviderPriceLists(groupComponentProviderId);
+        const activeList =
+          lists.find(
+            (list) =>
+              Number(list.is_active) === 1 &&
+              Number(list.currency_id) === Number(selectedPriceListCurrencyId),
+          ) || null;
+
+        if (!activeList) {
+          if (!cancelled) {
+            setGroupComponentActiveList(null);
+            setGroupComponentProviderItems([]);
+          }
+          return;
+        }
+
+        const items = await loadProviderPriceListItems(
+          groupComponentProviderId,
+          activeList.id,
+        );
+
+        if (!cancelled) {
+          setGroupComponentActiveList({
+            id: Number(activeList.id),
+            name: activeList.name || "",
+          });
+          setGroupComponentProviderItems(
+            items.filter(
+              (item) =>
+                isPriceItemActive(item) &&
+                String(item.item_type) !== "grupo_productos",
+            ),
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGroupComponentActiveList(null);
+          setGroupComponentProviderItems([]);
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible cargar la lista activa del proveedor para componentes",
+            ),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingGroupComponentProviderItems(false);
+        }
+      }
+    }
+
+    loadGroupComponentProviderItems();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showPriceItemModal,
+    isGroupProductsPriceList,
+    groupComponentProviderId,
+    selectedPriceListCurrencyId,
+  ]);
 
   function openCreateProviderModal() {
     setError("");
@@ -9426,9 +9889,17 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   function getPriceItemTypeLabel(itemType) {
-    return String(itemType) === "servicio_propio"
-      ? "Servicios Propios"
-      : "Productos";
+    const normalizedItemType = String(itemType || "producto");
+
+    if (normalizedItemType === "servicio_propio") {
+      return "Servicios Propios";
+    }
+
+    if (normalizedItemType === "grupo_productos") {
+      return "Grupo Productos";
+    }
+
+    return "Productos";
   }
 
   function buildProviderPriceListExportFileName(provider, priceList, filter) {
@@ -9460,7 +9931,10 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   async function exportProviderPriceListToExcel() {
-    if (!currentProviderForPriceList || visibleProviderPriceListItems.length === 0) {
+    if (
+      !currentProviderForPriceList ||
+      visibleProviderPriceListItems.length === 0
+    ) {
       return;
     }
 
@@ -9674,7 +10148,9 @@ function ProvidersPage({ can, currentUser }) {
     setLoadingProviderPriceListItems(true);
 
     try {
-      const lists = await loadProviderPriceLists(providerPriceListModalProvider.id);
+      const lists = await loadProviderPriceLists(
+        providerPriceListModalProvider.id,
+      );
       setProviderPriceLists(lists);
 
       const nextSelectedList =
@@ -9683,7 +10159,9 @@ function ProvidersPage({ can, currentUser }) {
         lists[0] ||
         null;
 
-      setSelectedProviderPriceListId(nextSelectedList ? Number(nextSelectedList.id) : null);
+      setSelectedProviderPriceListId(
+        nextSelectedList ? Number(nextSelectedList.id) : null,
+      );
 
       if (!nextSelectedList) {
         setProviderPriceListItems([]);
@@ -9704,6 +10182,7 @@ function ProvidersPage({ can, currentUser }) {
   async function openProviderPriceListModal(provider, preferredListId = null) {
     setError("");
     setSuccess("");
+    setPriceListStatusFilter("all");
     setPriceItemStatusFilter("all");
     setProviderPriceListModalProvider(provider);
     setProviderPriceLists([]);
@@ -9721,10 +10200,15 @@ function ProvidersPage({ can, currentUser }) {
         lists[0] ||
         null;
 
-      setSelectedProviderPriceListId(nextSelectedList ? Number(nextSelectedList.id) : null);
+      setSelectedProviderPriceListId(
+        nextSelectedList ? Number(nextSelectedList.id) : null,
+      );
 
       if (nextSelectedList) {
-        const items = await loadProviderPriceListItems(provider.id, nextSelectedList.id);
+        const items = await loadProviderPriceListItems(
+          provider.id,
+          nextSelectedList.id,
+        );
         setProviderPriceListItems(items);
       }
     } catch (err) {
@@ -9760,7 +10244,10 @@ function ProvidersPage({ can, currentUser }) {
     } catch (err) {
       setProviderPriceListItems([]);
       setError(
-        getApiErrorMessage(err, "No fue posible cargar los precios de la lista"),
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar los precios de la lista",
+        ),
       );
     } finally {
       setLoadingProviderPriceListItems(false);
@@ -9769,6 +10256,7 @@ function ProvidersPage({ can, currentUser }) {
 
   function closeProviderPriceListModal() {
     if (savingPriceItem || savingProviderPriceList) return;
+    setPriceListStatusFilter("all");
     setPriceItemStatusFilter("all");
     setProviderPriceListModalProvider(null);
     setProviderPriceLists([]);
@@ -9847,6 +10335,7 @@ function ProvidersPage({ can, currentUser }) {
     setError("");
     setSuccess("");
     setEditingPriceItemId(null);
+    resetGroupPriceItemState();
     const defaultForm = buildDefaultPriceItemForm();
     setPriceItemForm({
       ...defaultForm,
@@ -9860,6 +10349,7 @@ function ProvidersPage({ can, currentUser }) {
     setError("");
     setSuccess("");
     setEditingPriceItemId(Number(item.id));
+    resetGroupPriceItemState();
     setPriceItemForm({
       code: item.code || "",
       description: item.description || "",
@@ -9869,6 +10359,19 @@ function ProvidersPage({ can, currentUser }) {
       currencyId: String(lockedPriceItemCurrencyId || item.currency_id || ""),
       activationStatusId: String(item.activation_status_id || ""),
     });
+    if (
+      item.item_type === "grupo_productos" &&
+      Array.isArray(item.components)
+    ) {
+      setGroupPriceItemComponents(
+        item.components.map((component) =>
+          normalizeGroupComponentSelection(component, {
+            componentItemId: component.component_item_id,
+            quantity: component.quantity,
+          }),
+        ),
+      );
+    }
     setShowPriceItemModal(true);
   }
 
@@ -9876,6 +10379,7 @@ function ProvidersPage({ can, currentUser }) {
     if (savingPriceItem) return;
     setShowPriceItemModal(false);
     setEditingPriceItemId(null);
+    resetGroupPriceItemState();
   }
 
   function togglePriceItemMenu(itemId) {
@@ -9964,13 +10468,20 @@ function ProvidersPage({ can, currentUser }) {
     setSavingPriceItem(true);
 
     try {
+      const isGroupItem = priceItemForm.itemType === "grupo_productos";
       const payload = {
         code: String(priceItemForm.code || "").trim(),
         description: priceItemForm.description || undefined,
         itemType: priceItemForm.itemType,
-        price: Number(priceItemForm.price),
+        price: isGroupItem ? undefined : Number(priceItemForm.price),
         currencyId: Number(priceItemForm.currencyId),
         activationStatusId: Number(priceItemForm.activationStatusId),
+        components: isGroupItem
+          ? groupPriceItemComponents.map((component) => ({
+              componentItemId: Number(component.componentItemId),
+              quantity: Number(component.quantity),
+            }))
+          : undefined,
       };
 
       const { data } = editingPriceItemId
@@ -10097,6 +10608,35 @@ function ProvidersPage({ can, currentUser }) {
     [providerPriceListItems],
   );
 
+  const priceListStatusCounts = useMemo(
+    () =>
+      providerPriceLists.reduce(
+        (totals, priceList) => {
+          totals.all += 1;
+          if (Number(priceList.is_active) === 1) {
+            totals.active += 1;
+          } else {
+            totals.inactive += 1;
+          }
+          return totals;
+        },
+        { all: 0, active: 0, inactive: 0 },
+      ),
+    [providerPriceLists],
+  );
+
+  const visibleProviderPriceLists = useMemo(() => {
+    if (priceListStatusFilter === "all") {
+      return providerPriceLists;
+    }
+
+    return providerPriceLists.filter((priceList) =>
+      priceListStatusFilter === "active"
+        ? Number(priceList.is_active) === 1
+        : Number(priceList.is_active) !== 1,
+    );
+  }, [providerPriceLists, priceListStatusFilter]);
+
   const priceItemStatusCounts = useMemo(
     () =>
       providerPriceListItems.reduce(
@@ -10115,17 +10655,73 @@ function ProvidersPage({ can, currentUser }) {
   );
 
   const visibleProviderPriceListItems = useMemo(() => {
-    if (priceItemStatusFilter === "all") {
-      return providerPriceListItems;
-    }
+    const statusFilteredItems =
+      priceItemStatusFilter === "all"
+        ? providerPriceListItems
+        : providerPriceListItems.filter((item) =>
+            priceItemStatusFilter === "active"
+              ? isPriceItemActive(item)
+              : isPriceItemInactive(item),
+          );
 
-    return providerPriceListItems.filter(
-      (item) =>
-        priceItemStatusFilter === "active"
-          ? isPriceItemActive(item)
-          : isPriceItemInactive(item),
-    );
-  }, [providerPriceListItems, priceItemStatusFilter]);
+    const query = priceItemQuery.trim().toLowerCase();
+    const queryFilteredItems = !query
+      ? statusFilteredItems
+      : statusFilteredItems.filter((item) => {
+          const haystack = [
+            item.id,
+            item.code,
+            item.description,
+            item.price,
+            item.currency_code,
+            getPriceItemStatusLabel(item),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          return haystack.includes(query);
+        });
+
+    const list = [...queryFilteredItems];
+    const readValue = (item) => {
+      if (priceItemSortField === "id") return Number(item.id) || 0;
+      if (priceItemSortField === "codigo") return String(item.code || "");
+      if (priceItemSortField === "descripcion") {
+        return String(item.description || "");
+      }
+      if (priceItemSortField === "precio") return Number(item.price) || 0;
+      if (priceItemSortField === "estado") {
+        return getPriceItemStatusLabel(item);
+      }
+      return "";
+    };
+
+    list.sort((a, b) => {
+      const aValue = readValue(a);
+      const bValue = readValue(b);
+
+      let result = 0;
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        result = aValue - bValue;
+      } else {
+        result = String(aValue).localeCompare(String(bValue), "es", {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return priceItemSortDirection === "asc" ? result : -result;
+    });
+
+    return list;
+  }, [
+    providerPriceListItems,
+    priceItemStatusFilter,
+    priceItemQuery,
+    priceItemSortDirection,
+    priceItemSortField,
+  ]);
 
   const priceItemsPerPage = 10;
   const totalPriceItemPages = Math.max(
@@ -10139,7 +10735,26 @@ function ProvidersPage({ can, currentUser }) {
 
   useEffect(() => {
     setPriceItemsPage(1);
-  }, [selectedProviderPriceListId, priceItemStatusFilter, providerPriceListItems.length]);
+  }, [
+    selectedProviderPriceListId,
+    priceItemQuery,
+    priceItemStatusFilter,
+    providerPriceListItems.length,
+  ]);
+
+  function togglePriceItemSort(field) {
+    if (priceItemSortField === field) {
+      setPriceItemSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setPriceItemSortField(field);
+    setPriceItemSortDirection("asc");
+  }
+
+  function getPriceItemSortArrow(field) {
+    if (priceItemSortField !== field) return "↕";
+    return priceItemSortDirection === "asc" ? "↑" : "↓";
+  }
 
   const lockedPriceItemCurrencyId = useMemo(() => {
     if (selectedProviderPriceList?.currency_id) {
@@ -10166,6 +10781,52 @@ function ProvidersPage({ can, currentUser }) {
   );
 
   const isPriceItemCurrencyLocked = Boolean(lockedPriceItemCurrencyId);
+
+  const groupPriceItemTotal = useMemo(
+    () =>
+      Number(
+        groupPriceItemComponents
+          .reduce(
+            (sum, component) =>
+              sum +
+              Number(component.price || 0) * Number(component.quantity || 0),
+            0,
+          )
+          .toFixed(2),
+      ),
+    [groupPriceItemComponents],
+  );
+
+  const availableGroupComponentProviderItems = useMemo(
+    () =>
+      groupComponentProviderItems.filter(
+        (candidate) =>
+          !groupPriceItemComponents.some(
+            (component) =>
+              Number(component.componentItemId) === Number(candidate.id),
+          ),
+      ),
+    [groupComponentProviderItems, groupPriceItemComponents],
+  );
+
+  const filteredGroupComponentResults = useMemo(() => {
+    const trimmedFilter = normalizeText(groupComponentItemFilter);
+    if (!trimmedFilter) return availableGroupComponentProviderItems;
+
+    return availableGroupComponentProviderItems.filter((item) => {
+      const haystack = [
+        item.code,
+        item.description,
+        item.provider_name,
+        item.price_list_name,
+        item.currency_code,
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      return normalizeText(haystack).includes(trimmedFilter);
+    });
+  }, [availableGroupComponentProviderItems, groupComponentItemFilter]);
 
   return (
     <section className="panel">
@@ -10521,7 +11182,8 @@ function ProvidersPage({ can, currentUser }) {
               <div className="opportunity-modal-header-copy">
                 <h3 className="modal-title">Listas de precios</h3>
                 <p className="field-hint opportunity-modal-subtitle">
-                  {currentProviderForPriceList?.name || "Proveedor"} · {providerPriceLists.length} listas
+                  {currentProviderForPriceList?.name || "Proveedor"} ·{" "}
+                  {providerPriceLists.length} listas
                 </p>
               </div>
               <div className="opportunity-modal-header-meta">
@@ -10542,6 +11204,61 @@ function ProvidersPage({ can, currentUser }) {
             </div>
 
             <div className="provider-price-list-toolbar">
+              {!loadingProviderPriceLists && providerPriceLists.length > 0 && (
+                <div className="provider-price-lists-toolbar">
+                  <div
+                    className="accounts-status-pills"
+                    role="group"
+                    aria-label="Filtrar listas de precios por estado"
+                  >
+                    <button
+                      type="button"
+                      className={
+                        priceListStatusFilter === "all"
+                          ? "status-filter-pill status-filter-pill-all is-selected"
+                          : "status-filter-pill status-filter-pill-all"
+                      }
+                      aria-pressed={priceListStatusFilter === "all"}
+                      onClick={() => setPriceListStatusFilter("all")}
+                    >
+                      <span className="status-filter-pill-text">Todas</span>
+                      <span className="status-filter-pill-count">
+                        {priceListStatusCounts.all}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        priceListStatusFilter === "active"
+                          ? "status-filter-pill status-filter-pill-active is-selected"
+                          : "status-filter-pill status-filter-pill-active"
+                      }
+                      aria-pressed={priceListStatusFilter === "active"}
+                      onClick={() => setPriceListStatusFilter("active")}
+                    >
+                      <span className="status-filter-pill-text">Activas</span>
+                      <span className="status-filter-pill-count">
+                        {priceListStatusCounts.active}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        priceListStatusFilter === "inactive"
+                          ? "status-filter-pill status-filter-pill-inactive is-selected"
+                          : "status-filter-pill status-filter-pill-inactive"
+                      }
+                      aria-pressed={priceListStatusFilter === "inactive"}
+                      onClick={() => setPriceListStatusFilter("inactive")}
+                    >
+                      <span className="status-filter-pill-text">Inactivas</span>
+                      <span className="status-filter-pill-count">
+                        {priceListStatusCounts.inactive}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="provider-price-list-actions">
                 {canCreateProviderPrices && (
                   <div className="provider-price-list-action-item">
@@ -10552,11 +11269,17 @@ function ProvidersPage({ can, currentUser }) {
                       aria-label="Crear lista de precios"
                       title="Crear lista de precios"
                     >
-                      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
                         <path d="M12 5a.75.75 0 0 1 .75.75v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5A.75.75 0 0 1 12 5Z" />
                       </svg>
                     </button>
-                    <span className="provider-price-list-action-label">Crear lista</span>
+                    <span className="provider-price-list-action-label">
+                      Crear lista
+                    </span>
                   </div>
                 )}
                 {!loadingProviderPriceListItems &&
@@ -10569,10 +11292,22 @@ function ProvidersPage({ can, currentUser }) {
                         className="provider-price-list-icon-btn"
                         onClick={exportProviderPriceListToExcel}
                         disabled={exportingPriceList}
-                        aria-label={exportingPriceList ? "Exportando a Excel" : "Exportar a Excel"}
-                        title={exportingPriceList ? "Exportando a Excel" : "Exportar a Excel"}
+                        aria-label={
+                          exportingPriceList
+                            ? "Exportando a Excel"
+                            : "Exportar a Excel"
+                        }
+                        title={
+                          exportingPriceList
+                            ? "Exportando a Excel"
+                            : "Exportar a Excel"
+                        }
                       >
-                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                        <svg
+                          viewBox="0 0 24 24"
+                          focusable="false"
+                          aria-hidden="true"
+                        >
                           <path d="M12 4a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.75A.75.75 0 0 1 12 4Z" />
                           <path d="M5.75 16a.75.75 0 0 1 .75.75v1.5c0 .14.11.25.25.25h10.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 17.25 20H6.75A1.75 1.75 0 0 1 5 18.25v-1.5a.75.75 0 0 1 .75-.75Z" />
                         </svg>
@@ -10593,12 +11328,18 @@ function ProvidersPage({ can, currentUser }) {
                         aria-label="Agregar producto"
                         title="Agregar producto"
                       >
-                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                        <svg
+                          viewBox="0 0 24 24"
+                          focusable="false"
+                          aria-hidden="true"
+                        >
                           <path d="M6.75 5A1.75 1.75 0 0 0 5 6.75v10.5C5 18.22 5.78 19 6.75 19h10.5c.97 0 1.75-.78 1.75-1.75V6.75C19 5.78 18.22 5 17.25 5zm0 1.5h10.5a.25.25 0 0 1 .25.25v10.5a.25.25 0 0 1-.25.25H6.75a.25.25 0 0 1-.25-.25V6.75c0-.14.11-.25.25-.25Z" />
                           <path d="M12 8.25a.75.75 0 0 1 .75.75v2.25H15a.75.75 0 0 1 0 1.5h-2.25V15a.75.75 0 0 1-1.5 0v-2.25H9a.75.75 0 0 1 0-1.5h2.25V9a.75.75 0 0 1 .75-.75Z" />
                         </svg>
                       </button>
-                      <span className="provider-price-list-action-label">Agregar producto</span>
+                      <span className="provider-price-list-action-label">
+                        Agregar producto
+                      </span>
                     </div>
                   )}
               </div>
@@ -10609,99 +11350,137 @@ function ProvidersPage({ can, currentUser }) {
                 Cargando listas de precios...
               </p>
             ) : providerPriceLists.length > 0 ? (
-              <div className="provider-price-list-table-wrap provider-price-lists-compact-wrap">
-                <table className="provider-price-list-table provider-price-lists-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Nombre</th>
-                      <th>Estado</th>
-                      <th>Productos</th>
-                      <th>Moneda</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {providerPriceLists.map((priceList) => {
-                      const isSelected =
-                        Number(priceList.id) === Number(selectedProviderPriceListId);
+              <>
+                {visibleProviderPriceLists.length > 0 ? (
+                  <div
+                    className={
+                      openPriceListMenuId !== null
+                        ? "provider-price-list-table-wrap provider-price-lists-compact-wrap provider-price-lists-compact-wrap-menu-open"
+                        : "provider-price-list-table-wrap provider-price-lists-compact-wrap"
+                    }
+                  >
+                    <table className="provider-price-list-table provider-price-lists-table">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Nombre</th>
+                          <th>Tipo</th>
+                          <th>Estado</th>
+                          <th>Productos</th>
+                          <th>Moneda</th>
+                          <th>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleProviderPriceLists.map((priceList) => {
+                          const isSelected =
+                            Number(priceList.id) ===
+                            Number(selectedProviderPriceListId);
 
-                      return (
-                        <tr
-                          key={priceList.id}
-                          className={isSelected ? "provider-price-list-row-selected" : ""}
-                          onClick={() => selectProviderPriceList(priceList.id)}
-                        >
-                          <td>{priceList.id}</td>
-                          <td>{priceList.name}</td>
-                          <td>
-                            <span
+                          return (
+                            <tr
+                              key={priceList.id}
                               className={
-                                Number(priceList.is_active) === 1
-                                  ? "user-status-badge active"
-                                  : "user-status-badge inactive"
+                                isSelected
+                                  ? "provider-price-list-row-selected"
+                                  : ""
+                              }
+                              onClick={() =>
+                                selectProviderPriceList(priceList.id)
                               }
                             >
-                              {Number(priceList.is_active) === 1 ? "Activa" : "Inactiva"}
-                            </span>
-                          </td>
-                          <td>
-                            {priceList.active_price_items || 0} activos de {priceList.total_price_items || 0} productos
-                          </td>
-                          <td>{priceList.currency_code || "-"}</td>
-                          <td
-                            className="provider-price-list-inline-actions"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <div className="user-kebab-wrap provider-price-lists-kebab-wrap">
-                              <button
-                                type="button"
-                                className="kebab-btn"
-                                onClick={() => togglePriceListMenu(priceList.id)}
-                                aria-label="Abrir acciones"
+                              <td>{priceList.id}</td>
+                              <td>{priceList.name}</td>
+                              <td>
+                                <span className="record-id-badge">
+                                  {getPriceItemTypeLabel(priceList.item_type)}
+                                </span>
+                              </td>
+                              <td>
+                                <span
+                                  className={
+                                    Number(priceList.is_active) === 1
+                                      ? "user-status-badge active"
+                                      : "user-status-badge inactive"
+                                  }
+                                >
+                                  {Number(priceList.is_active) === 1
+                                    ? "Activa"
+                                    : "Inactiva"}
+                                </span>
+                              </td>
+                              <td>
+                                {priceList.active_price_items || 0} activos de{" "}
+                                {priceList.total_price_items || 0} productos
+                              </td>
+                              <td>{priceList.currency_code || "-"}</td>
+                              <td
+                                className="provider-price-list-inline-actions"
+                                onClick={(event) => event.stopPropagation()}
                               >
-                                ⋮
-                              </button>
-                              {openPriceListMenuId === priceList.id && (
-                                <div className="user-kebab-menu">
+                                <div className="user-kebab-wrap provider-price-lists-kebab-wrap">
                                   <button
                                     type="button"
-                                    disabled={
-                                      !canUpdateProviderPrices ||
-                                      Number(priceList.is_active) === 1
-                                    }
+                                    className="kebab-btn"
                                     onClick={() =>
-                                      runPriceListAction(() =>
-                                        updateProviderPriceListStatus(priceList, "activa"),
-                                      )
+                                      togglePriceListMenu(priceList.id)
                                     }
+                                    aria-label="Abrir acciones"
                                   >
-                                    Activar
+                                    ⋮
                                   </button>
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      !canUpdateProviderPrices ||
-                                      Number(priceList.is_active) !== 1
-                                    }
-                                    onClick={() =>
-                                      runPriceListAction(() =>
-                                        updateProviderPriceListStatus(priceList, "inactiva"),
-                                      )
-                                    }
-                                  >
-                                    Desactivar
-                                  </button>
+                                  {openPriceListMenuId === priceList.id && (
+                                    <div className="user-kebab-menu">
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canUpdateProviderPrices ||
+                                          Number(priceList.is_active) === 1
+                                        }
+                                        onClick={() =>
+                                          runPriceListAction(() =>
+                                            updateProviderPriceListStatus(
+                                              priceList,
+                                              "activa",
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        Activar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canUpdateProviderPrices ||
+                                          Number(priceList.is_active) !== 1
+                                        }
+                                        onClick={() =>
+                                          runPriceListAction(() =>
+                                            updateProviderPriceListStatus(
+                                              priceList,
+                                              "inactiva",
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        Desactivar
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="field-hint provider-price-list-empty">
+                    No hay listas de precios que coincidan con ese estado.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="field-hint provider-price-list-empty">
                 Este proveedor todavia no tiene listas de precios registradas.
@@ -10713,9 +11492,6 @@ function ProvidersPage({ can, currentUser }) {
                 <div className="provider-price-list-selection-header">
                   <div>
                     <h4>Precios de {selectedProviderPriceList.name}</h4>
-                    <p className="field-hint provider-price-list-empty">
-                      {activePriceItemsCount} activos de {providerPriceListItems.length} · {getPriceItemTypeLabel(selectedProviderPriceList.item_type)}
-                    </p>
                   </div>
                   <span
                     className={
@@ -10724,61 +11500,79 @@ function ProvidersPage({ can, currentUser }) {
                         : "user-status-badge inactive"
                     }
                   >
-                    {Number(selectedProviderPriceList.is_active) === 1 ? "Activa" : "Inactiva"}
+                    {Number(selectedProviderPriceList.is_active) === 1
+                      ? "Activa"
+                      : "Inactiva"}
                   </span>
                 </div>
 
-                {!loadingProviderPriceListItems && providerPriceListItems.length > 0 && (
-                  <div className="roles-pills-bar accounts-pills-bar-row">
-                    <div
-                      className="accounts-status-pills"
-                      role="group"
-                      aria-label="Filtrar precios por estado"
-                    >
-                      <button
-                        type="button"
-                        className={
-                          priceItemStatusFilter === "all"
-                            ? "status-filter-pill status-filter-pill-all is-selected"
-                            : "status-filter-pill status-filter-pill-all"
-                        }
-                        aria-pressed={priceItemStatusFilter === "all"}
-                        onClick={() => setPriceItemStatusFilter("all")}
+                {!loadingProviderPriceListItems &&
+                  providerPriceListItems.length > 0 && (
+                    <div className="roles-pills-bar accounts-pills-bar-row provider-price-items-toolbar">
+                      <div
+                        className="accounts-status-pills"
+                        role="group"
+                        aria-label="Filtrar precios por estado"
                       >
-                        <span className="status-filter-pill-text">Todos</span>
-                        <span className="status-filter-pill-count">{priceItemStatusCounts.all}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={
-                          priceItemStatusFilter === "active"
-                            ? "status-filter-pill status-filter-pill-active is-selected"
-                            : "status-filter-pill status-filter-pill-active"
-                        }
-                        aria-pressed={priceItemStatusFilter === "active"}
-                        onClick={() => setPriceItemStatusFilter("active")}
-                      >
-                        <span className="status-filter-pill-text">Activos</span>
-                        <span className="status-filter-pill-count">{priceItemStatusCounts.active}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={
-                          priceItemStatusFilter === "inactive"
-                            ? "status-filter-pill status-filter-pill-inactive is-selected"
-                            : "status-filter-pill status-filter-pill-inactive"
-                        }
-                        aria-pressed={priceItemStatusFilter === "inactive"}
-                        onClick={() => setPriceItemStatusFilter("inactive")}
-                      >
-                        <span className="status-filter-pill-text">Inactivos</span>
-                        <span className="status-filter-pill-count">
-                          {priceItemStatusCounts.inactive}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          className={
+                            priceItemStatusFilter === "all"
+                              ? "status-filter-pill status-filter-pill-all is-selected"
+                              : "status-filter-pill status-filter-pill-all"
+                          }
+                          aria-pressed={priceItemStatusFilter === "all"}
+                          onClick={() => setPriceItemStatusFilter("all")}
+                        >
+                          <span className="status-filter-pill-text">Todos</span>
+                          <span className="status-filter-pill-count">
+                            {priceItemStatusCounts.all}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            priceItemStatusFilter === "active"
+                              ? "status-filter-pill status-filter-pill-active is-selected"
+                              : "status-filter-pill status-filter-pill-active"
+                          }
+                          aria-pressed={priceItemStatusFilter === "active"}
+                          onClick={() => setPriceItemStatusFilter("active")}
+                        >
+                          <span className="status-filter-pill-text">
+                            Activos
+                          </span>
+                          <span className="status-filter-pill-count">
+                            {priceItemStatusCounts.active}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            priceItemStatusFilter === "inactive"
+                              ? "status-filter-pill status-filter-pill-inactive is-selected"
+                              : "status-filter-pill status-filter-pill-inactive"
+                          }
+                          aria-pressed={priceItemStatusFilter === "inactive"}
+                          onClick={() => setPriceItemStatusFilter("inactive")}
+                        >
+                          <span className="status-filter-pill-text">
+                            Inactivos
+                          </span>
+                          <span className="status-filter-pill-count">
+                            {priceItemStatusCounts.inactive}
+                          </span>
+                        </button>
+                      </div>
+                      <input
+                        className="accounts-search-inline"
+                        type="text"
+                        placeholder="Filtrar por ID, código, descripción, precio o estado"
+                        value={priceItemQuery}
+                        onChange={(e) => setPriceItemQuery(e.target.value)}
+                      />
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {loadingProviderPriceListItems ? (
                   <p className="field-hint provider-price-list-empty">
@@ -10786,16 +11580,69 @@ function ProvidersPage({ can, currentUser }) {
                   </p>
                 ) : visibleProviderPriceListItems.length > 0 ? (
                   <>
-                    <div className="provider-price-list-table-wrap">
+                    <div
+                      className={
+                        openPriceItemMenuId !== null
+                          ? "provider-price-list-table-wrap provider-price-items-table-wrap-menu-open"
+                          : "provider-price-list-table-wrap"
+                      }
+                    >
                       <table className="provider-price-list-table">
                         <thead>
                           <tr>
-                            <th>ID</th>
-                            <th>Codigo</th>
-                            <th>Descripcion</th>
-                            <th>Tipo</th>
-                            <th>Precio</th>
-                            <th>Estado</th>
+                            <th>
+                              <button
+                                type="button"
+                                className="provider-price-list-sort-btn"
+                                onClick={() => togglePriceItemSort("id")}
+                              >
+                                ID <span>{getPriceItemSortArrow("id")}</span>
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className="provider-price-list-sort-btn"
+                                onClick={() => togglePriceItemSort("codigo")}
+                              >
+                                Codigo{" "}
+                                <span>{getPriceItemSortArrow("codigo")}</span>
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className="provider-price-list-sort-btn"
+                                onClick={() =>
+                                  togglePriceItemSort("descripcion")
+                                }
+                              >
+                                Descripcion{" "}
+                                <span>
+                                  {getPriceItemSortArrow("descripcion")}
+                                </span>
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className="provider-price-list-sort-btn"
+                                onClick={() => togglePriceItemSort("precio")}
+                              >
+                                Precio{" "}
+                                <span>{getPriceItemSortArrow("precio")}</span>
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className="provider-price-list-sort-btn"
+                                onClick={() => togglePriceItemSort("estado")}
+                              >
+                                Estado{" "}
+                                <span>{getPriceItemSortArrow("estado")}</span>
+                              </button>
+                            </th>
                             <th>Acciones</th>
                           </tr>
                         </thead>
@@ -10806,13 +11653,15 @@ function ProvidersPage({ can, currentUser }) {
                               <td>{item.code}</td>
                               <td>{item.description || "-"}</td>
                               <td>
-                                <span className="record-id-badge">
-                                  {getPriceItemTypeLabel(item.item_type)}
-                                </span>
+                                {formatPriceValue(
+                                  item.price,
+                                  item.currency_code,
+                                )}
                               </td>
-                              <td>{formatPriceValue(item.price, item.currency_code)}</td>
                               <td>
-                                <span className={getPriceItemStatusBadgeClass(item)}>
+                                <span
+                                  className={getPriceItemStatusBadgeClass(item)}
+                                >
                                   {getPriceItemStatusLabel(item)}
                                 </span>
                               </td>
@@ -10846,7 +11695,10 @@ function ProvidersPage({ can, currentUser }) {
                                           isPriceItemActive(item)
                                         }
                                         onClick={() =>
-                                          openPriceItemStatusConfirmation(item, "activo")
+                                          openPriceItemStatusConfirmation(
+                                            item,
+                                            "activo",
+                                          )
                                         }
                                       >
                                         Activar
@@ -10858,7 +11710,10 @@ function ProvidersPage({ can, currentUser }) {
                                           isPriceItemInactive(item)
                                         }
                                         onClick={() =>
-                                          openPriceItemStatusConfirmation(item, "inactivo")
+                                          openPriceItemStatusConfirmation(
+                                            item,
+                                            "inactivo",
+                                          )
                                         }
                                       >
                                         Desactivar
@@ -10906,7 +11761,9 @@ function ProvidersPage({ can, currentUser }) {
                         </button>
                       </div>
                       <div className="users-pagination-right">
-                        <span className="users-pagination-label">Por página:</span>
+                        <span className="users-pagination-label">
+                          Por página:
+                        </span>
                         <button
                           type="button"
                           className="users-perpage-btn is-active"
@@ -10920,7 +11777,9 @@ function ProvidersPage({ can, currentUser }) {
                 ) : (
                   <p className="field-hint provider-price-list-empty">
                     {providerPriceListItems.length > 0
-                      ? "No hay precios para el estado seleccionado."
+                      ? priceItemQuery.trim()
+                        ? "No hay precios que coincidan con el filtro aplicado."
+                        : "No hay precios para el estado seleccionado."
                       : "La lista seleccionada todavia no tiene precios registrados."}
                   </p>
                 )}
@@ -10941,7 +11800,10 @@ function ProvidersPage({ can, currentUser }) {
       )}
 
       {showProviderPriceListCreateModal && providerPriceListModalProvider && (
-        <div className="modal-overlay" onClick={closeProviderPriceListCreateModal}>
+        <div
+          className="modal-overlay"
+          onClick={closeProviderPriceListCreateModal}
+        >
           <div
             className="modal-dialog modal-dialog-account provider-price-list-create-modal"
             onClick={(e) => e.stopPropagation()}
@@ -10961,7 +11823,8 @@ function ProvidersPage({ can, currentUser }) {
             >
               <section className="account-form-section account-modal-section">
                 <p className="field-hint provider-price-list-create-note">
-                  La lista se crea inactiva y usa una sola moneda y un solo tipo.
+                  La lista se crea inactiva y usa una sola moneda y un solo
+                  tipo.
                 </p>
                 <div className="provider-price-list-create-grid">
                   <div className="field-group provider-price-list-create-name-field">
@@ -11018,6 +11881,7 @@ function ProvidersPage({ can, currentUser }) {
                     >
                       <option value="producto">Productos</option>
                       <option value="servicio_propio">Servicios Propios</option>
+                      <option value="grupo_productos">Grupo Productos</option>
                     </select>
                   </div>
                 </div>
@@ -11047,13 +11911,17 @@ function ProvidersPage({ can, currentUser }) {
       {showPriceItemModal && providerPriceListModalProvider && (
         <div className="modal-overlay" onClick={closePriceItemModal}>
           <div
-            className="modal-dialog modal-dialog-account provider-price-item-modal"
+            className={
+              isGroupProductsPriceList
+                ? "modal-dialog modal-dialog-account provider-price-item-modal provider-price-item-modal-group"
+                : "modal-dialog modal-dialog-account provider-price-item-modal"
+            }
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
               <div className="opportunity-modal-header-copy">
                 <h3 className="modal-title">
-                  {editingPriceItemId ? "Editar precio" : "Agregar precio"}
+                  {editingPriceItemId ? "Editar precio" : "Agregar producto"}
                 </h3>
                 <p className="field-hint opportunity-modal-subtitle">
                   {providerPriceListModalProvider.name}
@@ -11075,131 +11943,675 @@ function ProvidersPage({ can, currentUser }) {
             </div>
 
             <form
-              className="account-create-form in-modal"
+              className="account-create-form in-modal provider-price-item-form"
               onSubmit={savePriceItem}
             >
-              <section className="account-form-section account-modal-section">
-                <h4>Datos del precio</h4>
-                <div className="grid-form account-grid-main">
-                  <div className="field-group">
-                    <label>
-                      Codigo <span className="required-mark">*</span>
-                    </label>
-                    <input
-                      value={priceItemForm.code}
-                      onChange={(e) =>
-                        setPriceItemForm((prev) => ({
-                          ...prev,
-                          code: e.target.value,
-                        }))
-                      }
-                      required
-                    />
+              <section className="account-form-section account-modal-section provider-price-item-section">
+                {isGroupProductsPriceList ? (
+                  <>
+                    <div className="provider-group-section-header">
+                      <div>
+                        <h4>ITEM DE GRUPO</h4>
+                        <p className="field-hint">
+                          Define primero la identidad del item y luego revisa su
+                          configuracion final.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="provider-group-item-layout">
+                      <div className="provider-group-item-main">
+                        <div className="provider-group-item-card">
+                          <div className="provider-group-item-card-header">
+                            <span className="provider-group-item-step">
+                              1. Origen y codigo
+                            </span>
+                            <p className="field-hint">
+                              Escribe un codigo propio o precargalo desde un
+                              precio activo existente.
+                            </p>
+                          </div>
+                          <div className="field-group">
+                            <div className="provider-group-code-heading">
+                              <label>
+                                Codigo <span className="required-mark">*</span>
+                              </label>
+                            </div>
+                            <div className="provider-group-code-panel">
+                              <input
+                                value={priceItemForm.code}
+                                onChange={(e) =>
+                                  setPriceItemForm((prev) => ({
+                                    ...prev,
+                                    code: e.target.value,
+                                  }))
+                                }
+                                placeholder="Ej. GP-SERVICIOS-001"
+                                required
+                              />
+                              <span className="field-hint provider-group-code-hint">
+                                Escribe un codigo propio o toma uno existente
+                                como base y luego ajustalo si lo necesitas.
+                              </span>
+                              <div className="provider-group-item-picker">
+                                <div className="provider-group-item-picker-header">
+                                  <strong>
+                                    Usar producto existente como base
+                                  </strong>
+                                  <span className="field-hint">
+                                    Al seleccionarlo se precargan el codigo y la
+                                    descripcion, pero ambos siguen siendo
+                                    editables.
+                                  </span>
+                                </div>
+                                <div className="provider-group-code-select-grid">
+                                  <div className="field-group">
+                                    <label>Proveedor activo</label>
+                                    <select
+                                      value={groupBaseProviderId}
+                                      onChange={(e) => {
+                                        setGroupBaseProviderId(e.target.value);
+                                        setSelectedGroupBaseItem(null);
+                                        setGroupBaseActiveList(null);
+                                        setGroupBaseProviderItems([]);
+                                        setGroupBaseItemFilter("");
+                                      }}
+                                    >
+                                      <option value="">
+                                        Selecciona un proveedor
+                                      </option>
+                                      {activeProvidersForGroupBase.map(
+                                        (provider) => (
+                                          <option
+                                            key={provider.id}
+                                            value={provider.id}
+                                          >
+                                            {provider.name}
+                                          </option>
+                                        ),
+                                      )}
+                                    </select>
+                                  </div>
+                                  <div className="field-group">
+                                    <label>Lista activa</label>
+                                    <input
+                                      value={groupBaseActiveList?.name || ""}
+                                      placeholder="Se detecta automaticamente"
+                                      readOnly
+                                    />
+                                  </div>
+                                </div>
+                                <div className="field-group">
+                                  <label>Producto existente</label>
+                                  <input
+                                    className="provider-group-search-input"
+                                    value={groupBaseItemFilter}
+                                    onChange={(e) => {
+                                      setGroupBaseItemFilter(e.target.value);
+                                      setSelectedGroupBaseItem(null);
+                                    }}
+                                    placeholder="Busca por codigo o descripcion"
+                                    disabled={
+                                      !groupBaseProviderId ||
+                                      !groupBaseActiveList ||
+                                      loadingGroupBaseProviderItems ||
+                                      groupBaseProviderItems.length === 0
+                                    }
+                                  />
+                                </div>
+                                {groupBaseActiveList &&
+                                !loadingGroupBaseProviderItems &&
+                                filteredGroupBaseProviderItems.length > 0 ? (
+                                  <div className="provider-group-search-results provider-group-search-results-compact provider-group-search-results-code">
+                                    {filteredGroupBaseProviderItems.map(
+                                      (item) => (
+                                        <button
+                                          key={item.id}
+                                          type="button"
+                                          className={
+                                            Number(
+                                              selectedGroupBaseItem?.id,
+                                            ) === Number(item.id)
+                                              ? "provider-group-search-card provider-group-search-card-selected"
+                                              : "provider-group-search-card"
+                                          }
+                                          onClick={() =>
+                                            applyBaseItemToGroup(item)
+                                          }
+                                        >
+                                          <span className="provider-group-search-copy">
+                                            <strong className="provider-group-search-copy-code">
+                                              {item.code}
+                                            </strong>
+                                            <span className="provider-group-search-copy-description">
+                                              {item.description ||
+                                                "Sin descripcion"}
+                                            </span>
+                                            <span className="provider-group-search-copy-price">
+                                              {formatPriceValue(
+                                                item.price,
+                                                item.currency_code,
+                                              )}
+                                            </span>
+                                          </span>
+                                          <span className="provider-group-search-btn">
+                                            Seleccionar
+                                          </span>
+                                        </button>
+                                      ),
+                                    )}
+                                  </div>
+                                ) : null}
+                                {groupBaseProviderId &&
+                                !loadingGroupBaseProviderItems &&
+                                !groupBaseActiveList ? (
+                                  <p className="field-hint provider-group-search-empty">
+                                    El proveedor seleccionado no tiene una lista
+                                    activa compatible con la moneda de esta
+                                    lista.
+                                  </p>
+                                ) : null}
+                                {groupBaseActiveList &&
+                                !loadingGroupBaseProviderItems &&
+                                groupBaseProviderItems.length === 0 ? (
+                                  <p className="field-hint provider-group-search-empty">
+                                    La lista activa de este proveedor no tiene
+                                    precios activos disponibles.
+                                  </p>
+                                ) : null}
+                                {groupBaseActiveList &&
+                                !loadingGroupBaseProviderItems &&
+                                groupBaseProviderItems.length > 0 &&
+                                filteredGroupBaseProviderItems.length === 0 ? (
+                                  <p className="field-hint provider-group-search-empty">
+                                    No hay productos que coincidan con ese
+                                    criterio.
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <aside className="provider-group-item-side provider-group-review-side">
+                        <div className="provider-group-item-card">
+                          <div className="provider-group-item-card-header">
+                            <span className="provider-group-item-step">
+                              2. Descripcion
+                            </span>
+                            <p className="field-hint">
+                              Resume claramente el alcance o contenido principal
+                              del grupo.
+                            </p>
+                          </div>
+                          <div className="field-group">
+                            <label>Descripcion del item de grupo</label>
+                            <textarea
+                              value={priceItemForm.description}
+                              onChange={(e) =>
+                                setPriceItemForm((prev) => ({
+                                  ...prev,
+                                  description: e.target.value,
+                                }))
+                              }
+                              placeholder="Describe el item principal del grupo"
+                            />
+                          </div>
+                        </div>
+                        <div className="provider-group-item-card provider-group-item-card-accent provider-group-review-card">
+                          <div className="provider-group-item-card-header">
+                            <span className="provider-group-item-step">
+                              3. Revision final
+                            </span>
+                            <p className="field-hint">
+                              El total se completa automaticamente con base en
+                              los componentes agregados.
+                            </p>
+                          </div>
+                          <div className="field-group provider-group-review-field">
+                            <label>
+                              Precio <span className="required-mark">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={Number(
+                                groupPriceItemTotal || 0,
+                              ).toLocaleString("en-US", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                              required
+                              readOnly
+                            />
+                            <span className="field-hint provider-group-price-hint">
+                              El total se calcula automaticamente con la suma de
+                              los componentes.
+                            </span>
+                          </div>
+                          <div className="field-group provider-group-review-field">
+                            <label>
+                              Estado <span className="required-mark">*</span>
+                            </label>
+                            <select
+                              value={priceItemForm.activationStatusId}
+                              onChange={(e) =>
+                                setPriceItemForm((prev) => ({
+                                  ...prev,
+                                  activationStatusId: e.target.value,
+                                }))
+                              }
+                              required
+                            >
+                              {catalogs.priceItemStatuses.map((status) => (
+                                <option key={status.id} value={status.id}>
+                                  {status.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </aside>
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid-form provider-price-item-grid">
+                    <div className="field-group">
+                      <label>
+                        Codigo <span className="required-mark">*</span>
+                      </label>
+                      <input
+                        value={priceItemForm.code}
+                        onChange={(e) =>
+                          setPriceItemForm((prev) => ({
+                            ...prev,
+                            code: e.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label>
+                        Precio <span className="required-mark">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={priceItemForm.price}
+                        onChange={(e) =>
+                          setPriceItemForm((prev) => ({
+                            ...prev,
+                            price: e.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label>
+                        Estado <span className="required-mark">*</span>
+                      </label>
+                      <select
+                        value={priceItemForm.activationStatusId}
+                        onChange={(e) =>
+                          setPriceItemForm((prev) => ({
+                            ...prev,
+                            activationStatusId: e.target.value,
+                          }))
+                        }
+                        required
+                      >
+                        {catalogs.priceItemStatuses.map((status) => (
+                          <option key={status.id} value={status.id}>
+                            {status.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <div className="field-group">
-                    <label>
-                      Precio <span className="required-mark">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={priceItemForm.price}
-                      onChange={(e) =>
-                        setPriceItemForm((prev) => ({
-                          ...prev,
-                          price: e.target.value,
-                        }))
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="field-group">
-                    <label>
-                      Tipo <span className="required-mark">*</span>
-                    </label>
-                    <select
-                      value={priceItemForm.itemType}
-                      disabled
-                      required
-                    >
-                      <option value="producto">Productos</option>
-                      <option value="servicio_propio">Servicios Propios</option>
-                    </select>
-                    {selectedProviderPriceList && (
-                      <p className="field-hint">
-                        La lista de precios usa un solo tipo: {getPriceItemTypeLabel(selectedProviderPriceList.item_type)}.
-                      </p>
-                    )}
-                  </div>
-                  <div className="field-group">
-                    <label>
-                      Moneda <span className="required-mark">*</span>
-                    </label>
-                    <select
-                      value={priceItemForm.currencyId}
-                      disabled={isPriceItemCurrencyLocked}
-                      onChange={(e) =>
-                        setPriceItemForm((prev) => ({
-                          ...prev,
-                          currencyId: e.target.value,
-                        }))
-                      }
-                      required
-                    >
-                      <option value="">Selecciona moneda</option>
-                      {catalogs.currencies.map((currency) => (
-                        <option key={currency.id} value={currency.id}>
-                          {currency.code} - {currency.name}
-                        </option>
-                      ))}
-                    </select>
-                    {isPriceItemCurrencyLocked && lockedPriceItemCurrency && (
-                      <p className="field-hint">
-                        La lista de precios usa una sola moneda: {" "}
-                        {lockedPriceItemCurrency.code} - {lockedPriceItemCurrency.name}.
-                      </p>
-                    )}
-                  </div>
-                  <div className="field-group">
-                    <label>
-                      Estado <span className="required-mark">*</span>
-                    </label>
-                    <select
-                      value={priceItemForm.activationStatusId}
-                      onChange={(e) =>
-                        setPriceItemForm((prev) => ({
-                          ...prev,
-                          activationStatusId: e.target.value,
-                        }))
-                      }
-                      required
-                    >
-                      {catalogs.priceItemStatuses.map((status) => (
-                        <option key={status.id} value={status.id}>
-                          {status.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                )}
               </section>
 
-              <section className="account-form-section account-modal-section account-description-section">
-                <h4>Descripcion</h4>
-                <div className="field-group">
-                  <textarea
-                    value={priceItemForm.description}
-                    onChange={(e) =>
-                      setPriceItemForm((prev) => ({
-                        ...prev,
-                        description: e.target.value,
-                      }))
-                    }
-                    placeholder="Descripción del precio o alcance del ítem"
-                  />
-                </div>
-              </section>
+              {isGroupProductsPriceList && (
+                <>
+                  <section className="account-form-section account-modal-section provider-price-item-section provider-group-search-section">
+                    <div className="provider-group-section-header">
+                      <div>
+                        <h4>Componentes del grupo</h4>
+                        <p className="field-hint">
+                          Agrega productos o servicios propios activos. El total
+                          se recalcula automaticamente.
+                        </p>
+                      </div>
+                      <span className="record-id-badge">
+                        {groupPriceItemComponents.length} componentes
+                      </span>
+                    </div>
+                    <div className="provider-group-item-picker">
+                      <div className="provider-group-item-picker-header">
+                        <strong>Agregar componente existente</strong>
+                        <span className="field-hint">
+                          Selecciona un proveedor activo y usa su lista activa
+                          para elegir el producto a agregar.
+                        </span>
+                      </div>
+                      <div className="provider-group-code-select-grid">
+                        <div className="field-group">
+                          <label>Proveedor activo</label>
+                          <select
+                            value={groupComponentProviderId}
+                            onChange={(e) => {
+                              setGroupComponentProviderId(e.target.value);
+                              setGroupComponentActiveList(null);
+                              setGroupComponentProviderItems([]);
+                              setGroupComponentItemFilter("");
+                            }}
+                          >
+                            <option value="">Selecciona un proveedor</option>
+                            {activeProvidersForGroupBase.map((provider) => (
+                              <option key={provider.id} value={provider.id}>
+                                {provider.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="field-group">
+                          <label>Lista activa</label>
+                          <input
+                            value={groupComponentActiveList?.name || ""}
+                            placeholder="Se detecta automaticamente"
+                            readOnly
+                          />
+                        </div>
+                      </div>
+                      <div className="field-group">
+                        <label>Producto existente</label>
+                        <input
+                          className="provider-group-search-input"
+                          type="text"
+                          value={groupComponentItemFilter}
+                          onChange={(e) =>
+                            setGroupComponentItemFilter(e.target.value)
+                          }
+                          placeholder="Busca por codigo o descripcion"
+                          disabled={
+                            !groupComponentProviderId ||
+                            !groupComponentActiveList ||
+                            loadingGroupComponentProviderItems ||
+                            availableGroupComponentProviderItems.length === 0
+                          }
+                        />
+                      </div>
+                      {loadingGroupComponentProviderItems ? (
+                        <p className="field-hint provider-group-search-empty">
+                          Cargando componentes...
+                        </p>
+                      ) : filteredGroupComponentResults.length > 0 ? (
+                        <div className="provider-group-search-results provider-group-search-results-compact provider-group-search-results-code">
+                          {filteredGroupComponentResults.map((candidate) => (
+                            <div
+                              key={`component-${candidate.id}`}
+                              className="provider-group-search-card"
+                              onClick={() => addGroupComponent(candidate)}
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  addGroupComponent(candidate);
+                                }
+                              }}
+                              role="button"
+                              tabIndex={0}
+                            >
+                              <span className="provider-group-search-copy">
+                                <strong className="provider-group-search-copy-code">
+                                  {candidate.code}
+                                </strong>
+                                <span className="provider-group-search-copy-description">
+                                  {candidate.description || "Sin descripcion"}
+                                </span>
+                                <span className="field-hint provider-group-search-copy-price">
+                                  {formatPriceValue(
+                                    candidate.price,
+                                    candidate.currency_code,
+                                  )}
+                                </span>
+                              </span>
+                              <button
+                                type="button"
+                                className="btn-secondary provider-group-search-btn"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  addGroupComponent(candidate);
+                                }}
+                              >
+                                Agregar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : groupComponentProviderId &&
+                        !groupComponentActiveList ? (
+                        <p className="field-hint provider-group-search-empty">
+                          El proveedor seleccionado no tiene una lista activa
+                          compatible con la moneda de esta lista.
+                        </p>
+                      ) : groupComponentActiveList &&
+                        availableGroupComponentProviderItems.length === 0 ? (
+                        <p className="field-hint provider-group-search-empty">
+                          La lista activa de este proveedor no tiene productos
+                          disponibles para agregar.
+                        </p>
+                      ) : groupComponentActiveList &&
+                        groupComponentItemFilter.trim() ? (
+                        <p className="field-hint provider-group-search-empty">
+                          No hay productos que coincidan con ese criterio.
+                        </p>
+                      ) : (
+                        <p className="field-hint provider-group-search-empty">
+                          Selecciona un proveedor activo para ver productos
+                          disponibles.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="provider-group-components-wrap">
+                      {groupPriceItemComponents.length > 0 ? (
+                        <table className="provider-group-components-table">
+                          <thead>
+                            <tr>
+                              <th>Componente</th>
+                              <th>Cantidad</th>
+                              <th>Precio</th>
+                              <th>Subtotal</th>
+                              <th />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupPriceItemComponents.map(
+                              (component, index) => (
+                                <tr key={component.componentItemId}>
+                                  <td>
+                                    <div className="provider-group-component-copy">
+                                      <strong>{component.code}</strong>
+                                      <span>
+                                        {component.description ||
+                                          "Sin descripcion"}
+                                      </span>
+                                      <span className="field-hint">
+                                        {component.providerName} ·{" "}
+                                        {component.priceListName}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="provider-group-quantity-control">
+                                      <button
+                                        type="button"
+                                        className="btn-ghost provider-group-quantity-btn"
+                                        aria-label="Reducir cantidad"
+                                        title="Reducir cantidad"
+                                        onClick={() =>
+                                          stepGroupComponentQuantity(
+                                            component.componentItemId,
+                                            -1,
+                                          )
+                                        }
+                                      >
+                                        <span aria-hidden="true">-</span>
+                                      </button>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        inputMode="decimal"
+                                        className="provider-group-quantity-input"
+                                        value={component.quantity}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "ArrowUp") {
+                                            e.preventDefault();
+                                            stepGroupComponentQuantity(
+                                              component.componentItemId,
+                                              1,
+                                            );
+                                          }
+                                          if (e.key === "ArrowDown") {
+                                            e.preventDefault();
+                                            stepGroupComponentQuantity(
+                                              component.componentItemId,
+                                              -1,
+                                            );
+                                          }
+                                        }}
+                                        onChange={(e) =>
+                                          updateGroupComponentQuantity(
+                                            component.componentItemId,
+                                            e.target.value,
+                                          )
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        className="btn-ghost provider-group-quantity-btn"
+                                        aria-label="Aumentar cantidad"
+                                        title="Aumentar cantidad"
+                                        onClick={() =>
+                                          stepGroupComponentQuantity(
+                                            component.componentItemId,
+                                            1,
+                                          )
+                                        }
+                                      >
+                                        <span aria-hidden="true">+</span>
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    {formatPriceValue(
+                                      component.price,
+                                      component.currencyCode,
+                                    )}
+                                  </td>
+                                  <td>
+                                    {formatPriceValue(
+                                      Number(component.price || 0) *
+                                        Number(component.quantity || 0),
+                                      component.currencyCode,
+                                    )}
+                                  </td>
+                                  <td>
+                                    <div className="provider-group-row-actions">
+                                      <button
+                                        type="button"
+                                        className="btn-ghost provider-group-order-btn"
+                                        aria-label="Subir componente"
+                                        title="Subir componente"
+                                        disabled={index === 0}
+                                        onClick={() =>
+                                          moveGroupComponent(
+                                            component.componentItemId,
+                                            "up",
+                                          )
+                                        }
+                                      >
+                                        <span aria-hidden="true">↑</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn-ghost provider-group-order-btn"
+                                        aria-label="Bajar componente"
+                                        title="Bajar componente"
+                                        disabled={
+                                          index ===
+                                          groupPriceItemComponents.length - 1
+                                        }
+                                        onClick={() =>
+                                          moveGroupComponent(
+                                            component.componentItemId,
+                                            "down",
+                                          )
+                                        }
+                                      >
+                                        <span aria-hidden="true">↓</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn-ghost provider-group-remove-btn"
+                                        aria-label="Quitar componente"
+                                        title="Quitar componente"
+                                        onClick={() =>
+                                          removeGroupComponent(
+                                            component.componentItemId,
+                                          )
+                                        }
+                                      >
+                                        <svg
+                                          aria-hidden="true"
+                                          viewBox="0 0 24 24"
+                                          className="provider-group-remove-icon"
+                                        >
+                                          <path
+                                            d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm1 12a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z"
+                                            fill="currentColor"
+                                          />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ),
+                            )}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="field-hint provider-group-search-empty provider-group-components-empty">
+                          Agrega al menos un componente para poder guardar este
+                          Grupo Productos.
+                        </p>
+                      )}
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {!isGroupProductsPriceList && (
+                <section className="account-form-section account-modal-section account-description-section provider-price-item-section">
+                  <div className="field-group">
+                    <textarea
+                      value={priceItemForm.description}
+                      onChange={(e) =>
+                        setPriceItemForm((prev) => ({
+                          ...prev,
+                          description: e.target.value,
+                        }))
+                      }
+                      placeholder="Descripción del precio o alcance del ítem"
+                    />
+                  </div>
+                </section>
+              )}
 
               <div className="modal-buttons" style={{ marginTop: 16 }}>
                 <button
@@ -11220,7 +12632,7 @@ function ProvidersPage({ can, currentUser }) {
                       : "Creando..."
                     : editingPriceItemId
                       ? "Guardar cambios"
-                      : "Agregar precio"}
+                      : "Agregar producto"}
                 </button>
               </div>
             </form>
