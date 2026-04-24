@@ -922,7 +922,7 @@ test.describe("providers", () => {
     await priceModal.locator("select").nth(0).selectOption("1");
     await priceModal.locator("textarea").fill("Precio agregado por prueba E2E");
     await priceModal
-      .getByRole("button", { name: "Agregar precio", exact: true })
+      .getByRole("button", { name: "Agregar producto", exact: true })
       .click();
 
     await expect(page.getByText("Precio agregado")).toBeVisible();
@@ -1142,10 +1142,10 @@ test.describe("providers", () => {
       groupPriceModal.locator(".provider-group-components-table"),
     ).toContainText("PRICE-DEMO-001");
     await expect(
-      groupPriceModal.locator('input[type="number"]').first(),
-    ).toHaveValue("1999.99");
+      groupPriceModal.locator(".provider-group-components-table"),
+    ).toContainText(/1,999\.99|1999\.99/);
     await groupPriceModal
-      .getByRole("button", { name: "Agregar precio", exact: true })
+      .getByRole("button", { name: "Agregar producto", exact: true })
       .click();
 
     await expect

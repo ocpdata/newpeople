@@ -5,6 +5,44 @@ import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 
 const router = express.Router();
+let ensureProviderPriceListItemComponentsTablePromise;
+
+async function ensureProviderPriceListItemComponentsTable() {
+  if (!ensureProviderPriceListItemComponentsTablePromise) {
+    ensureProviderPriceListItemComponentsTablePromise = query(`
+      CREATE TABLE IF NOT EXISTS provider_price_list_item_components (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        grupo_item_id BIGINT UNSIGNED NOT NULL,
+        component_item_id BIGINT UNSIGNED NOT NULL,
+        quantity DECIMAL(12, 2) NOT NULL,
+        sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+        created_by BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME(3) NOT NULL,
+        updated_by BIGINT UNSIGNED NOT NULL,
+        updated_at DATETIME(3) NOT NULL,
+        CONSTRAINT fk_provider_price_list_item_components_grupo_item FOREIGN KEY (grupo_item_id) REFERENCES provider_price_list_items(id) ON DELETE CASCADE,
+        CONSTRAINT fk_provider_price_list_item_components_component_item FOREIGN KEY (component_item_id) REFERENCES provider_price_list_items(id) ON DELETE CASCADE,
+        CONSTRAINT fk_provider_price_list_item_components_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+        CONSTRAINT fk_provider_price_list_item_components_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+        CONSTRAINT uq_provider_price_list_item_components_pair UNIQUE (grupo_item_id, component_item_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+    `).catch((error) => {
+      ensureProviderPriceListItemComponentsTablePromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureProviderPriceListItemComponentsTablePromise;
+}
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureProviderPriceListItemComponentsTable();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 function placeholders(length) {
   return Array.from({ length }, () => "?").join(", ");
