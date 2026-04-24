@@ -269,14 +269,16 @@ export async function createDirectProviderPriceList({
 }) {
   const now = new Date();
   const resolvedCurrencyId = currencyId || (await getFirstId("currencies"));
+  const productTypeId = await getCatalogId("product_types", itemType);
   const result = await query(
     `INSERT INTO provider_price_lists
-      (provider_id, name, currency_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (provider_id, name, currency_id, product_type_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       providerId,
       name || `Lista fixture ${suffix}`,
       resolvedCurrencyId,
+      productTypeId,
       itemType,
       isActive ? 1 : 0,
       actorUserId,
@@ -296,6 +298,7 @@ export async function createDirectProviderPriceItem({
   listId = null,
 }) {
   const now = new Date();
+  const productTypeId = await getCatalogId("product_types", itemType);
   const resolvedListId =
     listId ||
     (await createDirectProviderPriceList({
@@ -306,14 +309,15 @@ export async function createDirectProviderPriceItem({
     }));
   const result = await query(
     `INSERT INTO provider_price_list_items
-      (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
+      (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
        created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       providerId,
       resolvedListId,
       `PRICE-${suffix}`,
       `Precio fixture ${suffix}`,
+      productTypeId,
       itemType,
       1234.56,
       await getFirstId("currencies"),

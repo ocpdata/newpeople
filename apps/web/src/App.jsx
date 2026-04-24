@@ -9018,6 +9018,7 @@ function ProvidersPage({ can, currentUser }) {
     providerStatuses: [],
     priceItemStatuses: [],
     currencies: [],
+    productTypes: [],
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -9118,10 +9119,13 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   function buildDefaultPriceItemForm() {
+    const defaultProductTypeCode =
+      catalogs.productTypes?.[0]?.code || "producto";
+
     return {
       code: "",
       description: "",
-      itemType: "producto",
+      itemType: defaultProductTypeCode,
       price: "",
       currencyId: String(catalogs.currencies?.[0]?.id || ""),
       activationStatusId:
@@ -9131,11 +9135,34 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   function buildDefaultProviderPriceListForm() {
+    const defaultProductTypeCode =
+      catalogs.productTypes?.[0]?.code || "producto";
+
     return {
       name: "",
       currencyId: String(catalogs.currencies?.[0]?.id || ""),
-      itemType: "producto",
+      itemType: defaultProductTypeCode,
     };
+  }
+
+  function getCatalogProductTypeLabel(itemType) {
+    const productType = catalogs.productTypes.find(
+      (entry) => String(entry.code) === String(itemType || "producto"),
+    );
+
+    if (productType?.name) {
+      return String(productType.name);
+    }
+
+    if (String(itemType) === "servicio_propio") {
+      return "Servicios Propios";
+    }
+
+    if (String(itemType) === "grupo_productos") {
+      return "Bundle";
+    }
+
+    return "Productos";
   }
 
   function resetGroupPriceItemState() {
@@ -9399,12 +9426,14 @@ function ProvidersPage({ can, currentUser }) {
         providerStatusesRes,
         priceItemStatusesRes,
         currenciesRes,
+        productTypesRes,
       ] = await Promise.all([
         api.get("/api/providers"),
         api.get("/api/catalogs/provider-countries"),
         api.get("/api/catalogs/provider-activation-statuses"),
         api.get("/api/catalogs/provider-price-list-item-statuses"),
         api.get("/api/catalogs/provider-price-list-currencies"),
+        api.get("/api/catalogs/product-types"),
       ]);
 
       setProviders(providersRes.data || []);
@@ -9413,6 +9442,7 @@ function ProvidersPage({ can, currentUser }) {
         providerStatuses: providerStatusesRes.data || [],
         priceItemStatuses: priceItemStatusesRes.data || [],
         currencies: currenciesRes.data || [],
+        productTypes: productTypesRes.data || [],
       });
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar proveedores"));
@@ -9889,17 +9919,7 @@ function ProvidersPage({ can, currentUser }) {
   }
 
   function getPriceItemTypeLabel(itemType) {
-    const normalizedItemType = String(itemType || "producto");
-
-    if (normalizedItemType === "servicio_propio") {
-      return "Servicios Propios";
-    }
-
-    if (normalizedItemType === "grupo_productos") {
-      return "Grupo Productos";
-    }
-
-    return "Productos";
+    return getCatalogProductTypeLabel(itemType);
   }
 
   function buildProviderPriceListExportFileName(provider, priceList, filter) {
@@ -11879,9 +11899,11 @@ function ProvidersPage({ can, currentUser }) {
                       }
                       required
                     >
-                      <option value="producto">Productos</option>
-                      <option value="servicio_propio">Servicios Propios</option>
-                      <option value="grupo_productos">Grupo Productos</option>
+                      {catalogs.productTypes.map((productType) => (
+                        <option key={productType.id} value={productType.code}>
+                          {productType.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -12587,8 +12609,8 @@ function ProvidersPage({ can, currentUser }) {
                         </table>
                       ) : (
                         <p className="field-hint provider-group-search-empty provider-group-components-empty">
-                          Agrega al menos un componente para poder guardar este
-                          Grupo Productos.
+                          Agrega al menos un componente para poder guardar este{" "}
+                          {getCatalogProductTypeLabel("grupo_productos")}.
                         </p>
                       )}
                     </div>

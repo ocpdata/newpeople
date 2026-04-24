@@ -339,6 +339,19 @@ CREATE TABLE IF NOT EXISTS provider_price_list_item_statuses (
   CONSTRAINT uq_provider_price_list_item_statuses_name UNIQUE (name)
 );
 
+CREATE TABLE IF NOT EXISTS product_types (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(60) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  description VARCHAR(255) NULL,
+  sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_product_types_code UNIQUE (code),
+  CONSTRAINT uq_product_types_name UNIQUE (name)
+);
+
 CREATE TABLE IF NOT EXISTS opportunity_business_lines (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(60) NOT NULL,
@@ -480,6 +493,7 @@ CREATE TABLE IF NOT EXISTS provider_price_lists (
   provider_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(180) NOT NULL,
   currency_id BIGINT UNSIGNED NULL,
+  product_type_id BIGINT UNSIGNED NOT NULL,
   item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto',
   is_active TINYINT(1) NOT NULL DEFAULT 0,
   created_by BIGINT UNSIGNED NOT NULL,
@@ -488,6 +502,7 @@ CREATE TABLE IF NOT EXISTS provider_price_lists (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_provider_price_lists_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
   CONSTRAINT fk_provider_price_lists_currency FOREIGN KEY (currency_id) REFERENCES currencies(id),
+  CONSTRAINT fk_provider_price_lists_product_type FOREIGN KEY (product_type_id) REFERENCES product_types(id),
   CONSTRAINT fk_provider_price_lists_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_provider_price_lists_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_provider_price_lists_provider_name UNIQUE (provider_id, name)
@@ -526,6 +541,62 @@ DEALLOCATE PREPARE s_provider_price_lists_currency_fk;
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,
+    'ALTER TABLE provider_price_lists ADD COLUMN product_type_id BIGINT UNSIGNED NULL AFTER currency_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND COLUMN_NAME = 'product_type_id'
+);
+PREPARE s_provider_price_lists_product_type_col FROM @stmt;
+EXECUTE s_provider_price_lists_product_type_col;
+DEALLOCATE PREPARE s_provider_price_lists_product_type_col;
+
+UPDATE provider_price_lists ppl
+INNER JOIN product_types pt ON pt.code = ppl.item_type
+SET ppl.product_type_id = pt.id
+WHERE ppl.product_type_id IS NULL;
+
+UPDATE provider_price_lists ppl
+INNER JOIN product_types pt ON pt.id = ppl.product_type_id
+SET ppl.item_type = pt.code
+WHERE ppl.item_type <> pt.code;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_lists MODIFY COLUMN product_type_id BIGINT UNSIGNED NOT NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND COLUMN_NAME = 'product_type_id'
+    AND IS_NULLABLE = 'NO'
+);
+PREPARE s_provider_price_lists_product_type_not_null FROM @stmt;
+EXECUTE s_provider_price_lists_product_type_not_null;
+DEALLOCATE PREPARE s_provider_price_lists_product_type_not_null;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_lists ADD CONSTRAINT fk_provider_price_lists_product_type FOREIGN KEY (product_type_id) REFERENCES product_types(id)',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_lists'
+    AND CONSTRAINT_NAME = 'fk_provider_price_lists_product_type'
+);
+PREPARE s_provider_price_lists_product_type_fk FROM @stmt;
+EXECUTE s_provider_price_lists_product_type_fk;
+DEALLOCATE PREPARE s_provider_price_lists_product_type_fk;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
     "ALTER TABLE provider_price_lists ADD COLUMN item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto' AFTER currency_id",
     'SELECT 1'
   )
@@ -560,6 +631,7 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
   price_list_id BIGINT UNSIGNED NULL,
   code VARCHAR(80) NOT NULL,
   description TEXT NULL,
+  product_type_id BIGINT UNSIGNED NOT NULL,
   item_type ENUM('producto', 'servicio_propio', 'grupo_productos') NOT NULL DEFAULT 'producto',
   price DECIMAL(12, 2) NOT NULL,
   currency_id BIGINT UNSIGNED NOT NULL,
@@ -570,12 +642,69 @@ CREATE TABLE IF NOT EXISTS provider_price_list_items (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_provider_price_list_items_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
   CONSTRAINT fk_provider_price_list_items_price_list FOREIGN KEY (price_list_id) REFERENCES provider_price_lists(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_price_list_items_product_type FOREIGN KEY (product_type_id) REFERENCES product_types(id),
   CONSTRAINT fk_provider_price_list_items_currency FOREIGN KEY (currency_id) REFERENCES currencies(id),
   CONSTRAINT fk_provider_price_list_items_activation_status FOREIGN KEY (activation_status_id) REFERENCES provider_price_list_item_statuses(id),
   CONSTRAINT fk_provider_price_list_items_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_provider_price_list_items_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_provider_price_list_items_list_code UNIQUE (price_list_id, code)
 );
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items ADD COLUMN product_type_id BIGINT UNSIGNED NULL AFTER description',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND COLUMN_NAME = 'product_type_id'
+);
+PREPARE s_provider_price_list_items_product_type_col FROM @stmt;
+EXECUTE s_provider_price_list_items_product_type_col;
+DEALLOCATE PREPARE s_provider_price_list_items_product_type_col;
+
+UPDATE provider_price_list_items ppli
+INNER JOIN product_types pt ON pt.code = ppli.item_type
+SET ppli.product_type_id = pt.id
+WHERE ppli.product_type_id IS NULL;
+
+UPDATE provider_price_list_items ppli
+INNER JOIN product_types pt ON pt.id = ppli.product_type_id
+SET ppli.item_type = pt.code
+WHERE ppli.item_type <> pt.code;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items MODIFY COLUMN product_type_id BIGINT UNSIGNED NOT NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND COLUMN_NAME = 'product_type_id'
+    AND IS_NULLABLE = 'NO'
+);
+PREPARE s_provider_price_list_items_product_type_not_null FROM @stmt;
+EXECUTE s_provider_price_list_items_product_type_not_null;
+DEALLOCATE PREPARE s_provider_price_list_items_product_type_not_null;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_items ADD CONSTRAINT fk_provider_price_list_items_product_type FOREIGN KEY (product_type_id) REFERENCES product_types(id)',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_items'
+    AND CONSTRAINT_NAME = 'fk_provider_price_list_items_product_type'
+);
+PREPARE s_provider_price_list_items_product_type_fk FROM @stmt;
+EXECUTE s_provider_price_list_items_product_type_fk;
+DEALLOCATE PREPARE s_provider_price_list_items_product_type_fk;
 
 SET @stmt := (
   SELECT IF(
@@ -659,6 +788,7 @@ INSERT INTO provider_price_lists (
   provider_id,
   name,
   currency_id,
+  product_type_id,
   item_type,
   is_active,
   created_by,
@@ -669,6 +799,7 @@ INSERT INTO provider_price_lists (
 SELECT legacy.provider_id,
        'Lista legacy',
        legacy.currency_id,
+  pt.id,
   legacy.item_type,
        0,
        legacy.actor_user_id,
@@ -686,6 +817,7 @@ FROM (
   WHERE ppli.price_list_id IS NULL
   GROUP BY ppli.provider_id
 ) legacy
+INNER JOIN product_types pt ON pt.code = legacy.item_type
 LEFT JOIN provider_price_lists ppl
   ON ppl.provider_id = legacy.provider_id
  AND ppl.name = 'Lista legacy'
@@ -702,14 +834,16 @@ UPDATE provider_price_lists ppl
 INNER JOIN (
   SELECT ppli.price_list_id,
          MIN(ppli.currency_id) AS currency_id,
+         MIN(ppli.product_type_id) AS product_type_id,
          MIN(ppli.item_type) AS item_type
   FROM provider_price_list_items ppli
   WHERE ppli.price_list_id IS NOT NULL
   GROUP BY ppli.price_list_id
 ) item_stats ON item_stats.price_list_id = ppl.id
 SET ppl.currency_id = COALESCE(ppl.currency_id, item_stats.currency_id),
+    ppl.product_type_id = COALESCE(ppl.product_type_id, item_stats.product_type_id),
     ppl.item_type = item_stats.item_type
-WHERE ppl.currency_id IS NULL OR ppl.item_type = 'producto';
+WHERE ppl.currency_id IS NULL OR ppl.product_type_id IS NULL OR ppl.item_type = 'producto';
 
 SET @stmt := (
   SELECT IF(
@@ -1075,6 +1209,16 @@ INSERT INTO provider_price_list_item_statuses (code, name, is_active) VALUES
   ('activo', 'Activo', 1),
   ('inactivo', 'Inactivo', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO product_types (code, name, description, sort_order, is_active) VALUES
+  ('producto', 'Productos', 'Producto de proveedor con precio directo.', 1, 1),
+  ('servicio_propio', 'Servicios Propios', 'Servicio propio con precio directo.', 2, 1),
+  ('grupo_productos', 'Bundle', 'Item compuesto por otros productos o servicios activos.', 3, 1)
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  description = VALUES(description),
+  sort_order = VALUES(sort_order),
+  is_active = VALUES(is_active);
 
 INSERT INTO opportunity_business_lines (code, name, is_active) VALUES
   ('f5_tradicional', 'F5 tradicional', 1),

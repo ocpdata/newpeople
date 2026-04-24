@@ -1933,7 +1933,7 @@ describe("API integration baseline", () => {
 
     expect(invalidMixedTypeResponse.status).toBe(409);
     expect(invalidMixedTypeResponse.body.message).toBe(
-      "La lista de precios solo permite items de tipo Grupo Productos.",
+      "La lista de precios solo permite items de tipo Bundle.",
     );
     expect(invalidMixedTypeResponse.body.itemType).toBe("grupo_productos");
 
@@ -1963,7 +1963,7 @@ describe("API integration baseline", () => {
 
     expect(invalidNestedGroupResponse.status).toBe(409);
     expect(invalidNestedGroupResponse.body.message).toBe(
-      "Los componentes de un Grupo Productos solo pueden ser Productos o Servicios Propios",
+      "Los componentes de un Bundle solo pueden ser Productos o Servicios Propios",
     );
 
     const [productComponentItemRow] = await query(

@@ -3,6 +3,12 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import {
+  ensureProductTypesCatalog,
+  getProductTypeByCode,
+  getProductTypeIdByCode,
+  getProductTypeLabel,
+} from "./productTypes.js";
 
 const router = express.Router();
 let ensureProviderPriceListItemComponentsTablePromise;
@@ -37,6 +43,7 @@ async function ensureProviderPriceListItemComponentsTable() {
 
 router.use(async (_req, _res, next) => {
   try {
+    await ensureProductTypesCatalog();
     await ensureProviderPriceListItemComponentsTable();
     next();
   } catch (error) {
@@ -112,8 +119,7 @@ const priceListItemSchema = z
       if (!Array.isArray(value.components) || value.components.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message:
-            "Los productos de tipo Grupo Productos requieren al menos un componente",
+          message: `Los productos de tipo ${getProductTypeLabel("grupo_productos")} requieren al menos un componente`,
           path: ["components"],
         });
       }
@@ -248,7 +254,7 @@ async function requireProviderOr404(providerId) {
 
 async function requireProviderPriceListOr404(providerId, listId) {
   const rows = await query(
-    `SELECT id, provider_id, name, currency_id, item_type, is_active, created_at, updated_at
+    `SELECT id, provider_id, name, currency_id, product_type_id, item_type, is_active, created_at, updated_at
      FROM provider_price_lists
      WHERE id = ? AND provider_id = ?
      LIMIT 1`,
@@ -270,7 +276,7 @@ async function requireProviderPriceListOr404(providerId, listId) {
 
 async function requireProviderPriceItemOr404(providerId, listId, itemId) {
   const rows = await query(
-    `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.item_type,
+    `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.product_type_id, ppli.item_type,
             ppli.activation_status_id, ppl.is_active AS price_list_is_active
      FROM provider_price_list_items ppli
      INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id
@@ -368,11 +374,14 @@ async function getCurrencyCodeById(currencyId) {
 }
 
 function getProviderPriceItemTypeLabel(itemType) {
-  return String(itemType) === "servicio_propio"
-    ? "Servicios Propios"
-    : String(itemType) === "grupo_productos"
-      ? "Grupo Productos"
-      : "Productos";
+  return getProductTypeLabel(itemType);
+}
+
+function withProductTypeName(row) {
+  return {
+    ...row,
+    item_type_name: getProviderPriceItemTypeLabel(row.item_type),
+  };
 }
 
 async function getProviderPriceItemComponents(groupItemIds) {
@@ -384,6 +393,7 @@ async function getProviderPriceItemComponents(groupItemIds) {
             child.price_list_id AS component_price_list_id,
             child.code AS component_code,
             child.description AS component_description,
+            child.product_type_id AS component_product_type_id,
             child.item_type AS component_item_type,
             child.price AS component_price,
             child.currency_id AS component_currency_id,
@@ -419,6 +429,7 @@ async function getProviderPriceItemComponents(groupItemIds) {
       code: String(row.component_code),
       description: row.component_description,
       item_type: String(row.component_item_type),
+      product_type_id: Number(row.component_product_type_id),
       item_type_label: getProviderPriceItemTypeLabel(row.component_item_type),
       price: Number(row.component_price),
       currency_id: Number(row.component_currency_id),
@@ -437,7 +448,7 @@ async function getActiveComponentCandidates(componentItemIds) {
 
   return query(
     `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.code, ppli.description,
-            ppli.item_type, ppli.price, ppli.currency_id,
+            ppli.product_type_id, ppli.item_type, ppli.price, ppli.currency_id,
             curr.code AS currency_code, curr.name AS currency_name, curr.symbol AS currency_symbol,
             p.name AS provider_name, ppl.name AS price_list_name
      FROM provider_price_list_items ppli
@@ -574,8 +585,7 @@ async function validateGroupComponents({
       response: {
         status: 400,
         body: {
-          message:
-            "Los productos de tipo Grupo Productos requieren al menos un componente",
+          message: `Los productos de tipo ${getProductTypeLabel("grupo_productos")} requieren al menos un componente`,
         },
       },
     };
@@ -607,7 +617,7 @@ async function validateGroupComponents({
       response: {
         status: 409,
         body: {
-          message: "Un Grupo Productos no puede referenciarse a si mismo",
+          message: `Un ${getProductTypeLabel("grupo_productos")} no puede referenciarse a si mismo`,
         },
       },
     };
@@ -654,8 +664,7 @@ async function validateGroupComponents({
         response: {
           status: 409,
           body: {
-            message:
-              "Los componentes de un Grupo Productos solo pueden ser Productos o Servicios Propios",
+            message: `Los componentes de un ${getProductTypeLabel("grupo_productos")} solo pueden ser Productos o Servicios Propios`,
           },
         },
       };
@@ -763,14 +772,11 @@ function getPriceListItemTypeViolationResponse(priceList, itemType) {
   return {
     status: 409,
     body: {
-      message: `La lista de precios solo permite items de tipo ${
-        enforcedItemType === "servicio_propio"
-          ? "Servicios Propios"
-          : enforcedItemType === "grupo_productos"
-            ? "Grupo Productos"
-            : "Productos"
-      }.`,
+      message: `La lista de precios solo permite items de tipo ${getProviderPriceItemTypeLabel(
+        enforcedItemType,
+      )}.`,
       itemType: enforcedItemType,
+      itemTypeName: getProviderPriceItemTypeLabel(enforcedItemType),
     },
   };
 }
@@ -866,7 +872,7 @@ router.get(
       [...params, limit],
     );
 
-    res.json(rows);
+    res.json(rows.map((row) => withProductTypeName(row)));
   },
 );
 
@@ -1156,7 +1162,7 @@ router.get(
     }
 
     const rows = await query(
-      `SELECT ppl.id, ppl.provider_id, ppl.name, ppl.item_type, ppl.is_active,
+      `SELECT ppl.id, ppl.provider_id, ppl.name, ppl.product_type_id, ppl.item_type, ppl.is_active,
               COALESCE(item_stats.active_price_items, 0) AS active_price_items,
               COALESCE(item_stats.total_price_items, 0) AS total_price_items,
                 COALESCE(ppl.currency_id, item_stats.currency_id) AS currency_id,
@@ -1207,19 +1213,24 @@ router.post(
 
     const now = new Date();
     const currencyCode = await getCurrencyCodeById(parsed.data.currencyId);
+    const productType = await getProductTypeByCode(parsed.data.itemType);
     if (!currencyCode) {
       return res.status(400).json({ message: "Moneda invalida" });
+    }
+    if (!productType || Number(productType.is_active) !== 1) {
+      return res.status(400).json({ message: "Tipo de producto invalido" });
     }
 
     try {
       const insertResult = await query(
         `INSERT INTO provider_price_lists
-          (provider_id, name, currency_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+          (provider_id, name, currency_id, product_type_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
         [
           providerId,
           parsed.data.name,
           parsed.data.currencyId,
+          Number(productType.id),
           parsed.data.itemType,
           req.user.id,
           now,
@@ -1241,6 +1252,7 @@ router.post(
           currency_id: parsed.data.currencyId,
           currency_code: currencyCode,
           item_type: parsed.data.itemType,
+          item_type_name: String(productType.name),
           is_active: 0,
         },
       });
@@ -1395,7 +1407,7 @@ router.get(
 
     const rows = await query(
       `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.code,
-              ppli.description, ppli.item_type, ppli.price, ppli.currency_id,
+            ppli.description, ppli.product_type_id, ppli.item_type, ppli.price, ppli.currency_id,
               curr.code AS currency_code, curr.name AS currency_name,
               curr.symbol AS currency_symbol, ppli.activation_status_id,
               pils.code AS activation_status_code, pils.name AS activation_status,
@@ -1421,7 +1433,7 @@ router.get(
 
     res.json(
       rows.map((row) => ({
-        ...row,
+        ...withProductTypeName(row),
         components: componentMap.get(Number(row.id)) || [],
       })),
     );
@@ -1482,6 +1494,11 @@ router.post(
 
     const now = new Date();
     const body = parsed.data;
+    const productTypeId = await getProductTypeIdByCode(body.itemType);
+    const productType = await getProductTypeByCode(body.itemType);
+    if (!productType || !productTypeId || Number(productType.is_active) !== 1) {
+      return res.status(400).json({ message: "Tipo de producto invalido" });
+    }
     const groupComponents =
       body.itemType === "grupo_productos"
         ? await validateGroupComponents({
@@ -1500,14 +1517,15 @@ router.post(
       const insertResult = await withTransaction(async (conn) => {
         const [result] = await conn.query(
           `INSERT INTO provider_price_list_items
-            (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
+            (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
              created_by, created_at, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             providerId,
             listId,
             body.code,
             body.description || null,
+            productTypeId,
             body.itemType,
             body.itemType === "grupo_productos"
               ? groupComponents.totalPrice
@@ -1547,6 +1565,7 @@ router.post(
           code: body.code,
           description: body.description || null,
           item_type: body.itemType,
+          item_type_name: String(productType.name),
           price:
             body.itemType === "grupo_productos"
               ? groupComponents.totalPrice
@@ -1660,7 +1679,7 @@ router.put(
     }
 
     const beforeRows = await query(
-      `SELECT id, provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id
+      `SELECT id, provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id
        FROM provider_price_list_items
        WHERE id = ? AND provider_id = ? AND price_list_id = ?
        LIMIT 1`,
@@ -1668,6 +1687,11 @@ router.put(
     );
 
     const now = new Date();
+    const productTypeId = await getProductTypeIdByCode(parsed.data.itemType);
+    const productType = await getProductTypeByCode(parsed.data.itemType);
+    if (!productType || !productTypeId || Number(productType.is_active) !== 1) {
+      return res.status(400).json({ message: "Tipo de producto invalido" });
+    }
     const groupComponents =
       parsed.data.itemType === "grupo_productos"
         ? await validateGroupComponents({
@@ -1689,12 +1713,13 @@ router.put(
       await withTransaction(async (conn) => {
         await conn.query(
           `UPDATE provider_price_list_items
-           SET code = ?, description = ?, item_type = ?, price = ?, currency_id = ?, activation_status_id = ?,
+           SET code = ?, description = ?, product_type_id = ?, item_type = ?, price = ?, currency_id = ?, activation_status_id = ?,
                updated_by = ?, updated_at = ?
            WHERE id = ? AND provider_id = ? AND price_list_id = ?`,
           [
             parsed.data.code,
             parsed.data.description || null,
+            productTypeId,
             parsed.data.itemType,
             parsed.data.itemType === "grupo_productos"
               ? groupComponents.totalPrice
@@ -1760,7 +1785,7 @@ router.put(
     }
 
     const afterRows = await query(
-      `SELECT id, provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id
+      `SELECT id, provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id
        FROM provider_price_list_items
        WHERE id = ? AND provider_id = ? AND price_list_id = ?
        LIMIT 1`,
@@ -1777,6 +1802,7 @@ router.put(
       before: beforeRows[0],
       after: {
         ...afterRows[0],
+        item_type_name: String(productType.name),
         components:
           parsed.data.itemType === "grupo_productos"
             ? groupComponents.resolvedComponents.map((component) => ({
@@ -1796,8 +1822,8 @@ router.put(
         entityId: cascadedGroupItem.id,
         detail:
           requestedStatusCode === "activo"
-            ? "Grupo Productos activado automaticamente al quedar todos sus componentes activos"
-            : "Grupo Productos desactivado automaticamente por componente inactivo",
+            ? `${getProductTypeLabel("grupo_productos")} activado automaticamente al quedar todos sus componentes activos`
+            : `${getProductTypeLabel("grupo_productos")} desactivado automaticamente por componente inactivo`,
         before: {
           activation_status_id: cascadedGroupItem.previousStatusId,
         },
@@ -1920,8 +1946,8 @@ router.patch(
         entityId: cascadedGroupItem.id,
         detail:
           parsed.data.statusCode === "activo"
-            ? "Grupo Productos activado automaticamente al quedar todos sus componentes activos"
-            : "Grupo Productos desactivado automaticamente por componente inactivo",
+            ? `${getProductTypeLabel("grupo_productos")} activado automaticamente al quedar todos sus componentes activos`
+            : `${getProductTypeLabel("grupo_productos")} desactivado automaticamente por componente inactivo`,
         before: {
           activation_status_id: cascadedGroupItem.previousStatusId,
         },
@@ -1974,7 +2000,7 @@ router.get(
       [providerId, activeListAccess.priceList.id],
     );
 
-    res.json(rows);
+    res.json(rows.map((row) => withProductTypeName(row)));
   },
 );
 

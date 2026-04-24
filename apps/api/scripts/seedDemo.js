@@ -659,6 +659,7 @@ async function fetchCatalogs() {
     opportunityStageQuestions,
     providerStatuses,
     providerPriceItemStatuses,
+    productTypes,
     currencies,
   ] = await Promise.all([
     query(
@@ -710,6 +711,9 @@ async function fetchCatalogs() {
       "SELECT id, code, name FROM provider_price_list_item_statuses WHERE is_active = 1 ORDER BY id",
     ),
     query(
+      "SELECT id, code, name FROM product_types WHERE is_active = 1 ORDER BY sort_order, id",
+    ),
+    query(
       "SELECT id, code, name, symbol FROM currencies WHERE is_active = 1 ORDER BY id",
     ),
   ]);
@@ -720,6 +724,7 @@ async function fetchCatalogs() {
     !economicSectors.length ||
     !providerStatuses.length ||
     !providerPriceItemStatuses.length ||
+    !productTypes.length ||
     !currencies.length
   ) {
     throw new Error(
@@ -743,6 +748,7 @@ async function fetchCatalogs() {
     opportunityStageQuestions,
     providerStatuses,
     providerPriceItemStatuses,
+    productTypes,
     currencies,
   };
 }
@@ -1953,12 +1959,13 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
       const [priceListInsert] = await conn.query(
         `INSERT INTO provider_price_lists
-          (provider_id, name, currency_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (provider_id, name, currency_id, product_type_id, item_type, is_active, created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           providerId,
           providerPriceListName,
           Number(listCurrency.id),
+          byCode(catalogs.productTypes, listItemType),
           listItemType,
           providerPriceListIsActive,
           adminUserId,
@@ -1990,9 +1997,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
           const [groupItemInsert] = await conn.query(
             `INSERT INTO provider_price_list_items
-              (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
+              (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
                created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               providerId,
               providerPriceListId,
@@ -2001,6 +2008,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
                 itemIndex,
                 bundleComponents.length,
               ),
+              byCode(catalogs.productTypes, listItemType),
               listItemType,
               bundlePrice,
               Number(listCurrency.id),
@@ -2041,9 +2049,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
           const itemPrice = 850 + index * 115 + itemIndex * 47.5;
           const [itemInsert] = await conn.query(
             `INSERT INTO provider_price_list_items
-              (provider_id, price_list_id, code, description, item_type, price, currency_id, activation_status_id,
+              (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
                created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               providerId,
               providerPriceListId,
@@ -2053,6 +2061,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
                 familyName,
                 currencyCode: listCurrency.code,
               }),
+              byCode(catalogs.productTypes, listItemType),
               listItemType,
               itemPrice,
               Number(listCurrency.id),

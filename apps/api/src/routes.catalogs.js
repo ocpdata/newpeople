@@ -1,6 +1,7 @@
 import express from "express";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
+import { listProductTypes } from "./productTypes.js";
 
 const router = express.Router();
 const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
@@ -365,6 +366,23 @@ router.get(
       "SELECT id, code, name FROM contact_activation_statuses WHERE is_active = 1 ORDER BY id",
     );
     res.json(rows);
+  },
+);
+
+router.get(
+  "/product-types",
+  requireAnyPermission(["proveedores.read", "proveedores_precios.read"]),
+  async (_req, res) => {
+    const rows = await listProductTypes();
+    res.json(
+      rows.map((row) => ({
+        id: Number(row.id),
+        code: String(row.code),
+        name: String(row.name),
+        description: row.description || null,
+        sort_order: Number(row.sort_order || 0),
+      })),
+    );
   },
 );
 

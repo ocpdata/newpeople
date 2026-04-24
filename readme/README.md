@@ -39,7 +39,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
   paginacion con selector 10 / 50 / 100 registros por pagina.
 - Proveedores: modulo documentado con reglas de proveedor, listas de precios,
   moneda y tipo unico por lista, y composicion/reactivacion automatica de
-  `Grupo Productos`.
+  `Bundle`.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
   subtitulo, boton primario, barra pills + busqueda inline).

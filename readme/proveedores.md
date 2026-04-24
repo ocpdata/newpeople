@@ -10,7 +10,7 @@ Gestion del modulo de proveedores y de sus listas de precios:
 - Regla de lista activa unica por proveedor.
 - Creacion y mantenimiento de productos de proveedor.
 - Soporte de tres tipos de item: `producto`, `servicio_propio` y `grupo_productos`.
-- Composicion de `Grupo Productos` a partir de componentes activos.
+- Composicion de `Bundle` a partir de componentes activos.
 - Auditoria de cambios sobre proveedor, listas y precios.
 
 ## Modelo funcional
@@ -124,12 +124,13 @@ Campos principales:
 - No se puede activar si el proveedor esta desactivado.
 - El estado se usa en filtros, badges y reglas de composicion de grupos.
 
-## Reglas de negocio de Grupo Productos
+## Reglas de negocio de Bundle
 
 ### Definicion
 
-`Grupo Productos` representa un item compuesto por otros precios existentes.
+`Bundle` representa un item compuesto por otros precios existentes.
 Su valor no se captura manualmente: se calcula con base en sus componentes.
+Internamente el codigo tecnico persistido sigue siendo `grupo_productos`.
 
 ### Componentes permitidos
 
@@ -163,7 +164,7 @@ Si alguno no cumple, el grupo no puede crearse o actualizarse.
 
 ### Propagacion de estado desde componentes
 
-- Si un componente de un grupo se desactiva, el `Grupo Productos` se desactiva automaticamente.
+- Si un componente de un grupo se desactiva, el `Bundle` se desactiva automaticamente.
 - Si ese componente vuelve a activarse, el backend revisa el grupo padre.
 - El grupo solo se reactiva si todos sus componentes vuelven a estar activos y, ademas, sus proveedores y listas siguen activos.
 - Esta propagacion aplica tanto cuando se cambia el estado del item como cuando se actualiza el item completo con estado `activo` o `inactivo`.
@@ -176,7 +177,7 @@ Si alguno no cumple, el grupo no puede crearse o actualizarse.
 - La tabla superior administra listas; la inferior administra los precios de la lista seleccionada.
 - Las acciones se ejecutan desde menu kebab por fila.
 - La creacion de precio usa la accion `Agregar producto`.
-- En listas de tipo `Grupo Productos`, el modal permite seleccionar componentes desde productos activos existentes.
+- En listas de tipo `Bundle`, el modal permite seleccionar componentes desde productos activos existentes.
 - Seleccionar un producto base puede precargar codigo y descripcion, pero ambos siguen siendo editables.
 
 ## API relacionada (resumen)
@@ -213,11 +214,11 @@ Se auditan eventos de:
 - creacion de precio
 - actualizacion de precio
 - cambio de estado de precio
-- activacion o desactivacion automatica de `Grupo Productos` por cambios en componentes
+- activacion o desactivacion automatica de `Bundle` por cambios en componentes
 
 ## Consideraciones operativas
 
-- Mantener sincronizado `apps/api/sql/schema.sql` con la base local; el modulo depende de `provider_price_list_item_components` para grupos.
+- Mantener sincronizado `apps/api/sql/schema.sql` con la base local; el modulo depende de `provider_price_list_item_components` y del catalogo `product_types`.
 - Validar siempre proveedor, lista y item por ids explicitos antes de operar.
 - No asumir que una lista activa implica proveedor activo; el backend ya protege esa inconsistencia, pero la UI debe refrescar estados despues de cada accion.
-- Si cambia la semantica de `Grupo Productos`, actualizar este archivo y la prueba de integracion del modulo.
+- Si cambia la semantica de `Bundle`, actualizar este archivo y la prueba de integracion del modulo.

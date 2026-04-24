@@ -31,6 +31,16 @@ function createProvidersFixture() {
     },
     { id: 2, code: "MXN", name: "Peso mexicano", symbol: "$", decimals: 2 },
   ];
+  const productTypes = [
+    { id: 1, code: "producto", name: "Productos", sort_order: 1 },
+    {
+      id: 2,
+      code: "servicio_propio",
+      name: "Servicios Propios",
+      sort_order: 2,
+    },
+    { id: 3, code: "grupo_productos", name: "Bundle", sort_order: 3 },
+  ];
 
   let providerIdSeq = 2;
   let priceListIdSeq = 2;
@@ -594,6 +604,7 @@ function createProvidersFixture() {
     priceItemStatuses,
     countries,
     currencies,
+    productTypes,
     priceListsByProviderId,
     priceItemsByListId,
     listProviders() {
@@ -682,6 +693,10 @@ async function mockProvidersApi(page, fixture) {
 
     if (pathname === "/api/catalogs/provider-price-list-currencies") {
       return json(fixture.currencies);
+    }
+
+    if (pathname === "/api/catalogs/product-types") {
+      return json(fixture.productTypes);
     }
 
     if (pathname === "/api/providers/price-items/search" && method === "GET") {
