@@ -14,6 +14,49 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - Visualizacion en tabla con filtros y ordenamiento.
 - Auditoria visible en modo edicion.
 
+## Logica de negocio
+
+### Dependencias obligatorias
+
+- Toda oportunidad pertenece a una cuenta.
+- Toda oportunidad debe referenciar un contacto de esa misma cuenta.
+- No se permite mezclar cuenta y contacto de cuentas distintas.
+
+### Responsables comerciales
+
+- El vendedor es obligatorio y debe ser un usuario activo con rol `Vendedor`.
+- El preventa es opcional, pero si se asigna debe ser un usuario activo con rol `Preventa`.
+
+### Estados y permisos
+
+- `oportunidades.create` crea la oportunidad activada.
+- `oportunidades.request` crea la oportunidad en `pendiente_activacion`.
+- `oportunidades.update` permite editar datos sin cambiar estado de activacion.
+- Solo `oportunidades.create` habilita cambios de estado posteriores.
+- El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
+
+### Flujo comercial
+
+- El backend fuerza `Contacto inicial` y `En proceso` al crear una oportunidad nueva.
+- El avance de etapa exige que todas las preguntas obligatorias de la etapa actual tengan respuesta.
+- El retroceso solo es valido mientras la oportunidad siga `En proceso`.
+- `Ganada` solo puede aplicarse como cierre comercial desde `Waiting`.
+- `Perdida` y `Anulada` pueden aplicarse desde cualquier etapa, pero exigen motivo.
+- Una oportunidad cerrada ya no puede avanzar, retroceder ni guardar nuevas respuestas de etapa.
+- El estado de activacion sigue siendo independiente del flujo comercial.
+
+### Pantalla de preguntas comerciales
+
+- Las preguntas se administran por etapa comercial y sin tocar código.
+- El orden de preguntas es parte de la logica de negocio: la UI puede reordenar y el backend persiste la secuencia completa.
+- Cada pregunta define tipo de respuesta, orden y si es obligatoria.
+- Activar o desactivar una pregunta afecta la captura futura de oportunidades que consulten nuevamente el catalogo de su etapa.
+
+### Alcance de acceso
+
+- Administrador: ve y opera todas las oportunidades.
+- Usuario no administrador: solo ve y opera oportunidades de cuentas de las que es propietario.
+
 ## Modelo funcional
 
 La UI distingue tres conceptos separados:

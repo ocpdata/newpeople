@@ -11,6 +11,34 @@ Gestion de usuarios del CRM:
 - Consumo de enlace de set password con token temporal y vigencia visible.
 - Auditoria de acciones de usuarios.
 
+## Logica de negocio
+
+### Estado y acceso
+
+- Solo usuarios con estado activo pueden operar el sistema.
+- Un JWT valido no alcanza por si solo: en cada request el backend vuelve a cargar al usuario y verifica que siga activo.
+- Un usuario inactivo puede seguir apareciendo en historicos, auditoria y relaciones existentes, pero no recuperar acceso.
+
+### Alta, roles e invitaciones
+
+- El alta de usuario se considera exitosa cuando se persiste el usuario y sus roles, aunque falle el envio de correo.
+- Los roles pueden asignarse desde el alta o despues; el backend toma los permisos efectivos desde roles activos.
+- La invitacion inicial y el reinicio de acceso usan token temporal opaco, de un solo uso y con vigencia limitada.
+- Si SMTP falla, la operacion principal no se revierte: el backend devuelve el enlace temporal y su expiracion para resolucion manual.
+
+### Desactivacion y restricciones
+
+- Desactivar un usuario corta su acceso inmediatamente.
+- La desactivacion no elimina auditoria ni relaciones historicas.
+- Si el usuario es el ultimo propietario activo de una o mas cuentas activas, la desactivacion debe bloquearse.
+- El objetivo de ese bloqueo es evitar cuentas activas sin responsable comercial vigente.
+
+### Efectos visibles en otros modulos
+
+- Un usuario inactivo puede seguir mostrandose como propietario historico en cuentas existentes.
+- Cuando la UI necesita mostrarlo en listas historicas, se distingue visualmente como `Nombre (inactivo)`.
+- No debe ofrecerse como nueva opcion operativa en catalogos de seleccion para propietarios o responsables.
+
 ## Puntos clave de UX
 
 - Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear usuario` a la derecha.

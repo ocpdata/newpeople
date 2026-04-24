@@ -11,6 +11,27 @@ Administracion de roles y permisos del sistema:
 - Consulta de usuarios asociados a un rol.
 - Visualizacion de auditoria del rol seleccionado.
 
+## Logica de negocio
+
+### Permisos efectivos
+
+- Los permisos efectivos de un usuario salen de la union de permisos de sus roles activos.
+- Un rol inactivo deja de aportar permisos aunque siga asignado al usuario.
+- El rol `Administrador` funciona como bypass general de autorizacion, salvo reglas comerciales donde sigue mandando el permiso explicito `*.create` para cambios de estado.
+
+### Ciclo de vida del rol
+
+- Crear o editar un rol solo afecta nombre y descripcion; los permisos se gestionan como una operacion separada.
+- La asignacion de permisos debe ser explicita y auditable.
+- Un rol del sistema no debe desactivarse desde UI.
+- Un rol no puede desactivarse mientras siga teniendo usuarios asignados; primero deben retirarse o reasignarse.
+
+### Impacto operativo
+
+- Cambiar permisos de un rol afecta a todos los usuarios que lo tengan asignado y activo.
+- Si se actualizan permisos del rol del usuario actual, la aplicacion debe refrescar su contexto para recalcular navegacion y acciones disponibles.
+- La seleccion de un rol en pantalla debe cargar inmediatamente permisos, usuarios asociados y su auditoria resumida.
+
 ## Puntos clave de UX
 
 - Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear rol` a la derecha.

@@ -11,6 +11,40 @@ Gestion de cuentas comerciales:
 - Activacion, marcado pendiente y desactivacion de cuentas.
 - Visualizacion en tabla con filtros y ordenamiento.
 
+## Logica de negocio
+
+### Naturaleza de la entidad
+
+- La cuenta es la raiz operativa para contactos y oportunidades.
+- No se deben crear contactos ni oportunidades fuera del contexto de una cuenta existente.
+
+### Propietarios y ownership
+
+- Toda cuenta debe tener al menos un propietario.
+- La propiedad es N:M entre cuentas y usuarios.
+- Los propietarios activos determinan visibilidad y operacion para usuarios no administradores.
+- Una cuenta activa no debe quedar sin propietarios activos.
+- Los propietarios inactivos se conservan por trazabilidad, pero no deben reemplazar al menos un propietario vigente.
+
+### Estados y permisos
+
+- `cuentas.create` crea la cuenta activada.
+- `cuentas.request` crea la cuenta en `pendiente_activacion`.
+- `cuentas.update` permite editar datos sin implicar cambio de estado.
+- Solo `cuentas.create` habilita cambios de estado posteriores.
+- El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
+
+### Restricciones de estado
+
+- Una cuenta no puede desactivarse si tiene contactos activos.
+- Una cuenta no puede marcarse como pendiente si tiene contactos activos o desactivados.
+- Los cambios de estado deben reflejarse de inmediato en tabla, badges y acciones disponibles.
+
+### Alcance de acceso
+
+- Administrador: ve y opera todas las cuentas.
+- Usuario no administrador: solo ve y opera cuentas de las que es propietario.
+
 ## Puntos clave de UX
 
 - Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear cuenta` a la derecha.

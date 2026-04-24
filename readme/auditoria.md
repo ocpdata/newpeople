@@ -18,6 +18,26 @@ En invitaciones y reinicios de password, los eventos pueden incluir:
 - `invite_expires_at`: vigencia del enlace temporal
 - razon y detalle SMTP cuando el envio falla
 
+## Logica de negocio
+
+### Objetivo funcional
+
+- La auditoria registra trazabilidad operativa y de seguridad, no telemetria de bajo nivel.
+- Debe permitir responder quien hizo que, sobre que entidad, con que resultado y que campos cambiaron.
+
+### Politica de registro
+
+- Toda operacion sensible de negocio debe intentar registrar auditoria.
+- La auditoria debe guardar solo el delta funcional de cambios, no snapshots completos ni secretos.
+- Passwords, tokens planos y credenciales no deben persistirse en auditoria.
+- En invitaciones y reinicios solo se documentan proposito, expiracion y errores de envio cuando aplican.
+
+### Relacion con el resto del sistema
+
+- La auditoria es transversal: auth, usuarios, roles, cuentas y otros modulos deben converger en el mismo stream consultable.
+- Agregar un modulo nuevo implica instrumentar sus eventos en backend para que aparezcan automaticamente en la pantalla global.
+- La consulta de auditoria es solo de lectura; no reemplaza backups, restore ni bitacoras de base de datos.
+
 ## Puntos clave de UX
 
 - Pantalla dedicada en menu lateral: Auditoria.

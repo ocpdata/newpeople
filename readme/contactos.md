@@ -13,6 +13,34 @@ Gestion de contactos comerciales asociados a cuentas:
 - Visualizacion en tabla con filtros y ordenamiento.
 - Auditoria de cambios por contacto.
 
+## Logica de negocio
+
+### Dependencia con cuentas
+
+- Todo contacto pertenece obligatoriamente a una cuenta.
+- El contacto forma parte del contexto comercial de esa cuenta y no debe existir fuera de ella.
+- Los selectores de jerarquia deben trabajar sobre contactos del mismo universo comercial esperado para no mezclar relaciones inconsistentes.
+
+### Estados y permisos
+
+- `contactos.create` crea el contacto activado.
+- `contactos.request` crea el contacto en `pendiente_activacion`.
+- `contactos.update` permite editar datos sin activar automaticamente el registro.
+- Solo `contactos.create` habilita cambios de estado posteriores.
+- El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
+
+### Restricciones de negocio
+
+- Un contacto no puede desactivarse si tiene oportunidades activas.
+- Un contacto no puede marcarse como pendiente si tiene oportunidades activas o desactivadas.
+- La ubicacion puede heredarse desde la cuenta para reducir captura manual y mantener consistencia.
+- La jerarquia `jefe` e `influye en` es opcional y debe mantenerse coherente con el contexto de la cuenta.
+
+### Alcance de acceso
+
+- Administrador: ve y opera todos los contactos.
+- Usuario no administrador: solo ve y opera contactos de cuentas que le pertenecen.
+
 ## Puntos clave de UX
 
 - Encabezado unificado: titulo con icono SVG, subtitulo, boton `+ Crear contacto` a la derecha.

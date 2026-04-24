@@ -13,6 +13,34 @@ Gestion del modulo de proveedores y de sus listas de precios:
 - Composicion de `Bundle` a partir de componentes activos.
 - Auditoria de cambios sobre proveedor, listas y precios.
 
+## Logica de negocio
+
+### Separacion funcional
+
+- El modulo distingue entre maestro de proveedor y submodulo de listas/precios.
+- Un usuario puede tener acceso de consulta al proveedor sin poder operar listas de precios.
+- Las acciones de proveedor y las de precios se autorizan con permisos distintos.
+
+### Reglas base del proveedor
+
+- El proveedor es la entidad raiz del subdominio de abastecimiento.
+- Si el proveedor esta desactivado, no deben activarse listas ni precios relacionados.
+- La desactivacion del proveedor se bloquea si existe una lista activa o precios activos.
+
+### Reglas base de listas y precios
+
+- Solo puede existir una lista activa por proveedor.
+- Cada lista tiene una sola moneda y un solo tipo de item permitido.
+- Todo precio debe operar siempre dentro de una lista explicita; no debe haber operaciones ambiguas sin `listId`.
+- Desactivar una lista inactiva todos sus precios para mantener consistencia operativa.
+
+### Reglas de Bundle
+
+- `Bundle` es una composicion calculada; su precio no se captura manualmente.
+- Sus componentes deben ser items activos, de proveedores activos y listas activas.
+- No se permite autoreferencia, duplicados ni grupos dentro de grupos.
+- Si un componente deja de ser valido, el grupo debe desactivarse automaticamente.
+
 ## Modelo funcional
 
 El modulo se divide en tres niveles:

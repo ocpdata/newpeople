@@ -8,6 +8,20 @@ logica de usuarios, roles, cuentas, contactos, oportunidades y auditoria.
 No sustituye la documentacion por modulo. Su objetivo es explicar como opera el
 sistema como un todo y que decisiones de negocio estan implementadas hoy.
 
+## Donde vive el detalle
+
+La vista transversal vive aqui, pero el detalle operativo por dominio debe mantenerse tambien en:
+
+- `usuarios.md`
+- `roles.md`
+- `cuentas.md`
+- `contactos.md`
+- `oportunidades.md`
+- `proveedores.md`
+- `auditoria.md`
+
+Cada uno de esos archivos ya concentra su seccion `Logica de negocio` con reglas, restricciones y efectos esperados del modulo.
+
 ## Principios del sistema
 
 - Seguridad por defecto: si un usuario no tiene permiso explicito, no puede ejecutar la accion.
