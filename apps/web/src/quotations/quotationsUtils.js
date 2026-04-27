@@ -276,6 +276,15 @@ export function formatQuotationAmount(value) {
   });
 }
 
+export function roundQuotationMoney(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) {
+    return 0;
+  }
+
+  return Math.round((numericValue + Number.EPSILON) * 100) / 100;
+}
+
 export const DEFAULT_QUOTATION_VAT_PCT = 16;
 
 function toPercentFactor(value) {
@@ -534,11 +543,15 @@ export function calculateCreateQuotationSummary(
           )
         : 0
       : Math.min(numericSummaryDiscountValue, 100);
-  const discountAmount =
+  const totalSalePriceTotal = roundQuotationMoney(buckets.total.salePriceTotal);
+  const discountAmount = roundQuotationMoney(
     summaryDiscountMode === "amount"
-      ? Math.min(numericSummaryDiscountValue, buckets.total.salePriceTotal)
-      : buckets.total.salePriceTotal * (normalizedSummaryDiscountPct / 100);
-  const discountedTotalAmount = buckets.total.salePriceTotal - discountAmount;
+      ? Math.min(numericSummaryDiscountValue, totalSalePriceTotal)
+      : totalSalePriceTotal * (normalizedSummaryDiscountPct / 100),
+  );
+  const discountedTotalAmount = roundQuotationMoney(
+    totalSalePriceTotal - discountAmount,
+  );
   const summaryVatMode =
     summaryVatInput?.mode === "total"
       ? "total"
@@ -550,12 +563,13 @@ export function calculateCreateQuotationSummary(
     100,
   );
   const vatBaseAmount =
-    discountAmount > 0 ? discountedTotalAmount : buckets.total.salePriceTotal;
-  const vatAmount =
+    discountAmount > 0 ? discountedTotalAmount : totalSalePriceTotal;
+  const vatAmount = roundQuotationMoney(
     summaryVatMode === "total"
       ? vatBaseAmount * (normalizedSummaryVatPct / 100)
-      : 0;
-  const totalWithVatAmount = vatBaseAmount + vatAmount;
+      : 0,
+  );
+  const totalWithVatAmount = roundQuotationMoney(vatBaseAmount + vatAmount);
 
   const rows = [
     {
@@ -620,7 +634,7 @@ export function calculateCreateQuotationSummary(
         ? discountAmount
         : normalizedSummaryDiscountPct,
     summaryDiscountPct: normalizedSummaryDiscountPct,
-    totalSalePriceTotal: buckets.total.salePriceTotal,
+    totalSalePriceTotal,
     discountAmount,
     discountedTotalAmount,
     summaryVatMode,

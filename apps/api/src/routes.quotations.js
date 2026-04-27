@@ -100,6 +100,8 @@ const quotationPdfSectionSchema = z.object({
 
 const quotationPdfRenderSchema = z.object({
   header: z.object({
+    quotationNumber: z.string().trim().max(80).optional().default(""),
+    versionNumber: z.string().trim().max(80).optional().default(""),
     quotationDate: z.string().trim().max(120).optional().default(""),
     proposalName: z.string().trim().max(180).optional().default(""),
     accountName: z.string().trim().max(180).optional().default(""),
@@ -119,6 +121,10 @@ const quotationPdfRenderSchema = z.object({
     vatAmount: z.number().nonnegative().optional().default(0),
     total: z.number().nonnegative().optional().default(0),
     showVat: z.boolean().optional().default(false),
+    vatMode: z
+      .enum(["without_vat", "total", "per_item"])
+      .optional()
+      .default("without_vat"),
     currencyCode: z.string().trim().min(1).max(20).optional().default("USD"),
   }),
   commercialTerms: z

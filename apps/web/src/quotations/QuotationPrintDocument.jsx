@@ -10,6 +10,15 @@ function formatPrintMoney(value, currency = "USD") {
   return currency ? `${currency} ${formattedAmount}` : formattedAmount;
 }
 
+function hasVisibleMoneyValue(value) {
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) {
+    return false;
+  }
+
+  return Math.round(Math.abs(numericValue) * 100) > 0;
+}
+
 function renderContactLine(primary, secondary) {
   if (!primary && !secondary) {
     return "";
@@ -18,10 +27,19 @@ function renderContactLine(primary, secondary) {
   return [primary, secondary].filter(Boolean).join("    ");
 }
 
+function hasVatInSummary(summary) {
+  return summary?.vatMode === "total" || summary?.vatMode === "per_item";
+}
+
 function QuotationPrintDocument({ model }) {
   if (!model) {
     return null;
   }
+
+  const hasDiscount = hasVisibleMoneyValue(model.summary.discount);
+  const totalLabel = hasVatInSummary(model.summary)
+    ? "Total con IVA"
+    : "Total";
 
   return (
     <div className="quotation-print-sheet" data-testid="quotation-print-sheet">
@@ -44,6 +62,14 @@ function QuotationPrintDocument({ model }) {
         </div>
 
         <div className="quotation-print-metadata-grid">
+          <div className="quotation-print-info-card">
+            <strong>
+              Cotizacion: {model.header.quotationNumber || ""}
+            </strong>
+          </div>
+          <div className="quotation-print-info-card">
+            <strong>Version: {model.header.versionNumber || ""}</strong>
+          </div>
           <div className="quotation-print-info-card">
             <strong>Fecha: {model.header.quotationDate || ""}</strong>
           </div>
@@ -170,7 +196,7 @@ function QuotationPrintDocument({ model }) {
         <section className="quotation-print-summary-card">
           <div className="quotation-print-summary-title">Resumen</div>
           <div className="quotation-print-summary-row">
-            <span>Total</span>
+            <span>Subtotal</span>
             <strong>
               {formatPrintMoney(
                 model.summary.subtotal,
@@ -178,24 +204,28 @@ function QuotationPrintDocument({ model }) {
               )}
             </strong>
           </div>
-          <div className="quotation-print-summary-row">
-            <span>Descuento Final</span>
-            <strong>
-              {formatPrintMoney(
-                model.summary.discount,
-                model.summary.currencyCode,
-              )}
-            </strong>
-          </div>
-          <div className="quotation-print-summary-row">
-            <span>Total Descontado</span>
-            <strong>
-              {formatPrintMoney(
-                model.summary.discountedSubtotal,
-                model.summary.currencyCode,
-              )}
-            </strong>
-          </div>
+          {hasDiscount ? (
+            <>
+              <div className="quotation-print-summary-row">
+                <span>Descuento</span>
+                <strong>
+                  {formatPrintMoney(
+                    model.summary.discount,
+                    model.summary.currencyCode,
+                  )}
+                </strong>
+              </div>
+              <div className="quotation-print-summary-row">
+                <span>Subtotal con descuento</span>
+                <strong>
+                  {formatPrintMoney(
+                    model.summary.discountedSubtotal,
+                    model.summary.currencyCode,
+                  )}
+                </strong>
+              </div>
+            </>
+          ) : null}
           {model.summary.showVat ? (
             <div className="quotation-print-summary-row">
               <span>IVA</span>
@@ -208,7 +238,7 @@ function QuotationPrintDocument({ model }) {
             </div>
           ) : null}
           <div className="quotation-print-summary-row is-total">
-            <span>Total Final</span>
+            <span>{totalLabel}</span>
             <strong>
               {formatPrintMoney(
                 model.summary.total,

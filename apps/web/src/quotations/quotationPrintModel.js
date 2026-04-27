@@ -26,6 +26,8 @@ function formatPrintDate(value) {
 
 export function buildQuotationPrintModel({
   company = quotationPrintTemplateData.company,
+  quotationNumber = "",
+  versionNumber = "",
   proposalName = "",
   quotationDate = "",
   accountName = "",
@@ -53,6 +55,8 @@ export function buildQuotationPrintModel({
   return {
     company,
     header: {
+      quotationNumber: quotationNumber || "",
+      versionNumber: versionNumber || "",
       quotationDate: formatPrintDate(quotationDate),
       proposalName: proposalName || "",
       accountName: accountName || "",
@@ -72,6 +76,7 @@ export function buildQuotationPrintModel({
       vatAmount: 0,
       total: 0,
       showVat: false,
+      vatMode: "without_vat",
     },
     commercialTerms: {
       deliveryTime: getCatalogLabel(catalogs.deliveryTimes, deliveryTime),

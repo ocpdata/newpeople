@@ -1,7 +1,12 @@
 import "./quotation-print.css";
 import QuotationPrintDocument from "./QuotationPrintDocument";
 
-function QuotationPrintPreviewModal({ isOpen, onClose, model }) {
+function QuotationPrintPreviewModal({
+  isOpen,
+  onClose,
+  onOpenPdfPreview,
+  model,
+}) {
   if (!isOpen) {
     return null;
   }
@@ -24,6 +29,13 @@ function QuotationPrintPreviewModal({ isOpen, onClose, model }) {
         <div className="quotation-print-preview-header">
           <h3 className="modal-title">Impresion</h3>
           <div className="quotation-print-preview-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onOpenPdfPreview}
+            >
+              Abrir PDF
+            </button>
             <button
               type="button"
               className="btn-secondary"

@@ -495,6 +495,22 @@ function buildCreateQuotationSectionItemPayload(item, itemIndex) {
   };
 }
 
+function toPositiveIntegerOrNull(value) {
+  const numericValue = Number(value);
+  return Number.isInteger(numericValue) && numericValue > 0
+    ? numericValue
+    : null;
+}
+
+function resolvePositiveDisplayOrder(value, fallbackDisplayOrder) {
+  const explicitDisplayOrder = toPositiveIntegerOrNull(value);
+  if (explicitDisplayOrder) {
+    return explicitDisplayOrder;
+  }
+
+  return toPositiveIntegerOrNull(fallbackDisplayOrder) || 1;
+}
+
 function buildPersistedQuotationItemPayload(item, fallbackDisplayOrder = 1) {
   return {
     providerId: Number(item?.providerId),
@@ -507,20 +523,19 @@ function buildPersistedQuotationItemPayload(item, fallbackDisplayOrder = 1) {
     profitMarginPct: toNumber(item?.profitMarginPct),
     finalDiscountPct: toNumber(item?.finalDiscountPct),
     itemType: item?.itemType || "producto",
-    bundleParentItemId: item?.bundleParentItemId
-      ? Number(item.bundleParentItemId)
-      : null,
+    bundleParentItemId: toPositiveIntegerOrNull(item?.bundleParentItemId),
     bundleOriginType: item?.bundleOriginType || null,
-    sourceProviderPriceListItemId: item?.sourceProviderPriceListItemId
-      ? Number(item.sourceProviderPriceListItemId)
-      : null,
-    sourceComponentPriceListItemId: item?.sourceComponentPriceListItemId
-      ? Number(item.sourceComponentPriceListItemId)
-      : null,
-    bundleSortOrder: item?.bundleSortOrder
-      ? Number(item.bundleSortOrder)
-      : null,
-    displayOrder: Number(item?.displayOrder || fallbackDisplayOrder),
+    sourceProviderPriceListItemId: toPositiveIntegerOrNull(
+      item?.sourceProviderPriceListItemId,
+    ),
+    sourceComponentPriceListItemId: toPositiveIntegerOrNull(
+      item?.sourceComponentPriceListItemId,
+    ),
+    bundleSortOrder: toPositiveIntegerOrNull(item?.bundleSortOrder),
+    displayOrder: resolvePositiveDisplayOrder(
+      item?.displayOrder,
+      fallbackDisplayOrder,
+    ),
   };
 }
 
@@ -579,7 +594,10 @@ function buildPersistedQuotationVersionPayload({
         inclusionTypeId: Number(
           sectionDraft.inclusionTypeId || fallbackInclusionTypeId || 0,
         ),
-        displayOrder: Number(section.displayOrder || sectionIndex + 1),
+        displayOrder: resolvePositiveDisplayOrder(
+          section.displayOrder,
+          sectionIndex + 1,
+        ),
         items: sectionItems.map((item, itemIndex) => ({
           ...(Number(item.id) > 0 ? { id: Number(item.id) } : {}),
           localId: String(item.localId || item.id),

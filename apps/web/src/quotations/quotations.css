@@ -980,6 +980,7 @@
 .quotation-commercial-conditions-notes-input {
   width: 100%;
   min-height: 168px;
+  font-size: 11px;
   resize: vertical;
 }
 

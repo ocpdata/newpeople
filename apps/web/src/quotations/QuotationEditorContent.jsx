@@ -16,6 +16,7 @@ import {
   QuotationInternalNotesField,
 } from "./QuotationCommercialFields";
 import { buildQuotationPrintModel } from "./quotationPrintModel";
+import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
 
@@ -744,6 +745,7 @@ function QuotationEditorContent({
     sectionId: null,
     itemId: null,
   });
+  const [isPrintPreviewModalOpen, setIsPrintPreviewModalOpen] = useState(false);
   const newItemCodeInputRefs = useRef({});
   const selectedVersionSections = selectedVersion?.sections || [];
   const summaryDiscountMode =
@@ -980,6 +982,8 @@ function QuotationEditorContent({
   const printModel = useMemo(
     () =>
       buildQuotationPrintModel({
+        quotationNumber: String(selectedQuotation?.id || ""),
+        versionNumber: String(selectedVersion?.versionNumber || ""),
         proposalName: versionForm.proposalName,
         quotationDate: versionForm.quotationDate,
         accountName: selectedQuotation?.accountName || "",
@@ -1004,6 +1008,7 @@ function QuotationEditorContent({
               ? quotationSummary.totalWithVatAmount
               : quotationSummary.discountedTotalAmount,
           showVat: quotationSummary.summaryVatMode === "total",
+          vatMode: summaryVatMode,
           currencyCode: versionForm.currencyCode || "USD",
         },
         deliveryTime: versionForm.deliveryTime,
@@ -1021,10 +1026,26 @@ function QuotationEditorContent({
       selectedContextContact,
       selectedContextContactName,
       selectedQuotation,
+      selectedVersion,
       selectedSellerName,
       versionForm,
     ],
   );
+
+  function openPrintPreviewModal() {
+    setIsPrintPreviewModalOpen(true);
+  }
+
+  function closePrintPreviewModal() {
+    setIsPrintPreviewModalOpen(false);
+  }
+
+  function handleOpenPdfPreview() {
+    const opened = openQuotationPrintView(printModel);
+    if (opened) {
+      closePrintPreviewModal();
+    }
+  }
   const canCreateNewVersion = Array.isArray(allowedActions)
     ? allowedActions.some((action) => action.code === "crear_version")
     : false;
@@ -3112,7 +3133,7 @@ function QuotationEditorContent({
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => openQuotationPrintView(printModel)}
+            onClick={openPrintPreviewModal}
           >
             Vista previa
           </button>
@@ -3262,6 +3283,13 @@ function QuotationEditorContent({
           </div>
         </div>
       ) : null}
+
+      <QuotationPrintPreviewModal
+        isOpen={isPrintPreviewModalOpen}
+        onClose={closePrintPreviewModal}
+        onOpenPdfPreview={handleOpenPdfPreview}
+        model={printModel}
+      />
     </div>
   );
 }

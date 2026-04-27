@@ -231,11 +231,23 @@
 }
 
 .quotation-print-summary-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
   padding: 10px 0;
   border-top: 1px solid #e3ebf4;
+}
+
+.quotation-print-summary-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.quotation-print-summary-row strong {
+  text-align: right;
+  white-space: normal;
 }
 
 .quotation-print-summary-row:first-of-type {
