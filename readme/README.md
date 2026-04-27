@@ -10,6 +10,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
+- [Cotizaciones](./cotizaciones.md)
 - [Proveedores](./proveedores.md)
 - [Auditoria](./auditoria.md)
 - [Pruebas](./pruebas.md)
@@ -41,6 +42,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Proveedores: modulo documentado con reglas de proveedor, listas de precios,
   moneda y tipo unico por lista, y composicion/reactivacion automatica de
   `Bundle`.
+- Cotizaciones: modulo documentado con workflow propio, guardado completo por version,
+  bundles de catalogo y manuales, y vista previa oficial en PDF generada por backend.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
   subtitulo, boton primario, barra pills + busqueda inline).

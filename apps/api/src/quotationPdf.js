@@ -372,8 +372,8 @@ function drawSectionTable(doc, section, currencyCode) {
     doc.y = rowTop + rowHeight;
   }
 
-  const subtotalY = doc.y + 6;
   ensureSpace(doc, 28);
+  const subtotalY = doc.y + 6;
   doc
     .font("Helvetica-Bold")
     .fontSize(10)
@@ -482,6 +482,7 @@ function drawPageNumbers(doc) {
   const range = doc.bufferedPageRange();
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index);
+    const footerY = doc.page.height - doc.page.margins.bottom - 12;
     doc
       .font("Helvetica")
       .fontSize(8)
@@ -489,10 +490,11 @@ function drawPageNumbers(doc) {
       .text(
         `Pagina ${index + 1} de ${range.count}`,
         doc.page.margins.left,
-        doc.page.height - doc.page.margins.bottom + 10,
+        footerY,
         {
           width: PAGE_WIDTH,
           align: "right",
+          lineBreak: false,
         },
       );
   }

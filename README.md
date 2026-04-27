@@ -5,6 +5,12 @@ Monorepo CRM con:
 - API: Node.js + Express + MySQL
 - Web: React + Vite
 
+Cambios funcionales destacados del estado actual:
+
+- Cotizaciones ya vive como modulo independiente en la web.
+- La vista previa oficial de cotizaciones se genera en backend como PDF inline.
+- El flujo de edicion de cotizaciones soporta cambios locales sin guardar, bundles por seccion y versionado completo.
+
 ## Setup rapido local
 
 ### 1. Requisitos
@@ -80,6 +86,10 @@ En apps/api:
 - npm run seed:demo: genera datos demo manuales con soporte `--dry-run` y `--reset`.
 - npm test: ejecuta pruebas de integracion del API.
 - npm run test:watch: corre pruebas del API en modo watch.
+
+Documentacion local adicional:
+
+- [apps/api/README.md](./apps/api/README.md)
 
 En apps/web:
 
@@ -157,6 +167,7 @@ Endpoints relevantes:
 - Usuarios con gestion de estado y auditoria.
 - Cuentas con propietarios multiples.
 - Proveedores con precios tipificados como `Productos` o `Servicios Propios`.
+- Cotizaciones con versiones, workflow propio, bundles por seccion y vista previa PDF backend.
 - Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
 - Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
@@ -184,6 +195,8 @@ Cobertura automatizada:
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
+- Modulo de cotizaciones: [readme/cotizaciones.md](./readme/cotizaciones.md)
+  Politicas de impresion y vista previa PDF incluidas en ese documento.
 
 ## Troubleshooting rapido
 

@@ -8,6 +8,37 @@ Modulo de cotizaciones asociado a oportunidades activas.
 - Una cotizacion puede tener multiples versiones.
 - Solo la version mayor puede cambiar de estado.
 - La UI de cotizaciones vive en un modulo principal independiente, aunque sigue asociada a una oportunidad.
+- La vista previa oficial del documento se genera como PDF en backend y puede abrirse con cambios locales sin guardar.
+
+## Estado actual de implementacion
+
+El modulo ya no depende de APIs incrementales de secciones/items para la edicion principal.
+
+- La edicion de una version trabaja localmente en la UI y persiste todo el arbol con `PUT /api/quotation-versions/:versionId/full`.
+- La vista previa usa `POST /api/quotations/render-pdf` y abre un PDF inline en una pestaña nueva.
+- El branding documental se resuelve en backend desde `config.documents.quotation.company`.
+- El PDF soporta secciones, resumen, condiciones comerciales, notas y numeracion de pagina.
+- La tabla de edicion soporta bundles de catalogo y bundles manuales por seccion.
+- Los bundles pueden colapsarse por seccion sin afectar otras tablas.
+
+## Politicas de impresion
+
+Estas politicas definen el comportamiento oficial del documento de cotizacion:
+
+- El documento oficial de vista previa e impresion es el PDF generado por backend.
+- La vista previa debe poder generarse con cambios locales sin guardar en la version abierta.
+- El PDF debe abrirse inline en una pestaña nueva, no descargarse por defecto.
+- El branding del documento se resuelve en backend o configuracion central, no desde datos editables del frontend.
+- La fidelidad esperada es funcional: estructura, importes, secciones, resumen, bundles y notas deben ser correctos aunque no exista paridad pixel-perfect con una vista HTML previa.
+- La numeracion de pagina debe renderizarse dentro del area imprimible y no debe crear paginas vacias adicionales.
+
+Reglas visibles dentro del preview PDF:
+
+- Cada seccion conserva sus filas y totales sin contaminar otras secciones.
+- El padre de un bundle siempre debe aparecer en el preview.
+- Si el bundle esta expandido, el preview incluye padre y componentes.
+- Si el bundle esta colapsado, el preview incluye solo el padre.
+- La numeracion visible de filas en la tabla de edicion debe mantenerse consecutiva cuando hay componentes ocultos por colapso.
 
 ## Permisos funcionales
 
@@ -69,6 +100,9 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - descuento del fabricante en porcentaje
 - costo de importacion en porcentaje
 - margen de ganancia en porcentaje
+- descuento final en porcentaje
+- pertenencia opcional a bundle
+- origen de bundle (`price_list_bundle` o `manual_bundle`)
 
 ## Reglas de negocio
 
@@ -77,6 +111,48 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - `crear_cotizacion` es una accion global sin estado.
 - `crear_version` crea una nueva version borrador copiando secciones e items de la version mayor.
 - Las transiciones de workflow se resuelven por accion (`aprobar`, `rechazar`, `enviar`, etc.) y actualizan el estado de la version mayor.
+- Solo la version mayor entra al workflow; una version historica no mayor queda para consulta o correccion administrativa.
+- `Guardar version` persiste el contenido, pero no cambia de estado.
+- La vista previa PDF debe reflejar cambios locales sin guardar.
+- En vista previa, el padre de un bundle siempre debe estar presente; si el bundle esta expandido se listan sus componentes y si esta colapsado solo se muestra el padre.
+- La numeracion visible de filas en edicion usa el orden visible de la tabla cuando un bundle esta colapsado.
+
+## Bundles en cotizaciones
+
+Existen dos formas de bundle dentro de una seccion:
+
+### Bundle de catalogo
+
+- Nace desde una lista de precios del proveedor.
+- El padre es un item `grupo_productos`.
+- Los componentes se insertan debajo del padre.
+- El precio de venta del padre se calcula por componentes.
+
+### Bundle manual
+
+- Se crea a partir de filas independientes seleccionadas en la tabla.
+- El usuario elige una fila padre dentro de la seleccion.
+- Luego puede adjuntar componentes adicionales o quitar componentes existentes.
+- Las reglas de seleccion impiden mezclar bundles distintos o componentes ya agrupados.
+
+## Edicion y persistencia
+
+La edicion de versiones usa un modelo local completo en frontend:
+
+- cambios en encabezado, resumen, notas y condiciones comerciales;
+- cambios en secciones y filas;
+- reordenamiento;
+- seleccion multiple;
+- resaltado de filas;
+- copy/paste y duplicado local;
+- bundles y colapso por seccion.
+
+Al guardar, la UI manda un payload completo y el backend aplica la mezcla de:
+
+- actualizar filas existentes;
+- crear filas nuevas;
+- eliminar filas y secciones ausentes;
+- conservar jerarquia bundle.
 
 ## Matriz actor-estado-accion
 
@@ -127,6 +203,7 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - `GET /api/quotation-versions/:versionId`
 - `PUT /api/quotation-versions/:versionId`
 - `PUT /api/quotation-versions/:versionId/full`
+- `POST /api/quotations/render-pdf`
 - `POST /api/quotation-versions/:versionId/transition`
 - `GET /api/quotation-versions/:versionId/actions`
 - `GET /api/catalogs/quotation-statuses`
@@ -134,3 +211,34 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - `GET /api/catalogs/quotation-activation-statuses`
 - `GET /api/catalogs/quotation-section-inclusion-types`
 - `GET /api/catalogs/quotation-providers`
+
+## Frontend relevante
+
+- `apps/web/src/QuotationsPage.jsx`
+- `apps/web/src/quotations/useQuotationsSection.js`
+- `apps/web/src/quotations/QuotationEditorContent.jsx`
+- `apps/web/src/quotations/quotationPrintModel.js`
+
+## Backend relevante
+
+- `apps/api/src/routes.quotations.js`
+- `apps/api/src/quotationPdf.js`
+- `apps/api/src/config.js`
+
+## Cobertura automatizada relevante
+
+Backend:
+
+- generacion inline de PDF desde cambios no guardados;
+- persistencia de bundles reales al crear;
+- guardado completo con mezcla de crear, editar y eliminar;
+- validacion de secciones invalidas con rollback.
+
+Frontend E2E:
+
+- edicion de versiones y conservacion de cambios locales;
+- vista previa PDF con cambios locales;
+- colapso y expansion de bundles por seccion;
+- presencia del padre del bundle en preview;
+- bundles manuales y de catalogo en edicion;
+- jerarquia bundle al guardar la version completa.

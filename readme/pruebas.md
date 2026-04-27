@@ -30,7 +30,7 @@ Ya existe una primera base de pruebas de integracion del API con `vitest` y
 `supertest`.
 
 Tambien existe una base minima de pruebas E2E del frontend con `playwright`
-para el flujo de `/set-password`.
+para los modulos visibles del CRM, con foco fuerte en cotizaciones.
 
 Cobertura inicial:
 
@@ -56,6 +56,12 @@ Cobertura E2E inicial:
 - visualizacion de vigencia del token
 - guardado exitoso de contrasena con redireccion al dashboard
 - manejo visual de enlace invalido o expirado
+
+Cobertura E2E actual ampliada:
+
+- contactos y oportunidades
+- proveedores
+- cotizaciones: versiones, bundles, resumen, dirty-state, preview PDF y guardado completo
 
 Comando desde raiz:
 
@@ -124,6 +130,34 @@ errores y redireccion.
 ### 4. Prueba de regresion corta
 
 Usala despues de tocar permisos, estados, modales, tablas o filtros.
+
+## Suite recomendada por area
+
+### API
+
+- `npm run test:api`
+- focalizada de cotizaciones PDF:
+
+```bash
+cd apps/api && npm test -- --run test/api.integration.test.js -t "cotizaciones genera un PDF inline desde cambios no guardados"
+```
+
+### Web E2E
+
+- `npm run test:web:e2e`
+- focalizada de cotizaciones:
+
+```bash
+cd apps/web && npm run test:e2e -- quotations.spec.js
+```
+
+### Casos de cotizaciones que conviene rerunear
+
+- preview PDF con cambios locales;
+- colapso de bundles por seccion;
+- inclusion del padre del bundle en preview;
+- bundles manuales y de catalogo;
+- guardado de version completa conservando jerarquia.
 
 ## Matriz minima de roles a probar
 
@@ -215,6 +249,21 @@ Ejemplos:
 2. Revisar que queden reflejadas en auditoria.
 3. Validar modulo, entidad, accion y usuario asociado.
 
+### Cotizaciones
+
+1. Abrir el modulo independiente `/quotations`.
+2. Confirmar listado general y listado filtrado por oportunidad cuando aplique.
+3. Editar la version mayor y cambiar datos del encabezado, notas y resumen.
+4. Agregar y eliminar secciones.
+5. Agregar filas normales, bundles de catalogo y bundles manuales.
+6. Colapsar y expandir bundles por seccion.
+7. Validar que la numeracion visible no deje huecos al colapsar un bundle.
+8. Abrir `Vista previa` y confirmar que el PDF refleja cambios locales sin guardar.
+9. Confirmar que el padre del bundle siempre aparezca en preview y que los componentes dependan del estado expandido/colapsado.
+10. Guardar la version completa y validar que el listado refresque la version actual.
+11. Crear nueva version y confirmar copia del contenido de la mayor.
+12. Validar restricciones de version historica segun permisos.
+
 ## Casos criticos de negocio
 
 Estos casos no deberian romperse sin ser detectados:
@@ -246,6 +295,9 @@ Estos endpoints merecen pruebas de integracion:
 - `PUT /api/opportunities/:id`
 - `PATCH /api/opportunities/:id/status`
 - `PUT /api/roles/:id/permissions`
+- `PUT /api/quotation-versions/:versionId/full`
+- `POST /api/quotations/render-pdf`
+- `POST /api/quotation-versions/:versionId/transition`
 
 ## Flujo recomendado con curl
 

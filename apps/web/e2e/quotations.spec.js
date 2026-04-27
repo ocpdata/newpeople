@@ -2202,6 +2202,90 @@ test.describe("quotations", () => {
     await printPage.close();
   });
 
+  test("en edicion la vista previa incluye el padre de un bundle manual en la segunda seccion", async ({
+    page,
+  }) => {
+    let renderedPdfPayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.context().route(
+      "**/api/**",
+      createQuotationsFixture({
+        onRenderQuotationPdf(payload) {
+          renderedPdfPayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    await editModal
+      .getByRole("button", { name: "Agregar seccion inicial" })
+      .click();
+
+    const secondSection = editModal.locator(".quotation-section-card").nth(1);
+    await secondSection.locator("input").first().fill("Seccion 2");
+    await secondSection.locator("input").first().blur();
+
+    await secondSection.getByRole("button", { name: "Agregar fila" }).click();
+    let newRow = secondSection
+      .locator(".quotation-items-table tbody tr")
+      .last();
+    await newRow.locator("td:nth-child(3) input").dblclick();
+    await chooseProduct(page, "PROD-1");
+
+    await secondSection.getByRole("button", { name: "Agregar fila" }).click();
+    newRow = secondSection.locator(".quotation-items-table tbody tr").last();
+    await newRow.locator("td:nth-child(3) input").dblclick();
+    await chooseProduct(page, "PROD-2");
+
+    await secondSection.getByRole("button", { name: "Agregar fila" }).click();
+    newRow = secondSection.locator(".quotation-items-table tbody tr").last();
+    await newRow.locator("td:nth-child(3) input").dblclick();
+    await chooseProduct(page, "PROD-3");
+
+    await secondSection
+      .locator(".quotation-items-table tbody tr")
+      .nth(1)
+      .locator("td:first-child input")
+      .check();
+    await secondSection
+      .locator(".quotation-items-table tbody tr")
+      .nth(2)
+      .locator("td:first-child input")
+      .check();
+
+    await secondSection
+      .getByRole("button", {
+        name: "Crear bundle manual con filas seleccionadas",
+      })
+      .click();
+
+    const manualBundleDialog = editModal.getByRole("dialog", {
+      name: "Crear bundle manual",
+    });
+    await expect(manualBundleDialog).toBeVisible();
+    await manualBundleDialog.getByRole("radio", { name: /PROD-2/i }).check();
+    await manualBundleDialog
+      .getByRole("button", { name: "Confirmar bundle" })
+      .click();
+
+    const popupPromise = page.waitForEvent("popup");
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+    const printPage = await popupPromise;
+
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.[1]?.rows?.map(
+            (row) => row.productCode,
+          ) || [],
+      )
+      .toEqual(["PROD-1", "PROD-2", "PROD-3"]);
+
+    await printPage.close();
+  });
+
   test("en creacion avisa antes de cerrar si hay cambios sin guardar", async ({
     page,
   }) => {
