@@ -738,6 +738,8 @@ function QuotationEditorContent({
   const [selectedItemIdsBySection, setSelectedItemIdsBySection] = useState({});
   const [highlightedItemIdsBySection, setHighlightedItemIdsBySection] =
     useState({});
+  const [collapsedBundleIdsBySection, setCollapsedBundleIdsBySection] =
+    useState({});
   const [activeDescriptionEditor, setActiveDescriptionEditor] = useState({
     sectionId: null,
     itemId: null,
@@ -895,20 +897,26 @@ function QuotationEditorContent({
           sectionEdits[String(section.id)] ||
           buildSectionDraft(catalogs.inclusionTypes);
         const sectionDisplayItems = buildSectionDisplayItems(section);
+        const collapsedBundleIds = new Set(
+          collapsedBundleIdsBySection[String(section.id)] || [],
+        );
         const effectiveSectionItems =
           effectiveSummarySections.find(
             (candidateSection) =>
               Number(candidateSection.id) === Number(section.id),
           )?.items || sectionDisplayItems;
+        const effectiveSectionItemsById = new Map(
+          effectiveSectionItems.map((item) => [
+            String(item.localId || item.id),
+            item,
+          ]),
+        );
 
-        const subtotal = (section.items || [])
-          .filter((item) => !item.bundleParentItemId)
+        const subtotal = sectionDisplayItems
+          .filter((item) => !item.bundleParentLocalId)
           .reduce((accumulator, item) => {
             const effectiveItem =
-              effectiveSummaryItemsById.get(String(item.id)) ||
-              sectionDisplayItems.find(
-                (candidate) => Number(candidate.id) === Number(item.id),
-              ) ||
+              effectiveSectionItemsById.get(String(item.localId || item.id)) ||
               item;
             const totals = calculateQuotationItemDisplayTotals(
               effectiveItem,
@@ -921,12 +929,17 @@ function QuotationEditorContent({
         const rows = sectionDisplayItems
           .map((item) => {
             const displayItem =
-              effectiveSummaryItemsById.get(String(item.id)) || item;
+              effectiveSectionItemsById.get(String(item.localId || item.id)) ||
+              item;
             const isBundleComponent = Boolean(displayItem.isBundleComponent);
-            const isBundleParent =
-              displayItem.itemType === "grupo_productos" && !isBundleComponent;
+            const bundleParentLocalId = displayItem.bundleParentLocalId
+              ? String(displayItem.bundleParentLocalId)
+              : null;
 
-            if (isBundleParent) {
+            if (
+              bundleParentLocalId &&
+              collapsedBundleIds.has(bundleParentLocalId)
+            ) {
               return null;
             }
 
@@ -936,12 +949,12 @@ function QuotationEditorContent({
             );
 
             return {
-              id: item.id,
-              displayOrder: item.displayOrder,
-              productCode: item.productCode,
-              productDescription: item.productDescription,
-              quantity: item.quantity,
-              quantityDisplay: Number(item.quantity || 0).toFixed(2),
+              id: displayItem.localId || item.localId || item.id,
+              displayOrder: displayItem.displayOrder,
+              productCode: displayItem.productCode,
+              productDescription: displayItem.productDescription,
+              quantity: displayItem.quantity,
+              quantityDisplay: Number(displayItem.quantity || 0).toFixed(2),
               salePriceUnit: totals.salePriceUnit,
               salePriceTotal: totals.salePriceTotal,
             };
@@ -957,6 +970,7 @@ function QuotationEditorContent({
       }),
     [
       catalogs.inclusionTypes,
+      collapsedBundleIdsBySection,
       effectiveSummaryItemsById,
       effectiveSummarySections,
       sectionEdits,
@@ -1018,6 +1032,7 @@ function QuotationEditorContent({
   useEffect(() => {
     setSelectedItemIdsBySection({});
     setHighlightedItemIdsBySection({});
+    setCollapsedBundleIdsBySection({});
     setActiveDescriptionEditor({ sectionId: null, itemId: null });
     setPreferredBundleHintActionBySection({});
     setManualBundlePickerState({
@@ -1126,6 +1141,53 @@ function QuotationEditorContent({
     setActiveDescriptionEditor({
       sectionId: String(sectionId),
       itemId: String(itemId),
+    });
+  }
+
+  function toggleBundleCollapsed(sectionId, bundleLocalId, sectionItems) {
+    const sectionKey = String(sectionId);
+    const bundleKey = String(bundleLocalId);
+    const componentIds = (sectionItems || [])
+      .filter((item) => String(item.bundleParentLocalId) === bundleKey)
+      .map((item) => String(item.localId || item.id));
+
+    setCollapsedBundleIdsBySection((prev) => {
+      const currentIds = prev[sectionKey] || [];
+      const isCollapsed = currentIds.includes(bundleKey);
+      const nextIds = isCollapsed
+        ? currentIds.filter((currentId) => currentId !== bundleKey)
+        : [...currentIds, bundleKey];
+
+      if (!isCollapsed && componentIds.length) {
+        setSelectedItemIdsBySection((currentSelection) => {
+          const selectedIds = currentSelection[sectionKey] || [];
+          const hasSelectedComponents = componentIds.some((itemId) =>
+            selectedIds.includes(itemId),
+          );
+
+          if (!hasSelectedComponents) {
+            return currentSelection;
+          }
+
+          const nextSelectedIds = selectedIds.filter(
+            (itemId) => !componentIds.includes(itemId),
+          );
+
+          if (!nextSelectedIds.includes(bundleKey)) {
+            nextSelectedIds.push(bundleKey);
+          }
+
+          return {
+            ...currentSelection,
+            [sectionKey]: nextSelectedIds,
+          };
+        });
+      }
+
+      return {
+        ...prev,
+        [sectionKey]: nextIds,
+      };
     });
   }
 
@@ -1727,7 +1789,21 @@ function QuotationEditorContent({
                 selectedItemIdsBySection[String(section.id)] || [];
               const sectionHighlightedItemIds =
                 highlightedItemIdsBySection[String(section.id)] || [];
-              const allSectionItemIds = (section.items || []).map((item) =>
+              const sectionDisplayItems = buildSectionDisplayItems(section);
+              const collapsedBundleIds = new Set(
+                collapsedBundleIdsBySection[String(section.id)] || [],
+              );
+              const visibleSectionItems = sectionDisplayItems.filter((item) => {
+                const bundleParentLocalId = item.bundleParentLocalId
+                  ? String(item.bundleParentLocalId)
+                  : null;
+
+                return (
+                  !bundleParentLocalId ||
+                  !collapsedBundleIds.has(bundleParentLocalId)
+                );
+              });
+              const allSectionItemIds = visibleSectionItems.map((item) =>
                 String(item.id),
               );
               const allItemsSelected =
@@ -1735,7 +1811,6 @@ function QuotationEditorContent({
                 allSectionItemIds.every((itemId) =>
                   sectionSelectedItemIds.includes(itemId),
                 );
-              const sectionDisplayItems = buildSectionDisplayItems(section);
               const sectionTotals = (section.items || [])
                 .filter((item) => !item.bundleParentItemId)
                 .reduce(
@@ -2313,7 +2388,7 @@ function QuotationEditorContent({
                           </tr>
                         </thead>
                         <tbody>
-                          {sectionDisplayItems.map((item, index) => {
+                          {visibleSectionItems.map((item, index) => {
                             const itemDraftValue =
                               itemEdits[String(item.id)] ||
                               buildItemDraft(catalogs.providers);
@@ -2362,6 +2437,9 @@ function QuotationEditorContent({
                                 Number(candidate.bundleParentItemId) ===
                                 Number(item.id),
                             ).length;
+                            const isBundleCollapsed = collapsedBundleIds.has(
+                              String(item.id),
+                            );
 
                             return (
                               <tr
@@ -2394,7 +2472,7 @@ function QuotationEditorContent({
                                     }
                                   />
                                 </td>
-                                <td>{item.displayOrder || index + 1}</td>
+                                <td>{index + 1}</td>
                                 <td>
                                   <div
                                     className={[
@@ -2422,12 +2500,19 @@ function QuotationEditorContent({
                                           <button
                                             type="button"
                                             className="quotation-bundle-toggle-button"
-                                            disabled
-                                            aria-label="Componentes del bundle"
-                                            title="Componentes del bundle"
+                                            aria-expanded={!isBundleCollapsed}
+                                            aria-label={`${isBundleCollapsed ? "Mostrar" : "Ocultar"} componentes de ${item.productCode || item.productDescription || "bundle"}`}
+                                            title={`${isBundleCollapsed ? "Mostrar" : "Ocultar"} componentes`}
+                                            onClick={() =>
+                                              toggleBundleCollapsed(
+                                                section.id,
+                                                item.id,
+                                                sectionDisplayItems,
+                                              )
+                                            }
                                           >
                                             <BundleToggleIcon
-                                              collapsed={false}
+                                              collapsed={isBundleCollapsed}
                                             />
                                           </button>
                                         ) : null}

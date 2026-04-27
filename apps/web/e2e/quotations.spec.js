@@ -841,6 +841,14 @@ async function getQuotationRowCodes(page) {
     .evaluateAll((inputs) => inputs.map((input) => input.value));
 }
 
+async function getQuotationRowNumbers(page) {
+  return page
+    .locator(".quotation-items-table tbody tr td:nth-child(2)")
+    .evaluateAll((cells) =>
+      cells.map((cell) => cell.textContent?.trim() || ""),
+    );
+}
+
 function getQuotationRowByCode(page, code) {
   return page
     .locator(".quotation-items-table tbody tr")
@@ -1847,6 +1855,35 @@ test.describe("quotations", () => {
     await expect(quotationRow.locator("td").nth(5)).toHaveText(/USD\s*60/);
   });
 
+  test("en edicion permite ocultar y mostrar componentes por bundle individual", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route("**/api/**", createQuotationsFixture());
+
+    const editModal = await openEditQuotationModal(page);
+
+    await expect
+      .poll(() => getQuotationRowCodes(page))
+      .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
+
+    await toggleBundleComponents(page, "BUNDLE-A");
+
+    await expect.poll(() => getQuotationRowCodes(page)).toEqual(["BUNDLE-A"]);
+    await expect.poll(() => getQuotationRowNumbers(page)).toEqual(["1"]);
+
+    await toggleBundleComponents(page, "BUNDLE-A");
+
+    await expect
+      .poll(() => getQuotationRowCodes(page))
+      .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
+    await expect
+      .poll(() => getQuotationRowNumbers(page))
+      .toEqual(["1", "2", "3"]);
+
+    await expect(editModal).toBeVisible();
+  });
+
   test("en edicion abre una vista previa dedicada con cambios locales y conserva el estado", async ({
     page,
   }) => {
@@ -1894,7 +1931,17 @@ test.describe("quotations", () => {
     await expect
       .poll(
         () =>
-          renderedPdfPayload?.sections?.[0]?.rows?.[0]?.quantityDisplay ?? null,
+          renderedPdfPayload?.sections?.[0]?.rows?.map(
+            (row) => row.productCode,
+          ) || [],
+      )
+      .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.[0]?.rows?.find(
+            (row) => row.productCode === "A-COMP-1",
+          )?.quantityDisplay ?? null,
       )
       .toBe("4.00");
     await expect(printPage).not.toBeNull();
@@ -1908,6 +1955,249 @@ test.describe("quotations", () => {
     await expect(editModal.getByLabel("Notas de la cotizacion")).toHaveValue(
       "Vista previa con notas locales.",
     );
+
+    await printPage.close();
+  });
+
+  test("en edicion la vista previa siempre incluye el padre del bundle y solo muestra componentes si esta expandido", async ({
+    page,
+  }) => {
+    let renderedPdfPayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.context().route(
+      "**/api/**",
+      createQuotationsFixture({
+        onRenderQuotationPdf(payload) {
+          renderedPdfPayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    const firstPopupPromise = page.waitForEvent("popup");
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+    const firstPrintPage = await firstPopupPromise;
+
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.[0]?.rows?.map(
+            (row) => row.productCode,
+          ) || [],
+      )
+      .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
+
+    await firstPrintPage.close();
+
+    await toggleBundleComponents(page, "BUNDLE-A");
+
+    const secondPopupPromise = page.waitForEvent("popup");
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+    const secondPrintPage = await secondPopupPromise;
+
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.[0]?.rows?.map(
+            (row) => row.productCode,
+          ) || [],
+      )
+      .toEqual(["BUNDLE-A"]);
+
+    await secondPrintPage.close();
+  });
+
+  test("en edicion la vista previa incluye el padre del bundle en cada tabla", async ({
+    page,
+  }) => {
+    let renderedPdfPayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.context().route(
+      "**/api/**",
+      createQuotationsFixture({
+        quotationVersionOverrides: {
+          sections: [
+            {
+              id: 1101,
+              title: "Tabla A",
+              inclusionTypeId: 1,
+              items: [
+                {
+                  id: 5001,
+                  providerId: 201,
+                  providerName: "Bundles Inc",
+                  productCode: "BUNDLE-A",
+                  productDescription: "Bundle A",
+                  itemType: "grupo_productos",
+                  bundleParentItemId: null,
+                  bundleOriginType: "price_list_bundle",
+                  sourceProviderPriceListItemId: 301,
+                  sourceComponentPriceListItemId: null,
+                  quantity: 1,
+                  listPriceUnit: 0,
+                  manufacturerDiscountPct: 0,
+                  importCostPct: 0,
+                  profitMarginPct: 0,
+                  finalDiscountPct: 0,
+                  displayOrder: 1,
+                  bundleSortOrder: null,
+                },
+                {
+                  id: 5002,
+                  providerId: 201,
+                  providerName: "Bundles Inc",
+                  productCode: "A-COMP-1",
+                  productDescription: "Componente A1",
+                  itemType: "producto",
+                  bundleParentItemId: 5001,
+                  bundleOriginType: "price_list_bundle",
+                  sourceProviderPriceListItemId: null,
+                  sourceComponentPriceListItemId: 401,
+                  quantity: 2,
+                  listPriceUnit: 10,
+                  manufacturerDiscountPct: 0,
+                  importCostPct: 0,
+                  profitMarginPct: 0,
+                  finalDiscountPct: 0,
+                  displayOrder: 2,
+                  bundleSortOrder: 1,
+                },
+              ],
+            },
+            {
+              id: 1102,
+              title: "Tabla B",
+              inclusionTypeId: 1,
+              items: [
+                {
+                  id: 5101,
+                  providerId: 201,
+                  providerName: "Bundles Inc",
+                  productCode: "BUNDLE-B",
+                  productDescription: "Bundle B",
+                  itemType: "grupo_productos",
+                  bundleParentItemId: null,
+                  bundleOriginType: "price_list_bundle",
+                  sourceProviderPriceListItemId: 302,
+                  sourceComponentPriceListItemId: null,
+                  quantity: 1,
+                  listPriceUnit: 0,
+                  manufacturerDiscountPct: 0,
+                  importCostPct: 0,
+                  profitMarginPct: 0,
+                  finalDiscountPct: 0,
+                  displayOrder: 1,
+                  bundleSortOrder: null,
+                },
+                {
+                  id: 5102,
+                  providerId: 201,
+                  providerName: "Bundles Inc",
+                  productCode: "B-COMP-1",
+                  productDescription: "Componente B1",
+                  itemType: "producto",
+                  bundleParentItemId: 5101,
+                  bundleOriginType: "price_list_bundle",
+                  sourceProviderPriceListItemId: null,
+                  sourceComponentPriceListItemId: 403,
+                  quantity: 3,
+                  listPriceUnit: 15,
+                  manufacturerDiscountPct: 0,
+                  importCostPct: 0,
+                  profitMarginPct: 0,
+                  finalDiscountPct: 0,
+                  displayOrder: 2,
+                  bundleSortOrder: 1,
+                },
+              ],
+            },
+          ],
+        },
+        onRenderQuotationPdf(payload) {
+          renderedPdfPayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    const popupPromise = page.waitForEvent("popup");
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+    const printPage = await popupPromise;
+
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.map((section) => ({
+            title: section.title,
+            rows: (section.rows || []).map((row) => row.productCode),
+          })) || [],
+      )
+      .toEqual([
+        { title: "Tabla A", rows: ["BUNDLE-A", "A-COMP-1"] },
+        { title: "Tabla B", rows: ["BUNDLE-B", "B-COMP-1"] },
+      ]);
+
+    await printPage.close();
+  });
+
+  test("en edicion la vista previa incluye el padre del bundle en una segunda tabla creada localmente", async ({
+    page,
+  }) => {
+    let renderedPdfPayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.context().route(
+      "**/api/**",
+      createQuotationsFixture({
+        onRenderQuotationPdf(payload) {
+          renderedPdfPayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    await editModal
+      .getByRole("button", { name: "Agregar seccion inicial" })
+      .click();
+
+    const secondSection = editModal.locator(".quotation-section-card").nth(1);
+    await secondSection.locator("input").first().fill("Tabla local");
+    await secondSection.locator("input").first().blur();
+
+    await secondSection.getByRole("button", { name: "Agregar fila" }).click();
+    const secondSectionNewRow = secondSection
+      .locator(".quotation-items-table tbody tr")
+      .last();
+    await secondSectionNewRow.locator("td:nth-child(3) input").dblclick();
+    await chooseProduct(page, "BUNDLE-B");
+
+    const popupPromise = page.waitForEvent("popup");
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+    const printPage = await popupPromise;
+
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.map((section) => ({
+            title: section.title,
+            rows: (section.rows || []).map((row) => row.productCode),
+          })) || [],
+      )
+      .toEqual([
+        {
+          title: "Bundle persistido",
+          rows: ["BUNDLE-A", "A-COMP-1", "A-COMP-2"],
+        },
+        {
+          title: "Tabla local",
+          rows: ["BUNDLE-B", "B-COMP-1", "B-COMP-2"],
+        },
+      ]);
 
     await printPage.close();
   });

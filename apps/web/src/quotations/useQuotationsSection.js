@@ -86,6 +86,50 @@ function moveSelectedListItems(list, selectedIds, direction) {
   return blocks.flatMap((block) => block.items);
 }
 
+function normalizeQuotationPdfPayload(printModel) {
+  if (!printModel || typeof printModel !== "object") {
+    return null;
+  }
+
+  const { company: _ignoredCompany, ...payload } = printModel;
+
+  return {
+    ...payload,
+    sections: Array.isArray(payload.sections)
+      ? payload.sections.map((section) => ({
+          ...section,
+          subtotal: toNumber(section?.subtotal),
+          rows: Array.isArray(section?.rows)
+            ? section.rows.map((row) => ({
+                ...row,
+                displayOrder:
+                  row?.displayOrder == null ? null : Number(row.displayOrder),
+                quantity: row?.quantity == null ? null : toNumber(row.quantity),
+                salePriceUnit:
+                  row?.salePriceUnit == null
+                    ? null
+                    : toNumber(row.salePriceUnit),
+                salePriceTotal:
+                  row?.salePriceTotal == null
+                    ? null
+                    : toNumber(row.salePriceTotal),
+              }))
+            : [],
+        }))
+      : [],
+    summary: payload.summary
+      ? {
+          ...payload.summary,
+          subtotal: toNumber(payload.summary.subtotal),
+          discount: toNumber(payload.summary.discount),
+          discountedSubtotal: toNumber(payload.summary.discountedSubtotal),
+          vatAmount: toNumber(payload.summary.vatAmount),
+          total: toNumber(payload.summary.total),
+        }
+      : payload.summary,
+  };
+}
+
 function getBundleRootLocalId(item) {
   return item?.bundleParentLocalId || item?.localId || null;
 }
@@ -1451,33 +1495,77 @@ export function useQuotationsSection({
       // Ignore window bootstrap failures and rely on the navigation below.
     }
 
-    void api
-      .post("/api/quotations/render-pdf", printModel, {
-        responseType: "blob",
-        headers: {
-          Accept: "application/pdf",
-        },
+    const pdfPayload = normalizeQuotationPdfPayload(printModel);
+    const requestUrl = new URL(
+      "/api/quotations/render-pdf",
+      api.defaults.baseURL || window.location.origin,
+    );
+    const authToken = window.localStorage.getItem("crm_token") || "";
+
+    void fetch(requestUrl.toString(), {
+      method: "POST",
+      headers: {
+        Accept: "application/pdf",
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: JSON.stringify(pdfPayload),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const errorData = await response.json().catch(() => null);
+            const validationErrors = errorData?.errors?.fieldErrors
+              ? Object.entries(errorData.errors.fieldErrors)
+                  .flatMap(([field, messages]) => {
+                    if (!Array.isArray(messages) || messages.length === 0) {
+                      return [];
+                    }
+                    return `${field}: ${messages.join(", ")}`;
+                  })
+                  .join(" | ")
+              : "";
+            throw new Error(
+              validationErrors
+                ? `${errorData?.message || "No fue posible generar la vista previa PDF"}: ${validationErrors}`
+                : errorData?.message ||
+                    "No fue posible generar la vista previa PDF",
+            );
+          }
+
+          const textError = await response.text().catch(() => "");
+          throw new Error(
+            textError || "No fue posible generar la vista previa PDF",
+          );
+        }
+
+        const pdfBlob = await response.blob();
+        if (!pdfBlob || pdfBlob.size === 0) {
+          throw new Error("La vista previa PDF se genero vacia");
+        }
+
+        return pdfBlob;
       })
-      .then((response) => {
-        const pdfBlob =
-          response.data instanceof Blob
-            ? response.data
-            : new Blob([response.data], { type: "application/pdf" });
+      .then((pdfBlob) => {
         const objectUrl = window.URL.createObjectURL(pdfBlob);
         const revokeObjectUrl = () => {
           window.URL.revokeObjectURL(objectUrl);
         };
 
-        printWindow.addEventListener("pagehide", revokeObjectUrl, {
-          once: true,
-        });
+        const handleLoad = () => {
+          printWindow.removeEventListener("load", handleLoad);
+          printWindow.addEventListener("pagehide", revokeObjectUrl, {
+            once: true,
+          });
+        };
+
+        printWindow.addEventListener("load", handleLoad, { once: true });
         printWindow.location.replace(objectUrl);
       })
       .catch((err) => {
         printWindow.close();
-        setError(
-          getApiErrorMessage(err, "No fue posible generar la vista previa PDF"),
-        );
+        setError(err?.message || "No fue posible generar la vista previa PDF");
       });
 
     return true;
