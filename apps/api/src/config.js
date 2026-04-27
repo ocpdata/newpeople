@@ -39,4 +39,29 @@ export const config = {
     database: process.env.DB_NAME || "newpeople_crm",
     connectionLimit: Number(process.env.DB_POOL_SIZE || 10),
   },
+  documents: {
+    quotation: {
+      company: {
+        logoPath:
+          process.env.QUOTATION_COMPANY_LOGO_PATH ||
+          resolve(__dirname, "../../web/src/assets/hero.png"),
+        legalName:
+          process.env.QUOTATION_COMPANY_LEGAL_NAME ||
+          "Access Quality S.A. de C.V.",
+        taxId: process.env.QUOTATION_COMPANY_TAX_ID || "RFC: AQU110118AV2",
+        addressLines: (
+          process.env.QUOTATION_COMPANY_ADDRESS_LINES ||
+          [
+            "Montecito #38, Piso 7, Oficina 1, WTC, Col. Napoles",
+            "Benito Juarez, CDMX, CP 03810",
+          ].join("|")
+        )
+          .split("|")
+          .map((line) => line.trim())
+          .filter(Boolean),
+        email: process.env.QUOTATION_COMPANY_EMAIL || "",
+        phone: process.env.QUOTATION_COMPANY_PHONE || "",
+      },
+    },
+  },
 };

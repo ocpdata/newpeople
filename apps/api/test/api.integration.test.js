@@ -542,6 +542,13 @@ describe("API integration baseline", () => {
     };
   }
 
+  function binaryParser(res, callback) {
+    const chunks = [];
+    res.on("data", (chunk) => chunks.push(chunk));
+    res.on("end", () => callback(null, Buffer.concat(chunks)));
+    res.on("error", callback);
+  }
+
   async function createOwnedOpportunityFlowFixture(suffix) {
     const accountId = await createDirectAccount({
       ownerUserId: ctx.opportunityFlowUserId,
@@ -4017,6 +4024,72 @@ describe("API integration baseline", () => {
 
     expect(createdQuotation).toBeTruthy();
     expect(createdQuotation.latestTotalSaleAmount).toBeCloseTo(174, 6);
+  });
+
+  test("cotizaciones genera un PDF inline desde cambios no guardados", async () => {
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_quote_pdf`);
+
+    const response = await request(app)
+      .post("/api/quotations/render-pdf")
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .send({
+        header: {
+          quotationDate: "26-04-2026",
+          proposalName: "PDF Demo",
+          accountName: "Cuenta PDF",
+          contactName: "Ana Contacto",
+          contactEmail: "ana@example.com",
+          contactPhone: "555-100-2000",
+          sellerName: "API Seller Fixture",
+          sellerEmail: "seller@example.com",
+          sellerPhone: "555-300-4000",
+        },
+        introduction: "Documento PDF generado desde cambios locales.",
+        sections: [
+          {
+            title: "Licencias",
+            subtotal: 60,
+            rows: [
+              {
+                displayOrder: 1,
+                productCode: "SKU-1",
+                productDescription: "Licencia anual",
+                quantity: 4,
+                quantityDisplay: "4.00",
+                salePriceUnit: 15,
+                salePriceTotal: 60,
+              },
+            ],
+          },
+        ],
+        summary: {
+          subtotal: 60,
+          discount: 0,
+          discountedSubtotal: 60,
+          vatAmount: 9.6,
+          total: 69.6,
+          showVat: true,
+          currencyCode: "USD",
+        },
+        commercialTerms: {
+          deliveryTime: "30 dias",
+          quotationValidity: "30 dias",
+          warranty: "1 ano",
+          paymentTerms: "30 dias despues de facturado",
+          currency: "Dolar estadounidense",
+        },
+        notes: "Notas locales para el PDF.",
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/application\/pdf/);
+    expect(response.headers["content-disposition"]).toContain("inline;");
+    expect(response.headers["content-disposition"]).toContain("pdf-demo.pdf");
+    expect(response.body instanceof Buffer).toBe(true);
+    expect(response.body.length).toBeGreaterThan(1000);
+    expect(response.body.subarray(0, 4).toString("utf8")).toBe("%PDF");
   });
 
   test("cotizaciones.create persiste bundles reales y los conserva al clonar version", async () => {

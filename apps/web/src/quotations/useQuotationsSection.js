@@ -25,7 +25,6 @@ import {
   toNumber,
 } from "./quotationsUtils";
 import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
-import { createQuotationPrintJob } from "./quotationPrintStorage";
 
 function moveListItem(list, fromIndex, toIndex) {
   if (
@@ -1426,7 +1425,7 @@ export function useQuotationsSection({
 
   const openQuotationPrintView = useCallback((printModel) => {
     if (typeof window === "undefined" || !printModel) {
-      setError("No fue posible preparar la vista previa de impresion");
+      setError("No fue posible preparar la vista previa PDF");
       return false;
     }
 
@@ -1438,17 +1437,48 @@ export function useQuotationsSection({
       return false;
     }
 
-    const jobId = createQuotationPrintJob(printModel, printWindow);
-    if (!jobId) {
-      printWindow.close();
-      setError("No fue posible preparar la vista previa de impresion");
-      return false;
+    try {
+      printWindow.document.title = "Generando PDF...";
+      printWindow.document.body.innerHTML = `
+        <div style="font-family: Arial, sans-serif; padding: 32px; color: #123044;">
+          <h1 style="margin: 0 0 12px; font-size: 22px;">Generando vista previa PDF</h1>
+          <p style="margin: 0; font-size: 14px; color: #42515c;">
+            Estamos preparando el documento oficial de la cotizacion.
+          </p>
+        </div>
+      `;
+    } catch {
+      // Ignore window bootstrap failures and rely on the navigation below.
     }
 
-    const printUrl = new URL("/quotations/print", window.location.origin);
-    printUrl.searchParams.set("job", jobId);
+    void api
+      .post("/api/quotations/render-pdf", printModel, {
+        responseType: "blob",
+        headers: {
+          Accept: "application/pdf",
+        },
+      })
+      .then((response) => {
+        const pdfBlob =
+          response.data instanceof Blob
+            ? response.data
+            : new Blob([response.data], { type: "application/pdf" });
+        const objectUrl = window.URL.createObjectURL(pdfBlob);
+        const revokeObjectUrl = () => {
+          window.URL.revokeObjectURL(objectUrl);
+        };
 
-    printWindow.location.replace(printUrl.toString());
+        printWindow.addEventListener("pagehide", revokeObjectUrl, {
+          once: true,
+        });
+        printWindow.location.replace(objectUrl);
+      })
+      .catch((err) => {
+        printWindow.close();
+        setError(
+          getApiErrorMessage(err, "No fue posible generar la vista previa PDF"),
+        );
+      });
 
     return true;
   }, []);

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { buildQuotationPdfBuffer } from "./quotationPdf.js";
 
 const router = express.Router();
 
@@ -79,6 +80,58 @@ const transitionSchema = z.object({
     "ponerla_borrador",
     "aceptar",
   ]),
+});
+
+const quotationPdfRowSchema = z.object({
+  displayOrder: z.number().int().nonnegative().optional().nullable(),
+  productCode: z.string().trim().max(120).optional().nullable(),
+  productDescription: z.string().trim().max(5000).optional().nullable(),
+  quantity: z.number().nonnegative().optional().nullable(),
+  quantityDisplay: z.string().trim().max(120).optional().nullable(),
+  salePriceUnit: z.number().nonnegative().optional().nullable(),
+  salePriceTotal: z.number().nonnegative().optional().nullable(),
+});
+
+const quotationPdfSectionSchema = z.object({
+  title: z.string().trim().min(1).max(180),
+  subtotal: z.number().nonnegative().optional().default(0),
+  rows: z.array(quotationPdfRowSchema).optional().default([]),
+});
+
+const quotationPdfRenderSchema = z.object({
+  header: z.object({
+    quotationDate: z.string().trim().max(120).optional().default(""),
+    proposalName: z.string().trim().max(180).optional().default(""),
+    accountName: z.string().trim().max(180).optional().default(""),
+    contactName: z.string().trim().max(180).optional().default(""),
+    contactEmail: z.string().trim().max(180).optional().default(""),
+    contactPhone: z.string().trim().max(80).optional().default(""),
+    sellerName: z.string().trim().max(180).optional().default(""),
+    sellerEmail: z.string().trim().max(180).optional().default(""),
+    sellerPhone: z.string().trim().max(80).optional().default(""),
+  }),
+  introduction: z.string().trim().max(50000).optional().default(""),
+  sections: z.array(quotationPdfSectionSchema).optional().default([]),
+  summary: z.object({
+    subtotal: z.number().nonnegative().optional().default(0),
+    discount: z.number().nonnegative().optional().default(0),
+    discountedSubtotal: z.number().nonnegative().optional().default(0),
+    vatAmount: z.number().nonnegative().optional().default(0),
+    total: z.number().nonnegative().optional().default(0),
+    showVat: z.boolean().optional().default(false),
+    currencyCode: z.string().trim().min(1).max(20).optional().default("USD"),
+  }),
+  commercialTerms: z
+    .object({
+      deliveryTime: z.string().trim().max(180).optional().default(""),
+      quotationValidity: z.string().trim().max(180).optional().default(""),
+      warranty: z.string().trim().max(180).optional().default(""),
+      paymentTerms: z.string().trim().max(180).optional().default(""),
+      currency: z.string().trim().max(120).optional().default(""),
+    })
+    .optional()
+    .default({}),
+  notes: z.string().trim().max(50000).optional().default(""),
 });
 
 const sectionSchema = z.object({
@@ -3188,6 +3241,43 @@ router.put(
         Number(refreshedVersion.latest_version_id),
       message: "Version actualizada",
     });
+  },
+);
+
+router.post(
+  "/quotations/render-pdf",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const parsed = quotationPdfRenderSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const { buffer, fileName } = await buildQuotationPdfBuffer(parsed.data);
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "generar_pdf",
+      entityType: "quotation_document",
+      detail: `Documento PDF generado: ${parsed.data.header.proposalName || "cotizacion"}`,
+      after: {
+        proposalName: parsed.data.header.proposalName || "",
+        sectionCount: parsed.data.sections.length,
+      },
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(buffer.length));
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.send(buffer);
   },
 );
 

@@ -8,6 +8,7 @@ function bootstrapAuthenticatedSession(page, token = "jwt-token") {
 
 function createQuotationsFixture({
   onCreateQuotation,
+  onRenderQuotationPdf,
   onUpdateQuotationVersion,
   quotationVersionOverrides,
   quotationOverrides,
@@ -760,6 +761,31 @@ function createQuotationsFixture({
       });
 
       await fulfillJson(route, results);
+      return;
+    }
+
+    if (
+      pathname === "/api/quotations/render-pdf" &&
+      route.request().method() === "POST"
+    ) {
+      onRenderQuotationPdf?.(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/pdf",
+        body: `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF`,
+      });
       return;
     }
 
@@ -1824,15 +1850,17 @@ test.describe("quotations", () => {
   test("en edicion abre una vista previa dedicada con cambios locales y conserva el estado", async ({
     page,
   }) => {
-    await page.context().addInitScript(() => {
-      window.__printCalls = 0;
-      window.print = () => {
-        window.__printCalls += 1;
-      };
-    });
+    let renderedPdfPayload = null;
 
     await bootstrapAuthenticatedSession(page);
-    await page.context().route("**/api/**", createQuotationsFixture());
+    await page.context().route(
+      "**/api/**",
+      createQuotationsFixture({
+        onRenderQuotationPdf(payload) {
+          renderedPdfPayload = payload;
+        },
+      }),
+    );
 
     const editModal = await openEditQuotationModal(page);
 
@@ -1848,41 +1876,28 @@ test.describe("quotations", () => {
     const popupPromise = page.waitForEvent("popup");
     await editModal.getByRole("button", { name: "Vista previa" }).click();
     const printPage = await popupPromise;
-    await printPage.waitForLoadState("domcontentloaded");
-
-    await expect(printPage).toHaveURL(/\/quotations\/print\?job=/);
-    await expect(
-      printPage.getByRole("button", { name: "Imprimir" }),
-    ).toBeVisible();
-    await expect(
-      printPage.getByText("Vista previa de impresion"),
-    ).toBeVisible();
-    await expect(
-      printPage.getByText("Vista previa con notas locales."),
-    ).toBeVisible();
-    await expect(
-      printPage.getByTestId("quotation-print-section-subtotal-1101"),
-    ).toHaveText(/USD\s*60/);
-    await expect(
-      printPage.getByTestId("quotation-print-contact-email"),
-    ).toHaveText("");
-    await expect(
-      printPage.getByTestId("quotation-print-contact-phone"),
-    ).toHaveText("");
-    await expect(
-      printPage.getByTestId("quotation-print-seller-email"),
-    ).toHaveText("");
-    await expect(
-      printPage.getByTestId("quotation-print-seller-phone"),
-    ).toHaveText("");
-
     await expect
-      .poll(() => printPage.evaluate(() => window.__printCalls))
-      .toBe(0);
-    await printPage.getByRole("button", { name: "Imprimir" }).click();
+      .poll(() => renderedPdfPayload?.notes || "")
+      .toBe("Vista previa con notas locales.");
     await expect
-      .poll(() => printPage.evaluate(() => window.__printCalls))
-      .toBe(1);
+      .poll(() => renderedPdfPayload?.header?.accountName || "")
+      .toBe("Cuenta Demo");
+    await expect
+      .poll(() => renderedPdfPayload?.header?.contactEmail || "")
+      .toBe("");
+    await expect
+      .poll(() => renderedPdfPayload?.header?.sellerEmail || "")
+      .toBe("");
+    await expect
+      .poll(() => renderedPdfPayload?.sections?.[0]?.subtotal ?? null)
+      .toBe(60);
+    await expect
+      .poll(
+        () =>
+          renderedPdfPayload?.sections?.[0]?.rows?.[0]?.quantityDisplay ?? null,
+      )
+      .toBe("4.00");
+    await expect(printPage).not.toBeNull();
 
     await expect(
       editModal
