@@ -24,11 +24,11 @@ export function useUsersPage() {
   const [editForm, setEditForm] = useState(EMPTY_USER_FORM);
   const [sortField, setSortField] = useState("id");
   const [sortDirection, setSortDirection] = useState("asc");
-  const [userQuery, setUserQuery] = useState("");
-  const [userStatusFilter, setUserStatusFilter] = usePersistedStatusFilter(
+  const [userQuery, setUserQueryState] = useState("");
+  const [userStatusFilter, setUserStatusFilterState] = usePersistedStatusFilter(
     "crm.users.statusFilter",
   );
-  const [usersPerPage, setUsersPerPage] = useState(10);
+  const [usersPerPage, setUsersPerPageState] = useState(10);
   const [usersPage, setUsersPage] = useState(1);
   const [form, setForm] = useState(EMPTY_USER_FORM);
 
@@ -113,10 +113,6 @@ export function useUsersPage() {
     });
   }, [sortedUsers, userQuery, userStatusFilter]);
 
-  useEffect(() => {
-    setUsersPage(1);
-  }, [userQuery, userStatusFilter, usersPerPage]);
-
   const totalUserPages = Math.max(
     1,
     Math.ceil(filteredUsers.length / usersPerPage),
@@ -179,13 +175,45 @@ export function useUsersPage() {
   }
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+
+    async function initializeUsers() {
+      try {
+        const [usersRes, rolesRes] = await Promise.all([
+          api.get("/api/users"),
+          api.get("/api/roles"),
+        ]);
+        if (cancelled) return;
+        setUsers(usersRes.data || []);
+        setRoles(rolesRes.data || []);
+      } catch (err) {
+        if (!cancelled) {
+          setError(getApiErrorMessage(err, "No fue posible cargar usuarios"));
+        }
+      }
+    }
+
+    void initializeUsers();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (!showCreateForm) return;
-    setForm((prev) => ({ ...prev, email: "" }));
-  }, [showCreateForm]);
+  function setUserQuery(value) {
+    setUsersPage(1);
+    setUserQueryState(value);
+  }
+
+  function setUserStatusFilter(value) {
+    setUsersPage(1);
+    setUserStatusFilterState(value);
+  }
+
+  function setUsersPerPage(value) {
+    setUsersPage(1);
+    setUsersPerPageState(value);
+  }
 
   function readUserImageFile(file) {
     return new Promise((resolve, reject) => {
@@ -231,6 +259,7 @@ export function useUsersPage() {
   function openCreateUserModal() {
     setError("");
     setSuccess("");
+    setForm(EMPTY_USER_FORM);
     setShowCreateForm(true);
   }
 

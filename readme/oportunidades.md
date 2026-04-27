@@ -8,6 +8,7 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - Edicion de oportunidad desde acciones por fila.
 - Asignacion de un vendedor.
 - Seleccion opcional de ingeniero preventa.
+- Gestion de cotizaciones asociadas a la oportunidad en modo edicion.
 - Gestion del proceso comercial por etapas con preguntas configurables.
 - Cierre comercial como Ganada, Perdida o Anulada.
 - Cambio de estado de activacion desde menu por fila.
@@ -54,7 +55,7 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 
 ### Alcance de acceso
 
-- Administrador: ve y opera todas las oportunidades.
+- `oportunidades.read_all`: ve y opera todas las oportunidades y habilita cuentas/contactos ajenos en catalogos relacionados.
 - Usuario no administrador: solo ve y opera oportunidades de cuentas de las que es propietario.
 
 ## Modelo funcional
@@ -96,6 +97,7 @@ Los 4 estados comerciales vigentes son:
   - Datos principales.
   - Gestion comercial.
   - Proceso comercial.
+  - Cotizaciones y versiones asociadas.
   - Auditoria en modo edicion.
 - El bloque `Proceso comercial` usa un stepper clickable con las 7 etapas operativas.
 - Al abrir una oportunidad en edicion, el step seleccionado coincide con la etapa actual de la oportunidad.
@@ -130,6 +132,8 @@ Los 4 estados comerciales vigentes son:
 - POST /api/opportunities/:id/stage-transition
 - POST /api/opportunities/:id/commercial-close
 - PATCH /api/opportunities/:id/status
+- GET /api/opportunities/:id/quotations
+- POST /api/opportunities/:id/quotations
 - GET /api/catalogs/opportunity-accounts
 - GET /api/catalogs/opportunity-contacts
 - GET /api/catalogs/opportunity-seller-users
@@ -144,11 +148,13 @@ Los 4 estados comerciales vigentes son:
 - PATCH /api/catalogs/opportunity-stage-questions/:id/status
 - POST /api/catalogs/opportunity-stage-questions/reorder
 
+Las APIs especificas del modulo de cotizaciones se documentan en `cotizaciones.md`.
+
 ## Consideraciones
 
 - Cada oportunidad debe estar asociada a una cuenta y a un contacto de esa misma cuenta.
 - Los usuarios no administradores solo ven y operan oportunidades de cuentas de las que son propietarios.
-- Los administradores pueden ver y operar todas las oportunidades.
+- Usuarios con `oportunidades.read_all` pueden ver y operar todas las oportunidades.
 - El identificador de la oportunidad corresponde al `id` interno del registro.
 - Debe existir un vendedor con rol de vendedor.
 - Preventa es opcional y corresponde a un usuario activo.

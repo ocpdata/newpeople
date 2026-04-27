@@ -1,6 +1,7 @@
 import OpportunityQuestionAdminLayout from "./opportunities/OpportunityQuestionAdminLayout";
 import OpportunityQuestionFormModal from "./opportunities/OpportunityQuestionFormModal";
 import { useOpportunityQuestionAdminPage } from "./opportunities/useOpportunityQuestionAdminPage";
+import "./opportunities/opportunity-question-admin.css";
 
 export default function OpportunityQuestionAdminPage() {
   const {

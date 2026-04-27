@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 
 const DEFAULT_FORM = {
@@ -21,6 +21,7 @@ export function useOpportunityQuestionAdminPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [form, setForm] = useState(DEFAULT_FORM);
+  const loadStagesRef = useRef(null);
 
   useEffect(() => {
     if (!error && !success) return undefined;
@@ -31,20 +32,20 @@ export function useOpportunityQuestionAdminPage() {
     return () => window.clearTimeout(timeoutId);
   }, [error, success]);
 
-  async function loadStages() {
+  const loadStages = useCallback(async () => {
     const { data } = await api.get("/api/catalogs/opportunity-sales-stages");
     const nextStages = Array.isArray(data) ? data : [];
+    const nextSelectedStageId =
+      selectedStageId &&
+      nextStages.some((stage) => String(stage.id) === String(selectedStageId))
+        ? String(selectedStageId)
+        : nextStages[0]
+          ? String(nextStages[0].id)
+          : "";
     setStages(nextStages);
-    setSelectedStageId((current) => {
-      if (
-        current &&
-        nextStages.some((stage) => String(stage.id) === String(current))
-      ) {
-        return current;
-      }
-      return nextStages[0] ? String(nextStages[0].id) : "";
-    });
-  }
+    setSelectedStageId(nextSelectedStageId);
+    return nextSelectedStageId;
+  }, [selectedStageId]);
 
   async function loadQuestions(stageId) {
     if (!stageId) {
@@ -68,33 +69,69 @@ export function useOpportunityQuestionAdminPage() {
   }
 
   useEffect(() => {
-    loadStages().catch((err) => {
-      setError(
-        getApiErrorMessage(err, "No fue posible cargar las etapas comerciales"),
-      );
-      setLoading(false);
-    });
+    loadStagesRef.current = loadStages;
+  }, [loadStages]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncStages() {
+      try {
+        const nextSelectedStageId = await loadStagesRef.current?.();
+        if (cancelled) return;
+        if (!nextSelectedStageId) {
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible cargar las etapas comerciales",
+            ),
+          );
+          setLoading(false);
+        }
+      }
+    }
+
+    void syncStages();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!selectedStageId) {
-      setLoading(false);
-      return;
+    if (!selectedStageId) return;
+
+    let cancelled = false;
+
+    async function syncQuestions() {
+      setLoading(true);
+      try {
+        await loadQuestions(selectedStageId);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible cargar las preguntas de la etapa seleccionada",
+            ),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
 
-    setLoading(true);
-    loadQuestions(selectedStageId)
-      .catch((err) => {
-        setError(
-          getApiErrorMessage(
-            err,
-            "No fue posible cargar las preguntas de la etapa seleccionada",
-          ),
-        );
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    void syncQuestions();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedStageId]);
 
   const selectedStage = useMemo(
@@ -105,7 +142,8 @@ export function useOpportunityQuestionAdminPage() {
   );
 
   const activeQuestionsCount = useMemo(
-    () => questions.filter((question) => Number(question.is_active) === 1).length,
+    () =>
+      questions.filter((question) => Number(question.is_active) === 1).length,
     [questions],
   );
 
@@ -221,8 +259,13 @@ export function useOpportunityQuestionAdminPage() {
     const currentIndex = questions.findIndex(
       (row) => Number(row.id) === Number(question.id),
     );
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= questions.length) {
+    const targetIndex =
+      direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (
+      currentIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= questions.length
+    ) {
       return;
     }
 
@@ -242,7 +285,9 @@ export function useOpportunityQuestionAdminPage() {
         },
       );
       setQuestions(
-        Array.isArray(response.data?.questions) ? response.data.questions : reordered,
+        Array.isArray(response.data?.questions)
+          ? response.data.questions
+          : reordered,
       );
       setSuccess(response.data?.message || "Orden actualizado correctamente");
     } catch (err) {

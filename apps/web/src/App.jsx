@@ -22,7 +22,6 @@ function App() {
       fetchMe();
     } else {
       localStorage.removeItem("crm_token");
-      setCurrentUser(null);
     }
   }, [token]);
 
@@ -42,6 +41,7 @@ function App() {
       const { data } = await api.get("/api/auth/me");
       setCurrentUser(data);
     } catch {
+      setCurrentUser(null);
       setToken("");
     }
   }
@@ -73,7 +73,10 @@ function App() {
     <AppShell
       currentUser={currentUser}
       token={token}
-      onLogout={() => setToken("")}
+      onLogout={() => {
+        setCurrentUser(null);
+        setToken("");
+      }}
       onRefreshCurrentUser={fetchMe}
     />
   );

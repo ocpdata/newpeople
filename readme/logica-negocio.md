@@ -17,6 +17,7 @@ La vista transversal vive aqui, pero el detalle operativo por dominio debe mante
 - `cuentas.md`
 - `contactos.md`
 - `oportunidades.md`
+- `cotizaciones.md`
 - `proveedores.md`
 - `auditoria.md`
 
@@ -117,6 +118,12 @@ Este patron aplica actualmente a:
 - cuentas
 - contactos
 - oportunidades
+
+Cotizaciones usa una variante distinta:
+
+- los permisos `cotizaciones.*` representan perfiles funcionales del workflow;
+- los estados y acciones viven en catalogos dedicados;
+- la matriz de autorizacion depende del estado de la version mayor.
 
 ## Usuarios
 
@@ -275,12 +282,12 @@ Actualmente se auditan eventos relevantes de:
 4. Los cambios de estado de recursos comerciales requieren el permiso `create` del modulo correspondiente.
 5. La visibilidad comercial de no administradores depende de ownership de cuenta.
 6. Las dependencias comerciales bloquean regresiones de estado: una cuenta no puede volver a pendiente si ya tiene contactos u oportunidades vigentes, y un contacto no puede desactivarse ni volver a pendiente si mantiene oportunidades activas o desactivadas segun el caso.
-6. Contactos y oportunidades heredan el alcance de la cuenta a la que pertenecen.
-7. No se puede desactivar un usuario si eso deja cuentas activas sin propietarios activos.
-8. No se puede desactivar una cuenta si tiene contactos activos.
-9. No se puede marcar una cuenta como pendiente si tiene contactos activos o desactivados.
-10. No se puede desactivar un rol si tiene usuarios asignados.
-11. La auditoria es parte del comportamiento esperado, no un extra opcional.
+7. Contactos y oportunidades heredan el alcance de la cuenta a la que pertenecen.
+8. No se puede desactivar un usuario si eso deja cuentas activas sin propietarios activos.
+9. No se puede desactivar una cuenta si tiene contactos activos.
+10. No se puede marcar una cuenta como pendiente si tiene contactos activos o desactivados.
+11. No se puede desactivar un rol si tiene usuarios asignados.
+12. La auditoria es parte del comportamiento esperado, no un extra opcional.
 
 ## Flujo de negocio resumido
 

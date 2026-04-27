@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 import { useProviderPricing } from "./useProviderPricing";
 
 export function useProvidersPage({ currentUser }) {
   const [providers, setProviders] = useState([]);
-  const [providerStatusFilter, setProviderStatusFilter] =
+  const [providerStatusFilter, setProviderStatusFilterState] =
     usePersistedStatusFilter("crm.providers.statusFilter");
-  const [providerQuery, setProviderQuery] = useState("");
+  const [providerQuery, setProviderQueryState] = useState("");
   const [providerSortField, setProviderSortField] = useState("id");
   const [providerSortDirection, setProviderSortDirection] = useState("asc");
-  const [providersPerPage, setProvidersPerPage] = useState(10);
+  const [providersPerPage, setProvidersPerPageState] = useState(10);
   const [providersPage, setProvidersPage] = useState(1);
   const [showProviderModal, setShowProviderModal] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState(null);
@@ -44,12 +44,10 @@ export function useProvidersPage({ currentUser }) {
     [currentUser],
   );
 
-  const canCreateProviders = explicitProviderPermissions.has(
-    "proveedores.create",
-  );
-  const canUpdateProviders = explicitProviderPermissions.has(
-    "proveedores.update",
-  );
+  const canCreateProviders =
+    explicitProviderPermissions.has("proveedores.create");
+  const canUpdateProviders =
+    explicitProviderPermissions.has("proveedores.update");
   const canReadProviderPrices =
     explicitProviderPermissions.has("proveedores_precios.read") ||
     canCreateProviders ||
@@ -170,19 +168,51 @@ export function useProvidersPage({ currentUser }) {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!showProviderModal || editingProviderId) return;
-    setForm((prev) => ({
-      ...buildDefaultProviderForm(),
-      ...prev,
-      countryId: prev.countryId || buildDefaultProviderForm().countryId,
-      activationStatusId:
-        prev.activationStatusId || buildDefaultProviderForm().activationStatusId,
-    }));
-  }, [showProviderModal, editingProviderId, catalogs]);
+    async function initializeProviders() {
+      try {
+        const [
+          providersRes,
+          countriesRes,
+          providerStatusesRes,
+          priceItemStatusesRes,
+          currenciesRes,
+          productTypesRes,
+        ] = await Promise.all([
+          api.get("/api/providers"),
+          api.get("/api/catalogs/provider-countries"),
+          api.get("/api/catalogs/provider-activation-statuses"),
+          api.get("/api/catalogs/provider-price-list-item-statuses"),
+          api.get("/api/catalogs/provider-price-list-currencies"),
+          api.get("/api/catalogs/product-types"),
+        ]);
+
+        if (cancelled) return;
+
+        setProviders(providersRes.data || []);
+        setCatalogs({
+          countries: countriesRes.data || [],
+          providerStatuses: providerStatusesRes.data || [],
+          priceItemStatuses: priceItemStatusesRes.data || [],
+          currencies: currenciesRes.data || [],
+          productTypes: productTypesRes.data || [],
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(err, "No fue posible cargar proveedores"),
+          );
+        }
+      }
+    }
+
+    void initializeProviders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function openCreateProviderModal() {
     setError("");
@@ -228,25 +258,28 @@ export function useProvidersPage({ currentUser }) {
     setEditProviderAudit(null);
   }
 
-  function isProviderActive(provider) {
+  const isProviderActive = useCallback((provider) => {
     return (
       normalizeText(
         provider.activation_status_code || provider.activation_status,
       ) === "activado"
     );
-  }
+  }, []);
 
-  function isProviderInactive(provider) {
+  const isProviderInactive = useCallback((provider) => {
     return (
       normalizeText(
         provider.activation_status_code || provider.activation_status,
       ) === "desactivado"
     );
-  }
+  }, []);
 
-  function getProviderStatusLabel(provider) {
-    return isProviderActive(provider) ? "Activado" : "Desactivado";
-  }
+  const getProviderStatusLabel = useCallback(
+    (provider) => {
+      return isProviderActive(provider) ? "Activado" : "Desactivado";
+    },
+    [isProviderActive],
+  );
 
   function getProviderStatusBadgeClass(provider) {
     return isProviderActive(provider)
@@ -324,7 +357,7 @@ export function useProvidersPage({ currentUser }) {
         }
         return isProviderActive(provider);
       }),
-    [providers, providerStatusFilter],
+    [providers, providerStatusFilter, isProviderActive, isProviderInactive],
   );
 
   const providerStatusCounts = useMemo(
@@ -340,7 +373,7 @@ export function useProvidersPage({ currentUser }) {
         },
         { active: 0, inactive: 0 },
       ),
-    [providers],
+    [providers, isProviderInactive],
   );
 
   const totalProvidersCount =
@@ -380,7 +413,12 @@ export function useProvidersPage({ currentUser }) {
     });
 
     return list;
-  }, [filteredProviders, providerSortField, providerSortDirection]);
+  }, [
+    filteredProviders,
+    providerSortField,
+    providerSortDirection,
+    getProviderStatusLabel,
+  ]);
 
   const visibleProviders = useMemo(() => {
     const query = providerQuery.trim().toLowerCase();
@@ -400,11 +438,22 @@ export function useProvidersPage({ currentUser }) {
 
       return haystack.includes(query);
     });
-  }, [sortedProviders, providerQuery]);
+  }, [sortedProviders, providerQuery, getProviderStatusLabel]);
 
-  useEffect(() => {
+  function setProviderStatusFilter(value) {
     setProvidersPage(1);
-  }, [providerQuery, providerStatusFilter, providersPerPage]);
+    setProviderStatusFilterState(value);
+  }
+
+  function setProviderQuery(value) {
+    setProvidersPage(1);
+    setProviderQueryState(value);
+  }
+
+  function setProvidersPerPage(value) {
+    setProvidersPage(1);
+    setProvidersPerPageState(value);
+  }
 
   const totalProviderPages = Math.max(
     1,

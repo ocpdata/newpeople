@@ -7,13 +7,80 @@ const router = express.Router();
 const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
   "long_text",
 ]);
+const contactGlobalReadPermission = "contactos.read_all";
+const opportunityGlobalReadPermission = "oportunidades.read_all";
+const accountGlobalReadPermission = "cuentas.read_all";
+let ensureQuotationDeliveryTimesCatalogPromise;
+let ensureQuotationValidityCatalogPromise;
+let ensureQuotationWarrantyCatalogPromise;
+let ensureQuotationPaymentTermsCatalogPromise;
+let ensureQuotationStatusesCatalogPromise;
 
-function isAdminUser(user) {
-  return Boolean(user?.isAdmin);
+async function ensureQuotationStatusesCatalog() {
+  if (!ensureQuotationStatusesCatalogPromise) {
+    ensureQuotationStatusesCatalogPromise = (async () => {
+      const rows = await query(
+        `SELECT 1
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'quotation_statuses'
+           AND COLUMN_NAME = 'ui_key'
+         LIMIT 1`,
+      );
+
+      if (!rows.length) {
+        await query(
+          `ALTER TABLE quotation_statuses
+           ADD COLUMN ui_key VARCHAR(80) NOT NULL DEFAULT 'default'
+           AFTER name`,
+        );
+      }
+
+      await query(
+        `UPDATE quotation_statuses
+         SET ui_key = CASE code
+           WHEN 'borrador' THEN 'draft'
+           WHEN 'en_aprobacion' THEN 'pending'
+           WHEN 'rechazada' THEN 'rejected'
+           WHEN 'aprobada' THEN 'approved'
+           WHEN 'enviada' THEN 'sent'
+           WHEN 'ganada' THEN 'won'
+           WHEN 'perdida' THEN 'lost'
+           WHEN 'anulada' THEN 'cancelled'
+           WHEN 'aceptada' THEN 'accepted'
+           WHEN 'no_vigente' THEN 'inactive'
+           ELSE 'default'
+         END
+         WHERE ui_key IS NULL OR TRIM(ui_key) = '' OR ui_key = 'default'`,
+      );
+    })().catch((error) => {
+      ensureQuotationStatusesCatalogPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationStatusesCatalogPromise;
 }
 
-function applyOwnedAccountScope({ user, accountExpression, params }) {
-  if (isAdminUser(user)) return "";
+function hasGlobalContactReadScope(user) {
+  return user?.permissionSet?.has(contactGlobalReadPermission);
+}
+
+function hasGlobalAccountReadScope(user) {
+  return user?.permissionSet?.has(accountGlobalReadPermission);
+}
+
+function hasGlobalOpportunityReadScope(user) {
+  return user?.permissionSet?.has(opportunityGlobalReadPermission);
+}
+
+function applyOwnedAccountScope({
+  user,
+  accountExpression,
+  params,
+  allowGlobal,
+}) {
+  if (allowGlobal?.(user)) return "";
   params.push(Number(user.id));
   return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountExpression} AND ao_scope.user_id = ?`;
 }
@@ -47,6 +114,266 @@ function buildOpportunityStageQuestionCode(stageCode) {
   return `${stageCode}_manual_${Date.now()}_${Math.floor(
     Math.random() * 100000,
   )}`;
+}
+
+async function ensureQuotationDeliveryTimesCatalog() {
+  if (!ensureQuotationDeliveryTimesCatalogPromise) {
+    ensureQuotationDeliveryTimesCatalogPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS quotation_delivery_times (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(80) NOT NULL,
+          name VARCHAR(120) NOT NULL,
+          display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_quotation_delivery_times_code UNIQUE (code)
+        )
+      `);
+
+      await query(
+        `INSERT INTO quotation_delivery_times (
+           code,
+           name,
+           display_order,
+           is_active,
+           created_at,
+           updated_at
+         ) VALUES
+           ('inmediato', 'Inmediato', 1, 1, NOW(3), NOW(3)),
+           ('5_dias', '5 días', 2, 1, NOW(3), NOW(3)),
+           ('10_dias', '10 días', 3, 1, NOW(3), NOW(3)),
+           ('15_dias', '15 días', 4, 1, NOW(3), NOW(3)),
+           ('30_dias', '30 días', 5, 1, NOW(3), NOW(3)),
+           ('45_dias', '45 días', 6, 1, NOW(3), NOW(3)),
+           ('60_dias', '60 días', 7, 1, NOW(3), NOW(3)),
+           (
+             'segun_notas',
+             'De acuerdo a lo indicado en notas',
+             8,
+             1,
+             NOW(3),
+             NOW(3)
+           )
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           display_order = VALUES(display_order),
+           is_active = VALUES(is_active),
+           updated_at = VALUES(updated_at)`,
+      );
+    })().catch((error) => {
+      ensureQuotationDeliveryTimesCatalogPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationDeliveryTimesCatalogPromise;
+}
+
+async function ensureQuotationValidityCatalog() {
+  if (!ensureQuotationValidityCatalogPromise) {
+    ensureQuotationValidityCatalogPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS quotation_validity_terms (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(80) NOT NULL,
+          name VARCHAR(120) NOT NULL,
+          display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_quotation_validity_terms_code UNIQUE (code)
+        )
+      `);
+
+      await query(
+        `INSERT INTO quotation_validity_terms (
+           code,
+           name,
+           display_order,
+           is_active,
+           created_at,
+           updated_at
+         ) VALUES
+           ('5_dias', '5 días', 1, 1, NOW(3), NOW(3)),
+           ('10_dias', '10 días', 2, 1, NOW(3), NOW(3)),
+           ('15_dias', '15 días', 3, 1, NOW(3), NOW(3)),
+           ('30_dias', '30 días', 4, 1, NOW(3), NOW(3)),
+           ('45_dias', '45 días', 5, 1, NOW(3), NOW(3)),
+           ('60_dias', '60 días', 6, 1, NOW(3), NOW(3)),
+           (
+             'segun_notas',
+             'De acuerdo a lo indicado en notas',
+             7,
+             1,
+             NOW(3),
+             NOW(3)
+           )
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           display_order = VALUES(display_order),
+           is_active = VALUES(is_active),
+           updated_at = VALUES(updated_at)`,
+      );
+    })().catch((error) => {
+      ensureQuotationValidityCatalogPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationValidityCatalogPromise;
+}
+
+async function ensureQuotationWarrantyCatalog() {
+  if (!ensureQuotationWarrantyCatalogPromise) {
+    ensureQuotationWarrantyCatalogPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS quotation_warranty_terms (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(80) NOT NULL,
+          name VARCHAR(120) NOT NULL,
+          display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_quotation_warranty_terms_code UNIQUE (code)
+        )
+      `);
+
+      await query(
+        `INSERT INTO quotation_warranty_terms (
+           code,
+           name,
+           display_order,
+           is_active,
+           created_at,
+           updated_at
+         ) VALUES
+           ('1_ano', '1 año', 1, 1, NOW(3), NOW(3)),
+           ('2_anos', '2 años', 2, 1, NOW(3), NOW(3)),
+           ('3_anos', '3 años', 3, 1, NOW(3), NOW(3)),
+           ('4_anos', '4 años', 4, 1, NOW(3), NOW(3)),
+           ('5_anos', '5 años', 5, 1, NOW(3), NOW(3)),
+           (
+             'segun_notas',
+             'De acuerdo a lo indicado en notas',
+             6,
+             1,
+             NOW(3),
+             NOW(3)
+           )
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           display_order = VALUES(display_order),
+           is_active = VALUES(is_active),
+           updated_at = VALUES(updated_at)`,
+      );
+    })().catch((error) => {
+      ensureQuotationWarrantyCatalogPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationWarrantyCatalogPromise;
+}
+
+async function ensureQuotationPaymentTermsCatalog() {
+  if (!ensureQuotationPaymentTermsCatalogPromise) {
+    ensureQuotationPaymentTermsCatalogPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS quotation_payment_terms (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(80) NOT NULL,
+          name VARCHAR(180) NOT NULL,
+          display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_quotation_payment_terms_code UNIQUE (code)
+        )
+      `);
+
+      await query(
+        `INSERT INTO quotation_payment_terms (
+           code,
+           name,
+           display_order,
+           is_active,
+           created_at,
+           updated_at
+         ) VALUES
+           ('100_adelantado', '100% adelantado', 1, 1, NOW(3), NOW(3)),
+           (
+             '50_adelantado_50_entrega',
+             '50% adelantado - 50% contra entrega',
+             2,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           ('100_entrega', '100% contra entrega', 3, 1, NOW(3), NOW(3)),
+           (
+             '15_dias_facturado',
+             '15 días despues de facturado',
+             4,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           (
+             '30_dias_facturado',
+             '30 días despues de facturado',
+             5,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           (
+             '45_dias_facturado',
+             '45 días despues de facturado',
+             6,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           (
+             '60_dias_facturado',
+             '60 días despues de facturado',
+             7,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           (
+             '90_dias_facturado',
+             '90 días despues de facturado',
+             8,
+             1,
+             NOW(3),
+             NOW(3)
+           ),
+           (
+             'segun_notas',
+             'De acuerdo a lo indicado en notas',
+             9,
+             1,
+             NOW(3),
+             NOW(3)
+           )
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           display_order = VALUES(display_order),
+           is_active = VALUES(is_active),
+           updated_at = VALUES(updated_at)`,
+      );
+    })().catch((error) => {
+      ensureQuotationPaymentTermsCatalogPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationPaymentTermsCatalogPromise;
 }
 
 async function getOpportunitySalesStageById(stageId) {
@@ -302,6 +629,7 @@ router.get(
       user: req.user,
       accountExpression: "a.id",
       params,
+      allowGlobal: hasGlobalContactReadScope,
     });
     const rows = await query(
       `SELECT a.id, a.name, a.country_id, a.state_region, a.city, a.address_line, a.postal_code
@@ -439,6 +767,7 @@ router.get(
       user: req.user,
       accountExpression: "a.id",
       params,
+      allowGlobal: hasGlobalOpportunityReadScope,
     });
     const rows = await query(
       `SELECT a.id, a.name
@@ -460,6 +789,7 @@ router.get(
       user: req.user,
       accountExpression: "c.account_id",
       params,
+      allowGlobal: hasGlobalOpportunityReadScope,
     });
     const rows = await query(
       `SELECT c.id, c.account_id,
@@ -877,6 +1207,217 @@ router.get(
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name FROM opportunity_activation_statuses WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-statuses",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    await ensureQuotationStatusesCatalog();
+    const rows = await query(
+      `SELECT id, code, name, ui_key AS uiKey, display_order
+       FROM quotation_statuses
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-actions",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_actions
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-section-inclusion-types",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_section_inclusion_types
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-delivery-times",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    await ensureQuotationDeliveryTimesCatalog();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_delivery_times
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-validity-terms",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    await ensureQuotationValidityCatalog();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_validity_terms
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-warranty-terms",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    await ensureQuotationWarrantyCatalog();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_warranty_terms
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-payment-terms",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    await ensureQuotationPaymentTermsCatalog();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_payment_terms
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-currencies",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT DISTINCT curr.id, curr.code, curr.name, curr.symbol, curr.decimals
+       FROM countries c
+       INNER JOIN country_currency cc ON cc.country_id = c.id
+       INNER JOIN currencies curr ON curr.id = cc.currency_id
+       WHERE c.is_active = 1
+         AND curr.is_active = 1
+         AND (cc.valid_to IS NULL OR cc.valid_to >= CURRENT_DATE())
+         AND (cc.valid_from IS NULL OR cc.valid_from <= CURRENT_DATE())
+       ORDER BY curr.name, curr.code`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-activation-statuses",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM quotation_activation_statuses
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/quotation-providers",
+  requireAnyPermission([
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ]),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT p.id, p.name
+       FROM providers p
+       INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+       WHERE pas.code = 'activado'
+       ORDER BY p.name`,
     );
     res.json(rows);
   },

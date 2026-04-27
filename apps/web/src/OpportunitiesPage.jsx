@@ -9,7 +9,7 @@ import OpportunityFormModal from "./opportunities/OpportunityFormModal";
 import OpportunitiesListSection from "./opportunities/OpportunitiesListSection";
 import { useOpportunitiesPage } from "./opportunities/useOpportunitiesPage";
 
-function OpportunitiesPage({ can, currentUser }) {
+function OpportunitiesPage({ currentUser }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     opportunityStatusFilter,
@@ -115,14 +115,18 @@ function OpportunitiesPage({ can, currentUser }) {
         getOpportunitySortArrow={getOpportunitySortArrow}
         formatCloseDate={formatCloseDate}
         getCommercialStatusBadgeClass={getCommercialStatusBadgeClass}
-        getOpportunityCommercialStatusLabel={getOpportunityCommercialStatusLabel}
+        getOpportunityCommercialStatusLabel={
+          getOpportunityCommercialStatusLabel
+        }
         getOpportunityStatusBadgeClass={getOpportunityStatusBadgeClass}
         getOpportunityStatusLabel={getOpportunityStatusLabel}
         openOpportunityMenuId={openOpportunityMenuId}
         toggleOpportunityMenu={toggleOpportunityMenu}
         runOpportunityAction={runOpportunityAction}
         openEditOpportunityModal={openEditOpportunityModal}
-        canChangeOpportunityActivationStatus={canChangeOpportunityActivationStatus}
+        canChangeOpportunityActivationStatus={
+          canChangeOpportunityActivationStatus
+        }
         isOpportunityActive={isOpportunityActive}
         isOpportunityPending={isOpportunityPending}
         isOpportunityInactive={isOpportunityInactive}
@@ -158,8 +162,8 @@ function OpportunitiesPage({ can, currentUser }) {
         isSelectedCommercialStageReadOnly={isSelectedCommercialStageReadOnly}
         isCommercialFlowClosed={isCommercialFlowClosed}
         canOpenCommercialStatusReason={canOpenCommercialStatusReason}
+        displayedCommercialCloseReason={displayedCommercialCloseReason}
         pendingCommercialCloseStatusName={pendingCommercialCloseStatusName}
-        currentCommercialStatusName={currentCommercialStatusName}
         openCommercialStatusReasonModal={openCommercialStatusReasonModal}
         handleCommercialStageSelect={handleCommercialStageSelect}
         handleCurrentStageValidation={handleCurrentStageValidation}
@@ -174,7 +178,6 @@ function OpportunitiesPage({ can, currentUser }) {
         closeOpportunityModal={closeOpportunityModal}
         saveOpportunity={saveOpportunity}
         savingOpportunity={savingOpportunity}
-        getCommercialStatusBadgeClass={getCommercialStatusBadgeClass}
         formatDateTime={formatDateTime}
       />
 

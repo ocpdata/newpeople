@@ -31,6 +31,7 @@ const DEMO_CLOSED_OPPORTUNITY_TARGETS = {
   perdida: 4,
   anulada: 5,
 };
+const DEMO_QUOTATION_TARGET = 24;
 const DEFAULT_PASSWORD = "Demo12345!";
 const ADMIN_ROLE_NAME = "Administrador";
 const SELLER_ROLE_NAME = "Vendedor";
@@ -657,6 +658,9 @@ async function fetchCatalogs() {
     opportunityStatuses,
     opportunityCommercialStatuses,
     opportunityStageQuestions,
+    quotationStatuses,
+    quotationActivationStatuses,
+    quotationSectionInclusionTypes,
     providerStatuses,
     providerPriceItemStatuses,
     productTypes,
@@ -705,6 +709,15 @@ async function fetchCatalogs() {
        ORDER BY sales_stage_id, display_order, id`,
     ),
     query(
+      "SELECT id, code, name, ui_key AS uiKey FROM quotation_statuses WHERE is_active = 1 ORDER BY display_order, id",
+    ),
+    query(
+      "SELECT id, code, name FROM quotation_activation_statuses WHERE is_active = 1 ORDER BY display_order, id",
+    ),
+    query(
+      "SELECT id, code, name FROM quotation_section_inclusion_types WHERE is_active = 1 ORDER BY display_order, id",
+    ),
+    query(
       "SELECT id, code, name FROM provider_activation_statuses WHERE is_active = 1 ORDER BY id",
     ),
     query(
@@ -746,6 +759,9 @@ async function fetchCatalogs() {
     opportunityStatuses,
     opportunityCommercialStatuses,
     opportunityStageQuestions,
+    quotationStatuses,
+    quotationActivationStatuses,
+    quotationSectionInclusionTypes,
     providerStatuses,
     providerPriceItemStatuses,
     productTypes,
@@ -759,6 +775,248 @@ function byCode(rows, code) {
     throw new Error(`No se encontro catalogo con code=${code}`);
   }
   return Number(match.id);
+}
+
+function buildQuotationIntroduction(
+  opportunityName,
+  accountName,
+  versionNumber,
+) {
+  return `Cotizacion demo v${versionNumber} para ${opportunityName} sobre la cuenta ${accountName}. Incluye alcance preliminar, precios de referencia y supuestos operativos para validacion funcional.`;
+}
+
+function buildQuotationSectionTitle(index, accountName) {
+  const titles = [
+    "Licenciamiento y suscripciones",
+    "Servicios profesionales",
+    "Alcance opcional",
+  ];
+  return `${titles[index % titles.length]} - ${accountName}`;
+}
+
+function makeQuotationStatusCode(index) {
+  if (index % 7 === 0) return "enviada";
+  if (index % 5 === 0) return "aprobada";
+  if (index % 3 === 0) return "en_aprobacion";
+  return "borrador";
+}
+
+function buildQuotationSectionItems({
+  quotationSeedIndex,
+  providers,
+  sectionId,
+  adminUserId,
+  now,
+}) {
+  const firstProvider = pickRow(providers, quotationSeedIndex);
+  const secondProvider = pickRow(providers, quotationSeedIndex + 2);
+
+  return [
+    {
+      quotationSectionId: sectionId,
+      providerId: Number(firstProvider.id),
+      productCode: `DEMO-Q-${String(quotationSeedIndex + 1).padStart(3, "0")}-A`,
+      productDescription: `Componente principal demo para proveedor ${firstProvider.name}`,
+      quantity: 1,
+      listPriceUnit: 12500 + quotationSeedIndex * 180,
+      manufacturerDiscountPct: 7.5,
+      importCostPct: 4.25,
+      profitMarginPct: 18,
+      displayOrder: 1,
+      createdByUserId: adminUserId,
+      updatedByUserId: adminUserId,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      quotationSectionId: sectionId,
+      providerId: Number(secondProvider.id),
+      productCode: `DEMO-Q-${String(quotationSeedIndex + 1).padStart(3, "0")}-B`,
+      productDescription: `Servicio complementario demo para proveedor ${secondProvider.name}`,
+      quantity: 1,
+      listPriceUnit: 4200 + quotationSeedIndex * 90,
+      manufacturerDiscountPct: 0,
+      importCostPct: 0,
+      profitMarginPct: 22,
+      displayOrder: 2,
+      createdByUserId: adminUserId,
+      updatedByUserId: adminUserId,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
+
+async function seedDemoQuotations({
+  conn,
+  catalogs,
+  adminUserId,
+  opportunities,
+  providers,
+  now,
+}) {
+  const activeOpportunities = opportunities
+    .filter((opportunity) => opportunity.activationStatusCode === "activada")
+    .slice(0, DEMO_QUOTATION_TARGET);
+
+  if (!activeOpportunities.length || !providers.length) {
+    return { createdQuotations: 0, createdQuotationVersions: 0 };
+  }
+
+  const activeQuotationStatusId = byCode(
+    catalogs.quotationActivationStatuses,
+    "activada",
+  );
+  const includedTypeId = byCode(
+    catalogs.quotationSectionInclusionTypes,
+    "incluida",
+  );
+  const optionalTypeId = byCode(
+    catalogs.quotationSectionInclusionTypes,
+    "opcional",
+  );
+
+  let createdQuotations = 0;
+  let createdQuotationVersions = 0;
+
+  for (let index = 0; index < activeOpportunities.length; index += 1) {
+    const opportunity = activeOpportunities[index];
+    const [quotationInsert] = await conn.query(
+      `INSERT INTO quotations
+        (opportunity_id, latest_version_id, activation_status_id, created_at, updated_at, created_by_user_id, updated_by_user_id)
+       VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+      [
+        opportunity.id,
+        activeQuotationStatusId,
+        now,
+        now,
+        adminUserId,
+        adminUserId,
+      ],
+    );
+    const quotationId = Number(quotationInsert.insertId);
+    const totalVersions = index % 4 === 0 ? 2 : 1;
+    let latestVersionId = null;
+
+    for (
+      let versionNumber = 1;
+      versionNumber <= totalVersions;
+      versionNumber += 1
+    ) {
+      const statusCode =
+        versionNumber < totalVersions
+          ? "no_vigente"
+          : makeQuotationStatusCode(index);
+      const statusId = byCode(catalogs.quotationStatuses, statusCode);
+      const quotationDate = new Date(now);
+      quotationDate.setDate(
+        quotationDate.getDate() - index - (totalVersions - versionNumber),
+      );
+      const [versionInsert] = await conn.query(
+        `INSERT INTO quotation_versions
+          (quotation_id, version_number, contact_id, proposal_name, quotation_date, introduction,
+           status_id, activation_status_id, created_at, updated_at, created_by_user_id, updated_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          quotationId,
+          versionNumber,
+          opportunity.contactId,
+          `${opportunity.name} - Propuesta v${versionNumber}`,
+          quotationDate.toISOString().slice(0, 10),
+          buildQuotationIntroduction(
+            opportunity.name,
+            opportunity.accountName,
+            versionNumber,
+          ),
+          statusId,
+          activeQuotationStatusId,
+          now,
+          now,
+          adminUserId,
+          adminUserId,
+        ],
+      );
+      latestVersionId = Number(versionInsert.insertId);
+      createdQuotationVersions += 1;
+
+      const sections = [
+        {
+          title: buildQuotationSectionTitle(0, opportunity.accountName),
+          inclusionTypeId: includedTypeId,
+          displayOrder: 1,
+        },
+        {
+          title: buildQuotationSectionTitle(1, opportunity.accountName),
+          inclusionTypeId: index % 2 === 0 ? optionalTypeId : includedTypeId,
+          displayOrder: 2,
+        },
+      ];
+
+      for (const section of sections) {
+        const [sectionInsert] = await conn.query(
+          `INSERT INTO quotation_sections
+            (quotation_version_id, title, inclusion_type_id, activation_status_id, display_order,
+             created_at, updated_at, created_by_user_id, updated_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            latestVersionId,
+            section.title,
+            section.inclusionTypeId,
+            activeQuotationStatusId,
+            section.displayOrder,
+            now,
+            now,
+            adminUserId,
+            adminUserId,
+          ],
+        );
+        const sectionId = Number(sectionInsert.insertId);
+        const sectionItems = buildQuotationSectionItems({
+          quotationSeedIndex: index + versionNumber,
+          providers,
+          sectionId,
+          adminUserId,
+          now,
+        });
+
+        for (const item of sectionItems) {
+          await conn.query(
+            `INSERT INTO quotation_section_items
+              (quotation_section_id, provider_id, product_code, product_description, quantity, list_price_unit,
+               manufacturer_discount_pct, import_cost_pct, profit_margin_pct, display_order,
+               created_at, updated_at, created_by_user_id, updated_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.quotationSectionId,
+              item.providerId,
+              item.productCode,
+              item.productDescription,
+              item.quantity,
+              item.listPriceUnit,
+              item.manufacturerDiscountPct,
+              item.importCostPct,
+              item.profitMarginPct,
+              item.displayOrder,
+              item.createdAt,
+              item.updatedAt,
+              item.createdByUserId,
+              item.updatedByUserId,
+            ],
+          );
+        }
+      }
+    }
+
+    await conn.query(
+      `UPDATE quotations
+       SET latest_version_id = ?, updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [latestVersionId, now, adminUserId, quotationId],
+    );
+    createdQuotations += 1;
+  }
+
+  return { createdQuotations, createdQuotationVersions };
 }
 
 function groupStageQuestionsByStageId(rows) {
@@ -1518,6 +1776,8 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "oportunidades.read",
         "oportunidades.request",
         "oportunidades.update",
+        "cotizaciones.operacion",
+        "cotizaciones.ingreso",
         "proveedores.read",
         "proveedores.create",
         "proveedores.update",
@@ -1533,6 +1793,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "cuentas.read",
         "contactos.read",
         "oportunidades.read",
+        "cotizaciones.revision",
         "proveedores.read",
         "proveedores_precios.read",
       ],
@@ -1553,6 +1814,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "oportunidades.request",
         "oportunidades.create",
         "oportunidades.update",
+        "cotizaciones.administracion",
         "proveedores.read",
         "proveedores.create",
         "proveedores.update",
@@ -1568,6 +1830,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "cuentas.read",
         "contactos.read",
         "oportunidades.read",
+        "cotizaciones.externo",
         "proveedores.read",
         "proveedores_precios.read",
       ],
@@ -1579,6 +1842,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         "cuentas.read",
         "contactos.read",
         "oportunidades.read",
+        "cotizaciones.externo",
         "proveedores.read",
         "proveedores_precios.read",
       ],
@@ -1837,6 +2101,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       createdContactsByAccount.set(account.id, accountContacts);
     }
 
+    const createdOpportunities = [];
     let opportunityCounter = 0;
     for (let index = 0; index < createdAccounts.length; index += 1) {
       const account = createdAccounts[index];
@@ -1863,6 +2128,16 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         const closeDate = new Date();
         closeDate.setDate(closeDate.getDate() + 15 + opportunityCounter * 3);
         const closeDateValue = closeDate.toISOString().slice(0, 10);
+        const opportunityActivationStatusId = makeOpportunityStatusId(
+          catalogs,
+          opportunityCounter,
+        );
+        const opportunityActivationStatusCode =
+          opportunityCounter % 11 === 0
+            ? "desactivada"
+            : opportunityCounter % 3 === 0
+              ? "pendiente_activacion"
+              : "activada";
 
         const [insert] = await conn.query(
           `INSERT INTO opportunities
@@ -1881,7 +2156,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             Number(businessLine.id),
             account.primarySellerId,
             opportunityIndex % 2 === 0 ? presalesUser?.id || null : null,
-            makeOpportunityStatusId(catalogs, opportunityCounter),
+            opportunityActivationStatusId,
             Number(commercialOutcome.commercialStatusId),
             commercialOutcome.commercialClosedAt,
             commercialOutcome.commercialCloseReason,
@@ -1903,6 +2178,14 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
           contactId,
           sellerUserId: account.primarySellerId,
         });
+        createdOpportunities.push({
+          id: Number(insert.insertId),
+          accountId: account.id,
+          accountName: account.accountName,
+          contactId,
+          name: opportunityName,
+          activationStatusCode: opportunityActivationStatusCode,
+        });
         opportunityCounter += 1;
       }
     }
@@ -1920,6 +2203,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     let providerPriceItemsCounter = 0;
     const productComponentCandidates = [];
     const serviceComponentCandidates = [];
+    const createdProviders = [];
     for (let index = 0; index < DEFAULT_COUNTS.providers; index += 1) {
       const country = pickRow(catalogs.countries, index + 1);
       const providerStatusId = makeProviderStatusId(catalogs);
@@ -1947,6 +2231,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
         ],
       );
       const providerId = Number(providerInsert.insertId);
+      createdProviders.push({ id: providerId, name: providerName });
       const providerPriceListName = `Lista base demo ${String(index + 1).padStart(2, "0")}`;
       const providerPriceListIsActive = 1;
       const listCurrency = usdCurrency;
@@ -2090,12 +2375,23 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       }
     }
 
+    const quotationSeedResult = await seedDemoQuotations({
+      conn,
+      catalogs,
+      adminUserId,
+      opportunities: createdOpportunities,
+      providers: createdProviders,
+      now,
+    });
+
     return {
       adminUserId,
       createdUsers: createdUsers.length,
       createdAccounts: createdAccounts.length,
       createdContacts: contactCounter,
       createdOpportunities: opportunityCounter,
+      createdQuotations: quotationSeedResult.createdQuotations,
+      createdQuotationVersions: quotationSeedResult.createdQuotationVersions,
       createdProviders: DEFAULT_COUNTS.providers,
       createdProviderPriceItems: providerPriceItemsCounter,
     };
@@ -2141,6 +2437,10 @@ async function main() {
   console.log(`Cuentas creadas: ${result.createdAccounts}`);
   console.log(`Contactos creados: ${result.createdContacts}`);
   console.log(`Oportunidades creadas: ${result.createdOpportunities}`);
+  console.log(`Cotizaciones creadas: ${result.createdQuotations}`);
+  console.log(
+    `Versiones de cotizacion creadas: ${result.createdQuotationVersions}`,
+  );
   console.log(`Proveedores creados: ${result.createdProviders}`);
   console.log(
     `Precios de proveedores creados: ${result.createdProviderPriceItems}`,

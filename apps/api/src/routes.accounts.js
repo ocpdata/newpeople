@@ -32,13 +32,14 @@ const accountStatusSchema = z.object({
 });
 
 const accountCreatePermissions = ["cuentas.create", "cuentas.request"];
+const accountGlobalReadPermission = "cuentas.read_all";
 
-function isAdminUser(user) {
-  return Boolean(user?.isAdmin);
+function hasGlobalAccountReadScope(user) {
+  return user?.permissionSet?.has(accountGlobalReadPermission);
 }
 
 function applyAccountOwnershipScope({ user, accountAlias, params }) {
-  if (isAdminUser(user)) return "";
+  if (hasGlobalAccountReadScope(user)) return "";
   params.push(Number(user.id));
   return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountAlias}.id AND ao_scope.user_id = ?`;
 }
@@ -239,112 +240,118 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
   res.json({ ...rows[0], owners });
 });
 
-router.post("/", requireAnyPermission(accountCreatePermissions), async (req, res) => {
-  const parsed = accountSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res
-      .status(400)
-      .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
-  }
+router.post(
+  "/",
+  requireAnyPermission(accountCreatePermissions),
+  async (req, res) => {
+    const parsed = accountSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
 
-  const now = new Date();
-  const body = parsed.data;
-  const creationStatusCode = resolveAccountCreationStatusCode(req.user);
-  const activationStatusId = creationStatusCode
-    ? await getAccountActivationStatusId(creationStatusCode)
-    : null;
+    const now = new Date();
+    const body = parsed.data;
+    const creationStatusCode = resolveAccountCreationStatusCode(req.user);
+    const activationStatusId = creationStatusCode
+      ? await getAccountActivationStatusId(creationStatusCode)
+      : null;
 
-  if (!activationStatusId) {
-    return res.status(403).json({
-      message: "No autorizado para crear o solicitar cuentas",
-    });
-  }
+    if (!activationStatusId) {
+      return res.status(403).json({
+        message: "No autorizado para crear o solicitar cuentas",
+      });
+    }
 
-  try {
-    const accountId = await withTransaction(async (conn) => {
-      const [insertResult] = await conn.query(
-        `INSERT INTO accounts
+    try {
+      const accountId = await withTransaction(async (conn) => {
+        const [insertResult] = await conn.query(
+          `INSERT INTO accounts
           (name, account_type_id, registration_code, phone, economic_sector_id, website, city, state_region,
            country_id, description, address_line, postal_code, activation_status_id,
            created_by, created_at, updated_by, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          body.name,
-          body.accountTypeId,
-          body.registrationCode,
-          body.phone || null,
-          body.economicSectorId,
-          body.website || null,
-          body.city || null,
-          body.stateRegion || null,
-          body.countryId,
-          body.description || null,
-          body.addressLine || null,
-          body.postalCode || null,
-          activationStatusId,
-          req.user.id,
-          now,
-          req.user.id,
-          now,
-        ],
-      );
-
-      for (const ownerUserId of body.ownerUserIds) {
-        await conn.query(
-          "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
-          [insertResult.insertId, ownerUserId, now, req.user.id],
+          [
+            body.name,
+            body.accountTypeId,
+            body.registrationCode,
+            body.phone || null,
+            body.economicSectorId,
+            body.website || null,
+            body.city || null,
+            body.stateRegion || null,
+            body.countryId,
+            body.description || null,
+            body.addressLine || null,
+            body.postalCode || null,
+            activationStatusId,
+            req.user.id,
+            now,
+            req.user.id,
+            now,
+          ],
         );
-      }
 
-      return insertResult.insertId;
-    });
+        for (const ownerUserId of body.ownerUserIds) {
+          await conn.query(
+            "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
+            [insertResult.insertId, ownerUserId, now, req.user.id],
+          );
+        }
 
-    await logAuditEvent({
-      req,
-      module: "cuentas",
-      action: "created",
-      entityType: "account",
-      entityId: accountId,
-      detail: "Cuenta creada",
-      after: {
-        name: body.name,
-        account_type_id: body.accountTypeId,
-        registration_code: body.registrationCode,
-        phone: body.phone || null,
-        economic_sector_id: body.economicSectorId,
-        website: body.website || null,
-        city: body.city || null,
-        state_region: body.stateRegion || null,
-        country_id: body.countryId,
-        description: body.description || null,
-        address_line: body.addressLine || null,
-        postal_code: body.postalCode || null,
-        activation_status_id: activationStatusId,
-        owner_user_ids: body.ownerUserIds.map(Number),
-      },
-    });
-
-    return res.status(201).json({
-      id: accountId,
-      message:
-        creationStatusCode === "activada"
-          ? "Cuenta creada"
-          : "Solicitud de cuenta creada en estado pendiente",
-    });
-  } catch (error) {
-    if (
-      String(error.message || "").includes(
-        "accounts.uq_accounts_country_registration",
-      )
-    ) {
-      return res.status(409).json({
-        message:
-          "Ya existe una cuenta con ese registro en el pais seleccionado.",
+        return insertResult.insertId;
       });
+
+      await logAuditEvent({
+        req,
+        module: "cuentas",
+        action: "created",
+        entityType: "account",
+        entityId: accountId,
+        detail: "Cuenta creada",
+        after: {
+          name: body.name,
+          account_type_id: body.accountTypeId,
+          registration_code: body.registrationCode,
+          phone: body.phone || null,
+          economic_sector_id: body.economicSectorId,
+          website: body.website || null,
+          city: body.city || null,
+          state_region: body.stateRegion || null,
+          country_id: body.countryId,
+          description: body.description || null,
+          address_line: body.addressLine || null,
+          postal_code: body.postalCode || null,
+          activation_status_id: activationStatusId,
+          owner_user_ids: body.ownerUserIds.map(Number),
+        },
+      });
+
+      return res.status(201).json({
+        id: accountId,
+        message:
+          creationStatusCode === "activada"
+            ? "Cuenta creada"
+            : "Solicitud de cuenta creada en estado pendiente",
+      });
+    } catch (error) {
+      if (
+        String(error.message || "").includes(
+          "accounts.uq_accounts_country_registration",
+        )
+      ) {
+        return res.status(409).json({
+          message:
+            "Ya existe una cuenta con ese registro en el pais seleccionado.",
+        });
+      }
+      return res
+        .status(500)
+        .json({ message: "No fue posible crear la cuenta" });
     }
-    return res.status(500).json({ message: "No fue posible crear la cuenta" });
-  }
-});
+  },
+);
 
 router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   const id = Number(req.params.id);
@@ -364,7 +371,9 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
     message: "Cuenta no encontrada",
   });
   if (!accountAccess.ok) {
-    return res.status(accountAccess.response.status).json(accountAccess.response.body);
+    return res
+      .status(accountAccess.response.status)
+      .json(accountAccess.response.body);
   }
 
   const beforeRows = await query(
@@ -506,7 +515,8 @@ router.patch(
 
     if (!canActivateAccounts(req.user)) {
       return res.status(403).json({
-        message: "No autorizado para cambiar el estado de activacion de cuentas",
+        message:
+          "No autorizado para cambiar el estado de activacion de cuentas",
       });
     }
 
@@ -516,7 +526,9 @@ router.patch(
       message: "Cuenta no encontrada",
     });
     if (!accountAccess.ok) {
-      return res.status(accountAccess.response.status).json(accountAccess.response.body);
+      return res
+        .status(accountAccess.response.status)
+        .json(accountAccess.response.body);
     }
 
     const now = new Date();

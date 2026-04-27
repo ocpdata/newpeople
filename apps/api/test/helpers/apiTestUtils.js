@@ -333,6 +333,7 @@ export async function createDirectProviderPriceItem({
 
 export async function cleanupArtifacts({
   stageQuestionIds = [],
+  quotationIds = [],
   opportunityIds = [],
   contactIds = [],
   accountIds = [],
@@ -342,6 +343,13 @@ export async function cleanupArtifacts({
   userIds = [],
   roleIds = [],
 }) {
+  if (quotationIds.length) {
+    await query(
+      `DELETE FROM quotations WHERE id IN (${placeholders(quotationIds.length)})`,
+      quotationIds,
+    );
+  }
+
   if (stageQuestionIds.length) {
     await query(
       `DELETE FROM opportunity_stage_question_answers WHERE question_id IN (${placeholders(stageQuestionIds.length)})`,

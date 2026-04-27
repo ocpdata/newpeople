@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { api, getApiErrorMessage } from "../api";
 
@@ -38,20 +38,19 @@ export function useProviderPriceItems({
   providerPriceListModalProvider,
   currentProviderForPriceList,
   selectedProviderPriceList,
-  selectedProviderPriceListId,
   providerPriceListItems,
   loadProviderPriceLists,
   loadProviderPriceListItems,
   refreshProviderPriceLists,
   reloadProviders,
-  formatPriceValue,
   setError,
   setSuccess,
 }) {
   const [showPriceItemModal, setShowPriceItemModal] = useState(false);
   const [editingPriceItemId, setEditingPriceItemId] = useState(null);
-  const [priceItemStatusFilter, setPriceItemStatusFilter] = useState("all");
-  const [priceItemQuery, setPriceItemQuery] = useState("");
+  const [priceItemStatusFilter, setPriceItemStatusFilterState] =
+    useState("all");
+  const [priceItemQuery, setPriceItemQueryState] = useState("");
   const [priceItemSortField, setPriceItemSortField] = useState("id");
   const [priceItemSortDirection, setPriceItemSortDirection] = useState("desc");
   const [priceItemsPage, setPriceItemsPage] = useState(1);
@@ -68,9 +67,6 @@ export function useProviderPriceItems({
     currencyId: "",
     activationStatusId: "",
   });
-  const [groupBaseQuery, setGroupBaseQuery] = useState("");
-  const [groupBaseResults, setGroupBaseResults] = useState([]);
-  const [loadingGroupBaseResults, setLoadingGroupBaseResults] = useState(false);
   const [selectedGroupBaseItem, setSelectedGroupBaseItem] = useState(null);
   const [groupBaseProviderId, setGroupBaseProviderId] = useState("");
   const [groupBaseActiveList, setGroupBaseActiveList] = useState(null);
@@ -84,12 +80,15 @@ export function useProviderPriceItems({
   const [groupComponentProviderItems, setGroupComponentProviderItems] =
     useState([]);
   const [groupComponentItemFilter, setGroupComponentItemFilter] = useState("");
-  const [loadingGroupComponentProviderItems, setLoadingGroupComponentProviderItems] =
-    useState(false);
+  const [
+    loadingGroupComponentProviderItems,
+    setLoadingGroupComponentProviderItems,
+  ] = useState(false);
   const [groupPriceItemComponents, setGroupPriceItemComponents] = useState([]);
 
   function buildDefaultPriceItemForm() {
-    const defaultProductTypeCode = catalogs.productTypes?.[0]?.code || "producto";
+    const defaultProductTypeCode =
+      catalogs.productTypes?.[0]?.code || "producto";
 
     return {
       code: "",
@@ -100,7 +99,9 @@ export function useProviderPriceItems({
       activationStatusId: String(
         catalogs.priceItemStatuses.find(
           (status) => normalizeText(status.code) === "activo",
-        )?.id || catalogs.priceItemStatuses?.[0]?.id || "",
+        )?.id ||
+          catalogs.priceItemStatuses?.[0]?.id ||
+          "",
       ),
     };
   }
@@ -127,20 +128,33 @@ export function useProviderPriceItems({
   }
 
   function isProviderActive(provider) {
-    return normalizeText(provider?.activation_status_code || provider?.activation_status) === "activado";
+    return (
+      normalizeText(
+        provider?.activation_status_code || provider?.activation_status,
+      ) === "activado"
+    );
   }
 
   function isPriceItemActive(item) {
-    return normalizeText(item.activation_status_code || item.activation_status) === "activo";
+    return (
+      normalizeText(item.activation_status_code || item.activation_status) ===
+      "activo"
+    );
   }
 
   function isPriceItemInactive(item) {
-    return normalizeText(item.activation_status_code || item.activation_status) === "inactivo";
+    return (
+      normalizeText(item.activation_status_code || item.activation_status) ===
+      "inactivo"
+    );
   }
 
-  function getPriceItemStatusLabel(item) {
-    return isPriceItemActive(item) ? "Activo" : "Inactivo";
-  }
+  const getPriceItemStatusLabel = useCallback((item) => {
+    const normalizedStatus = normalizeText(
+      item?.activation_status_code || item?.activation_status,
+    );
+    return normalizedStatus === "activo" ? "Activo" : "Inactivo";
+  }, []);
 
   function getPriceItemStatusBadgeClass(item) {
     return isPriceItemActive(item)
@@ -149,9 +163,6 @@ export function useProviderPriceItems({
   }
 
   function resetGroupPriceItemState() {
-    setGroupBaseQuery("");
-    setGroupBaseResults([]);
-    setLoadingGroupBaseResults(false);
     setSelectedGroupBaseItem(null);
     setGroupBaseProviderId("");
     setGroupBaseActiveList(null);
@@ -182,14 +193,16 @@ export function useProviderPriceItems({
       description: item.description || "",
       itemType: item.item_type || "producto",
       itemTypeLabel:
-        item.item_type_label || getPriceItemTypeLabel(item.item_type || "producto"),
+        item.item_type_label ||
+        getPriceItemTypeLabel(item.item_type || "producto"),
       price: Number(item.price || 0),
       currencyId: Number(item.currency_id || 0),
       currencyCode: item.currency_code || "USD",
     };
   }
 
-  const selectedPriceListItemType = selectedProviderPriceList?.item_type || null;
+  const selectedPriceListItemType =
+    selectedProviderPriceList?.item_type || null;
   const selectedPriceListCurrencyId =
     selectedProviderPriceList?.currency_id || null;
   const isGroupProductsPriceList =
@@ -201,10 +214,14 @@ export function useProviderPriceItems({
       providers
         .filter((provider) => isProviderActive(provider))
         .sort((left, right) =>
-          String(left.name || "").localeCompare(String(right.name || ""), "es", {
-            sensitivity: "base",
-            numeric: true,
-          }),
+          String(left.name || "").localeCompare(
+            String(right.name || ""),
+            "es",
+            {
+              sensitivity: "base",
+              numeric: true,
+            },
+          ),
         ),
     [providers],
   );
@@ -278,7 +295,8 @@ export function useProviderPriceItems({
     const readValue = (item) => {
       if (priceItemSortField === "id") return Number(item.id) || 0;
       if (priceItemSortField === "codigo") return String(item.code || "");
-      if (priceItemSortField === "descripcion") return String(item.description || "");
+      if (priceItemSortField === "descripcion")
+        return String(item.description || "");
       if (priceItemSortField === "precio") return Number(item.price) || 0;
       if (priceItemSortField === "estado") return getPriceItemStatusLabel(item);
       return "";
@@ -308,6 +326,7 @@ export function useProviderPriceItems({
     priceItemQuery,
     priceItemSortDirection,
     priceItemSortField,
+    getPriceItemStatusLabel,
   ]);
 
   const priceItemsPerPage = 10;
@@ -342,7 +361,8 @@ export function useProviderPriceItems({
         groupPriceItemComponents
           .reduce(
             (sum, component) =>
-              sum + Number(component.price || 0) * Number(component.quantity || 0),
+              sum +
+              Number(component.price || 0) * Number(component.quantity || 0),
             0,
           )
           .toFixed(2),
@@ -396,96 +416,8 @@ export function useProviderPriceItems({
   }, [openPriceItemMenuId]);
 
   useEffect(() => {
-    if (!showPriceItemModal || editingPriceItemId) return;
-    setPriceItemForm((prev) => ({
-      ...buildDefaultPriceItemForm(),
-      ...prev,
-      currencyId: prev.currencyId || buildDefaultPriceItemForm().currencyId,
-      activationStatusId:
-        prev.activationStatusId || buildDefaultPriceItemForm().activationStatusId,
-    }));
-  }, [showPriceItemModal, editingPriceItemId, catalogs]);
-
-  async function searchActivePriceItems(searchValue, limit = 8, options = {}) {
-    const trimmedQuery = String(searchValue || "").trim();
-    const allowEmptyQuery = Boolean(options.allowEmptyQuery);
-    if ((!allowEmptyQuery && trimmedQuery.length < 2) || !selectedPriceListCurrencyId) {
-      return [];
-    }
-
-    const { data } = await api.get("/api/providers/price-items/search", {
-      params: {
-        q: trimmedQuery,
-        currencyId: Number(selectedPriceListCurrencyId),
-        limit,
-      },
-    });
-
-    return Array.isArray(data) ? data : [];
-  }
-
-  useEffect(() => {
-    if (!showPriceItemModal || !isGroupProductsPriceList) {
-      setGroupBaseResults([]);
-      setLoadingGroupBaseResults(false);
-      return undefined;
-    }
-
-    const trimmedQuery = groupBaseQuery.trim();
-    if (trimmedQuery.length < 2 || !selectedPriceListCurrencyId) {
-      setGroupBaseResults([]);
-      setLoadingGroupBaseResults(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timeoutId = window.setTimeout(async () => {
-      setLoadingGroupBaseResults(true);
-      try {
-        const results = await searchActivePriceItems(trimmedQuery);
-        if (!cancelled) {
-          setGroupBaseResults(results);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setGroupBaseResults([]);
-          setError(
-            getApiErrorMessage(err, "No fue posible buscar productos de referencia"),
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingGroupBaseResults(false);
-        }
-      }
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    showPriceItemModal,
-    isGroupProductsPriceList,
-    groupBaseQuery,
-    selectedPriceListCurrencyId,
-    setError,
-  ]);
-
-  useEffect(() => {
-    if (!showPriceItemModal || !isGroupProductsPriceList) {
-      setGroupBaseActiveList(null);
-      setGroupBaseProviderItems([]);
-      setLoadingGroupBaseProviderItems(false);
-      return undefined;
-    }
-
-    if (!groupBaseProviderId || !selectedPriceListCurrencyId) {
-      setGroupBaseActiveList(null);
-      setGroupBaseProviderItems([]);
-      setLoadingGroupBaseProviderItems(false);
-      return undefined;
-    }
+    if (!showPriceItemModal || !isGroupProductsPriceList) return undefined;
+    if (!groupBaseProviderId || !selectedPriceListCurrencyId) return undefined;
 
     let cancelled = false;
 
@@ -508,7 +440,10 @@ export function useProviderPriceItems({
           return;
         }
 
-        const items = await loadProviderPriceListItems(groupBaseProviderId, activeList.id);
+        const items = await loadProviderPriceListItems(
+          groupBaseProviderId,
+          activeList.id,
+        );
 
         if (!cancelled) {
           setGroupBaseActiveList({
@@ -518,7 +453,8 @@ export function useProviderPriceItems({
           setGroupBaseProviderItems(
             items.filter(
               (item) =>
-                isPriceItemActive(item) && String(item.item_type) !== "grupo_productos",
+                isPriceItemActive(item) &&
+                String(item.item_type) !== "grupo_productos",
             ),
           );
         }
@@ -540,7 +476,7 @@ export function useProviderPriceItems({
       }
     }
 
-    loadGroupBaseProviderItems();
+    void loadGroupBaseProviderItems();
 
     return () => {
       cancelled = true;
@@ -556,19 +492,9 @@ export function useProviderPriceItems({
   ]);
 
   useEffect(() => {
-    if (!showPriceItemModal || !isGroupProductsPriceList) {
-      setGroupComponentActiveList(null);
-      setGroupComponentProviderItems([]);
-      setLoadingGroupComponentProviderItems(false);
+    if (!showPriceItemModal || !isGroupProductsPriceList) return undefined;
+    if (!groupComponentProviderId || !selectedPriceListCurrencyId)
       return undefined;
-    }
-
-    if (!groupComponentProviderId || !selectedPriceListCurrencyId) {
-      setGroupComponentActiveList(null);
-      setGroupComponentProviderItems([]);
-      setLoadingGroupComponentProviderItems(false);
-      return undefined;
-    }
 
     let cancelled = false;
 
@@ -604,7 +530,8 @@ export function useProviderPriceItems({
           setGroupComponentProviderItems(
             items.filter(
               (item) =>
-                isPriceItemActive(item) && String(item.item_type) !== "grupo_productos",
+                isPriceItemActive(item) &&
+                String(item.item_type) !== "grupo_productos",
             ),
           );
         }
@@ -626,7 +553,7 @@ export function useProviderPriceItems({
       }
     }
 
-    loadGroupComponentProviderItems();
+    void loadGroupComponentProviderItems();
 
     return () => {
       cancelled = true;
@@ -641,14 +568,15 @@ export function useProviderPriceItems({
     loadProviderPriceLists,
   ]);
 
-  useEffect(() => {
+  function setPriceItemStatusFilter(value) {
     setPriceItemsPage(1);
-  }, [
-    selectedProviderPriceListId,
-    priceItemQuery,
-    priceItemStatusFilter,
-    providerPriceListItems.length,
-  ]);
+    setPriceItemStatusFilterState(value);
+  }
+
+  function setPriceItemQuery(value) {
+    setPriceItemsPage(1);
+    setPriceItemQueryState(value);
+  }
 
   async function refreshProviderPriceListItems() {
     if (!providerPriceListModalProvider) return;
@@ -679,12 +607,16 @@ export function useProviderPriceItems({
     setPriceItemForm({
       code: item.code || "",
       description: item.description || "",
-      itemType: selectedProviderPriceList?.item_type || item.item_type || "producto",
+      itemType:
+        selectedProviderPriceList?.item_type || item.item_type || "producto",
       price: item.price ?? "",
       currencyId: String(lockedPriceItemCurrencyId || item.currency_id || ""),
       activationStatusId: String(item.activation_status_id || ""),
     });
-    if (item.item_type === "grupo_productos" && Array.isArray(item.components)) {
+    if (
+      item.item_type === "grupo_productos" &&
+      Array.isArray(item.components)
+    ) {
       setGroupPriceItemComponents(
         item.components.map((component) =>
           normalizeGroupComponentSelection(component, {
@@ -801,7 +733,10 @@ export function useProviderPriceItems({
       await refreshProviderPriceListItems();
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible actualizar el estado del precio"),
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del precio",
+        ),
       );
     }
   }
@@ -845,7 +780,10 @@ export function useProviderPriceItems({
   }
 
   async function exportProviderPriceListToExcel() {
-    if (!currentProviderForPriceList || visibleProviderPriceListItems.length === 0) {
+    if (
+      !currentProviderForPriceList ||
+      visibleProviderPriceListItems.length === 0
+    ) {
       return;
     }
 
@@ -887,11 +825,16 @@ export function useProviderPriceItems({
       XLSX.utils.book_append_sheet(workbook, worksheet, "Lista de precios");
       XLSX.writeFile(
         workbook,
-        buildExportFileName(currentProviderForPriceList, selectedProviderPriceList),
+        buildExportFileName(
+          currentProviderForPriceList,
+          selectedProviderPriceList,
+        ),
       );
       setSuccess("Exportación generada correctamente");
     } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible exportar la lista de precios"));
+      setError(
+        getApiErrorMessage(err, "No fue posible exportar la lista de precios"),
+      );
     } finally {
       setExportingPriceList(false);
     }
@@ -904,7 +847,6 @@ export function useProviderPriceItems({
       id: Number(candidate.price_list_id || 0),
       name: candidate.price_list_name || "",
     });
-    setGroupBaseQuery(candidate.code || "");
     setGroupBaseItemFilter(candidate.code || "");
     setPriceItemForm((prev) => ({
       ...prev,
@@ -919,7 +861,8 @@ export function useProviderPriceItems({
       if (
         prev.some(
           (component) =>
-            Number(component.componentItemId) === Number(normalizedComponent.componentItemId),
+            Number(component.componentItemId) ===
+            Number(normalizedComponent.componentItemId),
         )
       ) {
         return prev;
@@ -963,7 +906,8 @@ export function useProviderPriceItems({
   function removeGroupComponent(componentItemId) {
     setGroupPriceItemComponents((prev) =>
       prev.filter(
-        (component) => Number(component.componentItemId) !== Number(componentItemId),
+        (component) =>
+          Number(component.componentItemId) !== Number(componentItemId),
       ),
     );
   }
@@ -971,12 +915,14 @@ export function useProviderPriceItems({
   function moveGroupComponent(componentItemId, direction) {
     setGroupPriceItemComponents((prev) => {
       const currentIndex = prev.findIndex(
-        (component) => Number(component.componentItemId) === Number(componentItemId),
+        (component) =>
+          Number(component.componentItemId) === Number(componentItemId),
       );
 
       if (currentIndex < 0) return prev;
 
-      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      const targetIndex =
+        direction === "up" ? currentIndex - 1 : currentIndex + 1;
       if (targetIndex < 0 || targetIndex >= prev.length) {
         return prev;
       }

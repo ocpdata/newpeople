@@ -37,7 +37,6 @@ export async function getUserAuthContext(userId) {
     ...user,
     roles,
     permissionSet: new Set(permissions.map((p) => p.code)),
-    isAdmin: roles.some((r) => r.name.toLowerCase() === "administrador"),
   };
 }
 
@@ -72,8 +71,6 @@ export async function loadUser(req, res, next) {
 
 export function requirePermission(permission) {
   return (req, res, next) => {
-    if (req.user?.isAdmin) return next();
-
     const hasPermission = req.user?.permissionSet?.has(permission);
     if (!hasPermission) {
       return res.status(403).json({
@@ -87,8 +84,6 @@ export function requirePermission(permission) {
 
 export function requireAnyPermission(permissions) {
   return (req, res, next) => {
-    if (req.user?.isAdmin) return next();
-
     const hasPermission = permissions.some((permission) =>
       req.user?.permissionSet?.has(permission),
     );

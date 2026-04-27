@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
@@ -10,14 +10,18 @@ function normalizeText(value) {
     .trim();
 }
 
-export function useContactsCrud({ currentUser, searchParams, setSearchParams }) {
+export function useContactsCrud({
+  currentUser,
+  searchParams,
+  setSearchParams,
+}) {
   const [contacts, setContacts] = useState([]);
-  const [contactStatusFilter, setContactStatusFilter] =
+  const [contactStatusFilter, setContactStatusFilterState] =
     usePersistedStatusFilter("crm.contacts.statusFilter");
-  const [contactQuery, setContactQuery] = useState("");
+  const [contactQuery, setContactQueryState] = useState("");
   const [contactSortField, setContactSortField] = useState("id");
   const [contactSortDirection, setContactSortDirection] = useState("asc");
-  const [contactsPerPage, setContactsPerPage] = useState(10);
+  const [contactsPerPage, setContactsPerPageState] = useState(10);
   const [contactsPage, setContactsPage] = useState(1);
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
@@ -58,6 +62,7 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
     managerContactId: "",
     influencesContactId: "",
   });
+  const openEditContactModalRef = useRef(null);
 
   const explicitContactPermissions = useMemo(
     () => new Set(currentUser?.permissions || []),
@@ -66,13 +71,14 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
   const canCreateOrRequestContacts =
     explicitContactPermissions.has("contactos.create") ||
     explicitContactPermissions.has("contactos.request");
-  const canChangeContactActivationStatus = explicitContactPermissions.has(
-    "contactos.create",
-  );
+  const canChangeContactActivationStatus =
+    explicitContactPermissions.has("contactos.create");
 
   function findCatalogIdByCode(options, expectedCode) {
     const target = normalizeText(expectedCode);
-    const found = options.find((option) => normalizeText(option.code) === target);
+    const found = options.find(
+      (option) => normalizeText(option.code) === target,
+    );
     return found ? String(found.id) : "";
   }
 
@@ -162,17 +168,22 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
   }
 
   function isContactPending(contact) {
-    return normalizeText(contact.activation_status) === "pendiente de activacion";
+    return (
+      normalizeText(contact.activation_status) === "pendiente de activacion"
+    );
   }
 
   function isContactInactive(contact) {
     return normalizeText(contact.activation_status) === "desactivado";
   }
 
-  function getContactStatusLabel(contact) {
-    if (isContactPending(contact)) return "Pendiente de activacion";
-    return isContactActive(contact) ? "Activado" : "Desactivado";
-  }
+  const getContactStatusLabel = useCallback((contact) => {
+    const normalizedStatus = normalizeText(contact?.activation_status);
+    if (normalizedStatus === "pendiente de activacion") {
+      return "Pendiente de activacion";
+    }
+    return normalizedStatus === "activado" ? "Activado" : "Desactivado";
+  }, []);
 
   function getContactStatusBadgeClass(contact) {
     if (isContactPending(contact)) {
@@ -204,9 +215,11 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
   }
 
   function handleContactAccountChange(accountId) {
+    const nextAccountId = String(accountId || "");
     setForm((prev) => ({
       ...prev,
-      accountId,
+      accountId: nextAccountId,
+      managerContactId: "",
       ...(editingContactId ? null : getAccountLocationFields(accountId)),
     }));
   }
@@ -220,7 +233,7 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
     setShowContactModal(true);
   }
 
-  async function openEditContactModal(contactId) {
+  const openEditContactModal = useCallback(async (contactId) => {
     setError("");
     setSuccess("");
     try {
@@ -262,7 +275,7 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar el contacto"));
     }
-  }
+  }, []);
 
   function closeContactModal() {
     if (savingContact) return;
@@ -422,7 +435,8 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
       contacts.filter((contact) => {
         if (contactStatusFilter === "all") return true;
         if (contactStatusFilter === "pending") return isContactPending(contact);
-        if (contactStatusFilter === "inactive") return isContactInactive(contact);
+        if (contactStatusFilter === "inactive")
+          return isContactInactive(contact);
         return isContactActive(contact);
       }),
     [contacts, contactStatusFilter],
@@ -459,10 +473,13 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
     const readValue = (contact) => {
       if (contactSortField === "id") return Number(contact.id) || 0;
       if (contactSortField === "nombre") return String(contact.full_name || "");
-      if (contactSortField === "cuenta") return String(contact.account_name || "");
-      if (contactSortField === "cargo") return String(contact.position_title || "");
+      if (contactSortField === "cuenta")
+        return String(contact.account_name || "");
+      if (contactSortField === "cargo")
+        return String(contact.position_title || "");
       if (contactSortField === "email") return String(contact.email || "");
-      if (contactSortField === "estado") return String(getContactStatusLabel(contact));
+      if (contactSortField === "estado")
+        return String(getContactStatusLabel(contact));
       return "";
     };
 
@@ -484,7 +501,12 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
     });
 
     return list;
-  }, [filteredContacts, contactSortField, contactSortDirection]);
+  }, [
+    filteredContacts,
+    contactSortField,
+    contactSortDirection,
+    getContactStatusLabel,
+  ]);
 
   const visibleContacts = useMemo(() => {
     const query = contactQuery.trim().toLowerCase();
@@ -506,7 +528,7 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
 
       return haystack.includes(query);
     });
-  }, [sortedContacts, contactQuery]);
+  }, [sortedContacts, contactQuery, getContactStatusLabel]);
 
   const totalContactPages = Math.max(
     1,
@@ -529,8 +551,9 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
 
   const editingContact = useMemo(
     () =>
-      contacts.find((contact) => Number(contact.id) === Number(editingContactId)) ||
-      null,
+      contacts.find(
+        (contact) => Number(contact.id) === Number(editingContactId),
+      ) || null,
     [contacts, editingContactId],
   );
 
@@ -558,53 +581,89 @@ export function useContactsCrud({ currentUser, searchParams, setSearchParams }) 
   }, [openContactMenuId]);
 
   useEffect(() => {
-    load();
+    openEditContactModalRef.current = openEditContactModal;
+  }, [openEditContactModal]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initializeContacts() {
+      try {
+        const [
+          contactsRes,
+          accountsRes,
+          countriesRes,
+          purchaseRes,
+          relationshipRes,
+          employmentRes,
+          activationRes,
+        ] = await Promise.all([
+          api.get("/api/contacts"),
+          api.get("/api/catalogs/contact-accounts"),
+          api.get("/api/catalogs/contact-countries"),
+          api.get("/api/catalogs/contact-purchase-participations"),
+          api.get("/api/catalogs/contact-relationship-types"),
+          api.get("/api/catalogs/contact-employment-statuses"),
+          api.get("/api/catalogs/contact-activation-statuses"),
+        ]);
+
+        if (cancelled) return;
+
+        setContacts(contactsRes.data || []);
+        setCatalogs({
+          accounts: accountsRes.data || [],
+          countries: countriesRes.data || [],
+          purchaseParticipations: purchaseRes.data || [],
+          relationshipTypes: relationshipRes.data || [],
+          employmentStatuses: employmentRes.data || [],
+          activationStatuses: activationRes.data || [],
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setError(getApiErrorMessage(err, "No fue posible cargar contactos"));
+        }
+      }
+    }
+
+    void initializeContacts();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     const editId = searchParams.get("edit");
     if (!editId) return;
-    setSearchParams({}, { replace: true });
-    openEditContactModal(Number(editId));
-  }, [searchParams]);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!showContactModal || editingContactId) return;
+    async function syncEditParam() {
+      setSearchParams({}, { replace: true });
+      if (cancelled) return;
+      await openEditContactModalRef.current?.(Number(editId));
+    }
 
-    setForm((prev) => ({
-      ...prev,
-      purchaseParticipationId:
-        prev.purchaseParticipationId ||
-        findCatalogIdByCode(catalogs.purchaseParticipations, "ninguno"),
-      relationshipTypeId:
-        prev.relationshipTypeId ||
-        findCatalogIdByCode(catalogs.relationshipTypes, "ninguno"),
-      employmentStatusId:
-        prev.employmentStatusId ||
-        String(catalogs.employmentStatuses?.[0]?.id || ""),
-      activationStatusId:
-        prev.activationStatusId ||
-        String(catalogs.activationStatuses?.[0]?.id || ""),
-      ...(prev.accountId ? getAccountLocationFields(prev.accountId) : null),
-    }));
-  }, [showContactModal, editingContactId, catalogs]);
+    void syncEditParam();
 
-  useEffect(() => {
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, setSearchParams]);
+
+  function setContactStatusFilter(value) {
     setContactsPage(1);
-  }, [contactQuery, contactStatusFilter, contactsPerPage]);
+    setContactStatusFilterState(value);
+  }
 
-  useEffect(() => {
-    if (!form.managerContactId) return;
-    const isValidManager = managerOptions.some(
-      (contact) => Number(contact.id) === Number(form.managerContactId),
-    );
-    if (isValidManager) return;
+  function setContactQuery(value) {
+    setContactsPage(1);
+    setContactQueryState(value);
+  }
 
-    setForm((prev) => ({
-      ...prev,
-      managerContactId: "",
-    }));
-  }, [managerOptions, form.managerContactId]);
+  function setContactsPerPage(value) {
+    setContactsPage(1);
+    setContactsPerPageState(value);
+  }
 
   function toggleContactSort(field) {
     if (contactSortField === field) {

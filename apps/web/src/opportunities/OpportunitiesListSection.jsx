@@ -50,6 +50,9 @@ function OpportunitiesListSection({
           <p className="roles-subtitle">
             Gestiona las oportunidades comerciales y su seguimiento
           </p>
+          <p className="field-hint">
+            Las cotizaciones ahora se administran desde su modulo principal.
+          </p>
         </div>
         {canCreateOrRequestOpportunities && (
           <button
@@ -223,7 +226,8 @@ function OpportunitiesListSection({
                 className="sort-header-btn"
                 onClick={() => toggleOpportunitySort("estado_comercial")}
               >
-                Estado comercial <span>{getOpportunitySortArrow("estado_comercial")}</span>
+                Estado comercial{" "}
+                <span>{getOpportunitySortArrow("estado_comercial")}</span>
               </button>
             </th>
             <th>
@@ -289,7 +293,7 @@ function OpportunitiesListSection({
                             )
                           }
                         >
-                          Editar
+                          Editar oportunidad
                         </button>
                         <button
                           type="button"
@@ -330,7 +334,10 @@ function OpportunitiesListSection({
                           }
                           onClick={() =>
                             runOpportunityAction(() =>
-                              updateOpportunityStatus(opportunity, "desactivada"),
+                              updateOpportunityStatus(
+                                opportunity,
+                                "desactivada",
+                              ),
                             )
                           }
                         >

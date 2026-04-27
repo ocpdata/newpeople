@@ -1,14 +1,48 @@
-import { useMemo } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import OpportunityQuestionAdminPage from "./OpportunityQuestionAdminPage";
+import { Suspense, lazy, useMemo } from "react";
+import {
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import Dashboard from "./Dashboard";
-import SystemAuditPage from "./SystemAuditPage";
-import UsersPage from "./UsersPage";
-import RolesPage from "./RolesPage";
-import AccountsPage from "./AccountsPage";
-import ProvidersPage from "./ProvidersPage";
-import OpportunitiesPage from "./OpportunitiesPage";
-import ContactsPage from "./ContactsPage";
+import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
+
+const OpportunityQuestionAdminPage = lazy(
+  () => import("./OpportunityQuestionAdminPage"),
+);
+const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
+const UsersPage = lazy(() => import("./UsersPage"));
+const RolesPage = lazy(() => import("./RolesPage"));
+const AccountsPage = lazy(() => import("./AccountsPage"));
+const ProvidersPage = lazy(() => import("./ProvidersPage"));
+const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
+const ContactsPage = lazy(() => import("./ContactsPage"));
+const QuotationsPage = lazy(() => import("./QuotationsPage"));
+const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
+
+function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
+  return (
+    <NavLink
+      {...props}
+      onClick={(event) => {
+        onClick?.(event);
+        if (event.defaultPrevented) {
+          return;
+        }
+
+        if (!onBeforeNavigate()) {
+          event.preventDefault();
+        }
+      }}
+    />
+  );
+}
+
+function RouteFallback() {
+  return <div className="centered">Cargando...</div>;
+}
 
 function getUserInitials(fullName) {
   const parts = String(fullName || "")
@@ -40,44 +74,212 @@ export function UserAvatar({ src, fullName, size = "md" }) {
 
 export default function AppShell({
   currentUser,
-  token,
   onLogout,
   onRefreshCurrentUser,
 }) {
+  const location = useLocation();
   const can = useMemo(() => {
     const set = new Set(currentUser.permissions || []);
-    const isAdmin = (currentUser.roles || []).some(
-      (r) => String(r.name).toLowerCase() === "administrador",
-    );
-    return (permission) => isAdmin || set.has(permission);
+    return (permission) => set.has(permission);
   }, [currentUser]);
+
+  const canAccessQuotations = [
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
+  const confirmRouteChange = () => confirmQuotationNavigation();
+  const isQuotationPrintRoute = location.pathname === "/quotations/print";
+
+  const appRoutes = (
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route
+          path="/users"
+          element={
+            can("usuarios.read") ? <UsersPage can={can} /> : <Navigate to="/" />
+          }
+        />
+        <Route
+          path="/roles"
+          element={
+            can("roles.read") ? (
+              <RolesPage
+                can={can}
+                onRefreshCurrentUser={onRefreshCurrentUser}
+              />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/accounts"
+          element={
+            can("cuentas.read") ? (
+              <AccountsPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/providers"
+          element={
+            can("proveedores.read") ? (
+              <ProvidersPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/opportunities/questions"
+          element={
+            can("oportunidades.update") ? (
+              <OpportunityQuestionAdminPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/opportunities"
+          element={
+            can("oportunidades.read") ? (
+              <OpportunitiesPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/quotations"
+          element={
+            canAccessQuotations ? (
+              <QuotationsPage currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/quotations/print"
+          element={
+            canAccessQuotations ? <QuotationPrintPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
+          path="/contacts"
+          element={
+            can("contactos.read") ? (
+              <ContactsPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/audit"
+          element={
+            can("audit.read") ? <SystemAuditPage /> : <Navigate to="/" />
+          }
+        />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Suspense>
+  );
+
+  if (isQuotationPrintRoute) {
+    return appRoutes;
+  }
 
   return (
     <div className="app">
       <aside className="sidebar">
         <h1>NewPeople CRM</h1>
         <nav>
-          <NavLink to="/">Dashboard</NavLink>
-          {can("usuarios.read") && <NavLink to="/users">Usuarios</NavLink>}
-          {can("roles.read") && <NavLink to="/roles">Roles</NavLink>}
-          {can("cuentas.read") && <NavLink to="/accounts">Cuentas</NavLink>}
+          <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
+            Dashboard
+          </GuardedNavLink>
+          {can("usuarios.read") && (
+            <GuardedNavLink to="/users" onBeforeNavigate={confirmRouteChange}>
+              Usuarios
+            </GuardedNavLink>
+          )}
+          {can("roles.read") && (
+            <GuardedNavLink to="/roles" onBeforeNavigate={confirmRouteChange}>
+              Roles
+            </GuardedNavLink>
+          )}
+          {can("cuentas.read") && (
+            <GuardedNavLink
+              to="/accounts"
+              onBeforeNavigate={confirmRouteChange}
+            >
+              Cuentas
+            </GuardedNavLink>
+          )}
           {can("proveedores.read") && (
-            <NavLink to="/providers">Proveedores</NavLink>
+            <GuardedNavLink
+              to="/providers"
+              onBeforeNavigate={confirmRouteChange}
+            >
+              Proveedores
+            </GuardedNavLink>
           )}
           {can("oportunidades.read") && (
-            <NavLink to="/opportunities" end>
+            <GuardedNavLink
+              to="/opportunities"
+              end
+              onBeforeNavigate={confirmRouteChange}
+            >
               Oportunidades
-            </NavLink>
+            </GuardedNavLink>
+          )}
+          {canAccessQuotations && (
+            <GuardedNavLink
+              to="/quotations"
+              onBeforeNavigate={confirmRouteChange}
+            >
+              Cotizaciones
+            </GuardedNavLink>
           )}
           {can("oportunidades.update") && (
-            <NavLink to="/opportunities/questions">
+            <GuardedNavLink
+              to="/opportunities/questions"
+              onBeforeNavigate={confirmRouteChange}
+            >
               Preguntas comerciales
-            </NavLink>
+            </GuardedNavLink>
           )}
-          {can("contactos.read") && <NavLink to="/contacts">Contactos</NavLink>}
-          {can("audit.read") && <NavLink to="/audit">Auditoria</NavLink>}
+          {can("contactos.read") && (
+            <GuardedNavLink
+              to="/contacts"
+              onBeforeNavigate={confirmRouteChange}
+            >
+              Contactos
+            </GuardedNavLink>
+          )}
+          {can("audit.read") && (
+            <GuardedNavLink to="/audit" onBeforeNavigate={confirmRouteChange}>
+              Auditoria
+            </GuardedNavLink>
+          )}
         </nav>
-        <button className="logout" onClick={onLogout}>
+        <button
+          className="logout"
+          onClick={() => {
+            if (!confirmRouteChange()) {
+              return;
+            }
+
+            onLogout();
+          }}
+        >
           Salir
         </button>
       </aside>
@@ -96,81 +298,7 @@ export default function AppShell({
           </div>
         </header>
 
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route
-            path="/users"
-            element={can("usuarios.read") ? <UsersPage can={can} /> : <Navigate to="/" />}
-          />
-          <Route
-            path="/roles"
-            element={
-              can("roles.read") ? (
-                <RolesPage
-                  can={can}
-                  onRefreshCurrentUser={onRefreshCurrentUser}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/accounts"
-            element={
-              can("cuentas.read") ? (
-                <AccountsPage can={can} currentUser={currentUser} />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/providers"
-            element={
-              can("proveedores.read") ? (
-                <ProvidersPage can={can} currentUser={currentUser} />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/opportunities/questions"
-            element={
-              can("oportunidades.update") ? (
-                <OpportunityQuestionAdminPage />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/opportunities"
-            element={
-              can("oportunidades.read") ? (
-                <OpportunitiesPage can={can} currentUser={currentUser} />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/contacts"
-            element={
-              can("contactos.read") ? (
-                <ContactsPage can={can} currentUser={currentUser} />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/audit"
-            element={can("audit.read") ? <SystemAuditPage /> : <Navigate to="/" />}
-          />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+        {appRoutes}
       </main>
     </div>
   );

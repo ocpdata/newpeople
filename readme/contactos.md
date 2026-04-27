@@ -38,7 +38,7 @@ Gestion de contactos comerciales asociados a cuentas:
 
 ### Alcance de acceso
 
-- Administrador: ve y opera todos los contactos.
+- `contactos.read_all`: ve y opera todos los contactos y habilita cuentas ajenas en catalogos relacionados.
 - Usuario no administrador: solo ve y opera contactos de cuentas que le pertenecen.
 
 ## Puntos clave de UX
@@ -73,6 +73,7 @@ Gestion de contactos comerciales asociados a cuentas:
 Permisos requeridos:
 
 - contactos.read
+- contactos.read_all
 - contactos.create
 - contactos.request
 - contactos.update
@@ -90,7 +91,7 @@ Los siguientes catalogos aplican exclusivamente al modulo de contactos:
 
 - Cada contacto debe estar asociado a una cuenta (obligatorio).
 - Los usuarios no administradores solo ven y operan contactos de cuentas de las que son propietarios.
-- Los administradores pueden ver y operar todos los contactos.
+- Usuarios con `contactos.read_all` pueden ver y operar todos los contactos.
 - La jerarquia (jefe / influye en) es opcional y referencia otros contactos.
 - Con `contactos.create`, el contacto se registra activado automaticamente.
 - Con `contactos.request`, el contacto se registra en pendiente automaticamente.

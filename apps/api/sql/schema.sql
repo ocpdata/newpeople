@@ -906,6 +906,636 @@ CREATE TABLE IF NOT EXISTS opportunities (
   CONSTRAINT fk_opportunities_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS quotation_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  ui_key VARCHAR(80) NOT NULL DEFAULT 'default',
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_statuses_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_actions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_actions_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_activation_statuses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_activation_statuses_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_section_inclusion_types (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_section_inclusion_types_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_delivery_times (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_delivery_times_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_validity_terms (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_validity_terms_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_warranty_terms (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_warranty_terms_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_payment_terms (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(80) NOT NULL,
+  name VARCHAR(180) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_payment_terms_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS quotations (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  opportunity_id BIGINT UNSIGNED NOT NULL,
+  latest_version_id BIGINT UNSIGNED NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  updated_by_user_id BIGINT UNSIGNED NOT NULL,
+  CONSTRAINT fk_quotations_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotations_activation_status FOREIGN KEY (activation_status_id) REFERENCES quotation_activation_statuses(id),
+  CONSTRAINT fk_quotations_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  CONSTRAINT fk_quotations_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+  INDEX idx_quotations_opportunity (opportunity_id),
+  INDEX idx_quotations_latest_version (latest_version_id)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_versions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_id BIGINT UNSIGNED NOT NULL,
+  version_number INT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
+  proposal_name VARCHAR(180) NOT NULL,
+  quotation_date DATE NOT NULL,
+  introduction LONGTEXT NULL,
+  status_id BIGINT UNSIGNED NOT NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  summary_discount_mode VARCHAR(20) NULL,
+  summary_discount_value DECIMAL(15, 8) NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  updated_by_user_id BIGINT UNSIGNED NOT NULL,
+  CONSTRAINT uq_quotation_versions_number UNIQUE (quotation_id, version_number),
+  CONSTRAINT fk_quotation_versions_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_versions_contact FOREIGN KEY (contact_id) REFERENCES contacts(id),
+  CONSTRAINT fk_quotation_versions_status FOREIGN KEY (status_id) REFERENCES quotation_statuses(id),
+  CONSTRAINT fk_quotation_versions_activation_status FOREIGN KEY (activation_status_id) REFERENCES quotation_activation_statuses(id),
+  CONSTRAINT fk_quotation_versions_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  CONSTRAINT fk_quotation_versions_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_versions_quotation (quotation_id, version_number),
+  INDEX idx_quotation_versions_status (status_id)
+);
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN summary_discount_mode VARCHAR(20) NULL AFTER activation_status_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_discount_mode'
+);
+PREPARE s_quotation_versions_summary_discount_mode_col FROM @stmt;
+EXECUTE s_quotation_versions_summary_discount_mode_col;
+DEALLOCATE PREPARE s_quotation_versions_summary_discount_mode_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN summary_discount_value DECIMAL(15, 8) NULL AFTER summary_discount_mode',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_discount_value'
+);
+PREPARE s_quotation_versions_summary_discount_value_col FROM @stmt;
+EXECUTE s_quotation_versions_summary_discount_value_col;
+DEALLOCATE PREPARE s_quotation_versions_summary_discount_value_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions MODIFY COLUMN summary_discount_value DECIMAL(15, 8) NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_discount_value'
+    AND NUMERIC_PRECISION = 15
+    AND NUMERIC_SCALE = 8
+);
+PREPARE s_quotation_versions_summary_discount_value_scale FROM @stmt;
+EXECUTE s_quotation_versions_summary_discount_value_scale;
+DEALLOCATE PREPARE s_quotation_versions_summary_discount_value_scale;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN summary_distribution_mode VARCHAR(20) NULL AFTER summary_discount_value',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_distribution_mode'
+);
+PREPARE s_quotation_versions_summary_distribution_mode_col FROM @stmt;
+EXECUTE s_quotation_versions_summary_distribution_mode_col;
+DEALLOCATE PREPARE s_quotation_versions_summary_distribution_mode_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN summary_vat_mode VARCHAR(20) NULL AFTER summary_distribution_mode',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_vat_mode'
+);
+PREPARE s_quotation_versions_summary_vat_mode_col FROM @stmt;
+EXECUTE s_quotation_versions_summary_vat_mode_col;
+DEALLOCATE PREPARE s_quotation_versions_summary_vat_mode_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN summary_vat_pct DECIMAL(15, 8) NULL AFTER summary_vat_mode',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_vat_pct'
+);
+PREPARE s_quotation_versions_summary_vat_pct_col FROM @stmt;
+EXECUTE s_quotation_versions_summary_vat_pct_col;
+DEALLOCATE PREPARE s_quotation_versions_summary_vat_pct_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions MODIFY COLUMN summary_vat_pct DECIMAL(15, 8) NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'summary_vat_pct'
+    AND (
+      NUMERIC_PRECISION <> 15
+      OR NUMERIC_SCALE <> 8
+    )
+);
+PREPARE s_quotation_versions_summary_vat_pct_scale FROM @stmt;
+EXECUTE s_quotation_versions_summary_vat_pct_scale;
+DEALLOCATE PREPARE s_quotation_versions_summary_vat_pct_scale;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN internal_notes LONGTEXT NULL AFTER summary_vat_pct',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'internal_notes'
+);
+PREPARE s_quotation_versions_internal_notes_col FROM @stmt;
+EXECUTE s_quotation_versions_internal_notes_col;
+DEALLOCATE PREPARE s_quotation_versions_internal_notes_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN delivery_time VARCHAR(120) NULL AFTER internal_notes',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'delivery_time'
+);
+PREPARE s_quotation_versions_delivery_time_col FROM @stmt;
+EXECUTE s_quotation_versions_delivery_time_col;
+DEALLOCATE PREPARE s_quotation_versions_delivery_time_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN quotation_validity VARCHAR(120) NULL AFTER delivery_time',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'quotation_validity'
+);
+PREPARE s_quotation_versions_quotation_validity_col FROM @stmt;
+EXECUTE s_quotation_versions_quotation_validity_col;
+DEALLOCATE PREPARE s_quotation_versions_quotation_validity_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN warranty_term VARCHAR(120) NULL AFTER quotation_validity',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'warranty_term'
+);
+PREPARE s_quotation_versions_warranty_term_col FROM @stmt;
+EXECUTE s_quotation_versions_warranty_term_col;
+DEALLOCATE PREPARE s_quotation_versions_warranty_term_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN payment_terms VARCHAR(180) NULL AFTER warranty_term',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'payment_terms'
+);
+PREPARE s_quotation_versions_payment_terms_col FROM @stmt;
+EXECUTE s_quotation_versions_payment_terms_col;
+DEALLOCATE PREPARE s_quotation_versions_payment_terms_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN currency_code VARCHAR(20) NULL AFTER payment_terms',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'currency_code'
+);
+PREPARE s_quotation_versions_currency_code_col FROM @stmt;
+EXECUTE s_quotation_versions_currency_code_col;
+DEALLOCATE PREPARE s_quotation_versions_currency_code_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN exchange_rate DECIMAL(15, 4) NULL AFTER currency_code',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'exchange_rate'
+);
+PREPARE s_quotation_versions_exchange_rate_col FROM @stmt;
+EXECUTE s_quotation_versions_exchange_rate_col;
+DEALLOCATE PREPARE s_quotation_versions_exchange_rate_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions ADD COLUMN quotation_notes LONGTEXT NULL AFTER exchange_rate',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'quotation_notes'
+);
+PREPARE s_quotation_versions_quotation_notes_col FROM @stmt;
+EXECUTE s_quotation_versions_quotation_notes_col;
+DEALLOCATE PREPARE s_quotation_versions_quotation_notes_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_versions MODIFY COLUMN exchange_rate DECIMAL(15, 4) NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_versions'
+    AND COLUMN_NAME = 'exchange_rate'
+    AND (
+      NUMERIC_PRECISION <> 15
+      OR NUMERIC_SCALE <> 4
+    )
+);
+PREPARE s_quotation_versions_exchange_rate_scale FROM @stmt;
+EXECUTE s_quotation_versions_exchange_rate_scale;
+DEALLOCATE PREPARE s_quotation_versions_exchange_rate_scale;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotations ADD CONSTRAINT fk_quotations_latest_version FOREIGN KEY (latest_version_id) REFERENCES quotation_versions(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotations'
+    AND CONSTRAINT_NAME = 'fk_quotations_latest_version'
+);
+PREPARE s_quotations_latest_version_fk FROM @stmt;
+EXECUTE s_quotations_latest_version_fk;
+DEALLOCATE PREPARE s_quotations_latest_version_fk;
+
+CREATE TABLE IF NOT EXISTS quotation_sections (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_version_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  inclusion_type_id BIGINT UNSIGNED NOT NULL,
+  activation_status_id BIGINT UNSIGNED NOT NULL,
+  display_order INT UNSIGNED NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  updated_by_user_id BIGINT UNSIGNED NOT NULL,
+  CONSTRAINT fk_quotation_sections_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_sections_inclusion FOREIGN KEY (inclusion_type_id) REFERENCES quotation_section_inclusion_types(id),
+  CONSTRAINT fk_quotation_sections_activation_status FOREIGN KEY (activation_status_id) REFERENCES quotation_activation_statuses(id),
+  CONSTRAINT fk_quotation_sections_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  CONSTRAINT fk_quotation_sections_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_sections_version (quotation_version_id, display_order)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_section_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_section_id BIGINT UNSIGNED NOT NULL,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  product_code VARCHAR(120) NOT NULL,
+  product_description TEXT NOT NULL,
+  item_type VARCHAR(40) NOT NULL DEFAULT 'producto',
+  bundle_parent_item_id BIGINT UNSIGNED NULL,
+  bundle_origin_type VARCHAR(40) NULL,
+  source_provider_price_list_item_id BIGINT UNSIGNED NULL,
+  source_component_price_list_item_id BIGINT UNSIGNED NULL,
+  quantity DECIMAL(15, 4) NOT NULL,
+  list_price_unit DECIMAL(15, 4) NOT NULL,
+  manufacturer_discount_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
+  import_cost_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
+  profit_margin_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
+  final_discount_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
+  display_order INT UNSIGNED NOT NULL DEFAULT 1,
+  bundle_sort_order INT UNSIGNED NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  updated_by_user_id BIGINT UNSIGNED NOT NULL,
+  CONSTRAINT fk_quotation_section_items_section FOREIGN KEY (quotation_section_id) REFERENCES quotation_sections(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_section_items_provider FOREIGN KEY (provider_id) REFERENCES providers(id),
+  CONSTRAINT fk_quotation_section_items_bundle_parent FOREIGN KEY (bundle_parent_item_id) REFERENCES quotation_section_items(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_section_items_source_provider_price_item FOREIGN KEY (source_provider_price_list_item_id) REFERENCES provider_price_list_items(id) ON DELETE SET NULL,
+  CONSTRAINT fk_quotation_section_items_source_component_price_item FOREIGN KEY (source_component_price_list_item_id) REFERENCES provider_price_list_items(id) ON DELETE SET NULL,
+  CONSTRAINT fk_quotation_section_items_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  CONSTRAINT fk_quotation_section_items_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_section_items_section (quotation_section_id, display_order),
+  INDEX idx_quotation_section_items_bundle_parent (bundle_parent_item_id, bundle_sort_order, display_order)
+);
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN final_discount_pct DECIMAL(7, 4) NOT NULL DEFAULT 0 AFTER profit_margin_pct',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'final_discount_pct'
+);
+PREPARE s_quotation_section_items_final_discount_col FROM @stmt;
+EXECUTE s_quotation_section_items_final_discount_col;
+DEALLOCATE PREPARE s_quotation_section_items_final_discount_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN item_type VARCHAR(40) NOT NULL DEFAULT ''producto'' AFTER product_description',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'item_type'
+);
+PREPARE s_quotation_section_items_item_type_col FROM @stmt;
+EXECUTE s_quotation_section_items_item_type_col;
+DEALLOCATE PREPARE s_quotation_section_items_item_type_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN bundle_parent_item_id BIGINT UNSIGNED NULL AFTER item_type',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'bundle_parent_item_id'
+);
+PREPARE s_quotation_section_items_bundle_parent_col FROM @stmt;
+EXECUTE s_quotation_section_items_bundle_parent_col;
+DEALLOCATE PREPARE s_quotation_section_items_bundle_parent_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN bundle_origin_type VARCHAR(40) NULL AFTER bundle_parent_item_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'bundle_origin_type'
+);
+PREPARE s_quotation_section_items_bundle_origin_col FROM @stmt;
+EXECUTE s_quotation_section_items_bundle_origin_col;
+DEALLOCATE PREPARE s_quotation_section_items_bundle_origin_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN source_provider_price_list_item_id BIGINT UNSIGNED NULL AFTER bundle_origin_type',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'source_provider_price_list_item_id'
+);
+PREPARE s_quotation_section_items_source_provider_col FROM @stmt;
+EXECUTE s_quotation_section_items_source_provider_col;
+DEALLOCATE PREPARE s_quotation_section_items_source_provider_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN source_component_price_list_item_id BIGINT UNSIGNED NULL AFTER source_provider_price_list_item_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'source_component_price_list_item_id'
+);
+PREPARE s_quotation_section_items_source_component_col FROM @stmt;
+EXECUTE s_quotation_section_items_source_component_col;
+DEALLOCATE PREPARE s_quotation_section_items_source_component_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN bundle_sort_order INT UNSIGNED NULL AFTER display_order',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'bundle_sort_order'
+);
+PREPARE s_quotation_section_items_bundle_sort_col FROM @stmt;
+EXECUTE s_quotation_section_items_bundle_sort_col;
+DEALLOCATE PREPARE s_quotation_section_items_bundle_sort_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD INDEX idx_quotation_section_items_bundle_parent (bundle_parent_item_id, bundle_sort_order, display_order)',
+    'SELECT 1'
+  )
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND INDEX_NAME = 'idx_quotation_section_items_bundle_parent'
+);
+PREPARE s_quotation_section_items_bundle_parent_idx FROM @stmt;
+EXECUTE s_quotation_section_items_bundle_parent_idx;
+DEALLOCATE PREPARE s_quotation_section_items_bundle_parent_idx;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD CONSTRAINT fk_quotation_section_items_bundle_parent FOREIGN KEY (bundle_parent_item_id) REFERENCES quotation_section_items(id) ON DELETE CASCADE',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND CONSTRAINT_NAME = 'fk_quotation_section_items_bundle_parent'
+);
+PREPARE s_quotation_section_items_bundle_parent_fk FROM @stmt;
+EXECUTE s_quotation_section_items_bundle_parent_fk;
+DEALLOCATE PREPARE s_quotation_section_items_bundle_parent_fk;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD CONSTRAINT fk_quotation_section_items_source_provider_price_item FOREIGN KEY (source_provider_price_list_item_id) REFERENCES provider_price_list_items(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND CONSTRAINT_NAME = 'fk_quotation_section_items_source_provider_price_item'
+);
+PREPARE s_quotation_section_items_source_provider_fk FROM @stmt;
+EXECUTE s_quotation_section_items_source_provider_fk;
+DEALLOCATE PREPARE s_quotation_section_items_source_provider_fk;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD CONSTRAINT fk_quotation_section_items_source_component_price_item FOREIGN KEY (source_component_price_list_item_id) REFERENCES provider_price_list_items(id) ON DELETE SET NULL',
+    'SELECT 1'
+  )
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND CONSTRAINT_NAME = 'fk_quotation_section_items_source_component_price_item'
+);
+PREPARE s_quotation_section_items_source_component_fk FROM @stmt;
+EXECUTE s_quotation_section_items_source_component_fk;
+DEALLOCATE PREPARE s_quotation_section_items_source_component_fk;
+
+CREATE TABLE IF NOT EXISTS quotation_action_permissions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  status_id BIGINT UNSIGNED NULL,
+  action_id BIGINT UNSIGNED NOT NULL,
+  permission_id BIGINT UNSIGNED NOT NULL,
+  is_allowed TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_action_permissions UNIQUE (status_id, action_id, permission_id),
+  CONSTRAINT fk_qap_status FOREIGN KEY (status_id) REFERENCES quotation_statuses(id) ON DELETE CASCADE,
+  CONSTRAINT fk_qap_action FOREIGN KEY (action_id) REFERENCES quotation_actions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_qap_permission FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+);
+
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,
@@ -1118,10 +1748,12 @@ VALUES
   ('roles.assign', 'roles', 'assign', 'Asignar roles a usuarios', NOW(3), NOW(3)),
   ('permissions.read', 'permissions', 'read', 'Ver permisos', NOW(3), NOW(3)),
   ('cuentas.read', 'cuentas', 'read', 'Ver cuentas', NOW(3), NOW(3)),
+  ('cuentas.read_all', 'cuentas', 'read_all', 'Ver todas las cuentas', NOW(3), NOW(3)),
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),
   ('cuentas.request', 'cuentas', 'request', 'Solicitar creacion de cuentas', NOW(3), NOW(3)),
   ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3)),
   ('contactos.read', 'contactos', 'read', 'Ver contactos', NOW(3), NOW(3)),
+  ('contactos.read_all', 'contactos', 'read_all', 'Ver todos los contactos', NOW(3), NOW(3)),
   ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),
   ('contactos.request', 'contactos', 'request', 'Solicitar creacion de contactos', NOW(3), NOW(3)),
   ('contactos.update', 'contactos', 'update', 'Actualizar contactos', NOW(3), NOW(3)),
@@ -1132,9 +1764,15 @@ VALUES
   ('proveedores_precios.create', 'proveedores_precios', 'create', 'Crear listas de precios de proveedores', NOW(3), NOW(3)),
   ('proveedores_precios.update', 'proveedores_precios', 'update', 'Actualizar listas de precios de proveedores', NOW(3), NOW(3)),
   ('oportunidades.read', 'oportunidades', 'read', 'Ver oportunidades', NOW(3), NOW(3)),
+  ('oportunidades.read_all', 'oportunidades', 'read_all', 'Ver todas las oportunidades', NOW(3), NOW(3)),
   ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
   ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
   ('oportunidades.update', 'oportunidades', 'update', 'Actualizar oportunidades', NOW(3), NOW(3)),
+  ('cotizaciones.operacion', 'cotizaciones', 'operacion', 'Operacion de cotizaciones', NOW(3), NOW(3)),
+  ('cotizaciones.revision', 'cotizaciones', 'revision', 'Revision de cotizaciones', NOW(3), NOW(3)),
+  ('cotizaciones.ingreso', 'cotizaciones', 'ingreso', 'Ingreso de cotizaciones', NOW(3), NOW(3)),
+  ('cotizaciones.administracion', 'cotizaciones', 'administracion', 'Administracion de cotizaciones', NOW(3), NOW(3)),
+  ('cotizaciones.externo', 'cotizaciones', 'externo', 'Acceso externo a cotizaciones', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 
@@ -1260,6 +1898,241 @@ INSERT INTO opportunity_activation_statuses (code, name, is_active) VALUES
   ('desactivada', 'Desactivada', 1),
   ('pendiente_activacion', 'Pendiente de activacion', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
+
+INSERT INTO quotation_activation_statuses (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('activada', 'Activada', 1, 1, NOW(3), NOW(3)),
+  ('desactivada', 'Desactivada', 2, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_statuses (code, name, ui_key, display_order, is_active, created_at, updated_at) VALUES
+  ('borrador', 'Borrador', 'draft', 1, 1, NOW(3), NOW(3)),
+  ('en_aprobacion', 'En aprobacion', 'pending', 2, 1, NOW(3), NOW(3)),
+  ('rechazada', 'Rechazada', 'rejected', 3, 1, NOW(3), NOW(3)),
+  ('aprobada', 'Aprobada', 'approved', 4, 1, NOW(3), NOW(3)),
+  ('enviada', 'Enviada', 'sent', 5, 1, NOW(3), NOW(3)),
+  ('ganada', 'Ganada', 'won', 6, 1, NOW(3), NOW(3)),
+  ('perdida', 'Perdida', 'lost', 7, 1, NOW(3), NOW(3)),
+  ('anulada', 'Anulada', 'cancelled', 8, 1, NOW(3), NOW(3)),
+  ('aceptada', 'Aceptada', 'accepted', 9, 1, NOW(3), NOW(3)),
+  ('no_vigente', 'No vigente', 'inactive', 10, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  ui_key = VALUES(ui_key),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_actions (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('crear_cotizacion', 'Crear cotizacion', 1, 1, NOW(3), NOW(3)),
+  ('crear_version', 'Crear version', 2, 1, NOW(3), NOW(3)),
+  ('ver', 'Ver', 3, 1, NOW(3), NOW(3)),
+  ('modificar', 'Modificar', 4, 1, NOW(3), NOW(3)),
+  ('solicitar_aprobacion', 'Solicitar aprobacion', 5, 1, NOW(3), NOW(3)),
+  ('declarar_ganada', 'Declarar ganada', 6, 1, NOW(3), NOW(3)),
+  ('declarar_perdida', 'Declarar perdida', 7, 1, NOW(3), NOW(3)),
+  ('declarar_anulada', 'Declarar anulada', 8, 1, NOW(3), NOW(3)),
+  ('enviar', 'Enviar', 9, 1, NOW(3), NOW(3)),
+  ('aprobar', 'Aprobar', 10, 1, NOW(3), NOW(3)),
+  ('rechazar', 'Rechazar', 11, 1, NOW(3), NOW(3)),
+  ('ponerla_borrador', 'Ponerla borrador', 12, 1, NOW(3), NOW(3)),
+  ('aceptar', 'Aceptar', 13, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_section_inclusion_types (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('incluida', 'Incluida', 1, 1, NOW(3), NOW(3)),
+  ('no_incluida', 'No incluida', 2, 1, NOW(3), NOW(3)),
+  ('opcional', 'Opcional', 3, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_delivery_times (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('inmediato', 'Inmediato', 1, 1, NOW(3), NOW(3)),
+  ('5_dias', '5 días', 2, 1, NOW(3), NOW(3)),
+  ('10_dias', '10 días', 3, 1, NOW(3), NOW(3)),
+  ('15_dias', '15 días', 4, 1, NOW(3), NOW(3)),
+  ('30_dias', '30 días', 5, 1, NOW(3), NOW(3)),
+  ('45_dias', '45 días', 6, 1, NOW(3), NOW(3)),
+  ('60_dias', '60 días', 7, 1, NOW(3), NOW(3)),
+  ('segun_notas', 'De acuerdo a lo indicado en notas', 8, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_validity_terms (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('5_dias', '5 días', 1, 1, NOW(3), NOW(3)),
+  ('10_dias', '10 días', 2, 1, NOW(3), NOW(3)),
+  ('15_dias', '15 días', 3, 1, NOW(3), NOW(3)),
+  ('30_dias', '30 días', 4, 1, NOW(3), NOW(3)),
+  ('45_dias', '45 días', 5, 1, NOW(3), NOW(3)),
+  ('60_dias', '60 días', 6, 1, NOW(3), NOW(3)),
+  ('segun_notas', 'De acuerdo a lo indicado en notas', 7, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_warranty_terms (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('1_ano', '1 año', 1, 1, NOW(3), NOW(3)),
+  ('2_anos', '2 años', 2, 1, NOW(3), NOW(3)),
+  ('3_anos', '3 años', 3, 1, NOW(3), NOW(3)),
+  ('4_anos', '4 años', 4, 1, NOW(3), NOW(3)),
+  ('5_anos', '5 años', 5, 1, NOW(3), NOW(3)),
+  ('segun_notas', 'De acuerdo a lo indicado en notas', 6, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO quotation_payment_terms (code, name, display_order, is_active, created_at, updated_at) VALUES
+  ('100_adelantado', '100% adelantado', 1, 1, NOW(3), NOW(3)),
+  ('50_adelantado_50_entrega', '50% adelantado - 50% contra entrega', 2, 1, NOW(3), NOW(3)),
+  ('100_entrega', '100% contra entrega', 3, 1, NOW(3), NOW(3)),
+  ('15_dias_facturado', '15 días despues de facturado', 4, 1, NOW(3), NOW(3)),
+  ('30_dias_facturado', '30 días despues de facturado', 5, 1, NOW(3), NOW(3)),
+  ('45_dias_facturado', '45 días despues de facturado', 6, 1, NOW(3), NOW(3)),
+  ('60_dias_facturado', '60 días despues de facturado', 7, 1, NOW(3), NOW(3)),
+  ('90_dias_facturado', '90 días despues de facturado', 8, 1, NOW(3), NOW(3)),
+  ('segun_notas', 'De acuerdo a lo indicado en notas', 9, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+DELETE qap
+FROM quotation_action_permissions qap
+INNER JOIN permissions p ON p.id = qap.permission_id
+WHERE p.code LIKE 'cotizaciones.%';
+
+INSERT INTO quotation_action_permissions (status_id, action_id, permission_id, is_allowed, created_at, updated_at)
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'modificar', 'solicitar_aprobacion', 'declarar_perdida', 'declarar_anulada')
+INNER JOIN permissions p ON p.code = 'cotizaciones.operacion'
+WHERE s.code = 'borrador'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.revision'
+WHERE s.code = 'borrador'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'modificar', 'solicitar_aprobacion')
+INNER JOIN permissions p ON p.code = 'cotizaciones.ingreso'
+WHERE s.code = 'borrador'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.operacion'
+WHERE s.code = 'en_aprobacion'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'modificar', 'aprobar', 'rechazar')
+INNER JOIN permissions p ON p.code = 'cotizaciones.revision'
+WHERE s.code = 'en_aprobacion'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'aprobar')
+INNER JOIN permissions p ON p.code = 'cotizaciones.ingreso'
+WHERE s.code = 'en_aprobacion'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'modificar', 'declarar_perdida', 'declarar_anulada')
+INNER JOIN permissions p ON p.code = 'cotizaciones.operacion'
+WHERE s.code = 'rechazada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code IN ('cotizaciones.revision', 'cotizaciones.ingreso')
+WHERE s.code = 'rechazada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'declarar_ganada', 'enviar')
+INNER JOIN permissions p ON p.code = 'cotizaciones.operacion'
+WHERE s.code = 'aprobada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.revision'
+WHERE s.code = 'aprobada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'declarar_ganada')
+INNER JOIN permissions p ON p.code = 'cotizaciones.ingreso'
+WHERE s.code = 'aprobada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.externo'
+WHERE s.code = 'aprobada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'declarar_ganada', 'declarar_perdida', 'declarar_anulada')
+INNER JOIN permissions p ON p.code = 'cotizaciones.operacion'
+WHERE s.code = 'enviada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code IN ('cotizaciones.revision', 'cotizaciones.ingreso', 'cotizaciones.externo')
+WHERE s.code = 'enviada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code IN ('cotizaciones.operacion', 'cotizaciones.revision')
+WHERE s.code = 'ganada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver', 'ponerla_borrador', 'aceptar')
+INNER JOIN permissions p ON p.code = 'cotizaciones.ingreso'
+WHERE s.code = 'ganada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.externo'
+WHERE s.code = 'ganada'
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code IN ('cotizaciones.operacion', 'cotizaciones.revision', 'cotizaciones.ingreso')
+WHERE s.code IN ('perdida', 'anulada', 'aceptada', 'no_vigente')
+UNION ALL
+SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
+FROM quotation_statuses s
+INNER JOIN quotation_actions a ON a.code IN ('ver')
+INNER JOIN permissions p ON p.code = 'cotizaciones.externo'
+WHERE s.code = 'aceptada';
 
 UPDATE opportunities o
 INNER JOIN opportunity_sales_stages won_stage ON won_stage.id = o.sales_stage_id AND won_stage.code = 'ganada'

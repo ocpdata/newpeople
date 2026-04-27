@@ -75,7 +75,10 @@ export function useRolesPage({ onRefreshCurrentUser }) {
       ]);
       const normalizedRoles = (rolesRes.data || []).map(normalizeRole);
       setRoles(normalizedRoles);
-      if (selectedRoleId && !normalizedRoles.some((role) => role.id === selectedRoleId)) {
+      if (
+        selectedRoleId &&
+        !normalizedRoles.some((role) => role.id === selectedRoleId)
+      ) {
         setSelectedRoleId(null);
         setSelectedPerms([]);
       }
@@ -86,8 +89,45 @@ export function useRolesPage({ onRefreshCurrentUser }) {
   }
 
   useEffect(() => {
-    load();
-  }, [roleStatusFilter]);
+    let cancelled = false;
+
+    async function syncRoles() {
+      try {
+        const rolesUrl =
+          roleStatusFilter === "all" || roleStatusFilter === "inactive"
+            ? "/api/roles?includeInactive=1"
+            : "/api/roles";
+        const [rolesRes, permsRes] = await Promise.all([
+          api.get(rolesUrl),
+          api.get("/api/roles/permissions"),
+        ]);
+        if (cancelled) return;
+
+        const normalizedRoles = (rolesRes.data || []).map(normalizeRole);
+        setRoles(normalizedRoles);
+        if (
+          selectedRoleId &&
+          !normalizedRoles.some((role) => role.id === selectedRoleId)
+        ) {
+          setSelectedRoleId(null);
+          setSelectedPerms([]);
+        }
+        setPermissions((permsRes.data || []).map(normalizePermission));
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(err, "No fue posible cargar roles/permisos"),
+          );
+        }
+      }
+    }
+
+    void syncRoles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roleStatusFilter, selectedRoleId]);
 
   function resetRoleForm() {
     setRoleForm({ name: "", description: "" });
@@ -221,7 +261,11 @@ export function useRolesPage({ onRefreshCurrentUser }) {
       await api.patch(`/api/roles/${roleId}/status`, {
         isActive: nextIsActive,
       });
-      if (!nextIsActive && roleStatusFilter === "active" && selectedRoleId === roleId) {
+      if (
+        !nextIsActive &&
+        roleStatusFilter === "active" &&
+        selectedRoleId === roleId
+      ) {
         setSelectedRoleId(null);
         setSelectedPerms([]);
       }
@@ -239,7 +283,6 @@ export function useRolesPage({ onRefreshCurrentUser }) {
   }
 
   async function updateRoleStatus(role, nextIsActive) {
-    const roleId = Number(role.id);
     if (Number(role.is_system) === 1) {
       setSuccess("");
       setError("No se puede cambiar el estado de un rol del sistema.");

@@ -23,6 +23,7 @@ import {
 describe("API integration baseline", () => {
   const cleanup = {
     stageQuestionIds: [],
+    quotationIds: [],
     opportunityIds: [],
     contactIds: [],
     accountIds: [],
@@ -53,6 +54,23 @@ describe("API integration baseline", () => {
     ctx.accountReadRoleId = await createRole({
       name: `${TEST_PREFIX}_accounts_read`,
       permissionCodes: ["cuentas.read"],
+    });
+    ctx.accountReadAllRoleId = await createRole({
+      name: `${TEST_PREFIX}_accounts_read_all`,
+      permissionCodes: ["cuentas.read", "cuentas.read_all"],
+    });
+    ctx.contactReadRoleId = await createRole({
+      name: `${TEST_PREFIX}_contacts_read`,
+      permissionCodes: ["contactos.read"],
+    });
+    ctx.contactGlobalScopeRoleId = await createRole({
+      name: `${TEST_PREFIX}_contacts_global_scope`,
+      permissionCodes: [
+        "contactos.read",
+        "contactos.read_all",
+        "contactos.create",
+        "contactos.update",
+      ],
     });
     ctx.contactRequestRoleId = await createRole({
       name: `${TEST_PREFIX}_contacts_request`,
@@ -85,6 +103,35 @@ describe("API integration baseline", () => {
         "oportunidades.update",
       ],
     });
+    ctx.opportunityGlobalScopeRoleId = await createRole({
+      name: `${TEST_PREFIX}_opps_global_scope`,
+      permissionCodes: [
+        "oportunidades.read",
+        "oportunidades.read_all",
+        "oportunidades.request",
+        "oportunidades.update",
+      ],
+    });
+    ctx.quotationOperationRoleId = await createRole({
+      name: `${TEST_PREFIX}_quotes_operation`,
+      permissionCodes: ["cotizaciones.operacion"],
+    });
+    ctx.quotationRevisionRoleId = await createRole({
+      name: `${TEST_PREFIX}_quotes_revision`,
+      permissionCodes: ["cotizaciones.revision"],
+    });
+    ctx.quotationIngresoRoleId = await createRole({
+      name: `${TEST_PREFIX}_quotes_ingreso`,
+      permissionCodes: ["cotizaciones.ingreso"],
+    });
+    ctx.quotationAdminRoleId = await createRole({
+      name: `${TEST_PREFIX}_quotes_admin`,
+      permissionCodes: ["cotizaciones.administracion"],
+    });
+    ctx.quotationExternalRoleId = await createRole({
+      name: `${TEST_PREFIX}_quotes_external`,
+      permissionCodes: ["cotizaciones.externo"],
+    });
     ctx.roleManagerRoleId = await createRole({
       name: `${TEST_PREFIX}_roles_update`,
       permissionCodes: ["roles.update"],
@@ -102,11 +149,20 @@ describe("API integration baseline", () => {
       ctx.accountCreateRoleId,
       ctx.accountRequestRoleId,
       ctx.accountReadRoleId,
+      ctx.accountReadAllRoleId,
+      ctx.contactReadRoleId,
+      ctx.contactGlobalScopeRoleId,
       ctx.contactRequestRoleId,
       ctx.contactCreateRoleId,
       ctx.providerManagerRoleId,
       ctx.opportunityRequestRoleId,
       ctx.opportunityFlowRoleId,
+      ctx.opportunityGlobalScopeRoleId,
+      ctx.quotationOperationRoleId,
+      ctx.quotationRevisionRoleId,
+      ctx.quotationIngresoRoleId,
+      ctx.quotationAdminRoleId,
+      ctx.quotationExternalRoleId,
       ctx.roleManagerRoleId,
       ctx.dynamicPermissionRoleId,
       ctx.userCrudRoleId,
@@ -204,6 +260,22 @@ describe("API integration baseline", () => {
         "opportunity_commercial_statuses",
         "anulada",
       ),
+      quotationDraftStatusId: await getCatalogId(
+        "quotation_statuses",
+        "borrador",
+      ),
+      quotationApprovedStatusId: await getCatalogId(
+        "quotation_statuses",
+        "aprobada",
+      ),
+      quotationActiveStatusId: await getCatalogId(
+        "quotation_activation_statuses",
+        "activada",
+      ),
+      quotationIncludedTypeId: await getCatalogId(
+        "quotation_section_inclusion_types",
+        "incluida",
+      ),
     };
 
     ctx.accountCreateUserId = await createUser({
@@ -220,6 +292,21 @@ describe("API integration baseline", () => {
       fullName: "API Account Read",
       email: `${TEST_PREFIX}.accounts.read@example.com`,
       roleIds: [ctx.accountReadRoleId],
+    });
+    ctx.accountReadAllUserId = await createUser({
+      fullName: "API Account Read All",
+      email: `${TEST_PREFIX}.accounts.read.all@example.com`,
+      roleIds: [ctx.accountReadAllRoleId],
+    });
+    ctx.contactReadUserId = await createUser({
+      fullName: "API Contact Read",
+      email: `${TEST_PREFIX}.contacts.read@example.com`,
+      roleIds: [ctx.contactReadRoleId],
+    });
+    ctx.contactGlobalScopeUserId = await createUser({
+      fullName: "API Contact Global Scope",
+      email: `${TEST_PREFIX}.contacts.global.scope@example.com`,
+      roleIds: [ctx.contactGlobalScopeRoleId],
     });
     ctx.contactRequestUserId = await createUser({
       fullName: "API Contact Request",
@@ -246,6 +333,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.opps.flow@example.com`,
       roleIds: [ctx.opportunityFlowRoleId],
     });
+    ctx.opportunityGlobalScopeUserId = await createUser({
+      fullName: "API Opportunity Global Scope",
+      email: `${TEST_PREFIX}.opps.global.scope@example.com`,
+      roleIds: [ctx.opportunityGlobalScopeRoleId],
+    });
     ctx.sellerUserId = await createUser({
       fullName: "API Seller Fixture",
       email: `${TEST_PREFIX}.seller@example.com`,
@@ -255,6 +347,31 @@ describe("API integration baseline", () => {
       fullName: "API Role Manager",
       email: `${TEST_PREFIX}.roles.manager@example.com`,
       roleIds: [ctx.roleManagerRoleId],
+    });
+    ctx.quotationOperationUserId = await createUser({
+      fullName: "API Quote Operation",
+      email: `${TEST_PREFIX}.quotes.operation@example.com`,
+      roleIds: [ctx.quotationOperationRoleId],
+    });
+    ctx.quotationRevisionUserId = await createUser({
+      fullName: "API Quote Revision",
+      email: `${TEST_PREFIX}.quotes.revision@example.com`,
+      roleIds: [ctx.quotationRevisionRoleId],
+    });
+    ctx.quotationIngresoUserId = await createUser({
+      fullName: "API Quote Ingreso",
+      email: `${TEST_PREFIX}.quotes.ingreso@example.com`,
+      roleIds: [ctx.quotationIngresoRoleId],
+    });
+    ctx.quotationAdminUserId = await createUser({
+      fullName: "API Quote Admin",
+      email: `${TEST_PREFIX}.quotes.admin@example.com`,
+      roleIds: [ctx.quotationAdminRoleId],
+    });
+    ctx.quotationExternalUserId = await createUser({
+      fullName: "API Quote External",
+      email: `${TEST_PREFIX}.quotes.external@example.com`,
+      roleIds: [ctx.quotationExternalRoleId],
     });
     ctx.dynamicPermissionUserId = await createUser({
       fullName: "API Dynamic Permission User",
@@ -271,13 +388,22 @@ describe("API integration baseline", () => {
       ctx.accountCreateUserId,
       ctx.accountRequestUserId,
       ctx.accountReadUserId,
+      ctx.accountReadAllUserId,
+      ctx.contactReadUserId,
+      ctx.contactGlobalScopeUserId,
       ctx.contactRequestUserId,
       ctx.contactCreateUserId,
       ctx.providerManagerUserId,
       ctx.opportunityRequestUserId,
       ctx.opportunityFlowUserId,
+      ctx.opportunityGlobalScopeUserId,
       ctx.sellerUserId,
       ctx.roleManagerUserId,
+      ctx.quotationOperationUserId,
+      ctx.quotationRevisionUserId,
+      ctx.quotationIngresoUserId,
+      ctx.quotationAdminUserId,
+      ctx.quotationExternalUserId,
       ctx.dynamicPermissionUserId,
       ctx.userCrudUserId,
     );
@@ -297,6 +423,124 @@ describe("API integration baseline", () => {
     });
     cleanup.contactIds.push(ctx.fixtureContactId);
   });
+
+  async function getOpportunityCommercialSnapshot(opportunityId) {
+    const rows = await query(
+      `SELECT o.id,
+              oss.code AS sales_stage_code,
+              ocs.code AS commercial_status_code,
+              oas.code AS activation_status_code,
+              o.commercial_close_reason,
+              o.commercial_closed_at
+       FROM opportunities o
+       INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+       WHERE o.id = ?
+       LIMIT 1`,
+      [opportunityId],
+    );
+    return rows[0] || null;
+  }
+
+  async function createOwnedQuoteOpportunityFixture(suffix) {
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.quotationOperationUserId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+    });
+    cleanup.accountIds.push(accountId);
+
+    for (const userId of [
+      ctx.quotationRevisionUserId,
+      ctx.quotationIngresoUserId,
+      ctx.quotationAdminUserId,
+      ctx.quotationExternalUserId,
+    ]) {
+      await query(
+        "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, NOW(3), ?)",
+        [accountId, userId, ctx.quotationOperationUserId],
+      );
+    }
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const alternateContactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_alt`,
+    });
+    cleanup.contactIds.push(alternateContactId);
+
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad cotizacion ${suffix}`,
+        32100,
+        accountId,
+        "2026-12-31",
+        contactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        ctx.quotationOperationUserId,
+        now,
+        ctx.quotationOperationUserId,
+        now,
+      ],
+    );
+    const opportunityId = Number(insertResult.insertId);
+    cleanup.opportunityIds.push(opportunityId);
+
+    return {
+      accountId,
+      contactId,
+      alternateContactId,
+      opportunityId,
+      sellerUserId: ctx.sellerUserId,
+      sellerUserName: "API Seller Fixture",
+    };
+  }
+
+  async function createQuotationFixture(suffix) {
+    const fixture = await createOwnedQuoteOpportunityFixture(suffix);
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        sections: [],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.quotationIds.push(Number(createResponse.body.quotationId));
+
+    return {
+      token: loginResponse.body.token,
+      quotationId: Number(createResponse.body.quotationId),
+      latestVersionId: Number(createResponse.body.latestVersionId),
+      ...fixture,
+    };
+  }
 
   async function createOwnedOpportunityFlowFixture(suffix) {
     const accountId = await createDirectAccount({
@@ -343,25 +587,6 @@ describe("API integration baseline", () => {
       contactId,
       opportunityId: Number(createResponse.body.id),
     };
-  }
-
-  async function getOpportunityCommercialSnapshot(opportunityId) {
-    const rows = await query(
-      `SELECT o.id,
-              oss.code AS sales_stage_code,
-              ocs.code AS commercial_status_code,
-              oas.code AS activation_status_code,
-              o.commercial_close_reason,
-              o.commercial_closed_at
-       FROM opportunities o
-       INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
-       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
-       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
-       WHERE o.id = ?
-       LIMIT 1`,
-      [opportunityId],
-    );
-    return rows[0] || null;
   }
 
   async function getStageQuestionRowsByCode(stageCode) {
@@ -784,6 +1009,213 @@ describe("API integration baseline", () => {
     ]);
   });
 
+  test("cuentas.read_all permite ver cuentas sin ser propietario", async () => {
+    const createLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${createLoginResponse.body.token}`)
+      .send({
+        name: `Cuenta Read All ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: `RAL-${TEST_PREFIX}`,
+        phone: "5550002424",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://readall.example.com",
+        city: "Monterrey",
+        stateRegion: "NL",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Cuenta para validar alcance global por permiso",
+        addressLine: "Direccion read all",
+        postalCode: "64000",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(createResponse.body.id));
+
+    const ownedReadLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.read@example.com`,
+    );
+
+    const ownedReadListResponse = await request(app)
+      .get("/api/accounts")
+      .set("Authorization", `Bearer ${ownedReadLoginResponse.body.token}`);
+
+    expect(ownedReadListResponse.status).toBe(200);
+    expect(
+      ownedReadListResponse.body.some(
+        (account) => Number(account.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(false);
+
+    const readAllLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.read.all@example.com`,
+    );
+
+    const readAllListResponse = await request(app)
+      .get("/api/accounts")
+      .set("Authorization", `Bearer ${readAllLoginResponse.body.token}`);
+
+    expect(readAllListResponse.status).toBe(200);
+    expect(
+      readAllListResponse.body.some(
+        (account) => Number(account.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(true);
+
+    const readAllDetailResponse = await request(app)
+      .get(`/api/accounts/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${readAllLoginResponse.body.token}`);
+
+    expect(readAllDetailResponse.status).toBe(200);
+    expect(Number(readAllDetailResponse.body.id)).toBe(
+      Number(createResponse.body.id),
+    );
+  });
+
+  test("Administrador sin cuentas.read_all ya no ve cuentas ajenas", async () => {
+    const createLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${createLoginResponse.body.token}`)
+      .send({
+        name: `Cuenta Admin Scope ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: `ADM-${TEST_PREFIX}`,
+        phone: "5550002525",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://admin-scope.example.com",
+        city: "Guadalajara",
+        stateRegion: "JAL",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Cuenta para validar que admin ya no depende del rol",
+        addressLine: "Direccion admin scope",
+        postalCode: "44100",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(createResponse.body.id));
+
+    const adminRoleRows = await query(
+      "SELECT id FROM roles WHERE name = 'Administrador' LIMIT 1",
+    );
+    expect(adminRoleRows).toHaveLength(1);
+    const adminRoleId = Number(adminRoleRows[0].id);
+
+    const readAllPermissionRows = await query(
+      "SELECT id FROM permissions WHERE code = 'cuentas.read_all' LIMIT 1",
+    );
+    expect(readAllPermissionRows).toHaveLength(1);
+    const readAllPermissionId = Number(readAllPermissionRows[0].id);
+
+    await query(
+      "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
+      [adminRoleId, readAllPermissionId],
+    );
+
+    const adminUserId = await createUser({
+      fullName: "API Real Admin Scope",
+      email: `${TEST_PREFIX}.real.admin.scope@example.com`,
+      roleIds: [adminRoleId],
+    });
+    cleanup.userIds.push(adminUserId);
+
+    const adminLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.real.admin.scope@example.com`,
+    );
+
+    const adminListResponse = await request(app)
+      .get("/api/accounts")
+      .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
+
+    expect(adminListResponse.status).toBe(200);
+    expect(
+      adminListResponse.body.some(
+        (account) => Number(account.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(false);
+
+    const adminDetailResponse = await request(app)
+      .get(`/api/accounts/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
+
+    expect(adminDetailResponse.status).toBe(404);
+
+    await query(
+      "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, NOW(3))",
+      [adminRoleId, readAllPermissionId],
+    );
+  });
+
+  test("Administrador sin permiso explicito recibe 403 en rutas protegidas por requirePermission", async () => {
+    const adminRoleRows = await query(
+      "SELECT id FROM roles WHERE name = 'Administrador' LIMIT 1",
+    );
+    expect(adminRoleRows).toHaveLength(1);
+    const adminRoleId = Number(adminRoleRows[0].id);
+
+    const permissionRows = await query(
+      "SELECT id FROM permissions WHERE code IN ('roles.read', 'permissions.read') ORDER BY code",
+    );
+    expect(permissionRows).toHaveLength(2);
+    const permissionIds = permissionRows.map((row) => Number(row.id));
+
+    await query(
+      `DELETE FROM role_permissions
+       WHERE role_id = ? AND permission_id IN (?, ?)`,
+      [adminRoleId, permissionIds[0], permissionIds[1]],
+    );
+
+    const adminUserId = await createUser({
+      fullName: "API Real Admin Permissions",
+      email: `${TEST_PREFIX}.real.admin.permissions@example.com`,
+      roleIds: [adminRoleId],
+    });
+    cleanup.userIds.push(adminUserId);
+
+    const adminLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.real.admin.permissions@example.com`,
+    );
+
+    const rolesResponse = await request(app)
+      .get("/api/roles")
+      .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
+
+    expect(rolesResponse.status).toBe(403);
+    expect(rolesResponse.body.requiredPermission).toBe("roles.read");
+
+    const permissionsResponse = await request(app)
+      .get("/api/roles/permissions")
+      .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
+
+    expect(permissionsResponse.status).toBe(403);
+    expect(permissionsResponse.body.requiredPermission).toBe(
+      "permissions.read",
+    );
+
+    for (const permissionId of permissionIds) {
+      await query(
+        "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, NOW(3))",
+        [adminRoleId, permissionId],
+      );
+    }
+  });
+
   test("usuarios.update bloquea desactivacion si dejaria cuentas activas sin propietarios activos", async () => {
     const guardedOwnerUserId = await createUser({
       fullName: "API Sole Active Owner",
@@ -1137,6 +1569,106 @@ describe("API integration baseline", () => {
     expect(patchResponse.body.message).toBe(
       "No autorizado para cambiar el estado de activacion de contactos",
     );
+  });
+
+  test("contactos.read_all extiende contactos y contact-accounts a cuentas ajenas", async () => {
+    const foreignAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_global_scope`,
+    });
+    cleanup.accountIds.push(foreignAccountId);
+
+    const limitedLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.read@example.com`,
+    );
+
+    const limitedCatalogResponse = await request(app)
+      .get("/api/catalogs/contact-accounts")
+      .set("Authorization", `Bearer ${limitedLoginResponse.body.token}`);
+
+    expect(limitedCatalogResponse.status).toBe(200);
+    expect(
+      limitedCatalogResponse.body.some(
+        (account) => Number(account.id) === foreignAccountId,
+      ),
+    ).toBe(false);
+
+    const globalLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.global.scope@example.com`,
+    );
+
+    const globalCatalogResponse = await request(app)
+      .get("/api/catalogs/contact-accounts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(globalCatalogResponse.status).toBe(200);
+    expect(
+      globalCatalogResponse.body.some(
+        (account) => Number(account.id) === foreignAccountId,
+      ),
+    ).toBe(true);
+
+    const createResponse = await request(app)
+      .post("/api/contacts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`)
+      .send({
+        firstName: "Global",
+        lastName: `Contact ${TEST_PREFIX}`,
+        accountId: foreignAccountId,
+        positionTitle: "Analista",
+        phone: "5553030303",
+        phoneExtension: "303",
+        mobile: `553${String(Date.now()).slice(-7)}`,
+        email: `${TEST_PREFIX}.contact.global@example.com`,
+        department: "Compras",
+        countryId: ctx.catalogIds.countryMxId,
+        stateRegion: "CDMX",
+        city: "Ciudad de Mexico",
+        addressLine: "Direccion global contacto",
+        postalCode: "01020",
+        purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
+        relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
+        employmentStatusId: ctx.catalogIds.employmentStatusId,
+        activationStatusId: ctx.catalogIds.contactActiveStatusId,
+        managerContactId: null,
+        influencesContactId: null,
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.contactIds.push(Number(createResponse.body.id));
+
+    const limitedListResponse = await request(app)
+      .get("/api/contacts")
+      .set("Authorization", `Bearer ${limitedLoginResponse.body.token}`);
+
+    expect(limitedListResponse.status).toBe(200);
+    expect(
+      limitedListResponse.body.some(
+        (contact) => Number(contact.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(false);
+
+    const globalListResponse = await request(app)
+      .get("/api/contacts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(globalListResponse.status).toBe(200);
+    expect(
+      globalListResponse.body.some(
+        (contact) => Number(contact.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(true);
+
+    const detailResponse = await request(app)
+      .get(`/api/contacts/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(Number(detailResponse.body.id)).toBe(Number(createResponse.body.id));
+    expect(Number(detailResponse.body.account_id)).toBe(foreignAccountId);
   });
 
   test("contactos.put permite editar sin cambiar estado y bloquea cambio de estado sin contactos.create", async () => {
@@ -2079,6 +2611,136 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("oportunidades.read_all extiende oportunidades y catalogos asociados a cuentas ajenas", async () => {
+    const foreignAccountId = await createDirectAccount({
+      ownerUserId: ctx.opportunityRequestUserId,
+      actorUserId: ctx.opportunityRequestUserId,
+      suffix: `${TEST_PREFIX}_opportunity_global_scope`,
+    });
+    cleanup.accountIds.push(foreignAccountId);
+
+    const foreignContactId = await createDirectContact({
+      accountId: foreignAccountId,
+      actorUserId: ctx.opportunityRequestUserId,
+      suffix: `${TEST_PREFIX}_opportunity_global_scope`,
+    });
+    cleanup.contactIds.push(foreignContactId);
+
+    const limitedLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+
+    const limitedAccountsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-accounts")
+      .set("Authorization", `Bearer ${limitedLoginResponse.body.token}`);
+
+    expect(limitedAccountsCatalogResponse.status).toBe(200);
+    expect(
+      limitedAccountsCatalogResponse.body.some(
+        (account) => Number(account.id) === foreignAccountId,
+      ),
+    ).toBe(false);
+
+    const limitedContactsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-contacts")
+      .set("Authorization", `Bearer ${limitedLoginResponse.body.token}`);
+
+    expect(limitedContactsCatalogResponse.status).toBe(200);
+    expect(
+      limitedContactsCatalogResponse.body.some(
+        (contact) => Number(contact.id) === foreignContactId,
+      ),
+    ).toBe(false);
+
+    const globalLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.global.scope@example.com`,
+    );
+
+    const globalAccountsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-accounts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(globalAccountsCatalogResponse.status).toBe(200);
+    expect(
+      globalAccountsCatalogResponse.body.some(
+        (account) => Number(account.id) === foreignAccountId,
+      ),
+    ).toBe(true);
+
+    const globalContactsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-contacts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(globalContactsCatalogResponse.status).toBe(200);
+    expect(
+      globalContactsCatalogResponse.body.some(
+        (contact) => Number(contact.id) === foreignContactId,
+      ),
+    ).toBe(true);
+
+    const createResponse = await request(app)
+      .post("/api/opportunities")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`)
+      .send({
+        name: `Oportunidad Global ${TEST_PREFIX}`,
+        amountUsd: 41000,
+        accountId: foreignAccountId,
+        closeDate: "2026-10-31",
+        contactId: foreignContactId,
+        salesStageId: ctx.catalogIds.salesStageInitialId,
+        businessLineId: ctx.catalogIds.businessLineId,
+        sellerUserId: ctx.sellerUserId,
+        presalesUserId: null,
+        activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.opportunityIds.push(Number(createResponse.body.id));
+
+    const limitedListResponse = await request(app)
+      .get("/api/opportunities")
+      .set("Authorization", `Bearer ${limitedLoginResponse.body.token}`);
+
+    expect(limitedListResponse.status).toBe(200);
+    expect(
+      limitedListResponse.body.some(
+        (opportunity) =>
+          Number(opportunity.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(false);
+
+    const globalListResponse = await request(app)
+      .get("/api/opportunities")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(globalListResponse.status).toBe(200);
+    expect(
+      globalListResponse.body.some(
+        (opportunity) =>
+          Number(opportunity.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(true);
+
+    const detailResponse = await request(app)
+      .get(`/api/opportunities/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(Number(detailResponse.body.id)).toBe(Number(createResponse.body.id));
+    expect(Number(detailResponse.body.account_id)).toBe(foreignAccountId);
+
+    const commercialContextResponse = await request(app)
+      .get(`/api/opportunities/${createResponse.body.id}/commercial-context`)
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(commercialContextResponse.status).toBe(200);
+    expect(Number(commercialContextResponse.body.opportunityId)).toBe(
+      Number(createResponse.body.id),
+    );
+  });
+
   test("oportunidades.put permite editar sin cambiar estado y bloquea cambio de estado sin oportunidades.create", async () => {
     const opportunityOwnedAccountId = await createDirectAccount({
       ownerUserId: ctx.opportunityRequestUserId,
@@ -2889,5 +3551,1376 @@ describe("API integration baseline", () => {
 
     expect(roleRows).toHaveLength(1);
     expect(Number(roleRows[0].is_active)).toBe(1);
+  });
+
+  test("cotizaciones expone catalogos base y permisos nuevos", async () => {
+    const permissionIds = await getPermissionIds([
+      "cotizaciones.operacion",
+      "cotizaciones.revision",
+      "cotizaciones.ingreso",
+      "cotizaciones.administracion",
+      "cotizaciones.externo",
+    ]);
+    expect(permissionIds).toHaveLength(5);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const [
+      statusesResponse,
+      actionsResponse,
+      inclusionResponse,
+      deliveryTimesResponse,
+      validityTermsResponse,
+      warrantyTermsResponse,
+      paymentTermsResponse,
+      currenciesResponse,
+    ] = await Promise.all([
+      request(app)
+        .get("/api/catalogs/quotation-statuses")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-actions")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-section-inclusion-types")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-delivery-times")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-validity-terms")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-warranty-terms")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-payment-terms")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+      request(app)
+        .get("/api/catalogs/quotation-currencies")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`),
+    ]);
+
+    expect(statusesResponse.status).toBe(200);
+    expect(actionsResponse.status).toBe(200);
+    expect(inclusionResponse.status).toBe(200);
+    expect(deliveryTimesResponse.status).toBe(200);
+    expect(validityTermsResponse.status).toBe(200);
+    expect(warrantyTermsResponse.status).toBe(200);
+    expect(paymentTermsResponse.status).toBe(200);
+    expect(currenciesResponse.status).toBe(200);
+    expect(statusesResponse.body.map((row) => row.code)).toContain("borrador");
+    expect(
+      statusesResponse.body.find((row) => row.code === "borrador")?.uiKey,
+    ).toBe("draft");
+    expect(actionsResponse.body.map((row) => row.code)).toContain(
+      "crear_cotizacion",
+    );
+    expect(inclusionResponse.body.map((row) => row.code)).toContain("incluida");
+    expect(deliveryTimesResponse.body.map((row) => row.code)).toContain(
+      "30_dias",
+    );
+    expect(validityTermsResponse.body.map((row) => row.code)).toContain(
+      "30_dias",
+    );
+    expect(warrantyTermsResponse.body.map((row) => row.code)).toContain(
+      "1_ano",
+    );
+    expect(paymentTermsResponse.body.map((row) => row.code)).toContain(
+      "30_dias_facturado",
+    );
+    expect(currenciesResponse.body.map((row) => row.code)).toContain("USD");
+  });
+
+  test("cotizaciones expone cuentas, oportunidades por cuenta y contactos por cuenta con vendedor asignado", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_selectors`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const accountsResponse = await request(app)
+      .get("/api/quotation-accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(accountsResponse.status).toBe(200);
+    expect(
+      accountsResponse.body.some((row) => row.id === fixture.accountId),
+    ).toBe(true);
+
+    const opportunitiesResponse = await request(app)
+      .get(`/api/quotation-accounts/${fixture.accountId}/opportunities`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(opportunitiesResponse.status).toBe(200);
+    expect(opportunitiesResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: fixture.opportunityId,
+          accountId: fixture.accountId,
+          sellerUserId: fixture.sellerUserId,
+        }),
+      ]),
+    );
+
+    const contactsResponse = await request(app)
+      .get(`/api/quotation-accounts/${fixture.accountId}/contacts`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(contactsResponse.status).toBe(200);
+    expect(contactsResponse.body.map((row) => row.id)).toEqual(
+      expect.arrayContaining([fixture.contactId, fixture.alternateContactId]),
+    );
+  });
+
+  test("cotizaciones permite buscar productos activos para llenar filas de la cotizacion", async () => {
+    const suffix = `${TEST_PREFIX}_quote_product_picker`;
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const priceListId = await createDirectProviderPriceList({
+      providerId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+      itemType: "producto",
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(priceListId);
+
+    const priceItemId = await createDirectProviderPriceItem({
+      providerId,
+      listId: priceListId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+      itemType: "producto",
+    });
+    cleanup.providerPriceItemIds.push(priceItemId);
+
+    const bundleProviderId = await createDirectProvider({
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_provider`,
+    });
+    cleanup.providerIds.push(bundleProviderId);
+
+    const bundlePriceListId = await createDirectProviderPriceList({
+      providerId: bundleProviderId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_list`,
+      itemType: "grupo_productos",
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(bundlePriceListId);
+
+    const bundlePriceItemId = await createDirectProviderPriceItem({
+      providerId: bundleProviderId,
+      listId: bundlePriceListId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_item`,
+      itemType: "grupo_productos",
+    });
+    cleanup.providerPriceItemIds.push(bundlePriceItemId);
+
+    const bundleComponentItemId = await createDirectProviderPriceItem({
+      providerId: bundleProviderId,
+      listId: bundlePriceListId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_component`,
+      itemType: "producto",
+    });
+    cleanup.providerPriceItemIds.push(bundleComponentItemId);
+
+    await query(
+      `INSERT INTO provider_price_list_item_components
+        (grupo_item_id, component_item_id, quantity, sort_order, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, NOW(3), ?, NOW(3))`,
+      [
+        bundlePriceItemId,
+        bundleComponentItemId,
+        2,
+        1,
+        ctx.quotationOperationUserId,
+        ctx.quotationOperationUserId,
+      ],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const response = await request(app)
+      .get("/api/quotation-products/search")
+      .query({ q: `PRICE-${suffix}` })
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: priceItemId,
+          providerId,
+          code: `PRICE-${suffix}`,
+          description: `Precio fixture ${suffix}`,
+          price: 1234.56,
+          providerName: expect.any(String),
+        }),
+      ]),
+    );
+
+    const bundleResponse = await request(app)
+      .get("/api/quotation-products/search")
+      .query({
+        providerId: bundleProviderId,
+        q: `PRICE-${suffix}_bundle_item`,
+      })
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(bundleResponse.status).toBe(200);
+    expect(bundleResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: bundlePriceItemId,
+          providerId: bundleProviderId,
+          code: `PRICE-${suffix}_bundle_item`,
+          description: `Precio fixture ${suffix}_bundle_item`,
+          itemType: "grupo_productos",
+          price: 1234.56,
+          components: expect.arrayContaining([
+            expect.objectContaining({
+              componentItemId: bundleComponentItemId,
+              code: `PRICE-${suffix}_bundle_component`,
+              quantity: 2,
+              itemType: "producto",
+              price: 1234.56,
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  test("cotizaciones.create crea desde oportunidad activa y aplica defaults de version", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_create`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const response = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.alternateContactId,
+        sellerUserId: fixture.sellerUserId,
+        introduction: "Intro inicial",
+        sections: [
+          {
+            title: "Alcance inicial",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+          },
+          {
+            title: "Exclusiones",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(201);
+    cleanup.quotationIds.push(Number(response.body.quotationId));
+
+    const detailResponse = await request(app)
+      .get(`/api/quotations/${response.body.quotationId}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.versions).toHaveLength(1);
+    expect(detailResponse.body.versions[0].versionNumber).toBe(1);
+    expect(detailResponse.body.versions[0].statusCode).toBe("borrador");
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${response.body.latestVersionId}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.contactId).toBe(fixture.alternateContactId);
+    expect(versionResponse.body.proposalName).toBe(
+      `Oportunidad cotizacion ${TEST_PREFIX}_quote_create`,
+    );
+    expect(versionResponse.body.introduction).toBe("Intro inicial");
+    expect(versionResponse.body.sections).toHaveLength(2);
+    expect(
+      versionResponse.body.sections.map((section) => section.title),
+    ).toEqual(["Alcance inicial", "Exclusiones"]);
+  });
+
+  test("cotizaciones.listado por oportunidad expone vendedor de la oportunidad", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_list_seller`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        proposalName: `Propuesta ${TEST_PREFIX}_quote_list_seller`,
+        sections: [
+          {
+            title: "Seccion inicial",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+          },
+        ],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.quotationIds.push(Number(createResponse.body.quotationId));
+
+    const listResponse = await request(app)
+      .get(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: Number(createResponse.body.quotationId),
+          sellerUserId: fixture.sellerUserId,
+          sellerUserName: fixture.sellerUserName,
+        }),
+      ]),
+    );
+  });
+
+  test("cotizaciones.listado general expone vendedor de la oportunidad", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_list_global_seller`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        proposalName: `Propuesta ${TEST_PREFIX}_quote_list_global_seller`,
+        sections: [
+          {
+            title: "Seccion general",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+          },
+        ],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.quotationIds.push(Number(createResponse.body.quotationId));
+
+    const listResponse = await request(app)
+      .get("/api/quotations")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: Number(createResponse.body.quotationId),
+          sellerUserId: fixture.sellerUserId,
+          sellerUserName: fixture.sellerUserName,
+        }),
+      ]),
+    );
+  });
+
+  test("cotizaciones.listado general expone el total calculado de la version mayor", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_list_total_amount`,
+    );
+
+    if (!ctx.fixtureProviderId) {
+      ctx.fixtureProviderId = await createDirectProvider({
+        actorUserId: ctx.providerManagerUserId,
+        suffix: `${TEST_PREFIX}_quote_list_total_amount_provider`,
+      });
+      cleanup.providerIds.push(ctx.fixtureProviderId);
+    }
+
+    const fullSaveResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: `Propuesta ${TEST_PREFIX}_quote_list_total_amount`,
+        quotationDate: "2026-04-26",
+        summaryDiscountMode: "percentage",
+        summaryDiscountValue: 25,
+        summaryDistributionMode: "total",
+        summaryVatMode: "total",
+        summaryVatPct: 16,
+        sections: [
+          {
+            localId: "section-list-total-1",
+            title: "Seccion total calculado",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                localId: "item-list-total-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-LIST-TOTAL",
+                productDescription: "Producto para validar total listado",
+                quantity: 1,
+                listPriceUnit: 100,
+                manufacturerDiscountPct: 0,
+                importCostPct: 0,
+                profitMarginPct: 50,
+                finalDiscountPct: 0,
+                itemType: "producto",
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(fullSaveResponse.status).toBe(200);
+
+    const listResponse = await request(app)
+      .get("/api/quotations")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(listResponse.status).toBe(200);
+
+    const createdQuotation = listResponse.body.find(
+      (quotation) => Number(quotation.id) === Number(fixture.quotationId),
+    );
+
+    expect(createdQuotation).toBeTruthy();
+    expect(createdQuotation.latestTotalSaleAmount).toBeCloseTo(174, 6);
+  });
+
+  test("cotizaciones.create persiste bundles reales y los conserva al clonar version", async () => {
+    const suffix = `${TEST_PREFIX}_quote_bundle_persist`;
+    const fixture = await createOwnedQuoteOpportunityFixture(suffix);
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.providerManagerUserId,
+      suffix,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const priceListId = await createDirectProviderPriceList({
+      providerId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix,
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(priceListId);
+
+    const bundlePriceItemId = await createDirectProviderPriceItem({
+      providerId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${suffix}_bundle`,
+      itemType: "grupo_productos",
+      listId: priceListId,
+    });
+    cleanup.providerPriceItemIds.push(bundlePriceItemId);
+
+    const bundleComponentItemId = await createDirectProviderPriceItem({
+      providerId,
+      actorUserId: ctx.providerManagerUserId,
+      suffix: `${suffix}_component`,
+      itemType: "producto",
+      listId: priceListId,
+    });
+    cleanup.providerPriceItemIds.push(bundleComponentItemId);
+
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        proposalName: `Propuesta ${suffix}`,
+        sections: [
+          {
+            title: "Bundle persistido",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            items: [
+              {
+                clientItemId: "bundle-list-parent",
+                providerId,
+                productCode: "BUNDLE-LIST",
+                productDescription: "Bundle proveniente de lista",
+                itemType: "grupo_productos",
+                bundleOriginType: "price_list_bundle",
+                sourceProviderPriceListItemId: bundlePriceItemId,
+                quantity: 1,
+                listPriceUnit: 0,
+                manufacturerDiscountPct: 0,
+                importCostPct: 0,
+                profitMarginPct: 0,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+              {
+                clientItemId: "bundle-list-child",
+                bundleParentClientItemId: "bundle-list-parent",
+                providerId,
+                productCode: "BUNDLE-LIST-COMP",
+                productDescription: "Componente de bundle de lista",
+                itemType: "producto",
+                bundleOriginType: "price_list_bundle",
+                sourceComponentPriceListItemId: bundleComponentItemId,
+                quantity: 2,
+                listPriceUnit: 250,
+                manufacturerDiscountPct: 5,
+                importCostPct: 10,
+                profitMarginPct: 20,
+                finalDiscountPct: 0,
+                displayOrder: 2,
+              },
+              {
+                clientItemId: "bundle-manual-parent",
+                providerId,
+                productCode: "BUNDLE-MANUAL",
+                productDescription: "Bundle manual",
+                itemType: "grupo_productos",
+                bundleOriginType: "manual_bundle",
+                quantity: 1,
+                listPriceUnit: 0,
+                manufacturerDiscountPct: 0,
+                importCostPct: 0,
+                profitMarginPct: 0,
+                finalDiscountPct: 0,
+                displayOrder: 3,
+              },
+              {
+                clientItemId: "bundle-manual-child",
+                bundleParentClientItemId: "bundle-manual-parent",
+                providerId,
+                productCode: "BUNDLE-MANUAL-COMP",
+                productDescription: "Componente manual",
+                itemType: "producto",
+                bundleOriginType: "manual_bundle",
+                quantity: 1,
+                listPriceUnit: 150,
+                manufacturerDiscountPct: 0,
+                importCostPct: 0,
+                profitMarginPct: 15,
+                finalDiscountPct: 0,
+                displayOrder: 4,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.quotationIds.push(Number(createResponse.body.quotationId));
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${createResponse.body.latestVersionId}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.sections).toHaveLength(1);
+    expect(versionResponse.body.sections[0].items).toHaveLength(4);
+
+    const listBundleParent = versionResponse.body.sections[0].items.find(
+      (item) => item.productCode === "BUNDLE-LIST",
+    );
+    const listBundleChild = versionResponse.body.sections[0].items.find(
+      (item) => item.productCode === "BUNDLE-LIST-COMP",
+    );
+    const manualBundleParent = versionResponse.body.sections[0].items.find(
+      (item) => item.productCode === "BUNDLE-MANUAL",
+    );
+    const manualBundleChild = versionResponse.body.sections[0].items.find(
+      (item) => item.productCode === "BUNDLE-MANUAL-COMP",
+    );
+
+    expect(listBundleParent).toEqual(
+      expect.objectContaining({
+        itemType: "grupo_productos",
+        bundleParentItemId: null,
+        bundleOriginType: "price_list_bundle",
+        sourceProviderPriceListItemId: bundlePriceItemId,
+      }),
+    );
+    expect(listBundleChild).toEqual(
+      expect.objectContaining({
+        itemType: "producto",
+        bundleParentItemId: listBundleParent.id,
+        bundleOriginType: "price_list_bundle",
+        sourceComponentPriceListItemId: bundleComponentItemId,
+        bundleSortOrder: 1,
+      }),
+    );
+    expect(manualBundleParent).toEqual(
+      expect.objectContaining({
+        itemType: "grupo_productos",
+        bundleParentItemId: null,
+        bundleOriginType: "manual_bundle",
+      }),
+    );
+    expect(manualBundleChild).toEqual(
+      expect.objectContaining({
+        itemType: "producto",
+        bundleParentItemId: manualBundleParent.id,
+        bundleOriginType: "manual_bundle",
+        bundleSortOrder: 1,
+      }),
+    );
+
+    const cloneResponse = await request(app)
+      .post(`/api/quotations/${createResponse.body.quotationId}/versions`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(cloneResponse.status).toBe(201);
+
+    const clonedVersionResponse = await request(app)
+      .get(`/api/quotation-versions/${cloneResponse.body.id}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(clonedVersionResponse.status).toBe(200);
+
+    const clonedListBundleParent =
+      clonedVersionResponse.body.sections[0].items.find(
+        (item) => item.productCode === "BUNDLE-LIST",
+      );
+    const clonedListBundleChild =
+      clonedVersionResponse.body.sections[0].items.find(
+        (item) => item.productCode === "BUNDLE-LIST-COMP",
+      );
+    const clonedManualBundleParent =
+      clonedVersionResponse.body.sections[0].items.find(
+        (item) => item.productCode === "BUNDLE-MANUAL",
+      );
+    const clonedManualBundleChild =
+      clonedVersionResponse.body.sections[0].items.find(
+        (item) => item.productCode === "BUNDLE-MANUAL-COMP",
+      );
+
+    expect(clonedListBundleParent.bundleOriginType).toBe("price_list_bundle");
+    expect(clonedListBundleChild.bundleParentItemId).toBe(
+      clonedListBundleParent.id,
+    );
+    expect(clonedListBundleChild.sourceComponentPriceListItemId).toBe(
+      bundleComponentItemId,
+    );
+    expect(clonedManualBundleParent.bundleOriginType).toBe("manual_bundle");
+    expect(clonedManualBundleChild.bundleParentItemId).toBe(
+      clonedManualBundleParent.id,
+    );
+  });
+
+  test("cotizaciones.create bloquea oportunidad inactiva y contacto de otra cuenta", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_invalids`,
+    );
+    const foreignAccountId = await createDirectAccount({
+      ownerUserId: ctx.quotationOperationUserId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${TEST_PREFIX}_quote_invalid_foreign`,
+    });
+    cleanup.accountIds.push(foreignAccountId);
+    const foreignContactId = await createDirectContact({
+      accountId: foreignAccountId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${TEST_PREFIX}_quote_invalid_foreign`,
+    });
+    cleanup.contactIds.push(foreignContactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const wrongContactResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: foreignContactId,
+        sellerUserId: fixture.sellerUserId,
+        sections: [],
+      });
+
+    expect(wrongContactResponse.status).toBe(400);
+    expect(wrongContactResponse.body.message).toBe(
+      "El contacto debe pertenecer a la cuenta de la oportunidad",
+    );
+
+    await query(
+      "UPDATE opportunities SET activation_status_id = ? WHERE id = ?",
+      [ctx.catalogIds.opportunityInactiveStatusId, fixture.opportunityId],
+    );
+
+    const inactiveResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        sections: [],
+      });
+
+    expect(inactiveResponse.status).toBe(400);
+    expect(inactiveResponse.body.message).toBe(
+      "Solo se puede crear una cotizacion desde una oportunidad activa",
+    );
+  });
+
+  test("cotizaciones persiste modos de distribucion e IVA a nivel de version", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_summary_modes`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        summaryDiscountMode: "amount",
+        summaryDiscountValue: 25,
+        summaryDistributionMode: "per_item",
+        summaryVatMode: "total",
+        summaryVatPct: 16,
+        internalNotes: "Nota interna inicial para el equipo comercial",
+        deliveryTime: "45_dias",
+        quotationValidity: "60_dias",
+        warranty: "2_anos",
+        paymentTerms: "100_adelantado",
+        currencyCode: "EUR",
+        exchangeRate: 17.25,
+        quotationNotes: "Entrega sujeta a confirmacion de fabrica.",
+        sections: [],
+      });
+
+    expect(createResponse.status).toBe(201);
+    cleanup.quotationIds.push(Number(createResponse.body.quotationId));
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${createResponse.body.latestVersionId}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.summaryDiscountMode).toBe("amount");
+    expect(versionResponse.body.summaryDiscountValue).toBe(25);
+    expect(versionResponse.body.summaryDistributionMode).toBe("per_item");
+    expect(versionResponse.body.summaryVatMode).toBe("total");
+    expect(versionResponse.body.summaryVatPct).toBe(16);
+    expect(versionResponse.body.internalNotes).toBe(
+      "Nota interna inicial para el equipo comercial",
+    );
+    expect(versionResponse.body.deliveryTime).toBe("45_dias");
+    expect(versionResponse.body.quotationValidity).toBe("60_dias");
+    expect(versionResponse.body.warranty).toBe("2_anos");
+    expect(versionResponse.body.paymentTerms).toBe("100_adelantado");
+    expect(versionResponse.body.currencyCode).toBe("EUR");
+    expect(versionResponse.body.exchangeRate).toBe(17.25);
+    expect(versionResponse.body.quotationNotes).toBe(
+      "Entrega sujeta a confirmacion de fabrica.",
+    );
+
+    const cloneResponse = await request(app)
+      .post(`/api/quotations/${createResponse.body.quotationId}/versions`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(cloneResponse.status).toBe(201);
+
+    const clonedVersionResponse = await request(app)
+      .get(`/api/quotation-versions/${cloneResponse.body.id}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(clonedVersionResponse.status).toBe(200);
+    expect(clonedVersionResponse.body.summaryDistributionMode).toBe("per_item");
+    expect(clonedVersionResponse.body.summaryVatMode).toBe("total");
+    expect(clonedVersionResponse.body.summaryVatPct).toBe(16);
+    expect(clonedVersionResponse.body.internalNotes).toBe(
+      "Nota interna inicial para el equipo comercial",
+    );
+    expect(clonedVersionResponse.body.deliveryTime).toBe("45_dias");
+    expect(clonedVersionResponse.body.quotationValidity).toBe("60_dias");
+    expect(clonedVersionResponse.body.warranty).toBe("2_anos");
+    expect(clonedVersionResponse.body.paymentTerms).toBe("100_adelantado");
+    expect(clonedVersionResponse.body.currencyCode).toBe("EUR");
+    expect(clonedVersionResponse.body.exchangeRate).toBe(17.25);
+    expect(clonedVersionResponse.body.quotationNotes).toBe(
+      "Entrega sujeta a confirmacion de fabrica.",
+    );
+
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    const updateResponse = await request(app)
+      .put(`/api/quotation-versions/${createResponse.body.latestVersionId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        contactId: fixture.contactId,
+        summaryDistributionMode: "total",
+        summaryVatMode: "without_vat",
+        summaryVatPct: 0,
+        internalNotes: "Nota interna actualizada por administracion",
+        deliveryTime: "30_dias",
+        quotationValidity: "30_dias",
+        warranty: "1_ano",
+        paymentTerms: "30_dias_facturado",
+        currencyCode: "USD",
+        exchangeRate: 1,
+        quotationNotes: "Los precios no incluyen maniobras especiales.",
+      });
+
+    expect(updateResponse.status).toBe(200);
+
+    const updatedVersionResponse = await request(app)
+      .get(`/api/quotation-versions/${createResponse.body.latestVersionId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+
+    expect(updatedVersionResponse.status).toBe(200);
+    expect(updatedVersionResponse.body.summaryDistributionMode).toBe("total");
+    expect(updatedVersionResponse.body.summaryVatMode).toBe("without_vat");
+    expect(updatedVersionResponse.body.summaryVatPct).toBe(0);
+    expect(updatedVersionResponse.body.internalNotes).toBe(
+      "Nota interna actualizada por administracion",
+    );
+    expect(updatedVersionResponse.body.deliveryTime).toBe("30_dias");
+    expect(updatedVersionResponse.body.quotationValidity).toBe("30_dias");
+    expect(updatedVersionResponse.body.warranty).toBe("1_ano");
+    expect(updatedVersionResponse.body.paymentTerms).toBe("30_dias_facturado");
+    expect(updatedVersionResponse.body.currencyCode).toBe("USD");
+    expect(updatedVersionResponse.body.exchangeRate).toBe(1);
+    expect(updatedVersionResponse.body.quotationNotes).toBe(
+      "Los precios no incluyen maniobras especiales.",
+    );
+  });
+
+  test("cotizaciones permite crear nueva version, bloquear transicion en no mayor y editar version vieja con permiso de administracion", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_versions`,
+    );
+
+    if (!ctx.fixtureProviderId) {
+      ctx.fixtureProviderId = await createDirectProvider({
+        actorUserId: ctx.providerManagerUserId,
+        suffix: `${TEST_PREFIX}_quote_provider`,
+      });
+      cleanup.providerIds.push(ctx.fixtureProviderId);
+    }
+
+    const seedVersionResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Cotizacion base con infraestructura",
+        sections: [
+          {
+            localId: "seed-section-1",
+            title: "Infraestructura",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                localId: "seed-item-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-1",
+                productDescription: "Producto de prueba",
+                quantity: 2,
+                listPriceUnit: 100,
+                manufacturerDiscountPct: 5,
+                importCostPct: 10,
+                profitMarginPct: 15,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(seedVersionResponse.status).toBe(200);
+
+    const createVersionResponse = await request(app)
+      .post(`/api/quotations/${fixture.quotationId}/versions`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createVersionResponse.status).toBe(201);
+    const version2Id = Number(createVersionResponse.body.id);
+
+    const version2Response = await request(app)
+      .get(`/api/quotation-versions/${version2Id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(version2Response.status).toBe(200);
+    expect(version2Response.body.versionNumber).toBe(2);
+    expect(version2Response.body.sections).toHaveLength(1);
+    expect(version2Response.body.sections[0].items).toHaveLength(1);
+
+    const oldVersionTransitionResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ actionCode: "solicitar_aprobacion" });
+
+    expect(oldVersionTransitionResponse.status).toBe(400);
+    expect(oldVersionTransitionResponse.body.message).toBe(
+      "Solo la version mayor puede cambiar de estado",
+    );
+
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const adminEditResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Version historica ajustada",
+      });
+
+    expect(adminEditResponse.status).toBe(200);
+
+    const editedVersionResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(editedVersionResponse.body.proposalName).toBe(
+      "Version historica ajustada",
+    );
+  });
+
+  test("cotizaciones.full-save persiste mezcla de actualizar, crear y eliminar filas en una sola transaccion", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_full_save_success`,
+    );
+
+    if (!ctx.fixtureProviderId) {
+      ctx.fixtureProviderId = await createDirectProvider({
+        actorUserId: ctx.providerManagerUserId,
+        suffix: `${TEST_PREFIX}_quote_provider`,
+      });
+      cleanup.providerIds.push(ctx.fixtureProviderId);
+    }
+
+    const initialVersionResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Cotizacion semilla",
+        sections: [
+          {
+            localId: "seed-section-1",
+            title: "Infraestructura base",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                localId: "seed-item-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-OLD-1",
+                productDescription: "Producto original A",
+                quantity: 2,
+                listPriceUnit: 100,
+                manufacturerDiscountPct: 5,
+                importCostPct: 10,
+                profitMarginPct: 15,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+              {
+                localId: "seed-item-2",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-OLD-2",
+                productDescription: "Producto original B",
+                quantity: 1,
+                listPriceUnit: 50,
+                manufacturerDiscountPct: 0,
+                importCostPct: 8,
+                profitMarginPct: 12,
+                finalDiscountPct: 0,
+                displayOrder: 2,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(initialVersionResponse.status).toBe(200);
+
+    const seededSection = initialVersionResponse.body.sections[0];
+    const seededItemA = seededSection.items.find(
+      (item) => item.productCode === "SKU-OLD-1",
+    );
+    const seededItemB = seededSection.items.find(
+      (item) => item.productCode === "SKU-OLD-2",
+    );
+
+    expect(seededSection).toBeTruthy();
+    expect(seededItemA).toBeTruthy();
+    expect(seededItemB).toBeTruthy();
+
+    const fullSaveResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Cotizacion consolidada",
+        sections: [
+          {
+            id: Number(seededSection.id),
+            localId: "section-existing-1",
+            title: "Infraestructura ajustada",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                id: Number(seededItemA.id),
+                localId: "item-existing-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-OLD-1",
+                productDescription: "Producto original A ajustado",
+                quantity: 5,
+                listPriceUnit: 125,
+                manufacturerDiscountPct: 4,
+                importCostPct: 9,
+                profitMarginPct: 14,
+                finalDiscountPct: 1,
+                displayOrder: 1,
+              },
+              {
+                localId: "item-new-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-NEW-1",
+                productDescription: "Producto nuevo",
+                quantity: 3,
+                listPriceUnit: 75,
+                manufacturerDiscountPct: 2,
+                importCostPct: 6,
+                profitMarginPct: 11,
+                finalDiscountPct: 0,
+                displayOrder: 2,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(fullSaveResponse.status).toBe(200);
+    expect(fullSaveResponse.body.proposalName).toBe("Cotizacion consolidada");
+    expect(fullSaveResponse.body.sections).toHaveLength(1);
+    expect(fullSaveResponse.body.sections[0].title).toBe(
+      "Infraestructura ajustada",
+    );
+    expect(fullSaveResponse.body.sections[0].items).toHaveLength(2);
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.proposalName).toBe("Cotizacion consolidada");
+    expect(versionResponse.body.sections).toHaveLength(1);
+    expect(versionResponse.body.sections[0].title).toBe(
+      "Infraestructura ajustada",
+    );
+
+    const persistedItems = versionResponse.body.sections[0].items;
+    expect(persistedItems).toHaveLength(2);
+    expect(persistedItems.map((item) => item.productCode)).toEqual([
+      "SKU-OLD-1",
+      "SKU-NEW-1",
+    ]);
+    expect(
+      persistedItems.find((item) => item.productCode === "SKU-OLD-1"),
+    ).toMatchObject({
+      productDescription: "Producto original A ajustado",
+      quantity: 5,
+      listPriceUnit: 125,
+      manufacturerDiscountPct: 4,
+      importCostPct: 9,
+      profitMarginPct: 14,
+      finalDiscountPct: 1,
+    });
+    expect(
+      persistedItems.some((item) => Number(item.id) === Number(seededItemB.id)),
+    ).toBe(false);
+  });
+
+  test("cotizaciones.full-save hace rollback si el payload referencia una seccion invalida", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_full_save_rollback`,
+    );
+
+    if (!ctx.fixtureProviderId) {
+      ctx.fixtureProviderId = await createDirectProvider({
+        actorUserId: ctx.providerManagerUserId,
+        suffix: `${TEST_PREFIX}_quote_provider`,
+      });
+      cleanup.providerIds.push(ctx.fixtureProviderId);
+    }
+
+    const initialVersionResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Cotizacion estable",
+        sections: [
+          {
+            localId: "seed-section-1",
+            title: "Seccion intacta",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                localId: "seed-item-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-STABLE-1",
+                productDescription: "Producto estable",
+                quantity: 2,
+                listPriceUnit: 80,
+                manufacturerDiscountPct: 1,
+                importCostPct: 5,
+                profitMarginPct: 10,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(initialVersionResponse.status).toBe(200);
+
+    const seededSection = initialVersionResponse.body.sections[0];
+    const seededItem = seededSection.items.find(
+      (item) => item.productCode === "SKU-STABLE-1",
+    );
+
+    expect(seededSection).toBeTruthy();
+    expect(seededItem).toBeTruthy();
+
+    const failedSaveResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "No debe persistir",
+        sections: [
+          {
+            id: 999999999,
+            localId: "section-invalid-1",
+            title: "Seccion invalida",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                id: Number(seededItem.id),
+                localId: "item-existing-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "SKU-STABLE-1",
+                productDescription: "Producto no debe cambiar",
+                quantity: 7,
+                listPriceUnit: 90,
+                manufacturerDiscountPct: 1,
+                importCostPct: 5,
+                profitMarginPct: 10,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(failedSaveResponse.status).toBe(400);
+    expect(failedSaveResponse.body.message).toContain(
+      "Seccion invalida para la version",
+    );
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.proposalName).not.toBe("No debe persistir");
+    expect(versionResponse.body.sections).toHaveLength(1);
+    expect(versionResponse.body.sections[0].title).toBe("Seccion intacta");
+    expect(versionResponse.body.sections[0].items).toHaveLength(1);
+    expect(versionResponse.body.sections[0].items[0]).toMatchObject({
+      productCode: "SKU-STABLE-1",
+      productDescription: "Producto estable",
+      quantity: 2,
+      listPriceUnit: 80,
+    });
+  });
+
+  test("Administrador sin cotizaciones.administracion no puede acceder a version vieja", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_admin_without_permission`,
+    );
+
+    const createVersionResponse = await request(app)
+      .post(`/api/quotations/${fixture.quotationId}/versions`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createVersionResponse.status).toBe(201);
+
+    const adminRoleRows = await query(
+      "SELECT id FROM roles WHERE name = 'Administrador' LIMIT 1",
+    );
+    expect(adminRoleRows).toHaveLength(1);
+    const adminRoleId = Number(adminRoleRows[0].id);
+
+    const adminPermissionRows = await query(
+      "SELECT id FROM permissions WHERE code = 'cotizaciones.administracion' LIMIT 1",
+    );
+    expect(adminPermissionRows).toHaveLength(1);
+    const adminPermissionId = Number(adminPermissionRows[0].id);
+
+    await query(
+      "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
+      [adminRoleId, adminPermissionId],
+    );
+
+    const adminUserId = await createUser({
+      fullName: "API Quote Real Admin",
+      email: `${TEST_PREFIX}.quotes.real.admin@example.com`,
+      roleIds: [adminRoleId],
+    });
+    cleanup.userIds.push(adminUserId);
+
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.real.admin@example.com`,
+    );
+
+    const adminEditResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Version historica no autorizada",
+      });
+
+    expect(adminEditResponse.status).toBe(404);
+    expect(adminEditResponse.body.message).toBe("Version no encontrada");
+
+    await query(
+      "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, NOW(3))",
+      [adminRoleId, adminPermissionId],
+    );
+  });
+
+  test("cotizaciones valida inclusion contra catalogo y matriz de acciones por estado", async () => {
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_quote_matrix`);
+    const invalidSectionResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        contactId: fixture.contactId,
+        proposalName: "Cotizacion con inclusion invalida",
+        sections: [
+          {
+            localId: "invalid-section-1",
+            title: "Seccion invalida",
+            inclusionTypeId: 999999,
+            displayOrder: 1,
+            items: [],
+          },
+        ],
+      });
+
+    expect(invalidSectionResponse.status).toBe(400);
+    expect(invalidSectionResponse.body.message).toBe("Inclusion invalida");
+
+    const operationActionsResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}/actions`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+    expect(operationActionsResponse.status).toBe(200);
+    const operationAllowedCodes = operationActionsResponse.body.actions
+      .filter((action) => action.allowed)
+      .map((action) => action.code);
+    expect(operationAllowedCodes).toContain("solicitar_aprobacion");
+    expect(operationAllowedCodes).toContain("declarar_perdida");
+
+    const transitionResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ actionCode: "solicitar_aprobacion" });
+    expect(transitionResponse.status).toBe(200);
+
+    const revisionLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.revision@example.com`,
+    );
+    const revisionActionsResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}/actions`)
+      .set("Authorization", `Bearer ${revisionLogin.body.token}`);
+    const revisionAllowedCodes = revisionActionsResponse.body.actions
+      .filter((action) => action.allowed)
+      .map((action) => action.code);
+    expect(revisionAllowedCodes).toContain("aprobar");
+    expect(revisionAllowedCodes).toContain("rechazar");
+    expect(revisionAllowedCodes).not.toContain("solicitar_aprobacion");
+
+    const revisionApproveResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${revisionLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+    expect(revisionApproveResponse.status).toBe(200);
+
+    const externalLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.external@example.com`,
+    );
+    const externalActionsResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}/actions`)
+      .set("Authorization", `Bearer ${externalLogin.body.token}`);
+    const externalAllowedCodes = externalActionsResponse.body.actions
+      .filter((action) => action.allowed)
+      .map((action) => action.code);
+    expect(externalAllowedCodes).toContain("ver");
+    expect(externalAllowedCodes).not.toContain("modificar");
   });
 });

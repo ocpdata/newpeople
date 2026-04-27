@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
@@ -13,12 +13,12 @@ function normalizeText(value) {
 export function useAccountsCrud({ currentUser }) {
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
-  const [accountStatusFilter, setAccountStatusFilter] =
+  const [accountStatusFilter, setAccountStatusFilterState] =
     usePersistedStatusFilter("crm.accounts.statusFilter");
-  const [accountQuery, setAccountQuery] = useState("");
+  const [accountQuery, setAccountQueryState] = useState("");
   const [accountSortField, setAccountSortField] = useState("id");
   const [accountSortDirection, setAccountSortDirection] = useState("asc");
-  const [accountsPerPage, setAccountsPerPage] = useState(10);
+  const [accountsPerPage, setAccountsPerPageState] = useState(10);
   const [accountsPage, setAccountsPage] = useState(1);
   const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState(null);
@@ -47,7 +47,9 @@ export function useAccountsCrud({ currentUser }) {
 
   function findCatalogIdByName(options, expectedName) {
     const target = normalizeText(expectedName);
-    const found = options.find((option) => normalizeText(option.name) === target);
+    const found = options.find(
+      (option) => normalizeText(option.name) === target,
+    );
     return found ? String(found.id) : "";
   }
 
@@ -263,7 +265,9 @@ export function useAccountsCrud({ currentUser }) {
   }
 
   function isAccountPending(account) {
-    return normalizeText(account.activation_status) === "pendiente de activacion";
+    return (
+      normalizeText(account.activation_status) === "pendiente de activacion"
+    );
   }
 
   function isAccountInactive(account) {
@@ -279,10 +283,13 @@ export function useAccountsCrud({ currentUser }) {
       : "user-status-badge inactive";
   }
 
-  function getAccountStatusLabel(account) {
-    if (isAccountPending(account)) return "Pendiente de activacion";
-    return isAccountActive(account) ? "Activada" : "Desactivada";
-  }
+  const getAccountStatusLabel = useCallback((account) => {
+    const normalizedStatus = normalizeText(account?.activation_status);
+    if (normalizedStatus === "pendiente de activacion") {
+      return "Pendiente de activacion";
+    }
+    return normalizedStatus === "activada" ? "Activada" : "Desactivada";
+  }, []);
 
   function getEditingActivationMeta() {
     const selectedStatus = catalogs.statuses.find(
@@ -414,7 +421,8 @@ export function useAccountsCrud({ currentUser }) {
       accounts.filter((account) => {
         if (accountStatusFilter === "all") return true;
         if (accountStatusFilter === "pending") return isAccountPending(account);
-        if (accountStatusFilter === "inactive") return isAccountInactive(account);
+        if (accountStatusFilter === "inactive")
+          return isAccountInactive(account);
         return isAccountActive(account);
       }),
     [accounts, accountStatusFilter],
@@ -426,7 +434,8 @@ export function useAccountsCrud({ currentUser }) {
     const readValue = (account) => {
       if (accountSortField === "id") return Number(account.id) || 0;
       if (accountSortField === "nombre") return String(account.name || "");
-      if (accountSortField === "tipo") return String(account.account_type || "");
+      if (accountSortField === "tipo")
+        return String(account.account_type || "");
       if (accountSortField === "pais") return String(account.country || "");
       if (accountSortField === "registro") {
         return String(account.registration_code || "");
@@ -458,7 +467,12 @@ export function useAccountsCrud({ currentUser }) {
     });
 
     return list;
-  }, [filteredAccounts, accountSortField, accountSortDirection]);
+  }, [
+    filteredAccounts,
+    accountSortField,
+    accountSortDirection,
+    getAccountStatusLabel,
+  ]);
 
   const visibleAccounts = useMemo(() => {
     const query = accountQuery.trim().toLowerCase();
@@ -480,7 +494,7 @@ export function useAccountsCrud({ currentUser }) {
 
       return haystack.includes(query);
     });
-  }, [sortedAccounts, accountQuery]);
+  }, [sortedAccounts, accountQuery, getAccountStatusLabel]);
 
   const totalAccountPages = Math.max(
     1,
@@ -540,26 +554,64 @@ export function useAccountsCrud({ currentUser }) {
   }, [openAccountMenuId]);
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+
+    async function initializeAccounts() {
+      try {
+        const [
+          accountsRes,
+          usersRes,
+          countriesRes,
+          typesRes,
+          sectorsRes,
+          statusesRes,
+        ] = await Promise.all([
+          api.get("/api/accounts"),
+          api.get("/api/catalogs/account-owner-users"),
+          api.get("/api/catalogs/countries"),
+          api.get("/api/catalogs/account-types"),
+          api.get("/api/catalogs/economic-sectors"),
+          api.get("/api/catalogs/account-activation-statuses"),
+        ]);
+
+        if (cancelled) return;
+
+        setAccounts(accountsRes.data);
+        setUsers((usersRes.data || []).map(normalizeOwnerOption));
+        setCatalogs({
+          countries: countriesRes.data,
+          accountTypes: typesRes.data,
+          sectors: sectorsRes.data,
+          statuses: statusesRes.data,
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setError(getApiErrorMessage(err, "No fue posible cargar cuentas"));
+        }
+      }
+    }
+
+    void initializeAccounts();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (!showCreateAccountModal) return;
-    const defaults = buildDefaultAccountForm();
-    setForm((prev) => ({
-      ...prev,
-      accountTypeId: prev.accountTypeId || defaults.accountTypeId,
-      countryId: prev.countryId || defaults.countryId,
-      ownerUserIds:
-        prev.ownerUserIds.length > 0
-          ? prev.ownerUserIds
-          : defaults.ownerUserIds,
-    }));
-  }, [showCreateAccountModal, catalogs, currentUser]);
-
-  useEffect(() => {
+  function setAccountStatusFilter(value) {
     setAccountsPage(1);
-  }, [accountQuery, accountStatusFilter, accountsPerPage]);
+    setAccountStatusFilterState(value);
+  }
+
+  function setAccountQuery(value) {
+    setAccountsPage(1);
+    setAccountQueryState(value);
+  }
+
+  function setAccountsPerPage(value) {
+    setAccountsPage(1);
+    setAccountsPerPageState(value);
+  }
 
   function toggleAccountSort(field) {
     if (accountSortField === field) {

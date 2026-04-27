@@ -1,0 +1,371 @@
+.quotation-print-preview-overlay {
+  z-index: 24;
+}
+
+.quotation-print-page {
+  min-height: 100vh;
+  padding: 24px;
+  background: #edf3fb;
+}
+
+.quotation-print-page-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.quotation-print-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 1120px;
+  margin: 0 auto 16px;
+}
+
+.quotation-print-page-preview-label {
+  margin-right: auto;
+  color: #4c627d;
+  font-weight: 600;
+}
+
+.quotation-print-page-empty {
+  display: grid;
+  place-items: center;
+  padding-inline: 16px;
+}
+
+.quotation-print-page-status-card {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid #d6e0ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 36px rgba(26, 43, 71, 0.12);
+}
+
+.quotation-print-page-status-card h1 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+}
+
+.quotation-print-page-status-card p {
+  margin: 0 0 18px;
+  line-height: 1.5;
+}
+
+.quotation-print-preview-modal {
+  width: min(1240px, calc(100vw - 40px));
+  max-width: 1240px;
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.quotation-print-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #d9e0ea;
+  background: #f8fbff;
+}
+
+.quotation-print-preview-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.quotation-print-preview-body {
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding: 24px;
+  background: #edf3fb;
+}
+
+.quotation-print-sheet {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px 30px 36px;
+  background: #fff;
+  color: #25313f;
+  box-shadow: 0 12px 36px rgba(26, 43, 71, 0.12);
+}
+
+.quotation-print-header-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 22px;
+  margin-bottom: 26px;
+}
+
+.quotation-print-company-block {
+  display: grid;
+  gap: 14px;
+}
+
+.quotation-print-company-logo {
+  max-width: 120px;
+  max-height: 90px;
+  object-fit: contain;
+}
+
+.quotation-print-metadata-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.quotation-print-info-card,
+.quotation-print-summary-card,
+.quotation-print-notes-card,
+.quotation-print-section {
+  border: 1px solid #d6e0ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quotation-print-info-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+}
+
+.quotation-print-introduction {
+  margin: 0 0 24px;
+  line-height: 1.55;
+}
+
+.quotation-print-sections {
+  display: grid;
+  gap: 18px;
+}
+
+.quotation-print-section {
+  padding: 12px 12px 10px;
+}
+
+.quotation-print-section-title,
+.quotation-print-summary-title {
+  margin-bottom: 10px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1f6fca;
+}
+
+.quotation-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.92rem;
+}
+
+.quotation-print-col-item {
+  width: 5%;
+}
+
+.quotation-print-col-code {
+  width: 14%;
+}
+
+.quotation-print-col-description {
+  width: 40%;
+}
+
+.quotation-print-col-quantity {
+  width: 9%;
+}
+
+.quotation-print-col-unit-price {
+  width: 16%;
+}
+
+.quotation-print-col-total-price {
+  width: 16%;
+}
+
+.quotation-print-table thead th {
+  padding: 12px 10px;
+  background: #2d79d1;
+  color: #fff;
+  text-align: left;
+  font-weight: 700;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.quotation-print-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid #e3ebf4;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.quotation-print-table tbody td:nth-child(4),
+.quotation-print-table tbody td:nth-child(5),
+.quotation-print-table tbody td:nth-child(6),
+.quotation-print-table thead th:nth-child(4),
+.quotation-print-table thead th:nth-child(5),
+.quotation-print-table thead th:nth-child(6) {
+  text-align: right;
+}
+
+.quotation-print-section-subtotal {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 6px 2px;
+  color: #4aa35d;
+  font-size: 1.1rem;
+}
+
+.quotation-print-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.quotation-print-summary-card {
+  padding: 12px 14px;
+}
+
+.quotation-print-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #e3ebf4;
+}
+
+.quotation-print-summary-row:first-of-type {
+  border-top: none;
+}
+
+.quotation-print-summary-row.is-total {
+  color: #1f6fca;
+}
+
+.quotation-print-notes-card {
+  margin-top: 16px;
+  padding: 12px 14px 18px;
+  min-height: 210px;
+}
+
+.quotation-print-notes-content {
+  min-height: 150px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: auto;
+    background: #fff;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .quotation-print-page,
+  .quotation-print-page * {
+    visibility: visible;
+  }
+
+  .quotation-print-page {
+    position: static;
+    min-height: auto;
+    padding: 0;
+    background: #fff;
+  }
+
+  .quotation-print-page-shell {
+    max-width: none;
+    margin: 0;
+  }
+
+  .screen-only {
+    display: none !important;
+  }
+
+  .quotation-print-sheet {
+    box-shadow: none;
+    max-width: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .quotation-print-header-grid,
+  .quotation-print-sections,
+  .quotation-print-summary-grid {
+    display: block;
+  }
+
+  .quotation-print-company-block,
+  .quotation-print-metadata-grid,
+  .quotation-print-section,
+  .quotation-print-summary-card,
+  .quotation-print-notes-card {
+    margin-bottom: 16px;
+  }
+
+  .quotation-print-section-title,
+  .quotation-print-summary-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .quotation-print-section-subtotal {
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+
+  .quotation-print-summary-card,
+  .quotation-print-notes-card {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .quotation-print-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .quotation-print-table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .quotation-print-table thead,
+  .quotation-print-table tbody,
+  .quotation-print-table tfoot {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .quotation-print-table tr,
+  .quotation-print-table tbody tr,
+  .quotation-print-table thead tr,
+  .quotation-print-table td,
+  .quotation-print-table th {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .quotation-print-table thead {
+    display: table-header-group;
+  }
+
+  .quotation-print-table tfoot {
+    display: table-footer-group;
+  }
+}

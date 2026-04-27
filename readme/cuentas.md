@@ -42,7 +42,7 @@ Gestion de cuentas comerciales:
 
 ### Alcance de acceso
 
-- Administrador: ve y opera todas las cuentas.
+- `cuentas.read_all`: ve y opera todas las cuentas sin depender del rol `Administrador`.
 - Usuario no administrador: solo ve y opera cuentas de las que es propietario.
 
 ## Puntos clave de UX
@@ -81,7 +81,7 @@ Gestion de cuentas comerciales:
 - Asegurar al menos un propietario (obligatorio).
 - La seleccion de propietarios usa un catalogo minimo de usuarios activos y no requiere acceso al modulo de usuarios.
 - Los usuarios no administradores solo ven y operan cuentas de las que son propietarios.
-- Los administradores pueden ver y operar todas las cuentas.
+- Usuarios con `cuentas.read_all` pueden ver y operar todas las cuentas.
 - Con `cuentas.create`, la cuenta se registra activada automaticamente.
 - Con `cuentas.request`, la cuenta se registra en pendiente automaticamente.
 - Solo usuarios con `cuentas.create` pueden cambiar el estado de activacion de una cuenta.

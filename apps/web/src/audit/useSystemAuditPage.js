@@ -92,22 +92,6 @@ export function useSystemAuditPage() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [debouncedQuery, setDebouncedQuery] = useState(DEFAULT_FILTERS.q);
 
-  async function load(nextFilters) {
-    setLoading(true);
-    setError("");
-    try {
-      const qs = buildQuery(nextFilters);
-      const { data } = await api.get(`/api/audit${qs ? `?${qs}` : ""}`);
-      setItems(data.items || []);
-      setTotal(Number(data.total || 0));
-      setTotalPages(Number(data.totalPages || 1));
-    } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible cargar auditoria"));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setDebouncedQuery(filters.q);
@@ -142,7 +126,34 @@ export function useSystemAuditPage() {
   );
 
   useEffect(() => {
-    load(appliedFilters);
+    let cancelled = false;
+
+    async function syncAudit() {
+      setLoading(true);
+      setError("");
+      try {
+        const qs = buildQuery(appliedFilters);
+        const { data } = await api.get(`/api/audit${qs ? `?${qs}` : ""}`);
+        if (cancelled) return;
+        setItems(data.items || []);
+        setTotal(Number(data.total || 0));
+        setTotalPages(Number(data.totalPages || 1));
+      } catch (err) {
+        if (!cancelled) {
+          setError(getApiErrorMessage(err, "No fue posible cargar auditoria"));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void syncAudit();
+
+    return () => {
+      cancelled = true;
+    };
   }, [appliedFilters]);
 
   function updateFilter(field, value) {
@@ -163,7 +174,8 @@ export function useSystemAuditPage() {
   }
 
   const startItem = total === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
-  const endItem = total === 0 ? 0 : Math.min(filters.page * filters.pageSize, total);
+  const endItem =
+    total === 0 ? 0 : Math.min(filters.page * filters.pageSize, total);
   const activeAuditFilterCount = [
     filters.q,
     filters.module,

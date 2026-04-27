@@ -25,8 +25,8 @@ function OpportunityFormModal({
   isSelectedCommercialStageReadOnly,
   isCommercialFlowClosed,
   canOpenCommercialStatusReason,
+  displayedCommercialCloseReason,
   pendingCommercialCloseStatusName,
-  currentCommercialStatusName,
   openCommercialStatusReasonModal,
   handleCommercialStageSelect,
   handleCurrentStageValidation,
@@ -41,10 +41,14 @@ function OpportunityFormModal({
   closeOpportunityModal,
   saveOpportunity,
   savingOpportunity,
-  getCommercialStatusBadgeClass,
   formatDateTime,
 }) {
   if (!isOpen) return null;
+
+  const isWaitingCurrentStage =
+    String(currentCommercialStage?.code || currentCommercialStage?.name || "")
+      .trim()
+      .toLowerCase() === "waiting";
 
   return (
     <div className="modal-overlay" onClick={closeOpportunityModal}>
@@ -55,11 +59,13 @@ function OpportunityFormModal({
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
             <h3 className="modal-title">
-              {editingOpportunityId ? "Editar oportunidad" : "Crear oportunidad"}
+              {editingOpportunityId
+                ? "Editar oportunidad"
+                : "Crear oportunidad"}
             </h3>
             <p className="field-hint opportunity-modal-subtitle">
               {editingOpportunityId
-                ? "Actualiza la información de la oportunidad y guarda los cambios."
+                ? "Actualiza la oportunidad y guarda los cambios."
                 : "Completa la información principal para registrar la oportunidad."}
             </p>
           </div>
@@ -73,7 +79,8 @@ function OpportunityFormModal({
               </span>
               {!isHeaderCommercialFlowClosed ? (
                 <span className="record-id-badge" title="Etapa de venta">
-                  Etapa: {currentCommercialStage?.name || currentSalesStageName || "-"}
+                  Etapa:{" "}
+                  {currentCommercialStage?.name || currentSalesStageName || "-"}
                 </span>
               ) : null}
               <span
@@ -92,7 +99,8 @@ function OpportunityFormModal({
                 title="Estado comercial"
               >
                 <span className="status-dot" aria-hidden="true" />
-                {editOpportunityAudit.commercialStatus || "Sin estado comercial"}
+                {editOpportunityAudit.commercialStatus ||
+                  "Sin estado comercial"}
               </span>
             </div>
           ) : null}
@@ -100,18 +108,22 @@ function OpportunityFormModal({
 
         {!editingOpportunityId && (
           <p className="field-hint">
-            El ID de la oportunidad se asigna automaticamente y coincide con el ID
-            interno.
+            El ID de la oportunidad se asigna automaticamente y coincide con el
+            ID interno.
           </p>
         )}
 
-        <form className="account-create-form in-modal" onSubmit={saveOpportunity}>
+        <form
+          className="account-create-form in-modal"
+          onSubmit={saveOpportunity}
+        >
           <section className="account-form-section opportunity-main-data-section">
             <h4>Datos principales</h4>
             <div className="grid-form account-grid-main">
               <div className="field-group">
                 <label>
-                  Nombre de la oportunidad <span className="required-mark">*</span>
+                  Nombre de la oportunidad{" "}
+                  <span className="required-mark">*</span>
                 </label>
                 <input
                   value={form.name}
@@ -133,7 +145,9 @@ function OpportunityFormModal({
                   onChange={(event) =>
                     setForm((prev) => ({
                       ...prev,
-                      amountUsd: formatOpportunityAmountInput(event.target.value),
+                      amountUsd: formatOpportunityAmountInput(
+                        event.target.value,
+                      ),
                     }))
                   }
                   required
@@ -224,7 +238,11 @@ function OpportunityFormModal({
                   <label>
                     Etapa de venta <span className="required-mark">*</span>
                   </label>
-                  <input aria-label="Etapa de venta" value={currentSalesStageName} readOnly />
+                  <input
+                    aria-label="Etapa de venta"
+                    value={currentSalesStageName}
+                    readOnly
+                  />
                 </div>
               ) : null}
               <div className="field-group">
@@ -299,9 +317,9 @@ function OpportunityFormModal({
                 <div>
                   <h4>Proceso comercial</h4>
                   <p className="field-hint opportunity-commercial-hint">
-                    Haz clic en una etapa para revisar sus preguntas. Solo la etapa
-                    actual permite editar respuestas, mover la oportunidad o cerrar el
-                    proceso comercial.
+                    Haz clic en una etapa para revisar sus preguntas. Solo la
+                    etapa actual permite editar respuestas, mover la oportunidad
+                    o cerrar el proceso comercial.
                   </p>
                 </div>
                 <div className="opportunity-commercial-badges">
@@ -367,6 +385,7 @@ function OpportunityFormModal({
                       type="button"
                       className={className}
                       onClick={() => handleCommercialStageSelect(stage.id)}
+                      aria-label={stage.name}
                       aria-pressed={isSelected}
                       disabled={loadingCommercialStageView && isSelected}
                     >
@@ -392,21 +411,42 @@ function OpportunityFormModal({
 
               {hasPendingStageChange ? (
                 <p className="field-hint opportunity-stage-readonly-banner">
-                  Hay un cambio de etapa pendiente hacia {currentCommercialStage?.name || "la etapa seleccionada"}.
-                  Presiona Guardar cambios para grabarlo o cierra el modal para descartarlo.
+                  Hay un cambio de etapa pendiente hacia{" "}
+                  {currentCommercialStage?.name || "la etapa seleccionada"}.
+                  Presiona Guardar cambios para grabarlo o cierra el modal para
+                  descartarlo.
                 </p>
               ) : null}
 
               {hasPendingCommercialClose ? (
                 <p className="field-hint opportunity-stage-readonly-banner">
-                  Hay un cierre comercial pendiente como {pendingCommercialCloseStatusName || "estado seleccionado"}. Presiona Guardar cambios para grabarlo o cierra el modal para descartarlo.
+                  Hay un cierre comercial pendiente como{" "}
+                  {pendingCommercialCloseStatusName || "estado seleccionado"}.
+                  Presiona Guardar cambios para grabarlo o cierra el modal para
+                  descartarlo.
                 </p>
               ) : null}
 
               {isSelectedCommercialStageReadOnly ? (
                 <p className="field-hint opportunity-stage-readonly-banner">
-                  Estás revisando la etapa {commercialContext.salesStage?.name || "seleccionada"}. Esta vista es solo lectura porque la oportunidad sigue en {currentCommercialStage?.name || "la etapa actual"}.
+                  Estás revisando la etapa{" "}
+                  {commercialContext.salesStage?.name || "seleccionada"}. Esta
+                  vista es solo lectura porque la oportunidad sigue en{" "}
+                  {currentCommercialStage?.name || "la etapa actual"}.
                 </p>
+              ) : null}
+
+              {displayedCommercialCloseReason ? (
+                <div className="field-group opportunity-stage-question">
+                  <label>Motivo de cierre comercial</label>
+                  <textarea
+                    aria-label="Motivo de cierre comercial"
+                    rows={3}
+                    value={displayedCommercialCloseReason}
+                    disabled
+                    readOnly
+                  />
+                </div>
               ) : null}
 
               <div className="opportunity-commercial-actions">
@@ -445,6 +485,21 @@ function OpportunityFormModal({
                       !canBypassCurrentStage,
                   },
                   {
+                    key: "advance",
+                    tone: "primary",
+                    icon: savingCommercialAction === "advance" ? "..." : "→",
+                    label: "Avanzar etapa",
+                    shortLabel: "Avanzar",
+                    onClick: () => handleStageTransition("advance"),
+                    disabled:
+                      Boolean(savingCommercialAction) ||
+                      isCommercialFlowClosed ||
+                      !commercialContext.isSelectedStageCurrent ||
+                      hasPendingStageChange ||
+                      hasPendingCommercialClose ||
+                      !canBypassCurrentStage,
+                  },
+                  {
                     key: "retreat",
                     tone: "neutral",
                     icon: savingCommercialAction === "retreat" ? "..." : "←",
@@ -460,8 +515,28 @@ function OpportunityFormModal({
                       hasPendingCommercialClose ||
                       (!commercialContext.isSelectedStageCurrent &&
                         !canRetreatToSelectedStage) ||
-                      (!canRetreatToSelectedStage && !hasImmediatePreviousStage),
+                      (!canRetreatToSelectedStage &&
+                        !hasImmediatePreviousStage),
                   },
+                  ...(isWaitingCurrentStage
+                    ? [
+                        {
+                          key: "ganada",
+                          tone: "success",
+                          icon:
+                            savingCommercialAction === "ganada" ? "..." : "★",
+                          label: "Marcar ganada",
+                          shortLabel: "Ganada",
+                          onClick: () => handleCommercialClose("ganada"),
+                          disabled:
+                            Boolean(savingCommercialAction) ||
+                            isCommercialFlowClosed ||
+                            !commercialContext.isSelectedStageCurrent ||
+                            hasPendingStageChange ||
+                            hasPendingCommercialClose,
+                        },
+                      ]
+                    : []),
                   {
                     key: "perdida",
                     tone: "danger",
@@ -489,7 +564,10 @@ function OpportunityFormModal({
                       hasPendingStageChange,
                   },
                 ].map((action) => (
-                  <div key={action.key} className="opportunity-commercial-action-item">
+                  <div
+                    key={action.key}
+                    className="opportunity-commercial-action-item"
+                  >
                     <button
                       type="button"
                       className={`opportunity-commercial-action-icon is-${action.tone}`}
@@ -510,7 +588,8 @@ function OpportunityFormModal({
               {commercialContext.bypassInfo?.isBypassed ? (
                 <div className="opportunity-stage-bypass-summary">
                   <p className="field-hint opportunity-stage-readonly-banner">
-                    Esta etapa fue bypaseada. Solo se muestra el motivo del bypass.
+                    Esta etapa fue bypaseada. Solo se muestra el motivo del
+                    bypass.
                   </p>
                   <div className="field-group opportunity-stage-question">
                     <label>Motivo del bypass</label>
@@ -607,7 +686,11 @@ function OpportunityFormModal({
             >
               Cancelar
             </button>
-            <button type="submit" className="btn-primary" disabled={savingOpportunity}>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={savingOpportunity}
+            >
               {savingOpportunity
                 ? editingOpportunityId
                   ? "Guardando..."

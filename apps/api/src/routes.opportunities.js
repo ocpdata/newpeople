@@ -67,13 +67,14 @@ const opportunityCreatePermissions = [
   "oportunidades.create",
   "oportunidades.request",
 ];
+const opportunityGlobalReadPermission = "oportunidades.read_all";
 
-function isAdminUser(user) {
-  return Boolean(user?.isAdmin);
+function hasGlobalAccountReadScope(user) {
+  return user?.permissionSet?.has(opportunityGlobalReadPermission);
 }
 
 function applyOwnedAccountScope({ user, accountExpression, params }) {
-  if (isAdminUser(user)) return "";
+  if (hasGlobalAccountReadScope(user)) return "";
   params.push(Number(user.id));
   return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountExpression} AND ao_scope.user_id = ?`;
 }
@@ -437,7 +438,7 @@ async function validateOpportunityRelations({
   sellerUserId,
   presalesUserId,
 }) {
-  if (!isAdminUser(user)) {
+  if (!hasGlobalAccountReadScope(user)) {
     const accountRows = await query(
       `SELECT 1
        FROM account_owners

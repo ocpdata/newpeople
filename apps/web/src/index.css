@@ -12,16 +12,14 @@ body {
   margin: 0;
 }
 
-.centered {
+.centered,
+.auth-wrap {
   min-height: 100vh;
   display: grid;
   place-items: center;
 }
 
 .auth-wrap {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
   background: linear-gradient(140deg, #e8f2ff, #f7fff0);
 }
 
@@ -521,14 +519,7 @@ button:disabled {
   margin: 10px 0 16px;
 }
 
-.user-create-form.in-modal {
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  margin: 0;
-}
-
+.user-create-form.in-modal,
 .account-create-form.in-modal {
   border: none;
   border-radius: 0;
@@ -557,26 +548,43 @@ button:disabled {
   color: #345173;
 }
 
-.opportunity-main-data-section {
+.opportunity-main-data-section,
+.opportunity-sales-management-section,
+.account-modal-section,
+.contact-modal-section {
   padding: 8px;
 }
 
-.opportunity-main-data-section h4 {
+.opportunity-main-data-section h4,
+.opportunity-sales-management-section h4,
+.account-modal-section h4,
+.contact-modal-section h4 {
   margin-bottom: 4px;
   font-size: 11px;
 }
 
-.opportunity-main-data-section .grid-form {
+.opportunity-main-data-section .grid-form,
+.opportunity-sales-management-section .grid-form {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 6px;
   margin: 4px 0 6px;
 }
 
-.opportunity-main-data-section .field-group {
+.account-modal-section .grid-form,
+.contact-modal-section .grid-form {
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.opportunity-main-data-section .field-group,
+.opportunity-sales-management-section .field-group,
+.account-modal-section .field-group,
+.contact-modal-section .field-group {
   gap: 2px;
 }
 
-.opportunity-main-data-section .field-group label {
+.opportunity-main-data-section .field-group label,
+.opportunity-sales-management-section .field-group label {
   font-size: 11px;
   line-height: 1.2;
 }
@@ -585,66 +593,25 @@ button:disabled {
   .field-group
   input:not([type="checkbox"]):not([type="radio"]),
 .opportunity-main-data-section .field-group select,
-.opportunity-main-data-section .field-group .audit-date-input {
-  min-height: 32px;
-  height: 32px;
-  font-size: 11px;
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-
-.opportunity-sales-management-section {
-  padding: 8px;
-}
-
-.opportunity-sales-management-section h4 {
-  margin-bottom: 4px;
-  font-size: 11px;
-}
-
-.opportunity-sales-management-section .grid-form {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 6px;
-  margin: 4px 0 6px;
-}
-
-.opportunity-sales-management-section .field-group {
-  gap: 2px;
-}
-
-.opportunity-sales-management-section .field-group label {
-  font-size: 11px;
-  line-height: 1.2;
-}
-
+.opportunity-main-data-section .field-group .audit-date-input,
 .opportunity-sales-management-section
   .field-group
   input:not([type="checkbox"]):not([type="radio"]),
 .opportunity-sales-management-section .field-group select,
-.opportunity-sales-management-section .field-group .audit-date-input {
+.opportunity-sales-management-section .field-group .audit-date-input,
+.account-modal-section
+  .field-group
+  input:not([type="checkbox"]):not([type="radio"]),
+.account-modal-section .field-group select,
+.contact-modal-section
+  .field-group
+  input:not([type="checkbox"]):not([type="radio"]),
+.contact-modal-section .field-group select {
   min-height: 32px;
   height: 32px;
   font-size: 11px;
   padding-top: 5px;
   padding-bottom: 5px;
-}
-
-.account-modal-section {
-  padding: 8px;
-}
-
-.account-modal-section h4 {
-  margin-bottom: 4px;
-  font-size: 11px;
-}
-
-.account-modal-section .grid-form {
-  gap: 6px;
-  margin: 4px 0 6px;
-}
-
-.account-modal-section .field-group {
-  gap: 2px;
 }
 
 .account-modal-section .field-group label,
@@ -656,18 +623,8 @@ button:disabled {
   line-height: 1.25;
 }
 
-.account-modal-section
-  .field-group
-  input:not([type="checkbox"]):not([type="radio"]),
-.account-modal-section .field-group select {
-  min-height: 32px;
-  height: 32px;
-  font-size: 11px;
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-
-.account-modal-section .field-group textarea {
+.account-modal-section .field-group textarea,
+.contact-modal-section .field-group textarea {
   min-height: 72px;
   font-size: 11px;
 }
@@ -712,44 +669,10 @@ button:disabled {
   font-size: 11px;
 }
 
-.contact-modal-section {
-  padding: 8px;
-}
-
-.contact-modal-section h4 {
-  margin-bottom: 4px;
-  font-size: 11px;
-}
-
-.contact-modal-section .grid-form {
-  gap: 6px;
-  margin: 4px 0 6px;
-}
-
-.contact-modal-section .field-group {
-  gap: 2px;
-}
-
 .contact-modal-section .field-group label,
 .contact-modal-section .field-hint {
   font-size: 11px;
   line-height: 1.25;
-}
-
-.contact-modal-section
-  .field-group
-  input:not([type="checkbox"]):not([type="radio"]),
-.contact-modal-section .field-group select {
-  min-height: 32px;
-  height: 32px;
-  font-size: 11px;
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-
-.contact-modal-section .field-group textarea {
-  min-height: 72px;
-  font-size: 11px;
 }
 
 .module-title-icon-providers {
@@ -1475,6 +1398,12 @@ button:disabled {
   color: #9a5a11;
 }
 
+.module-title-icon-quotations {
+  background: #eef1ff;
+  border-color: #d5daf7;
+  color: #465fbe;
+}
+
 .accounts-status-pills-panel {
   display: flex;
   flex-wrap: wrap;
@@ -2113,27 +2042,7 @@ td {
   font-weight: 600;
 }
 
-.role-status-badge {
-  display: inline-block;
-  font-size: 11px;
-  line-height: 1;
-  padding: 4px 7px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-}
-
-.role-status-badge.active {
-  color: #0b5e2a;
-  background: #eaf8ef;
-  border-color: #b8e6c7;
-}
-
-.role-status-badge.inactive {
-  color: #7a1f1f;
-  background: #fdeeee;
-  border-color: #f5c2c2;
-}
-
+.role-status-badge,
 .user-status-badge {
   display: inline-block;
   font-size: 11px;
@@ -2143,13 +2052,17 @@ td {
   border: 1px solid transparent;
 }
 
-.user-status-badge.active {
+.role-status-badge.active,
+.user-status-badge.active,
+.status-icon-badge.active {
   color: #0b5e2a;
   background: #eaf8ef;
   border-color: #b8e6c7;
 }
 
-.user-status-badge.inactive {
+.role-status-badge.inactive,
+.user-status-badge.inactive,
+.status-icon-badge.inactive {
   color: #7a1f1f;
   background: #fdeeee;
   border-color: #f5c2c2;
@@ -2161,19 +2074,31 @@ td {
   border-color: #f3d49a;
 }
 
-.user-status-badge.won {
+.user-status-badge.draft,
+.status-icon-badge.draft {
+  color: #7a4b00;
+  background: #fff6e5;
+  border-color: #f3d49a;
+}
+
+.user-status-badge.won,
+.status-icon-badge.won {
   color: #0b5e2a;
   background: #e3f7ec;
   border-color: #9fd7b4;
 }
 
-.user-status-badge.lost {
+.user-status-badge.lost,
+.commercial-status-reason-badge.lost,
+.status-icon-badge.lost {
   color: #8a3e00;
   background: #fff0e4;
   border-color: #f3c49c;
 }
 
-.user-status-badge.canceled {
+.user-status-badge.canceled,
+.commercial-status-reason-badge.canceled,
+.status-icon-badge.canceled {
   color: #5b3b83;
   background: #f3ecff;
   border-color: #d7c2f4;
@@ -3682,6 +3607,7 @@ td {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
   font-size: 11px;
   line-height: 1.3;
@@ -3987,18 +3913,6 @@ td {
   align-self: flex-start;
 }
 
-.commercial-status-reason-badge.lost {
-  color: #8a3e00;
-  background: #fff0e4;
-  border-color: #f3c49c;
-}
-
-.commercial-status-reason-badge.canceled {
-  color: #5b3b83;
-  background: #f3ecff;
-  border-color: #d7c2f4;
-}
-
 .commercial-status-reason-panel {
   display: grid;
   gap: 10px;
@@ -4144,40 +4058,10 @@ td {
   background: currentColor;
 }
 
-.status-icon-badge.active {
-  color: #0b5e2a;
-  background: #eaf8ef;
-  border-color: #b8e6c7;
-}
-
-.status-icon-badge.inactive {
-  color: #7a1f1f;
-  background: #fdeeee;
-  border-color: #f5c2c2;
-}
-
 .status-icon-badge.pending {
   color: #8a5a00;
   background: #fff5db;
   border-color: #f2d28a;
-}
-
-.status-icon-badge.won {
-  color: #0b5e2a;
-  background: #e3f7ec;
-  border-color: #9fd7b4;
-}
-
-.status-icon-badge.lost {
-  color: #8a3e00;
-  background: #fff0e4;
-  border-color: #f3c49c;
-}
-
-.status-icon-badge.canceled {
-  color: #5b3b83;
-  background: #f3ecff;
-  border-color: #d7c2f4;
 }
 
 .opportunity-commercial-section-header {
@@ -4406,6 +4290,11 @@ td {
   margin-top: 8px;
 }
 
+.opportunity-quotations-section {
+  border-top: 1px solid #dbe7f5;
+  padding-top: 20px;
+}
+
 .opportunity-commercial-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4499,81 +4388,6 @@ td {
   overflow-wrap: anywhere;
 }
 
-.question-admin-stage-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.question-admin-stage-pill {
-  border: 1px solid #d6e3f5;
-  background: #fff;
-  color: #23405f;
-  border-radius: 12px;
-  padding: 10px 12px;
-  min-width: 170px;
-  text-align: left;
-}
-
-.question-admin-stage-pill small {
-  display: block;
-  margin-top: 4px;
-  color: #7291b3;
-  font-size: 11px;
-}
-
-.question-admin-stage-pill.is-selected {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.question-admin-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.question-admin-summary-card strong {
-  display: block;
-  font-size: 20px;
-  color: #17365d;
-}
-
-.question-admin-summary-hint {
-  margin-top: 6px;
-}
-
-.question-admin-table-wrap {
-  overflow-x: auto;
-}
-
-.question-admin-prompt-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.question-admin-table-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.question-admin-order-btn {
-  min-width: 44px;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-.question-admin-modal-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
 @media (max-width: 768px) {
   .opportunity-commercial-section-header {
     flex-direction: column;
@@ -4621,14 +4435,6 @@ td {
   .opportunity-stage-step-content {
     align-items: flex-start;
     max-width: none;
-  }
-
-  .question-admin-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .question-admin-modal-grid {
-    grid-template-columns: 1fr;
   }
 }
 

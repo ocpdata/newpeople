@@ -38,13 +38,14 @@ const contactStatusSchema = z.object({
 });
 
 const contactCreatePermissions = ["contactos.create", "contactos.request"];
+const contactGlobalReadPermission = "contactos.read_all";
 
-function isAdminUser(user) {
-  return Boolean(user?.isAdmin);
+function hasGlobalAccountReadScope(user) {
+  return user?.permissionSet?.has(contactGlobalReadPermission);
 }
 
 function applyOwnedAccountScope({ user, accountExpression, params }) {
-  if (isAdminUser(user)) return "";
+  if (hasGlobalAccountReadScope(user)) return "";
   params.push(Number(user.id));
   return `INNER JOIN account_owners ao_scope ON ao_scope.account_id = ${accountExpression} AND ao_scope.user_id = ?`;
 }
@@ -74,7 +75,7 @@ async function requireAccessibleContactOr404({ user, contactId, message }) {
 }
 
 async function requireAccessibleAccountForContact({ user, accountId }) {
-  if (isAdminUser(user)) return { ok: true };
+  if (hasGlobalAccountReadScope(user)) return { ok: true };
 
   const rows = await query(
     `SELECT 1

@@ -53,6 +53,18 @@ SHOW TABLES;
 
 - `opportunities`: entidad principal de oportunidades comerciales.
 
+### Cotizaciones
+
+- `quotations`: raiz de cotizacion asociada a una oportunidad.
+- `quotation_versions`: versiones numeradas de cada cotizacion.
+- `quotation_sections`: secciones por version.
+- `quotation_section_items`: items por seccion.
+- `quotation_statuses`: catalogo de estados de cotizacion.
+- `quotation_actions`: catalogo de acciones del workflow.
+- `quotation_activation_statuses`: catalogo de activacion del modulo.
+- `quotation_section_inclusion_types`: catalogo de inclusion de secciones.
+- `quotation_action_permissions`: matriz persistida `estado + accion + permiso`.
+
 ### Catalogos
 
 - `countries`
@@ -116,9 +128,11 @@ El script carga automaticamente:
 
 - Permisos base (`usuarios.*`, `roles.*`, `permissions.read`, `cuentas.*`).
 - Permisos base de oportunidades (`oportunidades.*`).
+- Permisos funcionales de cotizaciones (`cotizaciones.*`).
 - Rol `Administrador` (`is_system=1`) con todos los permisos.
 - Catalogos de tipo de cuenta, sector economico y estados de activacion.
 - Catalogos de oportunidades: lineas de negocio, etapas de venta y estados.
+- Catalogos de cotizaciones: estados, acciones, activacion e inclusion de secciones.
 - Paises y monedas frecuentes para LATAM.
 - Relacion por defecto pais-moneda en `country_currency`.
 
@@ -139,6 +153,7 @@ ORDER BY r.name, p.code;
 ```
 
 Para cuentas, contactos y oportunidades el catalogo de permisos incluye las acciones `read`, `create`, `request` y `update`.
+Para cotizaciones, el catalogo de permisos modela perfiles funcionales del flujo comercial.
 
 ### 7.2 Usuarios y roles asignados
 
