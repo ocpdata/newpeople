@@ -10,6 +10,7 @@ Cambios funcionales destacados del estado actual:
 - Cotizaciones ya vive como modulo independiente en la web.
 - La vista previa oficial de cotizaciones se genera en backend como PDF inline.
 - El flujo de edicion de cotizaciones soporta cambios locales sin guardar, bundles por seccion y versionado completo.
+- En cotizaciones, cada item conserva moneda y precio lista originales del proveedor, mientras `Precio de lista` se recalcula en la moneda de la cotizacion segun el tipo de cambio vigente.
 
 ## Setup rapido local
 
@@ -168,6 +169,7 @@ Endpoints relevantes:
 - Cuentas con propietarios multiples.
 - Proveedores con precios tipificados como `Productos` o `Servicios Propios`.
 - Cotizaciones con versiones, workflow propio, bundles por seccion y vista previa PDF backend.
+- Cotizaciones con separacion entre precio original del proveedor y precio convertido en moneda de cotizacion.
 - Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
 - Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
@@ -197,6 +199,7 @@ Cobertura automatizada:
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
 - Modulo de cotizaciones: [readme/cotizaciones.md](./readme/cotizaciones.md)
   Politicas de impresion y vista previa PDF incluidas en ese documento.
+- Modelo de tipo de cambio y persistencia de precios de cotizaciones documentado en ese mismo archivo.
 
 ## Troubleshooting rapido
 

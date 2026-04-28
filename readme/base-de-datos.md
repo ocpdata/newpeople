@@ -65,6 +65,12 @@ SHOW TABLES;
 - `quotation_section_inclusion_types`: catalogo de inclusion de secciones.
 - `quotation_action_permissions`: matriz persistida `estado + accion + permiso`.
 
+Regla monetaria relevante del modulo:
+
+- `quotation_section_items` conserva la base monetaria original del proveedor con `original_currency_code` y `original_list_price_unit`.
+- `list_price_unit` representa el valor convertido a la moneda de la version de cotizacion.
+- Esta separacion permite recalcular visualmente el precio convertido al cambiar el tipo de cambio sin perder la referencia original del proveedor.
+
 ### Catalogos
 
 - `countries`
@@ -440,3 +446,38 @@ Archivos backend conectados al modelo:
 | affected_user_id     | BIGINT UNSIGNED | NULL, FK           |
 | detail               | TEXT            | NULL               |
 | created_at           | DATETIME(3)     | NOT NULL           |
+
+### 10.15 quotation_versions
+
+- PK: `id`
+- FK: `quotation_id -> quotations.id`, `currency_code -> currencies.code` logica de negocio via catalogo de monedas
+
+Campos monetarios relevantes:
+
+- `currency_code`: moneda comercial de la version.
+- `exchange_rate`: tipo de cambio usado para convertir items cuya moneda original difiere.
+
+### 10.16 quotation_section_items
+
+- PK: `id`
+- FK: `quotation_section_id -> quotation_sections.id`, `provider_id -> providers.id`
+
+Campos monetarios relevantes:
+
+| Campo                     | Tipo           | Restricciones                          |
+| ------------------------- | -------------- | -------------------------------------- |
+| quantity                  | DECIMAL(15, 4) | NOT NULL                               |
+| original_currency_code    | CHAR(3)        | NULL, moneda original del proveedor    |
+| original_list_price_unit  | DECIMAL(15, 4) | NULL, precio lista original del item   |
+| list_price_unit           | DECIMAL(15, 4) | NOT NULL, precio convertido cotizacion |
+| manufacturer_discount_pct | DECIMAL(7, 4)  | NOT NULL, DEFAULT 0                    |
+| import_cost_pct           | DECIMAL(7, 4)  | NOT NULL, DEFAULT 0                    |
+| profit_margin_pct         | DECIMAL(7, 4)  | NOT NULL, DEFAULT 0                    |
+| final_discount_pct        | DECIMAL(7, 4)  | NOT NULL, DEFAULT 0                    |
+
+Comportamiento esperado del esquema:
+
+- instalaciones nuevas crean estas columnas directamente en `schema.sql`;
+- instalaciones existentes se actualizan de forma idempotente agregando las columnas faltantes;
+- las filas historicas se rellenan con `original_currency_code = 'USD'` y `original_list_price_unit = list_price_unit` cuando el dato original no existia;
+- backend y frontend deben tratar `original_*` como fuente de verdad del proveedor y `list_price_unit` como valor comercial convertido.

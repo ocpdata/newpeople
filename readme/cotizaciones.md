@@ -96,7 +96,9 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - codigo de producto
 - descripcion
 - cantidad
-- precio de lista unitario
+- moneda original del proveedor
+- precio de lista unitario original del proveedor
+- precio de lista unitario convertido a la moneda de la cotizacion
 - descuento del fabricante en porcentaje
 - costo de importacion en porcentaje
 - margen de ganancia en porcentaje
@@ -104,16 +106,35 @@ La matriz `estado + accion + permiso` se persiste en `quotation_action_permissio
 - pertenencia opcional a bundle
 - origen de bundle (`price_list_bundle` o `manual_bundle`)
 
+## Modelo de moneda y tipo de cambio
+
+Cada item mantiene dos capas de precio:
+
+- `originalCurrencyCode`: moneda original del proveedor o de la lista de precios origen.
+- `originalListPriceUnit`: precio base original en esa moneda.
+- `listPriceUnit`: precio convertido a la moneda de la cotizacion.
+
+Reglas operativas:
+
+- `Precio Lista M.O.` en la UI edita `originalListPriceUnit`.
+- `Precio de lista` es de solo lectura en la tabla y refleja `listPriceUnit` ya convertido.
+- Cambiar la moneda o el tipo de cambio de la version recalcula `listPriceUnit` para todos los items compatibles sin borrar la base original.
+- Si la moneda original del item coincide con la moneda de la cotizacion, no hay conversion y ambos valores pueden coincidir.
+- La persistencia guarda ambas referencias para que una version clonada o reabierta mantenga la base del proveedor y el valor comercial calculado de la cotizacion.
+- Los calculos de costo, venta, resumen y PDF parten del valor convertido de la cotizacion.
+
 ## Reglas de negocio
 
 - Solo se crea cotizacion desde una oportunidad con estado de activacion `activada`.
 - El contacto de la version debe pertenecer a la misma cuenta de la oportunidad origen.
 - `crear_cotizacion` es una accion global sin estado.
 - `crear_version` crea una nueva version borrador copiando secciones e items de la version mayor.
+- `crear_version` debe copiar tambien `originalCurrencyCode` y `originalListPriceUnit` por item.
 - Las transiciones de workflow se resuelven por accion (`aprobar`, `rechazar`, `enviar`, etc.) y actualizan el estado de la version mayor.
 - Solo la version mayor entra al workflow; una version historica no mayor queda para consulta o correccion administrativa.
 - `Guardar version` persiste el contenido, pero no cambia de estado.
 - La vista previa PDF debe reflejar cambios locales sin guardar.
+- Cambiar el tipo de cambio en creacion o edicion debe actualizar el valor visible de `Precio de lista` sin alterar `Precio Lista M.O.`.
 - En vista previa, el padre de un bundle siempre debe estar presente; si el bundle esta expandido se listan sus componentes y si esta colapsado solo se muestra el padre.
 - La numeracion visible de filas en edicion usa el orden visible de la tabla cuando un bundle esta colapsado.
 
@@ -153,6 +174,13 @@ Al guardar, la UI manda un payload completo y el backend aplica la mezcla de:
 - crear filas nuevas;
 - eliminar filas y secciones ausentes;
 - conservar jerarquia bundle.
+
+En esa persistencia completa, cada item guarda:
+
+- moneda original del proveedor;
+- precio lista original;
+- precio lista convertido en la moneda de la cotizacion;
+- porcentajes comerciales derivados sobre el valor convertido.
 
 ## Matriz actor-estado-accion
 
@@ -232,7 +260,8 @@ Backend:
 - generacion inline de PDF desde cambios no guardados;
 - persistencia de bundles reales al crear;
 - guardado completo con mezcla de crear, editar y eliminar;
-- validacion de secciones invalidas con rollback.
+- validacion de secciones invalidas con rollback;
+- persistencia simultanea de precio original y precio convertido por item.
 
 Frontend E2E:
 
@@ -241,4 +270,6 @@ Frontend E2E:
 - colapso y expansion de bundles por seccion;
 - presencia del padre del bundle en preview;
 - bundles manuales y de catalogo en edicion;
-- jerarquia bundle al guardar la version completa.
+- jerarquia bundle al guardar la version completa;
+- recambio de `Precio de lista` al modificar el tipo de cambio;
+- edicion de `Precio Lista M.O.` manteniendo la base original persistida.

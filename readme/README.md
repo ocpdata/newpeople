@@ -43,7 +43,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
   moneda y tipo unico por lista, y composicion/reactivacion automatica de
   `Bundle`.
 - Cotizaciones: modulo documentado con workflow propio, guardado completo por version,
-  bundles de catalogo y manuales, y vista previa oficial en PDF generada por backend.
+  bundles de catalogo y manuales, vista previa oficial en PDF generada por backend,
+  y separacion entre precio original del proveedor y precio convertido por tipo de cambio.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
   subtitulo, boton primario, barra pills + busqueda inline).

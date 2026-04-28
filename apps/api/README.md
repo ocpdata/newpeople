@@ -50,6 +50,9 @@ Puntos relevantes del backend:
 - `POST /api/quotations/render-pdf`: genera el PDF oficial de vista previa a partir del estado local de la cotizacion, incluso con cambios sin guardar.
 - `src/quotationPdf.js`: renderiza secciones, resumen, condiciones comerciales, notas y numeracion de pagina.
 - `src/config.js`: define branding documental (`config.documents.quotation.company`).
+- Cada item de cotizacion persiste `original_currency_code` y `original_list_price_unit` como base del proveedor.
+- `list_price_unit` se guarda como valor convertido a la moneda de la cotizacion usando el tipo de cambio vigente al guardar.
+- Al leer o clonar versiones, el backend devuelve ambos valores para que la UI pueda editar la base original sin perder el precio convertido.
 
 ## Pruebas
 

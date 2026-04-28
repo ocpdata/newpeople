@@ -233,6 +233,24 @@ Reglas:
 - Administrador: ve y opera todas las oportunidades.
 - No administrador: solo oportunidades de cuentas de las que es propietario.
 
+## Cotizaciones
+
+### Base monetaria y tipo de cambio
+
+- Cada item de cotizacion conserva dos referencias de precio: la base original del proveedor y el valor convertido en la moneda de la cotizacion.
+- La base original se compone de `originalCurrencyCode` y `originalListPriceUnit`.
+- El valor convertido visible y persistido para la cotizacion es `listPriceUnit`.
+- Si la moneda original del item coincide con la moneda de la cotizacion, `listPriceUnit` es igual a `originalListPriceUnit`.
+- Si la moneda original del item difiere de la moneda de la cotizacion, `listPriceUnit` se recalcula usando el tipo de cambio vigente de la version.
+- Cambiar moneda o tipo de cambio no debe sobrescribir la base original del proveedor; solo debe recalcular el valor convertido.
+- La UI expone `Precio Lista M.O.` como edicion directa de la base original y `Precio de lista` como resultado convertido.
+
+### Persistencia y versionado
+
+- Al crear una version nueva, los items copian tanto la base original como el valor convertido de la version origen.
+- Al guardar una cotizacion, backend y frontend deben persistir simultaneamente la base original y el precio convertido para preservar trazabilidad comercial.
+- La vista previa PDF y los totales operan sobre el valor convertido de la cotizacion, no sobre la base original del proveedor.
+
 ## Roles y catalogos
 
 ### Roles
@@ -288,6 +306,7 @@ Actualmente se auditan eventos relevantes de:
 10. No se puede marcar una cuenta como pendiente si tiene contactos activos o desactivados.
 11. No se puede desactivar un rol si tiene usuarios asignados.
 12. La auditoria es parte del comportamiento esperado, no un extra opcional.
+13. En cotizaciones, cambiar el tipo de cambio recalcula el precio convertido sin perder la moneda ni el precio originales del proveedor.
 
 ## Flujo de negocio resumido
 
@@ -358,6 +377,7 @@ por lideres comerciales, administradores funcionales y responsables de operacion
 ### Politica de oportunidades
 
 - Toda oportunidad debe nacer ligada a una cuenta y a un contacto de esa misma cuenta.
+- Una cotizacion derivada de la oportunidad puede presentarse en una moneda distinta de la lista del proveedor, pero debe conservar la base monetaria original por item para mantener trazabilidad del tipo de cambio.
 - El vendedor siempre es obligatorio.
 - El preventa se registra solo cuando realmente participa en el ciclo comercial.
 - No deben crearse oportunidades aisladas sin cuenta o con contactos cruzados de otra organizacion.

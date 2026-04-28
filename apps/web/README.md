@@ -65,6 +65,9 @@ El modulo de cotizaciones usa un flujo local intensivo en cliente:
 - el boton `Vista previa` envia el modelo actual al backend y abre un PDF inline en una pestaña nueva;
 - la tabla de edicion soporta bundles de catalogo y bundles manuales, con colapso por seccion;
 - la numeracion visible de filas en edicion se recalcula sobre las filas visibles.
+- `Precio Lista M.O.` edita la base original del proveedor con separacion de miles en UI.
+- `Precio de lista` se muestra como valor convertido en la moneda de la cotizacion y reacciona al cambiar moneda o tipo de cambio.
+- El frontend conserva `originalCurrencyCode` y `originalListPriceUnit` por item para recalcular `listPriceUnit` sin perder la referencia original.
 
 Archivos relevantes:
 
