@@ -189,6 +189,8 @@ const itemSchema = z.object({
   productCode: z.string().trim().min(1).max(120),
   productDescription: z.string().trim().min(1).max(5000),
   quantity: z.number().positive(),
+  originalCurrencyCode: z.string().trim().length(3).optional().nullable(),
+  originalListPriceUnit: z.number().nonnegative().optional().nullable(),
   listPriceUnit: z.number().nonnegative(),
   manufacturerDiscountPct: z.number().min(0).max(100),
   importCostPct: z.number().min(0).max(100),
@@ -547,6 +549,18 @@ async function ensureQuotationSectionItemsSchema() {
   if (!ensureQuotationSectionItemsSchemaPromise) {
     ensureQuotationSectionItemsSchemaPromise = (async () => {
       await ensureQuotationSectionItemsColumn(
+        "original_currency_code",
+        `ALTER TABLE quotation_section_items
+         ADD COLUMN original_currency_code CHAR(3) NULL
+         AFTER quantity`,
+      );
+      await ensureQuotationSectionItemsColumn(
+        "original_list_price_unit",
+        `ALTER TABLE quotation_section_items
+         ADD COLUMN original_list_price_unit DECIMAL(15, 4) NULL
+         AFTER original_currency_code`,
+      );
+      await ensureQuotationSectionItemsColumn(
         "final_discount_pct",
         `ALTER TABLE quotation_section_items
          ADD COLUMN final_discount_pct DECIMAL(7, 4) NOT NULL DEFAULT 0
@@ -611,6 +625,14 @@ async function ensureQuotationSectionItemsSchema() {
          ADD CONSTRAINT fk_quotation_section_items_source_component_price_item
          FOREIGN KEY (source_component_price_list_item_id) REFERENCES provider_price_list_items(id) ON DELETE SET NULL`,
       );
+      await query(
+        `UPDATE quotation_section_items
+         SET original_currency_code = COALESCE(NULLIF(TRIM(original_currency_code), ''), 'USD'),
+             original_list_price_unit = COALESCE(original_list_price_unit, list_price_unit)
+         WHERE original_currency_code IS NULL
+            OR TRIM(original_currency_code) = ''
+            OR original_list_price_unit IS NULL`,
+      );
     })().catch((error) => {
       ensureQuotationSectionItemsSchemaPromise = undefined;
       throw error;
@@ -647,6 +669,23 @@ function deriveBundleOriginType(item) {
   }
 
   return null;
+}
+
+function normalizeQuotationItemOriginalValues(
+  item,
+  fallbackCurrencyCode = "USD",
+) {
+  return {
+    originalCurrencyCode: String(
+      item.originalCurrencyCode || fallbackCurrencyCode || "USD",
+    )
+      .trim()
+      .toUpperCase(),
+    originalListPriceUnit: Number(
+      item.originalListPriceUnit ?? item.listPriceUnit,
+    ),
+    listPriceUnit: Number(item.listPriceUnit),
+  };
 }
 
 function validateAndNormalizeSectionItemsForCreate(items = []) {
@@ -904,7 +943,7 @@ function validateAndNormalizeFullSaveSections(sections = []) {
 
 async function upsertQuotationSectionItemsForFullSave(
   conn,
-  { sectionId, currentItemsById, items, now, userId },
+  { sectionId, currentItemsById, items, now, userId, quotationCurrencyCode },
 ) {
   const keptItemIds = new Set();
   const persistedItemIdByLocalId = new Map();
@@ -915,6 +954,10 @@ async function upsertQuotationSectionItemsForFullSave(
     const bundleSortOrder = item.bundleParentLocalId
       ? Number(item.bundleSortOrder || 1)
       : null;
+    const normalizedPrices = normalizeQuotationItemOriginalValues(
+      item,
+      quotationCurrencyCode,
+    );
 
     if (item.id) {
       const currentItem = currentItemsById.get(Number(item.id));
@@ -927,7 +970,8 @@ async function upsertQuotationSectionItemsForFullSave(
          SET provider_id = ?, product_code = ?, product_description = ?, item_type = ?,
              bundle_parent_item_id = NULL, bundle_origin_type = ?,
              source_provider_price_list_item_id = ?, source_component_price_list_item_id = ?,
-             quantity = ?, list_price_unit = ?, manufacturer_discount_pct = ?, import_cost_pct = ?,
+           quantity = ?, original_currency_code = ?, original_list_price_unit = ?, list_price_unit = ?,
+           manufacturer_discount_pct = ?, import_cost_pct = ?,
              profit_margin_pct = ?, final_discount_pct = ?, display_order = ?, bundle_sort_order = ?,
              updated_at = ?, updated_by_user_id = ?
          WHERE id = ?`,
@@ -940,7 +984,9 @@ async function upsertQuotationSectionItemsForFullSave(
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
           Number(item.quantity),
-          Number(item.listPriceUnit),
+          normalizedPrices.originalCurrencyCode,
+          normalizedPrices.originalListPriceUnit,
+          normalizedPrices.listPriceUnit,
           Number(item.manufacturerDiscountPct),
           Number(item.importCostPct),
           Number(item.profitMarginPct),
@@ -960,9 +1006,10 @@ async function upsertQuotationSectionItemsForFullSave(
         `INSERT INTO quotation_section_items
           (quotation_section_id, provider_id, product_code, product_description, item_type, bundle_parent_item_id,
            bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
-           quantity, list_price_unit, manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
+           quantity, original_currency_code, original_list_price_unit, list_price_unit,
+           manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
            final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           Number(sectionId),
           Number(item.providerId),
@@ -973,7 +1020,9 @@ async function upsertQuotationSectionItemsForFullSave(
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
           Number(item.quantity),
-          Number(item.listPriceUnit),
+          normalizedPrices.originalCurrencyCode,
+          normalizedPrices.originalListPriceUnit,
+          normalizedPrices.listPriceUnit,
           Number(item.manufacturerDiscountPct),
           Number(item.importCostPct),
           Number(item.profitMarginPct),
@@ -1107,19 +1156,32 @@ async function validatePersistentQuotationItemBundleShape({
 
 async function insertQuotationSectionItems(
   conn,
-  { sectionId, items, now, userId, refField, parentRefField },
+  {
+    sectionId,
+    items,
+    now,
+    userId,
+    refField,
+    parentRefField,
+    quotationCurrencyCode,
+  },
 ) {
   const insertedIdsByRef = new Map();
   const pendingRelationships = [];
 
   for (const [itemIndex, item] of items.entries()) {
+    const normalizedPrices = normalizeQuotationItemOriginalValues(
+      item,
+      quotationCurrencyCode,
+    );
     const [result] = await conn.query(
       `INSERT INTO quotation_section_items
         (quotation_section_id, provider_id, product_code, product_description, item_type, bundle_parent_item_id,
          bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
-         quantity, list_price_unit, manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
+         quantity, original_currency_code, original_list_price_unit, list_price_unit,
+         manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
          final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sectionId,
         Number(item.providerId),
@@ -1130,7 +1192,9 @@ async function insertQuotationSectionItems(
         item.sourceProviderPriceListItemId || null,
         item.sourceComponentPriceListItemId || null,
         Number(item.quantity),
-        Number(item.listPriceUnit),
+        normalizedPrices.originalCurrencyCode,
+        normalizedPrices.originalListPriceUnit,
+        normalizedPrices.listPriceUnit,
         Number(item.manufacturerDiscountPct),
         Number(item.importCostPct),
         Number(item.profitMarginPct),
@@ -1469,7 +1533,7 @@ async function getQuotationVersionSections(versionId) {
               qsi.bundle_parent_item_id, qsi.bundle_origin_type,
               qsi.source_provider_price_list_item_id,
               qsi.source_component_price_list_item_id,
-              qsi.quantity, qsi.list_price_unit,
+              qsi.quantity, qsi.original_currency_code, qsi.original_list_price_unit, qsi.list_price_unit,
               qsi.manufacturer_discount_pct, qsi.import_cost_pct,
               qsi.profit_margin_pct, qsi.final_discount_pct,
               qsi.display_order, qsi.bundle_sort_order
@@ -1501,6 +1565,11 @@ async function getQuotationVersionSections(versionId) {
           ? Number(item.source_component_price_list_item_id)
           : null,
         quantity: Number(item.quantity),
+        originalCurrencyCode: item.original_currency_code || null,
+        originalListPriceUnit:
+          item.original_list_price_unit == null
+            ? null
+            : Number(item.original_list_price_unit),
         listPriceUnit: Number(item.list_price_unit),
         manufacturerDiscountPct: Number(item.manufacturer_discount_pct),
         importCostPct: Number(item.import_cost_pct),
@@ -2381,6 +2450,7 @@ router.post(
           userId: req.user.id,
           refField: "clientItemId",
           parentRefField: "bundleParentClientItemId",
+          quotationCurrencyCode: parsed.data.currencyCode || "USD",
         });
       }
 
@@ -2641,6 +2711,8 @@ router.post(
           userId: req.user.id,
           refField: "id",
           parentRefField: "bundleParentItemId",
+          quotationCurrencyCode:
+            parsed.data.currencyCode || latestVersion.currency_code,
         });
       }
 
@@ -3103,6 +3175,8 @@ router.put(
               items: section.items,
               now,
               userId: req.user.id,
+              quotationCurrencyCode:
+                parsed.data.currencyCode || version.currency_code,
             },
           );
 

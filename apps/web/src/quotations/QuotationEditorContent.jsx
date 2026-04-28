@@ -7,7 +7,9 @@ import {
   calculateQuotationItemDisplayTotals,
   applyCreateQuotationDistributedFinalDiscount,
   DEFAULT_QUOTATION_VAT_PCT,
+  formatQuotationMoneyInputValue,
   formatQuotationAmount,
+  sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
 } from "./quotationsUtils";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +46,9 @@ function buildBundleDraftComponents(product, providerOptions) {
     productCode: component.code || "",
     productDescription: component.description || "",
     quantity: String(component.quantity ?? 1),
+    originalCurrencyCode:
+      component.currencyCode || product.currencyCode || "USD",
+    originalListPriceUnit: String(component.price ?? 0),
     listPriceUnit: String(component.price ?? 0),
     manufacturerDiscountPct: "0",
     importCostPct: "0",
@@ -84,6 +89,11 @@ const ITEM_TABLE_COLUMNS = [
     key: "quantity",
     label: "Cant.",
     defaultWidth: 64,
+  },
+  {
+    key: "originalListPriceUnit",
+    label: "Precio Lista M.O.",
+    defaultWidth: 108,
   },
   {
     key: "listPriceUnit",
@@ -182,6 +192,32 @@ function QuantityInput({ value, onChange, onBlur, min = "0" }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function OriginalListPriceInput({ ariaLabel, value, onChange, onBlur }) {
+  const [isFocused, setIsFocused] = useState(false);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      value={
+        isFocused ? String(value ?? "") : formatQuotationMoneyInputValue(value)
+      }
+      onFocus={() => setIsFocused(true)}
+      onChange={(event) =>
+        onChange(sanitizeQuotationMoneyInputValue(event.target.value))
+      }
+      onBlur={(event) => {
+        const sanitizedValue = sanitizeQuotationMoneyInputValue(
+          event.target.value,
+        );
+        setIsFocused(false);
+        onBlur?.(sanitizedValue);
+      }}
+    />
   );
 }
 
@@ -2645,6 +2681,35 @@ function QuotationEditorContent({
                                       --
                                     </span>
                                   ) : (
+                                    <OriginalListPriceInput
+                                      aria-label={`Precio Lista M.O. ${itemDraftValue.productCode || item.id}`}
+                                      value={
+                                        itemDraftValue.originalListPriceUnit
+                                      }
+                                      onChange={(nextValue) =>
+                                        updateDraftEntry(
+                                          setItemEdits,
+                                          item.id,
+                                          itemDraftValue,
+                                          "originalListPriceUnit",
+                                          nextValue,
+                                        )
+                                      }
+                                      onBlur={(nextValue) =>
+                                        saveExistingItemDraft(item.id, {
+                                          ...itemDraftValue,
+                                          originalListPriceUnit: nextValue,
+                                        })
+                                      }
+                                    />
+                                  )}
+                                </td>
+                                <td>
+                                  {isBundleParent ? (
+                                    <span className="quotation-bundle-parent-placeholder">
+                                      --
+                                    </span>
+                                  ) : (
                                     formatQuotationAmount(
                                       itemDraftValue.listPriceUnit,
                                     )
@@ -2824,7 +2889,7 @@ function QuotationEditorContent({
                         </tbody>
                         <tfoot>
                           <tr>
-                            <td colSpan={10}>Totales de la seccion</td>
+                            <td colSpan={11}>Totales de la seccion</td>
                             <td>
                               {formatQuotationAmount(
                                 displayedSectionTotals.costTotal,

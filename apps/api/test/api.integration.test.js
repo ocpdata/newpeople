@@ -4537,6 +4537,8 @@ describe("API integration baseline", () => {
                 productCode: "SKU-1",
                 productDescription: "Producto de prueba",
                 quantity: 2,
+                originalCurrencyCode: "USD",
+                originalListPriceUnit: 100,
                 listPriceUnit: 100,
                 manufacturerDiscountPct: 5,
                 importCostPct: 10,
@@ -4567,6 +4569,11 @@ describe("API integration baseline", () => {
     expect(version2Response.body.versionNumber).toBe(2);
     expect(version2Response.body.sections).toHaveLength(1);
     expect(version2Response.body.sections[0].items).toHaveLength(1);
+    expect(version2Response.body.sections[0].items[0]).toMatchObject({
+      originalCurrencyCode: "USD",
+      originalListPriceUnit: 100,
+      listPriceUnit: 100,
+    });
 
     const oldVersionTransitionResponse = await request(app)
       .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
@@ -4632,6 +4639,8 @@ describe("API integration baseline", () => {
                 productCode: "SKU-OLD-1",
                 productDescription: "Producto original A",
                 quantity: 2,
+                originalCurrencyCode: "USD",
+                originalListPriceUnit: 100,
                 listPriceUnit: 100,
                 manufacturerDiscountPct: 5,
                 importCostPct: 10,
@@ -4645,6 +4654,8 @@ describe("API integration baseline", () => {
                 productCode: "SKU-OLD-2",
                 productDescription: "Producto original B",
                 quantity: 1,
+                originalCurrencyCode: "USD",
+                originalListPriceUnit: 50,
                 listPriceUnit: 50,
                 manufacturerDiscountPct: 0,
                 importCostPct: 8,
@@ -4692,6 +4703,8 @@ describe("API integration baseline", () => {
                 productCode: "SKU-OLD-1",
                 productDescription: "Producto original A ajustado",
                 quantity: 5,
+                originalCurrencyCode: "USD",
+                originalListPriceUnit: 200,
                 listPriceUnit: 125,
                 manufacturerDiscountPct: 4,
                 importCostPct: 9,
@@ -4705,6 +4718,8 @@ describe("API integration baseline", () => {
                 productCode: "SKU-NEW-1",
                 productDescription: "Producto nuevo",
                 quantity: 3,
+                originalCurrencyCode: "EUR",
+                originalListPriceUnit: 60,
                 listPriceUnit: 75,
                 manufacturerDiscountPct: 2,
                 importCostPct: 6,
@@ -4747,12 +4762,44 @@ describe("API integration baseline", () => {
     ).toMatchObject({
       productDescription: "Producto original A ajustado",
       quantity: 5,
+      originalCurrencyCode: "USD",
+      originalListPriceUnit: 200,
       listPriceUnit: 125,
       manufacturerDiscountPct: 4,
       importCostPct: 9,
       profitMarginPct: 14,
       finalDiscountPct: 1,
     });
+    expect(
+      persistedItems.find((item) => item.productCode === "SKU-NEW-1"),
+    ).toMatchObject({
+      originalCurrencyCode: "EUR",
+      originalListPriceUnit: 60,
+      listPriceUnit: 75,
+    });
+
+    const rawPersistedRows = await query(
+      `SELECT product_code, original_currency_code, original_list_price_unit, list_price_unit
+       FROM quotation_section_items
+       WHERE quotation_section_id = ?
+       ORDER BY display_order, id`,
+      [Number(versionResponse.body.sections[0].id)],
+    );
+
+    expect(rawPersistedRows).toEqual([
+      {
+        product_code: "SKU-OLD-1",
+        original_currency_code: "USD",
+        original_list_price_unit: "200.0000",
+        list_price_unit: "125.0000",
+      },
+      {
+        product_code: "SKU-NEW-1",
+        original_currency_code: "EUR",
+        original_list_price_unit: "60.0000",
+        list_price_unit: "75.0000",
+      },
+    ]);
     expect(
       persistedItems.some((item) => Number(item.id) === Number(seededItemB.id)),
     ).toBe(false);

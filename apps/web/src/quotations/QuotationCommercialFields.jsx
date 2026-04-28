@@ -167,6 +167,11 @@ export function QuotationCommercialConditionsCard({
             />
           </div>
         </div>
+
+        <p className="quotation-commercial-conditions-helper-text">
+          "Precio Lista M.O." conserva la base original del proveedor y "Precio
+          de lista" muestra el valor convertido en la moneda de la cotizacion.
+        </p>
       </div>
 
       <div className="field-group quotation-commercial-conditions-notes-field">

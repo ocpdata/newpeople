@@ -10,7 +10,10 @@ import {
   calculateQuotationItemTotals,
   DEFAULT_QUOTATION_COMMERCIAL_CONDITIONS,
   DEFAULT_QUOTATION_VAT_PCT,
+  buildQuotationItemPricing,
+  formatQuotationMoneyInputValue,
   formatQuotationAmount,
+  sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
 } from "./quotationsUtils";
 import {
@@ -110,6 +113,32 @@ function CheckIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="m5 12 5 5L20 7" />
     </svg>
+  );
+}
+
+function OriginalListPriceInput({ ariaLabel, value, onChange, onBlur }) {
+  const [isFocused, setIsFocused] = useState(false);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      value={
+        isFocused ? String(value ?? "") : formatQuotationMoneyInputValue(value)
+      }
+      onFocus={() => setIsFocused(true)}
+      onChange={(event) =>
+        onChange(sanitizeQuotationMoneyInputValue(event.target.value))
+      }
+      onBlur={(event) => {
+        const sanitizedValue = sanitizeQuotationMoneyInputValue(
+          event.target.value,
+        );
+        setIsFocused(false);
+        onBlur?.(sanitizedValue);
+      }}
+    />
   );
 }
 
@@ -332,6 +361,13 @@ const ITEM_TABLE_COLUMNS = [
     resizable: true,
   },
   {
+    key: "originalListPriceUnit",
+    label: "Precio Lista M.O.",
+    defaultWidth: 110,
+    minWidth: 92,
+    resizable: true,
+  },
+  {
     key: "listPriceUnit",
     label: "Precio de lista",
     defaultWidth: 88,
@@ -518,13 +554,27 @@ function QuotationCreateModal({
   );
   const effectiveCreateSectionDrafts = useMemo(
     () =>
-      summaryVatMode === "per_item"
+      (summaryVatMode === "per_item"
         ? applyCreateQuotationPerItemVat(
             discountedCreateSectionDrafts,
             DEFAULT_QUOTATION_VAT_PCT,
           )
-        : discountedCreateSectionDrafts,
-    [discountedCreateSectionDrafts, summaryVatMode],
+        : discountedCreateSectionDrafts
+      ).map((section) => ({
+        ...section,
+        items: (section.items || []).map((item) => {
+          const pricing = buildQuotationItemPricing(item, commercialConditions);
+          return {
+            ...item,
+            quotationCurrencyCode: commercialConditions.currencyCode,
+            quotationExchangeRate: commercialConditions.exchangeRate,
+            originalCurrencyCode: pricing.originalCurrencyCode,
+            originalListPriceUnit: String(pricing.originalListPriceUnit),
+            listPriceUnit: String(pricing.listPriceUnit),
+          };
+        }),
+      })),
+    [commercialConditions, discountedCreateSectionDrafts, summaryVatMode],
   );
   const effectiveCreateSectionItemsBySectionId = useMemo(
     () =>
@@ -1719,7 +1769,7 @@ function QuotationCreateModal({
 
                   {createSectionDrafts.length ? (
                     <div className="quotation-create-section-drafts">
-                      {createSectionDrafts.map((section, index) => {
+                      {effectiveCreateSectionDrafts.map((section, index) => {
                         const sectionItems = section.items || [];
                         const effectiveSectionItems =
                           effectiveCreateSectionItemsBySectionId.get(
@@ -2494,20 +2544,31 @@ function QuotationCreateModal({
                                                   --
                                                 </span>
                                               ) : (
-                                                <input
-                                                  type="number"
-                                                  min="0"
-                                                  step="0.01"
-                                                  value={item.listPriceUnit}
-                                                  onChange={(event) =>
+                                                <OriginalListPriceInput
+                                                  aria-label={`Precio Lista M.O. ${item.productCode || visibleItemIndex + 1}`}
+                                                  value={
+                                                    item.originalListPriceUnit
+                                                  }
+                                                  onChange={(nextValue) =>
                                                     handleUpdateCreateSectionItem(
                                                       index,
                                                       itemIndex,
-                                                      "listPriceUnit",
-                                                      event.target.value,
+                                                      "originalListPriceUnit",
+                                                      nextValue,
                                                     )
                                                   }
                                                 />
+                                              )}
+                                            </td>
+                                            <td>
+                                              {isBundleParent ? (
+                                                <span className="quotation-bundle-parent-placeholder">
+                                                  --
+                                                </span>
+                                              ) : (
+                                                formatQuotationAmount(
+                                                  item.listPriceUnit,
+                                                )
                                               )}
                                             </td>
                                             <td>
@@ -2663,7 +2724,7 @@ function QuotationCreateModal({
                                   </tbody>
                                   <tfoot>
                                     <tr>
-                                      <td colSpan={10}>
+                                      <td colSpan={11}>
                                         Totales de la seccion
                                       </td>
                                       <td>

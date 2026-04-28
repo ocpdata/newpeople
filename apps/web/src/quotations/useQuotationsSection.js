@@ -8,6 +8,7 @@ import {
 } from "react";
 import { api, getApiErrorMessage } from "../api";
 import {
+  buildQuotationItemPricing,
   buildItemDraft,
   buildCreateQuotationForm,
   buildItemDrafts,
@@ -22,6 +23,8 @@ import {
   getQuotationWorkflowTone,
   normalizeQuotationDateInput,
   normalizeText,
+  syncQuotationItemDraftPricing,
+  syncQuotationItemEditsPricing,
   toNumber,
 } from "./quotationsUtils";
 import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
@@ -214,6 +217,7 @@ function normalizeCreateBundleParentAsManual(item) {
   return {
     ...item,
     quantity: "1",
+    originalListPriceUnit: "0",
     listPriceUnit: "0",
     manufacturerDiscountPct: "0",
     importCostPct: "0",
@@ -470,13 +474,20 @@ function getCreateBundleOriginType(item) {
 }
 
 function buildCreateQuotationSectionItemPayload(item, itemIndex) {
+  const pricing = buildQuotationItemPricing(item, {
+    currencyCode: item?.quotationCurrencyCode,
+    exchangeRate: item?.quotationExchangeRate,
+  });
+
   return {
     clientItemId: String(item?.localId || `draft-item-${itemIndex + 1}`),
     providerId: Number(item?.providerId),
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     quantity: toNumber(item?.quantity),
-    listPriceUnit: toNumber(item?.listPriceUnit),
+    originalCurrencyCode: pricing.originalCurrencyCode,
+    originalListPriceUnit: pricing.originalListPriceUnit,
+    listPriceUnit: pricing.listPriceUnit,
     manufacturerDiscountPct: toNumber(item?.manufacturerDiscountPct),
     importCostPct: toNumber(item?.importCostPct),
     profitMarginPct: toNumber(item?.profitMarginPct),
@@ -511,13 +522,21 @@ function resolvePositiveDisplayOrder(value, fallbackDisplayOrder) {
   return toPositiveIntegerOrNull(fallbackDisplayOrder) || 1;
 }
 
-function buildPersistedQuotationItemPayload(item, fallbackDisplayOrder = 1) {
+function buildPersistedQuotationItemPayload(
+  item,
+  fallbackDisplayOrder = 1,
+  pricingContext = {},
+) {
+  const pricing = buildQuotationItemPricing(item, pricingContext);
+
   return {
     providerId: Number(item?.providerId),
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     quantity: toNumber(item?.quantity),
-    listPriceUnit: toNumber(item?.listPriceUnit),
+    originalCurrencyCode: pricing.originalCurrencyCode,
+    originalListPriceUnit: pricing.originalListPriceUnit,
+    listPriceUnit: pricing.listPriceUnit,
     manufacturerDiscountPct: toNumber(item?.manufacturerDiscountPct),
     importCostPct: toNumber(item?.importCostPct),
     profitMarginPct: toNumber(item?.profitMarginPct),
@@ -601,7 +620,10 @@ function buildPersistedQuotationVersionPayload({
         items: sectionItems.map((item, itemIndex) => ({
           ...(Number(item.id) > 0 ? { id: Number(item.id) } : {}),
           localId: String(item.localId || item.id),
-          ...buildPersistedQuotationItemPayload(item, itemIndex + 1),
+          ...buildPersistedQuotationItemPayload(item, itemIndex + 1, {
+            currencyCode: versionForm.currencyCode,
+            exchangeRate: versionForm.exchangeRate,
+          }),
           bundleParentLocalId: item.bundleParentLocalId || null,
         })),
       };
@@ -697,6 +719,10 @@ function buildLocalEditableItemRecord(item, providers, displayOrder) {
       ? Number(item.sourceComponentPriceListItemId)
       : null,
     quantity: toNumber(item?.quantity),
+    originalCurrencyCode: item?.originalCurrencyCode || "USD",
+    originalListPriceUnit: toNumber(
+      item?.originalListPriceUnit ?? item?.listPriceUnit,
+    ),
     listPriceUnit: toNumber(item?.listPriceUnit),
     manufacturerDiscountPct: toNumber(item?.manufacturerDiscountPct),
     importCostPct: toNumber(item?.importCostPct),
@@ -724,6 +750,10 @@ function buildLocalEditableItemDraft(item, displayOrder) {
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     quantity: String(item?.quantity ?? 0),
+    originalCurrencyCode: item?.originalCurrencyCode || "USD",
+    originalListPriceUnit: String(
+      item?.originalListPriceUnit ?? item?.listPriceUnit ?? 0,
+    ),
     listPriceUnit: String(item?.listPriceUnit ?? 0),
     manufacturerDiscountPct: String(item?.manufacturerDiscountPct ?? 0),
     importCostPct: String(item?.importCostPct ?? 0),
@@ -832,6 +862,29 @@ export function useQuotationsSection({
   const [createContactOptions, setCreateContactOptions] = useState(
     contactOptions || [],
   );
+  const quotationVersionPricingContext = useMemo(
+    () => ({
+      currencyCode: versionForm.currencyCode,
+      exchangeRate: versionForm.exchangeRate,
+    }),
+    [versionForm.currencyCode, versionForm.exchangeRate],
+  );
+  const setSyncedItemEdits = useCallback(
+    (valueOrUpdater) => {
+      setItemEdits((prev) => {
+        const nextItemEdits =
+          typeof valueOrUpdater === "function"
+            ? valueOrUpdater(prev)
+            : valueOrUpdater;
+
+        return syncQuotationItemEditsPricing(
+          nextItemEdits,
+          quotationVersionPricingContext,
+        );
+      });
+    },
+    [quotationVersionPricingContext],
+  );
   const [loadingCreateOpportunities, setLoadingCreateOpportunities] =
     useState(false);
   const [loadingCreateContacts, setLoadingCreateContacts] = useState(false);
@@ -866,6 +919,12 @@ export function useQuotationsSection({
   const createItemDraftSequenceRef = useRef(1);
   const editSectionDraftSequenceRef = useRef(1);
   const editItemDraftSequenceRef = useRef(1);
+
+  useEffect(() => {
+    setItemEdits((prev) =>
+      syncQuotationItemEditsPricing(prev, quotationVersionPricingContext),
+    );
+  }, [quotationVersionPricingContext]);
 
   const normalizeQuotationListRecords = useCallback((records) => {
     if (!Array.isArray(records)) return [];
@@ -2220,17 +2279,23 @@ export function useQuotationsSection({
             ...section,
             items: (section.items || []).map((item, currentItemIndex) =>
               currentItemIndex === itemIndex
-                ? {
-                    ...item,
-                    [field]: value,
-                  }
+                ? syncQuotationItemDraftPricing(
+                    {
+                      ...item,
+                      [field]: value,
+                    },
+                    {
+                      currencyCode: createQuotationForm.currencyCode,
+                      exchangeRate: createQuotationForm.exchangeRate,
+                    },
+                  )
                 : item,
             ),
           };
         }),
       );
     },
-    [],
+    [createQuotationForm.currencyCode, createQuotationForm.exchangeRate],
   );
 
   const handleApplyCreateSectionItemProduct = useCallback(
@@ -2255,6 +2320,14 @@ export function useQuotationsSection({
             ),
             productCode: product.code || "",
             productDescription: product.description || "",
+            originalCurrencyCode:
+              product.currencyCode || currentItem.originalCurrencyCode || "USD",
+            originalListPriceUnit: String(
+              product.price ??
+                currentItem.originalListPriceUnit ??
+                currentItem.listPriceUnit ??
+                "0",
+            ),
             listPriceUnit: String(
               product.price ?? currentItem.listPriceUnit ?? "0",
             ),
@@ -2297,6 +2370,9 @@ export function useQuotationsSection({
                     productCode: component.code || "",
                     productDescription: component.description || "",
                     quantity: String(component.quantity ?? 1),
+                    originalCurrencyCode:
+                      component.currencyCode || product.currencyCode || "USD",
+                    originalListPriceUnit: String(component.price ?? 0),
                     listPriceUnit: String(component.price ?? 0),
                     manufacturerDiscountPct: "0",
                     importCostPct: "0",
@@ -3368,6 +3444,14 @@ export function useQuotationsSection({
         providerId: String(product.providerId || currentItem.providerId || ""),
         productCode: product.code || "",
         productDescription: product.description || "",
+        originalCurrencyCode:
+          product.currencyCode || currentItem.originalCurrencyCode || "USD",
+        originalListPriceUnit: String(
+          product.price ??
+            currentItem.originalListPriceUnit ??
+            currentItem.listPriceUnit ??
+            "0",
+        ),
         listPriceUnit: String(
           product.price ?? currentItem.listPriceUnit ?? "0",
         ),
@@ -3393,6 +3477,9 @@ export function useQuotationsSection({
                 productCode: component.code || "",
                 productDescription: component.description || "",
                 quantity: String(component.quantity ?? 1),
+                originalCurrencyCode:
+                  component.currencyCode || product.currencyCode || "USD",
+                originalListPriceUnit: String(component.price ?? 0),
                 listPriceUnit: String(component.price ?? 0),
                 manufacturerDiscountPct: "0",
                 importCostPct: "0",
@@ -4184,7 +4271,7 @@ export function useQuotationsSection({
         sectionEdits,
         setSectionEdits,
         itemEdits,
-        setItemEdits,
+        setItemEdits: setSyncedItemEdits,
         itemDraftsBySection,
         setItemDraftsBySection,
         handleSaveSection,
@@ -4255,7 +4342,7 @@ export function useQuotationsSection({
       sectionEdits,
       setSectionEdits,
       itemEdits,
-      setItemEdits,
+      setItemEdits: setSyncedItemEdits,
       itemDraftsBySection,
       setItemDraftsBySection,
       handleSaveSection,

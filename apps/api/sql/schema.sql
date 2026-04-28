@@ -1335,6 +1335,8 @@ CREATE TABLE IF NOT EXISTS quotation_section_items (
   source_provider_price_list_item_id BIGINT UNSIGNED NULL,
   source_component_price_list_item_id BIGINT UNSIGNED NULL,
   quantity DECIMAL(15, 4) NOT NULL,
+  original_currency_code CHAR(3) NULL,
+  original_list_price_unit DECIMAL(15, 4) NULL,
   list_price_unit DECIMAL(15, 4) NOT NULL,
   manufacturer_discount_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
   import_cost_pct DECIMAL(7, 4) NOT NULL DEFAULT 0,
@@ -1371,6 +1373,43 @@ SET @stmt := (
 PREPARE s_quotation_section_items_final_discount_col FROM @stmt;
 EXECUTE s_quotation_section_items_final_discount_col;
 DEALLOCATE PREPARE s_quotation_section_items_final_discount_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN original_currency_code CHAR(3) NULL AFTER quantity',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'original_currency_code'
+);
+PREPARE s_quotation_section_items_original_currency_col FROM @stmt;
+EXECUTE s_quotation_section_items_original_currency_col;
+DEALLOCATE PREPARE s_quotation_section_items_original_currency_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN original_list_price_unit DECIMAL(15, 4) NULL AFTER original_currency_code',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'original_list_price_unit'
+);
+PREPARE s_quotation_section_items_original_list_price_col FROM @stmt;
+EXECUTE s_quotation_section_items_original_list_price_col;
+DEALLOCATE PREPARE s_quotation_section_items_original_list_price_col;
+
+UPDATE quotation_section_items
+SET original_currency_code = COALESCE(NULLIF(TRIM(original_currency_code), ''), 'USD'),
+    original_list_price_unit = COALESCE(original_list_price_unit, list_price_unit)
+WHERE original_currency_code IS NULL
+   OR TRIM(original_currency_code) = ''
+   OR original_list_price_unit IS NULL;
 
 SET @stmt := (
   SELECT IF(

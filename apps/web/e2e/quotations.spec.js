@@ -253,6 +253,8 @@ function createQuotationsFixture({
             sourceProviderPriceListItemId: 301,
             sourceComponentPriceListItemId: null,
             quantity: 1,
+            originalCurrencyCode: "USD",
+            originalListPriceUnit: 0,
             listPriceUnit: 0,
             manufacturerDiscountPct: 0,
             importCostPct: 0,
@@ -273,6 +275,8 @@ function createQuotationsFixture({
             sourceProviderPriceListItemId: null,
             sourceComponentPriceListItemId: 401,
             quantity: 2,
+            originalCurrencyCode: "USD",
+            originalListPriceUnit: 10,
             listPriceUnit: 10,
             manufacturerDiscountPct: 0,
             importCostPct: 0,
@@ -293,6 +297,8 @@ function createQuotationsFixture({
             sourceProviderPriceListItemId: null,
             sourceComponentPriceListItemId: 402,
             quantity: 1,
+            originalCurrencyCode: "USD",
+            originalListPriceUnit: 20,
             listPriceUnit: 20,
             manufacturerDiscountPct: 0,
             importCostPct: 0,
@@ -503,6 +509,10 @@ function createQuotationsFixture({
         sourceComponentPriceListItemId:
           item.sourceComponentPriceListItemId || null,
         quantity: Number(item.quantity || 0),
+        originalCurrencyCode: item.originalCurrencyCode || "USD",
+        originalListPriceUnit: Number(
+          item.originalListPriceUnit ?? item.listPriceUnit ?? 0,
+        ),
         listPriceUnit: Number(item.listPriceUnit || 0),
         manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
         importCostPct: Number(item.importCostPct || 0),
@@ -833,6 +843,25 @@ async function chooseProduct(page, code) {
     .first();
   await expect(pickerRow).toBeVisible();
   await pickerRow.getByRole("button", { name: "Seleccionar producto" }).click();
+}
+
+async function selectProductPickerProvider(page, providerId = "201") {
+  const pickerModal = page.locator(".quotation-product-picker-modal").first();
+  await expect(pickerModal).toBeVisible();
+  await pickerModal.locator("select").first().selectOption(providerId);
+}
+
+async function openQuotationPdfPreview(page, editModal) {
+  await editModal.getByRole("button", { name: "Vista previa" }).click();
+
+  const previewModal = page.locator(".quotation-print-preview-modal").first();
+  await expect(previewModal).toBeVisible();
+
+  const popupPromise = page.waitForEvent("popup");
+  await previewModal.getByRole("button", { name: "Abrir PDF" }).click();
+  const printPage = await popupPromise;
+
+  return { previewModal, printPage };
 }
 
 async function getQuotationRowCodes(page) {
@@ -1411,13 +1440,13 @@ test.describe("quotations", () => {
       page
         .locator(".quotation-items-table tbody tr")
         .nth(0)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toHaveValue("10");
     await expect(
       page
         .locator(".quotation-items-table tbody tr")
         .nth(1)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toHaveValue("10");
   });
 
@@ -1633,6 +1662,61 @@ test.describe("quotations", () => {
     );
   });
 
+  test("crea cotizacion usando Precio Lista M.O. como base persistida y listPriceUnit convertido", async ({
+    page,
+  }) => {
+    let capturedCreatePayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        onCreateQuotation(payload) {
+          capturedCreatePayload = payload;
+        },
+      }),
+    );
+
+    const createModal = await openCreateQuotationModal(page);
+
+    await addProductRow(page, createModal, 0, "PROD-1");
+    await createModal.getByLabel("Moneda").selectOption("EUR");
+    await createModal.getByLabel("Tipo de cambio").fill("18");
+    await createModal
+      .getByRole("row", { name: /PROD-1/ })
+      .getByRole("textbox")
+      .nth(2)
+      .fill("120");
+    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+
+    await expect.poll(() => capturedCreatePayload).not.toBeNull();
+    expect(capturedCreatePayload.sections[0].items[0]).toMatchObject({
+      originalCurrencyCode: "USD",
+      originalListPriceUnit: 120,
+      listPriceUnit: 2160,
+    });
+  });
+
+  test("actualiza Precio de lista al cambiar el tipo de cambio en la creacion", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route("**/api/**", createQuotationsFixture());
+
+    const createModal = await openCreateQuotationModal(page);
+
+    await addProductRow(page, createModal, 0, "PROD-1");
+    await createModal.getByLabel("Moneda").selectOption("EUR");
+
+    const productRow = createModal.getByRole("row", { name: /PROD-1/ });
+
+    await createModal.getByLabel("Tipo de cambio").fill("18");
+    await expect(productRow).toContainText("1,800.00");
+
+    await createModal.getByLabel("Tipo de cambio").fill("20");
+    await expect(productRow).toContainText("2,000.00");
+  });
+
   test("permite editar condiciones comerciales y bloquea el contexto de oportunidad", async ({
     page,
   }) => {
@@ -1706,6 +1790,47 @@ test.describe("quotations", () => {
     );
     expect(capturedUpdatePayload.internalNotes).toBe(
       "Revision interna de margen aprobada.",
+    );
+  });
+
+  test("edita cotizacion usando Precio Lista M.O. como base persistida y listPriceUnit convertido", async ({
+    page,
+  }) => {
+    let capturedUpdatePayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        onUpdateQuotationVersion(payload) {
+          capturedUpdatePayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    await editModal.getByLabel("Moneda").selectOption("EUR");
+    await editModal.getByLabel("Tipo de cambio").fill("2");
+    await editModal
+      .getByRole("row", { name: /A-COMP-1/ })
+      .getByRole("textbox")
+      .nth(2)
+      .fill("11");
+    await editModal
+      .getByRole("button", { name: "Guardar como version actual" })
+      .click();
+
+    await expect.poll(() => capturedUpdatePayload).not.toBeNull();
+    expect(capturedUpdatePayload.sections[0].items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          productCode: "A-COMP-1",
+          originalCurrencyCode: "USD",
+          originalListPriceUnit: 11,
+          listPriceUnit: 22,
+        }),
+      ]),
     );
   });
 
@@ -1910,9 +2035,7 @@ test.describe("quotations", () => {
       .getByLabel("Notas de la cotizacion")
       .fill("Vista previa con notas locales.");
 
-    const popupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const printPage = await popupPromise;
+    const { printPage } = await openQuotationPdfPreview(page, editModal);
     await expect
       .poll(() => renderedPdfPayload?.notes || "")
       .toBe("Vista previa con notas locales.");
@@ -1976,9 +2099,10 @@ test.describe("quotations", () => {
 
     const editModal = await openEditQuotationModal(page);
 
-    const firstPopupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const firstPrintPage = await firstPopupPromise;
+    const { printPage: firstPrintPage } = await openQuotationPdfPreview(
+      page,
+      editModal,
+    );
 
     await expect
       .poll(
@@ -1993,9 +2117,10 @@ test.describe("quotations", () => {
 
     await toggleBundleComponents(page, "BUNDLE-A");
 
-    const secondPopupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const secondPrintPage = await secondPopupPromise;
+    const { printPage: secondPrintPage } = await openQuotationPdfPreview(
+      page,
+      editModal,
+    );
 
     await expect
       .poll(
@@ -2124,9 +2249,7 @@ test.describe("quotations", () => {
 
     const editModal = await openEditQuotationModal(page);
 
-    const popupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const printPage = await popupPromise;
+    const { printPage } = await openQuotationPdfPreview(page, editModal);
 
     await expect
       .poll(
@@ -2174,11 +2297,10 @@ test.describe("quotations", () => {
       .locator(".quotation-items-table tbody tr")
       .last();
     await secondSectionNewRow.locator("td:nth-child(3) input").dblclick();
+    await selectProductPickerProvider(page);
     await chooseProduct(page, "BUNDLE-B");
 
-    const popupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const printPage = await popupPromise;
+    const { printPage } = await openQuotationPdfPreview(page, editModal);
 
     await expect
       .poll(
@@ -2232,16 +2354,19 @@ test.describe("quotations", () => {
       .locator(".quotation-items-table tbody tr")
       .last();
     await newRow.locator("td:nth-child(3) input").dblclick();
+    await selectProductPickerProvider(page);
     await chooseProduct(page, "PROD-1");
 
     await secondSection.getByRole("button", { name: "Agregar fila" }).click();
     newRow = secondSection.locator(".quotation-items-table tbody tr").last();
     await newRow.locator("td:nth-child(3) input").dblclick();
+    await selectProductPickerProvider(page);
     await chooseProduct(page, "PROD-2");
 
     await secondSection.getByRole("button", { name: "Agregar fila" }).click();
     newRow = secondSection.locator(".quotation-items-table tbody tr").last();
     await newRow.locator("td:nth-child(3) input").dblclick();
+    await selectProductPickerProvider(page);
     await chooseProduct(page, "PROD-3");
 
     await secondSection
@@ -2270,9 +2395,7 @@ test.describe("quotations", () => {
       .getByRole("button", { name: "Confirmar bundle" })
       .click();
 
-    const popupPromise = page.waitForEvent("popup");
-    await editModal.getByRole("button", { name: "Vista previa" }).click();
-    const printPage = await popupPromise;
+    const { printPage } = await openQuotationPdfPreview(page, editModal);
 
     await expect
       .poll(
@@ -3214,25 +3337,25 @@ test.describe("quotations", () => {
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(1)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toHaveValue("25");
     await expect(
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(1)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toBeDisabled();
     await expect(
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(2)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toHaveValue("25");
     await expect(
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(2)
-        .locator("td:nth-child(13) input"),
+        .locator("td:nth-child(14) input"),
     ).toBeDisabled();
 
     await editModal
@@ -3290,13 +3413,13 @@ test.describe("quotations", () => {
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(1)
-        .locator("td:nth-child(14)"),
+        .locator("td:nth-child(15)"),
     ).toContainText("11.60");
     await expect(
       editModal
         .locator(".quotation-items-table tbody tr")
         .nth(1)
-        .locator("td:nth-child(15)"),
+        .locator("td:nth-child(16)"),
     ).toContainText("23.20");
     await expect(
       await getQuotationSummaryRowValues(editModal, "Total"),
@@ -3329,13 +3452,13 @@ test.describe("quotations", () => {
       page
         .locator(".quotation-items-table tbody tr")
         .nth(0)
-        .locator("td:nth-child(14)"),
+        .locator("td:nth-child(15)"),
     ).toContainText("116.00");
     await expect(
       page
         .locator(".quotation-items-table tbody tr")
         .nth(0)
-        .locator("td:nth-child(15)"),
+        .locator("td:nth-child(16)"),
     ).toContainText("116.00");
     await expect(
       await getQuotationSummaryRowValues(createModal, "Total"),

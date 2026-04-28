@@ -224,6 +224,8 @@ export function buildItemDraft(providerOptions) {
     productCode: "",
     productDescription: "",
     quantity: "1",
+    originalCurrencyCode: "USD",
+    originalListPriceUnit: "0",
     listPriceUnit: "0",
     manufacturerDiscountPct: "0",
     importCostPct: "0",
@@ -276,6 +278,38 @@ export function formatQuotationAmount(value) {
   });
 }
 
+export function sanitizeQuotationMoneyInputValue(value) {
+  return String(value || "")
+    .replace(/,/gu, "")
+    .replace(/[^\d.]/gu, "")
+    .replace(/(\..*)\./gu, "$1");
+}
+
+export function formatQuotationMoneyInputValue(value) {
+  const sanitizedValue = sanitizeQuotationMoneyInputValue(value);
+  const numericValue = Number(sanitizedValue);
+
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return "0";
+  }
+
+  const normalizedValue = numericValue
+    .toFixed(4)
+    .replace(/(\.\d*?[1-9])0+$/u, "$1")
+    .replace(/\.0+$/u, "");
+  const [integerPart, decimalPart] = normalizedValue.split(".");
+  const formattedIntegerPart = Number(integerPart || 0).toLocaleString(
+    "es-MX",
+    {
+      maximumFractionDigits: 0,
+    },
+  );
+
+  return decimalPart
+    ? `${formattedIntegerPart}.${decimalPart}`
+    : formattedIntegerPart;
+}
+
 export function roundQuotationMoney(value) {
   const numericValue = Number(value || 0);
   if (!Number.isFinite(numericValue)) {
@@ -283,6 +317,121 @@ export function roundQuotationMoney(value) {
   }
 
   return Math.round((numericValue + Number.EPSILON) * 100) / 100;
+}
+
+export function roundQuotationUnitPrice(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) {
+    return 0;
+  }
+
+  return Math.round((numericValue + Number.EPSILON) * 10000) / 10000;
+}
+
+export function normalizeQuotationCurrencyCode(value, fallback = "USD") {
+  const normalizedValue = String(value || fallback || "USD")
+    .trim()
+    .toUpperCase();
+
+  return normalizedValue || "USD";
+}
+
+export function normalizeQuotationExchangeRateValue(value, fallback = 1) {
+  const numericValue = toNumber(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return fallback;
+  }
+
+  return numericValue;
+}
+
+export function buildQuotationItemPricing(item, pricingContext = {}) {
+  const quotationCurrencyCode = normalizeQuotationCurrencyCode(
+    pricingContext?.currencyCode,
+    item?.originalCurrencyCode || "USD",
+  );
+  const originalCurrencyCode = normalizeQuotationCurrencyCode(
+    item?.originalCurrencyCode,
+    quotationCurrencyCode,
+  );
+  const originalListPriceUnit = Math.max(
+    toNumber(item?.originalListPriceUnit ?? item?.listPriceUnit),
+    0,
+  );
+  const exchangeRate = normalizeQuotationExchangeRateValue(
+    pricingContext?.exchangeRate,
+    1,
+  );
+  const listPriceUnit =
+    originalCurrencyCode === quotationCurrencyCode
+      ? originalListPriceUnit
+      : roundQuotationUnitPrice(originalListPriceUnit * exchangeRate);
+
+  return {
+    quotationCurrencyCode,
+    originalCurrencyCode,
+    originalListPriceUnit,
+    listPriceUnit,
+    exchangeRate,
+  };
+}
+
+export function syncQuotationItemDraftPricing(item, pricingContext = {}) {
+  if (!item || typeof item !== "object") {
+    return item;
+  }
+
+  const pricing = buildQuotationItemPricing(item, pricingContext);
+
+  return {
+    ...item,
+    quotationCurrencyCode: pricing.quotationCurrencyCode,
+    quotationExchangeRate: pricing.exchangeRate,
+    originalCurrencyCode: pricing.originalCurrencyCode,
+    originalListPriceUnit: String(pricing.originalListPriceUnit),
+    listPriceUnit: String(pricing.listPriceUnit),
+  };
+}
+
+export function syncQuotationItemEditsPricing(itemEdits, pricingContext = {}) {
+  if (!itemEdits || typeof itemEdits !== "object") {
+    return itemEdits;
+  }
+
+  const entries = Object.entries(itemEdits);
+  if (!entries.length) {
+    return itemEdits;
+  }
+
+  let hasChanges = false;
+  const nextItemEdits = Object.fromEntries(
+    entries.map(([itemId, itemDraft]) => {
+      const syncedDraft = syncQuotationItemDraftPricing(
+        itemDraft,
+        pricingContext,
+      );
+
+      if (
+        !hasChanges &&
+        (String(itemDraft?.quotationCurrencyCode || "") !==
+          String(syncedDraft?.quotationCurrencyCode || "") ||
+          String(itemDraft?.quotationExchangeRate || "") !==
+            String(syncedDraft?.quotationExchangeRate || "") ||
+          String(itemDraft?.originalCurrencyCode || "") !==
+            String(syncedDraft?.originalCurrencyCode || "") ||
+          String(itemDraft?.originalListPriceUnit || "") !==
+            String(syncedDraft?.originalListPriceUnit || "") ||
+          String(itemDraft?.listPriceUnit || "") !==
+            String(syncedDraft?.listPriceUnit || ""))
+      ) {
+        hasChanges = true;
+      }
+
+      return [itemId, syncedDraft];
+    }),
+  );
+
+  return hasChanges ? nextItemEdits : itemEdits;
 }
 
 export const DEFAULT_QUOTATION_VAT_PCT = 16;
@@ -668,6 +817,10 @@ export function buildItemEdits(version) {
           productCode: item.productCode,
           productDescription: item.productDescription,
           quantity: String(item.quantity),
+          originalCurrencyCode: item.originalCurrencyCode || "USD",
+          originalListPriceUnit: String(
+            item.originalListPriceUnit ?? item.listPriceUnit ?? 0,
+          ),
           listPriceUnit: String(item.listPriceUnit),
           manufacturerDiscountPct: String(item.manufacturerDiscountPct),
           importCostPct: String(item.importCostPct),
