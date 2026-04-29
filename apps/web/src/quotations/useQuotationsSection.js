@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { quotationPrintTemplateData } from "./quotationPrintTemplateData";
 import {
   buildQuotationItemPricing,
   buildItemDraft,
@@ -813,6 +814,9 @@ export function useQuotationsSection({
     providers: [],
     activationStatuses: [],
   });
+  const [companyBranding, setCompanyBranding] = useState(
+    quotationPrintTemplateData.company,
+  );
   const [selectedQuotationId, setSelectedQuotationId] = useState(null);
   const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [selectedVersion, setSelectedVersion] = useState(null);
@@ -918,6 +922,30 @@ export function useQuotationsSection({
   const createSectionDraftSequenceRef = useRef(1);
   const createItemDraftSequenceRef = useRef(1);
   const editSectionDraftSequenceRef = useRef(1);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDocumentBranding() {
+      try {
+        const response = await api.get("/api/settings/document-branding");
+        if (cancelled) return;
+        if (response.data?.company) {
+          setCompanyBranding(response.data.company);
+        }
+      } catch {
+        if (!cancelled) {
+          setCompanyBranding(quotationPrintTemplateData.company);
+        }
+      }
+    }
+
+    void loadDocumentBranding();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const editItemDraftSequenceRef = useRef(1);
 
   useEffect(() => {
@@ -2363,6 +2391,8 @@ export function useQuotationsSection({
                 : [];
               if (bundleComponents.length) {
                 bundleComponents.forEach((component) => {
+                  const componentUnitPrice =
+                    component.unitPriceOverride ?? component.price ?? 0;
                   nextItems.push({
                     ...buildItemDraft(catalogs.providers),
                     localId: `draft-item-${createItemDraftSequenceRef.current++}`,
@@ -2372,8 +2402,8 @@ export function useQuotationsSection({
                     quantity: String(component.quantity ?? 1),
                     originalCurrencyCode:
                       component.currencyCode || product.currencyCode || "USD",
-                    originalListPriceUnit: String(component.price ?? 0),
-                    listPriceUnit: String(component.price ?? 0),
+                    originalListPriceUnit: String(componentUnitPrice),
+                    listPriceUnit: String(componentUnitPrice),
                     manufacturerDiscountPct: "0",
                     importCostPct: "0",
                     profitMarginPct: "0",
@@ -3468,33 +3498,38 @@ export function useQuotationsSection({
       const bundleComponents =
         shouldExpandBundleComponents && Array.isArray(product.components)
           ? buildLocalEditItemsFromSources(
-              product.components.map((component) => ({
-                ...buildItemDraft(catalogs.providers),
-                localId: `edit-bundle-component-${editItemDraftSequenceRef.current++}`,
-                providerId: String(
-                  component.providerId || product.providerId || "",
-                ),
-                productCode: component.code || "",
-                productDescription: component.description || "",
-                quantity: String(component.quantity ?? 1),
-                originalCurrencyCode:
-                  component.currencyCode || product.currencyCode || "USD",
-                originalListPriceUnit: String(component.price ?? 0),
-                listPriceUnit: String(component.price ?? 0),
-                manufacturerDiscountPct: "0",
-                importCostPct: "0",
-                profitMarginPct: "0",
-                finalDiscountPct: "0",
-                itemType: component.itemType || "producto",
-                bundleParentLocalId: parentLocalId,
-                bundleParentItemId: Number(currentItem.id) || null,
-                bundleOriginType: "price_list_bundle",
-                sourceProviderPriceListItemId: null,
-                sourceComponentPriceListItemId:
-                  component.componentItemId || null,
-                bundleComponentItemId: component.componentItemId || null,
-                isBundleComponent: true,
-              })),
+              product.components.map((component) => {
+                const componentUnitPrice =
+                  component.unitPriceOverride ?? component.price ?? 0;
+
+                return {
+                  ...buildItemDraft(catalogs.providers),
+                  localId: `edit-bundle-component-${editItemDraftSequenceRef.current++}`,
+                  providerId: String(
+                    component.providerId || product.providerId || "",
+                  ),
+                  productCode: component.code || "",
+                  productDescription: component.description || "",
+                  quantity: String(component.quantity ?? 1),
+                  originalCurrencyCode:
+                    component.currencyCode || product.currencyCode || "USD",
+                  originalListPriceUnit: String(componentUnitPrice),
+                  listPriceUnit: String(componentUnitPrice),
+                  manufacturerDiscountPct: "0",
+                  importCostPct: "0",
+                  profitMarginPct: "0",
+                  finalDiscountPct: "0",
+                  itemType: component.itemType || "producto",
+                  bundleParentLocalId: parentLocalId,
+                  bundleParentItemId: Number(currentItem.id) || null,
+                  bundleOriginType: "price_list_bundle",
+                  sourceProviderPriceListItemId: null,
+                  sourceComponentPriceListItemId:
+                    component.componentItemId || null,
+                  bundleComponentItemId: component.componentItemId || null,
+                  isBundleComponent: true,
+                };
+              }),
               { startingDisplayOrder: currentItemIndex + 2 },
             )
           : [];
@@ -4256,6 +4291,7 @@ export function useQuotationsSection({
         selectedQuotation,
         closeEditQuotationModal,
         openQuotationPrintView,
+        companyBranding,
         versionForm,
         setVersionForm,
         contactOptions,
@@ -4328,6 +4364,7 @@ export function useQuotationsSection({
       selectedQuotation,
       selectedQuotation,
       openQuotationPrintView,
+      companyBranding,
       versionForm,
       setVersionForm,
       contactOptions,

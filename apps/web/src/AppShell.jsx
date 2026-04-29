@@ -13,6 +13,7 @@ const OpportunityQuestionAdminPage = lazy(
   () => import("./OpportunityQuestionAdminPage"),
 );
 const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
+const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
 const UsersPage = lazy(() => import("./UsersPage"));
 const RolesPage = lazy(() => import("./RolesPage"));
 const AccountsPage = lazy(() => import("./AccountsPage"));
@@ -97,6 +98,16 @@ export default function AppShell({
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route
+          path="/settings"
+          element={
+            can("configuracion.read") ? (
+              <ConfigurationPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
         <Route
           path="/users"
           element={
@@ -213,6 +224,14 @@ export default function AppShell({
           {can("roles.read") && (
             <GuardedNavLink to="/roles" onBeforeNavigate={confirmRouteChange}>
               Roles
+            </GuardedNavLink>
+          )}
+          {can("configuracion.read") && (
+            <GuardedNavLink
+              to="/settings"
+              onBeforeNavigate={confirmRouteChange}
+            >
+              Configuracion
             </GuardedNavLink>
           )}
           {can("cuentas.read") && (

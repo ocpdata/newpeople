@@ -233,6 +233,83 @@ CREATE TABLE IF NOT EXISTS countries (
   CONSTRAINT uq_countries_iso3 UNIQUE (iso3)
 );
 
+CREATE TABLE IF NOT EXISTS company_profile (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  singleton_key VARCHAR(40) NOT NULL,
+  legal_name VARCHAR(190) NOT NULL,
+  commercial_name VARCHAR(190) NULL,
+  tax_id VARCHAR(120) NOT NULL,
+  logo_url LONGTEXT NULL,
+  address_line1 VARCHAR(255) NOT NULL,
+  address_line2 VARCHAR(255) NULL,
+  city VARCHAR(120) NOT NULL,
+  state_region VARCHAR(120) NOT NULL,
+  country_id BIGINT UNSIGNED NOT NULL,
+  postal_code VARCHAR(20) NOT NULL,
+  email VARCHAR(190) NULL,
+  phone VARCHAR(40) NULL,
+  website VARCHAR(300) NULL,
+  description TEXT NULL,
+  created_by_user_id BIGINT UNSIGNED NULL,
+  updated_by_user_id BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT uq_company_profile_singleton UNIQUE (singleton_key),
+  CONSTRAINT fk_company_profile_country FOREIGN KEY (country_id) REFERENCES countries(id),
+  CONSTRAINT fk_company_profile_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_company_profile_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+INSERT INTO company_profile (
+  singleton_key,
+  legal_name,
+  commercial_name,
+  tax_id,
+  logo_url,
+  address_line1,
+  address_line2,
+  city,
+  state_region,
+  country_id,
+  postal_code,
+  email,
+  phone,
+  website,
+  description,
+  created_by_user_id,
+  updated_by_user_id,
+  created_at,
+  updated_at
+)
+SELECT
+  'default',
+  'Access Quality S.A. de C.V.',
+  'Access Quality',
+  'RFC: AQU110118AV2',
+  NULL,
+  'Montecito #38, Piso 7, Oficina 1, WTC, Col. Napoles',
+  '',
+  'Ciudad de Mexico',
+  'CDMX',
+  c.id,
+  '03810',
+  '',
+  '',
+  '',
+  'Configuracion institucional inicial',
+  NULL,
+  NULL,
+  NOW(3),
+  NOW(3)
+FROM countries c
+WHERE c.iso2 = 'MX'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM company_profile cp
+    WHERE cp.singleton_key = 'default'
+  )
+LIMIT 1;
+
 CREATE TABLE IF NOT EXISTS currencies (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code CHAR(3) NOT NULL,
@@ -771,6 +848,7 @@ CREATE TABLE IF NOT EXISTS provider_price_list_item_components (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   grupo_item_id BIGINT UNSIGNED NOT NULL,
   component_item_id BIGINT UNSIGNED NOT NULL,
+  unit_price_override DECIMAL(12, 2) NOT NULL,
   quantity DECIMAL(12, 2) NOT NULL,
   sort_order INT UNSIGNED NOT NULL DEFAULT 0,
   created_by BIGINT UNSIGNED NOT NULL,
@@ -783,6 +861,29 @@ CREATE TABLE IF NOT EXISTS provider_price_list_item_components (
   CONSTRAINT fk_provider_price_list_item_components_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_provider_price_list_item_components_pair UNIQUE (grupo_item_id, component_item_id)
 );
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE provider_price_list_item_components ADD COLUMN unit_price_override DECIMAL(12, 2) NULL DEFAULT NULL AFTER component_item_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'provider_price_list_item_components'
+    AND COLUMN_NAME = 'unit_price_override'
+);
+PREPARE s_provider_price_list_item_components_unit_price_override_col FROM @stmt;
+EXECUTE s_provider_price_list_item_components_unit_price_override_col;
+DEALLOCATE PREPARE s_provider_price_list_item_components_unit_price_override_col;
+
+UPDATE provider_price_list_item_components component_link
+INNER JOIN provider_price_list_items child ON child.id = component_link.component_item_id
+SET component_link.unit_price_override = child.price
+WHERE component_link.unit_price_override IS NULL;
+
+ALTER TABLE provider_price_list_item_components
+MODIFY COLUMN unit_price_override DECIMAL(12, 2) NOT NULL DEFAULT 0;
 
 INSERT INTO provider_price_lists (
   provider_id,
@@ -1786,6 +1887,8 @@ VALUES
   ('roles.update', 'roles', 'update', 'Actualizar roles', NOW(3), NOW(3)),
   ('roles.assign', 'roles', 'assign', 'Asignar roles a usuarios', NOW(3), NOW(3)),
   ('permissions.read', 'permissions', 'read', 'Ver permisos', NOW(3), NOW(3)),
+  ('configuracion.read', 'configuracion', 'read', 'Ver configuracion general', NOW(3), NOW(3)),
+  ('configuracion.update', 'configuracion', 'update', 'Actualizar configuracion general', NOW(3), NOW(3)),
   ('cuentas.read', 'cuentas', 'read', 'Ver cuentas', NOW(3), NOW(3)),
   ('cuentas.read_all', 'cuentas', 'read_all', 'Ver todas las cuentas', NOW(3), NOW(3)),
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),

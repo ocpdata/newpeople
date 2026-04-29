@@ -32,11 +32,21 @@ export async function getUserAuthContext(userId) {
     [userId],
   );
 
+  const isAdministrator = roles.some(
+    (role) => role.is_system || role.name === "Administrador",
+  );
+
+  let effectivePermissions = permissions.map((permission) => permission.code);
+  if (isAdministrator) {
+    const allPermissions = await query("SELECT code FROM permissions");
+    effectivePermissions = allPermissions.map((permission) => permission.code);
+  }
+
   const user = users[0];
   return {
     ...user,
     roles,
-    permissionSet: new Set(permissions.map((p) => p.code)),
+    permissionSet: new Set(effectivePermissions),
   };
 }
 

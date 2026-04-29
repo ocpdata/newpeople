@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import PDFDocument from "pdfkit";
-import { config } from "./config.js";
 
 const PAGE_MARGIN = 42;
 const PAGE_WIDTH = 612 - PAGE_MARGIN * 2;
@@ -27,6 +26,27 @@ function asLines(value) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function resolveLogoSource(value) {
+  const safeValue = asText(value);
+  if (!safeValue) return null;
+
+  if (safeValue.startsWith("data:image/")) {
+    const separatorIndex = safeValue.indexOf(",");
+    if (separatorIndex <= 0) return null;
+    try {
+      return Buffer.from(safeValue.slice(separatorIndex + 1), "base64");
+    } catch {
+      return null;
+    }
+  }
+
+  if (existsSync(safeValue)) {
+    return safeValue;
+  }
+
+  return null;
 }
 
 function asNumber(value) {
@@ -200,15 +220,16 @@ function drawLabelValue(doc, { label, value, x, y, width, align = "left" }) {
 }
 
 function drawHeader(doc, model) {
-  const company = config.documents.quotation.company;
+  const company = model.company;
   const topY = doc.y;
   const leftX = doc.page.margins.left;
   const rightX = leftX + 265;
   const rightWidth = PAGE_WIDTH - 265;
+  const logoSource = resolveLogoSource(company.logoUrl);
 
-  if (company.logoPath && existsSync(company.logoPath)) {
+  if (logoSource) {
     try {
-      doc.image(company.logoPath, leftX, topY, {
+      doc.image(logoSource, leftX, topY, {
         fit: [150, 55],
         align: "left",
         valign: "top",
@@ -811,6 +832,14 @@ function drawPageNumbers(doc) {
 
 function normalizeModel(input) {
   return {
+    company: {
+      logoUrl: asText(input?.company?.logoUrl),
+      legalName: asText(input?.company?.legalName),
+      taxId: asText(input?.company?.taxId),
+      addressLines: asLines(input?.company?.addressLines),
+      email: asText(input?.company?.email),
+      phone: asText(input?.company?.phone),
+    },
     header: {
       quotationNumber: asText(input?.header?.quotationNumber),
       versionNumber: asText(input?.header?.versionNumber),

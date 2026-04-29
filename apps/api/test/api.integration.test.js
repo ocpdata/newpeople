@@ -136,6 +136,10 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_roles_update`,
       permissionCodes: ["roles.update"],
     });
+    ctx.configurationManagerRoleId = await createRole({
+      name: `${TEST_PREFIX}_configuration_manager`,
+      permissionCodes: ["configuracion.read", "configuracion.update"],
+    });
     ctx.dynamicPermissionRoleId = await createRole({
       name: `${TEST_PREFIX}_dynamic_permissions`,
       permissionCodes: ["contactos.request"],
@@ -164,6 +168,7 @@ describe("API integration baseline", () => {
       ctx.quotationAdminRoleId,
       ctx.quotationExternalRoleId,
       ctx.roleManagerRoleId,
+      ctx.configurationManagerRoleId,
       ctx.dynamicPermissionRoleId,
       ctx.userCrudRoleId,
     );
@@ -348,6 +353,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.roles.manager@example.com`,
       roleIds: [ctx.roleManagerRoleId],
     });
+    ctx.configurationManagerUserId = await createUser({
+      fullName: "API Configuration Manager",
+      email: `${TEST_PREFIX}.configuration.manager@example.com`,
+      roleIds: [ctx.configurationManagerRoleId],
+    });
     ctx.quotationOperationUserId = await createUser({
       fullName: "API Quote Operation",
       email: `${TEST_PREFIX}.quotes.operation@example.com`,
@@ -399,6 +409,7 @@ describe("API integration baseline", () => {
       ctx.opportunityGlobalScopeUserId,
       ctx.sellerUserId,
       ctx.roleManagerUserId,
+      ctx.configurationManagerUserId,
       ctx.quotationOperationUserId,
       ctx.quotationRevisionUserId,
       ctx.quotationIngresoUserId,
@@ -641,6 +652,91 @@ describe("API integration baseline", () => {
     expect(meResponse.status).toBe(200);
     expect(meResponse.body.permissions).toContain("cuentas.create");
     expect(meResponse.body.permissions).toContain("cuentas.update");
+  });
+
+  test("configuracion permite consultar y actualizar el perfil institucional", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+
+    const token = loginResponse.body.token;
+    const currentProfileResponse = await request(app)
+      .get("/api/settings/company-profile")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(currentProfileResponse.status).toBe(200);
+    const originalProfile = currentProfileResponse.body.profile;
+
+    const payload = {
+      legalName: originalProfile.legalName,
+      commercialName: `Marca ${TEST_PREFIX}`,
+      taxId: originalProfile.taxId,
+      logoUrl: originalProfile.logoUrl || undefined,
+      addressLine1: originalProfile.addressLine1,
+      addressLine2: originalProfile.addressLine2 || "",
+      city: originalProfile.city,
+      stateRegion: originalProfile.stateRegion,
+      countryId: Number(originalProfile.countryId),
+      postalCode: originalProfile.postalCode,
+      email: originalProfile.email || "configuracion@example.com",
+      phone: "+52 55 5555 0101",
+      website: originalProfile.website || "",
+      description: "Actualizacion de prueba de configuracion",
+    };
+
+    const updateResponse = await request(app)
+      .put("/api/settings/company-profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send(payload);
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.body.profile.commercialName).toBe(payload.commercialName);
+    expect(updateResponse.body.profile.phone).toBe(payload.phone);
+
+    const brandingResponse = await request(app)
+      .get("/api/settings/document-branding")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(brandingResponse.status).toBe(200);
+    expect(brandingResponse.body.company.legalName).toBe(payload.legalName);
+    expect(brandingResponse.body.company.phone).toBe(payload.phone);
+
+    const auditResponse = await request(app)
+      .get("/api/settings/audit?limit=5")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(auditResponse.status).toBe(200);
+    expect(
+      auditResponse.body.some(
+        (entry) => entry.action === "updated_company_profile",
+      ),
+    ).toBe(true);
+
+    await query(
+      `UPDATE company_profile
+       SET legal_name = ?, commercial_name = ?, tax_id = ?, logo_url = ?,
+           address_line1 = ?, address_line2 = ?, city = ?, state_region = ?,
+           country_id = ?, postal_code = ?, email = ?, phone = ?, website = ?,
+           description = ?, updated_at = NOW(3)
+       WHERE singleton_key = 'default'`,
+      [
+        originalProfile.legalName,
+        originalProfile.commercialName || null,
+        originalProfile.taxId,
+        originalProfile.logoUrl || null,
+        originalProfile.addressLine1,
+        originalProfile.addressLine2 || null,
+        originalProfile.city,
+        originalProfile.stateRegion,
+        Number(originalProfile.countryId),
+        originalProfile.postalCode,
+        originalProfile.email || null,
+        originalProfile.phone || null,
+        originalProfile.website || null,
+        originalProfile.description || null,
+      ],
+    );
   });
 
   test("auth.set-password permite configurar contrasena desde el enlace y luego iniciar sesion", async () => {
@@ -1168,7 +1264,7 @@ describe("API integration baseline", () => {
     );
   });
 
-  test("Administrador sin permiso explicito recibe 403 en rutas protegidas por requirePermission", async () => {
+  test("Administrador conserva acceso efectivo aunque falten permisos explicitos en role_permissions", async () => {
     const adminRoleRows = await query(
       "SELECT id FROM roles WHERE name = 'Administrador' LIMIT 1",
     );
@@ -1199,21 +1295,25 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}.real.admin.permissions@example.com`,
     );
 
+    const meResponse = await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
+
+    expect(meResponse.status).toBe(200);
+    expect(meResponse.body.permissions).toContain("roles.read");
+    expect(meResponse.body.permissions).toContain("permissions.read");
+
     const rolesResponse = await request(app)
       .get("/api/roles")
       .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
 
-    expect(rolesResponse.status).toBe(403);
-    expect(rolesResponse.body.requiredPermission).toBe("roles.read");
+    expect(rolesResponse.status).toBe(200);
 
     const permissionsResponse = await request(app)
       .get("/api/roles/permissions")
       .set("Authorization", `Bearer ${adminLoginResponse.body.token}`);
 
-    expect(permissionsResponse.status).toBe(403);
-    expect(permissionsResponse.body.requiredPermission).toBe(
-      "permissions.read",
-    );
+    expect(permissionsResponse.status).toBe(200);
 
     for (const permissionId of permissionIds) {
       await query(
@@ -2390,6 +2490,8 @@ describe("API integration baseline", () => {
       `SELECT price FROM provider_price_list_items WHERE id = ? LIMIT 1`,
       [serviceComponentItemId],
     );
+    const productComponentOverride = Number(productComponentRow.price) + 10;
+    const serviceComponentOverride = Number(serviceComponentRow.price) + 5;
 
     const loginResponse = await login(
       request(app),
@@ -2421,10 +2523,12 @@ describe("API integration baseline", () => {
         components: [
           {
             componentItemId: productComponentItemId,
+            unitPriceOverride: productComponentOverride,
             quantity: 2,
           },
           {
             componentItemId: serviceComponentItemId,
+            unitPriceOverride: serviceComponentOverride,
             quantity: 3,
           },
         ],
@@ -2449,11 +2553,25 @@ describe("API integration baseline", () => {
     expect(itemsResponse.body).toHaveLength(1);
     expect(itemsResponse.body[0].item_type).toBe("grupo_productos");
     expect(itemsResponse.body[0].components).toHaveLength(2);
+    expect(itemsResponse.body[0].components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component_item_id: productComponentItemId,
+          unit_price_override: productComponentOverride,
+          quantity: 2,
+        }),
+        expect.objectContaining({
+          component_item_id: serviceComponentItemId,
+          unit_price_override: serviceComponentOverride,
+          quantity: 3,
+        }),
+      ]),
+    );
     expect(Number(itemsResponse.body[0].price)).toBe(
       Number(
         (
-          Number(productComponentRow.price) * 2 +
-          Number(serviceComponentRow.price) * 3
+          productComponentOverride * 2 +
+          serviceComponentOverride * 3
         ).toFixed(2),
       ),
     );
@@ -3746,11 +3864,12 @@ describe("API integration baseline", () => {
 
     await query(
       `INSERT INTO provider_price_list_item_components
-        (grupo_item_id, component_item_id, quantity, sort_order, created_by, created_at, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?, NOW(3), ?, NOW(3))`,
+        (grupo_item_id, component_item_id, unit_price_override, quantity, sort_order, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(3), ?, NOW(3))`,
       [
         bundlePriceItemId,
         bundleComponentItemId,
+        2500,
         2,
         1,
         ctx.quotationOperationUserId,
@@ -3804,6 +3923,7 @@ describe("API integration baseline", () => {
             expect.objectContaining({
               componentItemId: bundleComponentItemId,
               code: `PRICE-${suffix}_bundle_component`,
+              unitPriceOverride: 2500,
               quantity: 2,
               itemType: "producto",
               price: 1234.56,

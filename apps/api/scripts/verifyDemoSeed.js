@@ -7,7 +7,15 @@ const EXPECTED_DEMO_PROVIDER_NAMES = [
   "Cisco",
   "Servicios Access Quality",
   "Otros",
-  "Bundles",
+  "Bundle F5",
+];
+const EXPECTED_DEMO_PROVIDER_PRICE_LIST_NAMES = [
+  "F5",
+  "Lista base demo 02",
+  "Lista base demo 03",
+  "Servicios",
+  "Lista base demo 05",
+  "Bundle F5",
 ];
 const EXPECTED_DEMO_PROVIDERS = EXPECTED_DEMO_PROVIDER_NAMES.length;
 const EXPECTED_DEMO_PROVIDER_PRICE_LISTS = EXPECTED_DEMO_PROVIDERS;
@@ -148,6 +156,33 @@ async function verifyProviderSeed() {
       );
     }
     console.log(`demo_provider_name_${index + 1}_ok`, actualName);
+  }
+
+  const providerPriceListNames = await query(
+    `SELECT p.name AS provider_name, ppl.name AS list_name
+     FROM provider_price_lists ppl
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     WHERE p.registration_code LIKE 'DEMO-PROV-%'
+     ORDER BY p.registration_code, ppl.id`,
+  );
+  assertEqual(
+    "demo_provider_list_names_count",
+    providerPriceListNames.length,
+    EXPECTED_DEMO_PROVIDER_PRICE_LIST_NAMES.length,
+  );
+  for (
+    let index = 0;
+    index < EXPECTED_DEMO_PROVIDER_PRICE_LIST_NAMES.length;
+    index += 1
+  ) {
+    const actualListName = String(providerPriceListNames[index]?.list_name || "");
+    const expectedListName = EXPECTED_DEMO_PROVIDER_PRICE_LIST_NAMES[index];
+    if (actualListName !== expectedListName) {
+      throw new Error(
+        `demo_provider_price_list_name_${index + 1}: esperado ${expectedListName}, recibido ${actualListName}`,
+      );
+    }
+    console.log(`demo_provider_price_list_name_${index + 1}_ok`, actualListName);
   }
 
   const [providersWithMultipleActiveLists] = await query(
@@ -302,7 +337,7 @@ async function verifyProviderSeed() {
     `SELECT COUNT(*) AS count
      FROM provider_price_list_items ppi
      INNER JOIN providers p ON p.id = ppi.provider_id
-     WHERE p.name = 'Bundles'
+    WHERE p.name = 'Bundle F5'
        AND p.registration_code LIKE 'DEMO-PROV-%'
        AND ppi.item_type = 'grupo_productos'`,
   );

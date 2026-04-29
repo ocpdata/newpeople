@@ -77,6 +77,10 @@ function ProvidersPage({ currentUser }) {
     savingProviderPriceList,
     savingPriceItem,
     exportingPriceList,
+    providerPriceListImportFileName,
+    providerPriceListImportPreview,
+    reviewingProviderPriceListImport,
+    providerPriceListImportProgress,
     priceItemForm,
     groupPriceItemTotal,
     activeProvidersForGroupBase,
@@ -123,6 +127,10 @@ function ProvidersPage({ currentUser }) {
     runPriceItemAction,
     updateProviderPriceListStatus,
     exportProviderPriceListToExcel,
+    downloadProviderPriceListImportTemplate,
+    updateProviderPriceListImportFile,
+    clearProviderPriceListImportFile,
+    reviewProviderPriceListImportFile,
     savePriceItem,
     openPriceItemStatusConfirmation,
     closePriceItemStatusConfirmation,
@@ -143,6 +151,7 @@ function ProvidersPage({ currentUser }) {
     addGroupComponent,
     stepGroupComponentQuantity,
     updateGroupComponentQuantity,
+    updateGroupComponentUnitPrice,
     moveGroupComponent,
     removeGroupComponent,
     togglePriceItemSort,
@@ -349,9 +358,17 @@ function ProvidersPage({ currentUser }) {
         form={providerPriceListForm}
         catalogs={catalogs}
         saving={savingProviderPriceList}
+        importFileName={providerPriceListImportFileName}
+        importPreview={providerPriceListImportPreview}
+        reviewingImport={reviewingProviderPriceListImport}
+        importProgress={providerPriceListImportProgress}
         onClose={closeProviderPriceListCreateModal}
         onSubmit={saveProviderPriceList}
         onChange={updateProviderPriceListFormField}
+        onDownloadTemplate={downloadProviderPriceListImportTemplate}
+        onImportFileChange={updateProviderPriceListImportFile}
+        onClearImportFile={clearProviderPriceListImportFile}
+        onReviewImportFile={reviewProviderPriceListImportFile}
       />
 
       <ProviderPriceItemModal
@@ -397,6 +414,7 @@ function ProvidersPage({ currentUser }) {
           onAddGroupComponent: addGroupComponent,
           onStepGroupComponentQuantity: stepGroupComponentQuantity,
           onUpdateGroupComponentQuantity: updateGroupComponentQuantity,
+          onUpdateGroupComponentUnitPrice: updateGroupComponentUnitPrice,
           onMoveGroupComponent: moveGroupComponent,
           onRemoveGroupComponent: removeGroupComponent,
         }}

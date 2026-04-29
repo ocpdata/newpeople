@@ -18,13 +18,38 @@ const DEFAULT_COUNTS = {
 const SERVICE_ONLY_PROVIDER_INDEX = 3;
 const BUNDLES_PROVIDER_INDEX = 5;
 const BUNDLES_GROUP_ITEMS_COUNT = 20;
-const DEMO_PROVIDER_NAMES = [
-  "F5 Networks",
-  "Bluecat Networks",
-  "Cisco",
-  "Servicios Access Quality",
-  "Otros",
-  "Bundles",
+const DEMO_PROVIDER_BLUEPRINTS = [
+  {
+    providerName: "F5 Networks",
+    priceListName: "F5",
+    itemType: "producto",
+  },
+  {
+    providerName: "Bluecat Networks",
+    priceListName: "Lista base demo 02",
+    itemType: "producto",
+  },
+  {
+    providerName: "Cisco",
+    priceListName: "Lista base demo 03",
+    itemType: "producto",
+  },
+  {
+    providerName: "Servicios Access Quality",
+    priceListName: "Servicios",
+    itemType: "servicio_propio",
+  },
+  {
+    providerName: "Otros",
+    priceListName: "Lista base demo 05",
+    itemType: "producto",
+  },
+  {
+    providerName: "Bundle F5",
+    providerAliases: ["Bundles"],
+    priceListName: "Bundle F5",
+    itemType: "grupo_productos",
+  },
 ];
 const DEMO_CLOSED_OPPORTUNITY_TARGETS = {
   ganada: 10,
@@ -1601,8 +1626,31 @@ function buildAccountName(index, countryIso2) {
   return `${prefix} ${suffix} ${countryIso2} ${String(index + 1).padStart(2, "0")}`;
 }
 
+function getDemoProviderBlueprint(index) {
+  return (
+    DEMO_PROVIDER_BLUEPRINTS[index] || {
+      providerName: `Proveedor demo ${index + 1}`,
+      priceListName: `Lista base demo ${String(index + 1).padStart(2, "0")}`,
+      itemType: "producto",
+      providerAliases: [],
+    }
+  );
+}
+
 function buildProviderName(index) {
-  return DEMO_PROVIDER_NAMES[index] || `Proveedor demo ${index + 1}`;
+  return getDemoProviderBlueprint(index).providerName;
+}
+
+function buildProviderPriceListName(index) {
+  return getDemoProviderBlueprint(index).priceListName;
+}
+
+function buildProviderAliases(index) {
+  return getDemoProviderBlueprint(index).providerAliases || [];
+}
+
+function buildProviderItemType(index) {
+  return getDemoProviderBlueprint(index).itemType;
 }
 
 function makeProviderStatusId(catalogs) {
@@ -1696,17 +1744,6 @@ function buildBundleComponents({
 
 async function resetDemoData(conn) {
   await conn.query(
-    `DELETE ppi FROM provider_price_list_items ppi
-     INNER JOIN providers p ON p.id = ppi.provider_id
-     WHERE p.registration_code LIKE ?`,
-    [`${DEMO_PROVIDER_REGISTRATION_PREFIX}%`],
-  );
-  await conn.query(
-    `DELETE FROM providers
-     WHERE registration_code LIKE ?`,
-    [`${DEMO_PROVIDER_REGISTRATION_PREFIX}%`],
-  );
-  await conn.query(
     `DELETE o FROM opportunities o
      INNER JOIN accounts a ON a.id = o.account_id
      WHERE a.description LIKE ? OR a.registration_code LIKE ?`,
@@ -1728,6 +1765,17 @@ async function resetDemoData(conn) {
     `DELETE FROM accounts
      WHERE description LIKE ? OR registration_code LIKE ?`,
     [`${DEMO_MARKER}:%`, `${DEMO_REGISTRATION_PREFIX}%`],
+  );
+  await conn.query(
+    `DELETE ppi FROM provider_price_list_items ppi
+     INNER JOIN providers p ON p.id = ppi.provider_id
+     WHERE p.registration_code LIKE ?`,
+    [`${DEMO_PROVIDER_REGISTRATION_PREFIX}%`],
+  );
+  await conn.query(
+    `DELETE FROM providers
+     WHERE registration_code LIKE ?`,
+    [`${DEMO_PROVIDER_REGISTRATION_PREFIX}%`],
   );
   await conn.query(
     `DELETE FROM password_setup_tokens
@@ -2204,43 +2252,81 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     const productComponentCandidates = [];
     const serviceComponentCandidates = [];
     const createdProviders = [];
+    let createdProvidersCounter = 0;
     for (let index = 0; index < DEFAULT_COUNTS.providers; index += 1) {
       const country = pickRow(catalogs.countries, index + 1);
       const providerStatusId = makeProviderStatusId(catalogs);
       const providerName = buildProviderName(index);
+      const providerAliases = buildProviderAliases(index);
       const registrationCode = `${DEMO_PROVIDER_REGISTRATION_PREFIX}${String(index + 1).padStart(3, "0")}`;
-
-      const [providerInsert] = await conn.query(
-        `INSERT INTO providers
-          (name, registration_code, address_line, country_id, city, postal_code, state_region,
-           activation_status_id, created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          providerName,
-          registrationCode,
-          `Parque industrial demo ${index + 1}`,
-          Number(country.id),
-          `Ciudad proveedor ${country.iso2}`,
-          `${30000 + index}`,
-          `Region proveedor ${country.iso2}`,
-          providerStatusId,
-          adminUserId,
-          now,
-          adminUserId,
-          now,
-        ],
+      const providerLookupNames = [providerName, ...providerAliases];
+      const providerLookupPlaceholders = providerLookupNames
+        .map(() => "?")
+        .join(", ");
+      const [existingProviders] = await conn.query(
+        `SELECT id, name
+         FROM providers
+         WHERE name IN (${providerLookupPlaceholders})
+         ORDER BY FIELD(name, ${providerLookupPlaceholders})
+         LIMIT 1`,
+        [...providerLookupNames, ...providerLookupNames],
       );
-      const providerId = Number(providerInsert.insertId);
+
+      let providerId;
+      if (existingProviders.length) {
+        providerId = Number(existingProviders[0].id);
+      } else {
+        const [providerInsert] = await conn.query(
+          `INSERT INTO providers
+            (name, registration_code, address_line, country_id, city, postal_code, state_region,
+             activation_status_id, created_by, created_at, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            providerName,
+            registrationCode,
+            `Parque industrial demo ${index + 1}`,
+            Number(country.id),
+            `Ciudad proveedor ${country.iso2}`,
+            `${30000 + index}`,
+            `Region proveedor ${country.iso2}`,
+            providerStatusId,
+            adminUserId,
+            now,
+            adminUserId,
+            now,
+          ],
+        );
+        providerId = Number(providerInsert.insertId);
+        createdProvidersCounter += 1;
+      }
+
       createdProviders.push({ id: providerId, name: providerName });
-      const providerPriceListName = `Lista base demo ${String(index + 1).padStart(2, "0")}`;
+      const providerPriceListName = buildProviderPriceListName(index);
       const providerPriceListIsActive = 1;
       const listCurrency = usdCurrency;
-      const listItemType =
-        index === SERVICE_ONLY_PROVIDER_INDEX
-          ? "servicio_propio"
-          : index === BUNDLES_PROVIDER_INDEX
-            ? "grupo_productos"
-            : "producto";
+      const listItemType = buildProviderItemType(index);
+
+      const [existingLists] = await conn.query(
+        `SELECT id
+         FROM provider_price_lists
+         WHERE provider_id = ?
+           AND name = ?
+         LIMIT 1`,
+        [providerId, providerPriceListName],
+      );
+      if (existingLists.length) {
+        continue;
+      }
+
+      await conn.query(
+        `UPDATE provider_price_lists
+         SET is_active = 0,
+             updated_by = ?,
+             updated_at = ?
+         WHERE provider_id = ?
+           AND is_active = 1`,
+        [adminUserId, now, providerId],
+      );
 
       const [priceListInsert] = await conn.query(
         `INSERT INTO provider_price_lists
@@ -2392,7 +2478,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       createdOpportunities: opportunityCounter,
       createdQuotations: quotationSeedResult.createdQuotations,
       createdQuotationVersions: quotationSeedResult.createdQuotationVersions,
-      createdProviders: DEFAULT_COUNTS.providers,
+      createdProviders: createdProvidersCounter,
       createdProviderPriceItems: providerPriceItemsCounter,
     };
   });

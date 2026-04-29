@@ -75,6 +75,13 @@ export function useProviderPricing({
     savingProviderPriceList: priceLists.savingProviderPriceList,
     savingPriceItem: priceItems.savingPriceItem,
     exportingPriceList: priceItems.exportingPriceList,
+    providerPriceListImportFileName:
+      priceLists.providerPriceListImportFileName,
+    providerPriceListImportPreview: priceLists.providerPriceListImportPreview,
+    reviewingProviderPriceListImport:
+      priceLists.reviewingProviderPriceListImport,
+    providerPriceListImportProgress:
+      priceLists.providerPriceListImportProgress,
     priceItemForm: priceItems.priceItemForm,
     groupPriceItemTotal: priceItems.groupPriceItemTotal,
     activeProvidersForGroupBase: priceItems.activeProvidersForGroupBase,
@@ -121,6 +128,13 @@ export function useProviderPricing({
     runPriceItemAction: priceItems.runPriceItemAction,
     updateProviderPriceListStatus: priceLists.updateProviderPriceListStatus,
     exportProviderPriceListToExcel: priceItems.exportProviderPriceListToExcel,
+    downloadProviderPriceListImportTemplate:
+      priceLists.downloadProviderPriceListImportTemplate,
+    updateProviderPriceListImportFile:
+      priceLists.updateProviderPriceListImportFile,
+    clearProviderPriceListImportFile: priceLists.clearProviderPriceListImportFile,
+    reviewProviderPriceListImportFile:
+      priceLists.reviewProviderPriceListImportFile,
     savePriceItem: priceItems.savePriceItem,
     openPriceItemStatusConfirmation: priceItems.openPriceItemStatusConfirmation,
     closePriceItemStatusConfirmation: priceItems.closePriceItemStatusConfirmation,
@@ -141,6 +155,7 @@ export function useProviderPricing({
     addGroupComponent: priceItems.addGroupComponent,
     stepGroupComponentQuantity: priceItems.stepGroupComponentQuantity,
     updateGroupComponentQuantity: priceItems.updateGroupComponentQuantity,
+    updateGroupComponentUnitPrice: priceItems.updateGroupComponentUnitPrice,
     moveGroupComponent: priceItems.moveGroupComponent,
     removeGroupComponent: priceItems.removeGroupComponent,
     togglePriceItemSort: priceItems.togglePriceItemSort,

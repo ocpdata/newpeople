@@ -40,28 +40,33 @@ function buildBundleDraftComponents(product, providerOptions) {
     return [];
   }
 
-  return product.components.map((component) => ({
-    ...buildItemDraft(providerOptions),
-    providerId: String(component.providerId || product.providerId || ""),
-    productCode: component.code || "",
-    productDescription: component.description || "",
-    quantity: String(component.quantity ?? 1),
-    originalCurrencyCode:
-      component.currencyCode || product.currencyCode || "USD",
-    originalListPriceUnit: String(component.price ?? 0),
-    listPriceUnit: String(component.price ?? 0),
-    manufacturerDiscountPct: "0",
-    importCostPct: "0",
-    profitMarginPct: "0",
-    finalDiscountPct: "0",
-    itemType: component.itemType || "producto",
-    bundleParentLocalId: "draft-bundle-parent",
-    bundleOriginType: "price_list_bundle",
-    sourceProviderPriceListItemId: null,
-    sourceComponentPriceListItemId: component.componentItemId || null,
-    bundleComponentItemId: component.componentItemId || null,
-    isBundleComponent: true,
-  }));
+  return product.components.map((component) => {
+    const componentUnitPrice =
+      component.unitPriceOverride ?? component.price ?? 0;
+
+    return {
+      ...buildItemDraft(providerOptions),
+      providerId: String(component.providerId || product.providerId || ""),
+      productCode: component.code || "",
+      productDescription: component.description || "",
+      quantity: String(component.quantity ?? 1),
+      originalCurrencyCode:
+        component.currencyCode || product.currencyCode || "USD",
+      originalListPriceUnit: String(componentUnitPrice),
+      listPriceUnit: String(componentUnitPrice),
+      manufacturerDiscountPct: "0",
+      importCostPct: "0",
+      profitMarginPct: "0",
+      finalDiscountPct: "0",
+      itemType: component.itemType || "producto",
+      bundleParentLocalId: "draft-bundle-parent",
+      bundleOriginType: "price_list_bundle",
+      sourceProviderPriceListItemId: null,
+      sourceComponentPriceListItemId: component.componentItemId || null,
+      bundleComponentItemId: component.componentItemId || null,
+      isBundleComponent: true,
+    };
+  });
 }
 
 const ITEM_TABLE_COLUMNS = [
@@ -715,6 +720,7 @@ function QuotationEditorContent({
   selectedQuotation,
   closeEditQuotationModal,
   openQuotationPrintView,
+  companyBranding,
   error,
   success,
   versionForm,
@@ -1018,6 +1024,7 @@ function QuotationEditorContent({
   const printModel = useMemo(
     () =>
       buildQuotationPrintModel({
+        company: companyBranding,
         quotationNumber: String(selectedQuotation?.id || ""),
         versionNumber: String(selectedVersion?.versionNumber || ""),
         proposalName: versionForm.proposalName,
@@ -1057,6 +1064,7 @@ function QuotationEditorContent({
       }),
     [
       catalogs,
+      companyBranding,
       printSections,
       quotationSummary,
       selectedContextContact,
@@ -1199,6 +1207,33 @@ function QuotationEditorContent({
       sectionId: String(sectionId),
       itemId: String(itemId),
     });
+  }
+
+  function closeDescriptionEditor() {
+    setActiveDescriptionEditor({ sectionId: null, itemId: null });
+  }
+
+  function handleDescriptionEditorBlur(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+
+    closeDescriptionEditor();
+  }
+
+  function handleDescriptionEditorEscape(event, itemId, itemDraftValue) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    saveExistingItemDraft(itemId, {
+      ...itemDraftValue,
+      productDescription: event.currentTarget.value,
+    });
+    closeDescriptionEditor();
+    event.currentTarget.blur();
   }
 
   function toggleBundleCollapsed(sectionId, bundleLocalId, sectionItems) {
@@ -2597,6 +2632,7 @@ function QuotationEditorContent({
                                         ? " is-bundle-component"
                                         : ""
                                     }`}
+                                    onBlurCapture={handleDescriptionEditorBlur}
                                   >
                                     <input
                                       value={itemDraftValue.productDescription}
@@ -2613,6 +2649,13 @@ function QuotationEditorContent({
                                           itemDraftValue,
                                           "productDescription",
                                           event.target.value,
+                                        )
+                                      }
+                                      onKeyDown={(event) =>
+                                        handleDescriptionEditorEscape(
+                                          event,
+                                          item.id,
+                                          itemDraftValue,
                                         )
                                       }
                                       onBlur={(event) =>
@@ -2641,6 +2684,13 @@ function QuotationEditorContent({
                                               itemDraftValue,
                                               "productDescription",
                                               event.target.value,
+                                            )
+                                          }
+                                          onKeyDown={(event) =>
+                                            handleDescriptionEditorEscape(
+                                              event,
+                                              item.id,
+                                              itemDraftValue,
                                             )
                                           }
                                           onBlur={(event) =>

@@ -368,6 +368,25 @@ function createProvidersFixture() {
       };
     }
 
+    const duplicatedCode = [...priceItemsByListId.values()]
+      .flatMap((listItems) => listItems)
+      .find(
+        (item) =>
+          Number(item.provider_id) === Number(providerId) &&
+          String(item.code) === String(body.code),
+      );
+
+    if (duplicatedCode) {
+      return {
+        error: {
+          status: 409,
+          body: {
+            message: "Ya existe un precio con ese codigo para la lista.",
+          },
+        },
+      };
+    }
+
     const resolvedComponents = Array.isArray(body.components)
       ? body.components
           .map((component) => {
@@ -379,6 +398,9 @@ function createProvidersFixture() {
               return {
                 ...foundItem,
                 component_item_id: Number(component.componentItemId),
+                unit_price_override: Number(
+                  component.unitPriceOverride ?? foundItem.price ?? 0,
+                ),
                 quantity: Number(component.quantity),
               };
             }
@@ -392,7 +414,8 @@ function createProvidersFixture() {
         ? resolvedComponents.reduce(
             (sum, component) =>
               sum +
-              Number(component.price || 0) * Number(component.quantity || 0),
+              Number(component.unit_price_override || component.price || 0) *
+                Number(component.quantity || 0),
             0,
           )
         : Number(body.price);
@@ -469,6 +492,9 @@ function createProvidersFixture() {
               return {
                 ...foundItem,
                 component_item_id: Number(component.componentItemId),
+                unit_price_override: Number(
+                  component.unitPriceOverride ?? foundItem.price ?? 0,
+                ),
                 quantity: Number(component.quantity),
               };
             }
@@ -482,7 +508,8 @@ function createProvidersFixture() {
         ? resolvedComponents.reduce(
             (sum, component) =>
               sum +
-              Number(component.price || 0) * Number(component.quantity || 0),
+              Number(component.unit_price_override || component.price || 0) *
+                Number(component.quantity || 0),
             0,
           )
         : Number(body.price);
@@ -860,7 +887,9 @@ test.describe("providers", () => {
       page.getByRole("heading", { name: "Crear lista de precios" }),
     ).toBeVisible();
     const createListModal = page.locator(".provider-price-list-create-modal");
-    await createListModal.locator("input").fill("Lista QA 2026");
+    await createListModal
+      .getByPlaceholder("Ej. Lista mayo 2026")
+      .fill("Lista QA 2026");
     await createListModal.locator("select").nth(0).selectOption("1");
     await createListModal.locator("select").nth(1).selectOption("producto");
     await page
@@ -896,35 +925,6 @@ test.describe("providers", () => {
       )
       .toBe(1);
 
-    await page.getByLabel("Crear lista de precios").click();
-    const secondCreateListModal = page.locator(
-      ".provider-price-list-create-modal",
-    );
-    await secondCreateListModal.locator("input").fill("Lista Secundaria QA");
-    await secondCreateListModal.locator("select").nth(0).selectOption("2");
-    await secondCreateListModal
-      .locator("select")
-      .nth(1)
-      .selectOption("servicio_propio");
-    await page
-      .getByRole("button", { name: "Crear lista", exact: true })
-      .click();
-
-    const secondListRow = listsTable
-      .locator("tbody tr")
-      .filter({ has: page.getByText("Lista Secundaria QA", { exact: true }) })
-      .first();
-    await secondListRow.getByRole("button", { name: "Abrir acciones" }).click();
-    await secondListRow
-      .locator(".user-kebab-menu")
-      .getByRole("button", { name: "Activar", exact: true })
-      .click();
-    await expect(
-      page.getByText(
-        "Ya existe una lista de precios activa para el proveedor.",
-      ),
-    ).toBeVisible();
-
     await firstListRow.click();
     await page.getByRole("button", { name: "Agregar producto" }).click();
     await expect(
@@ -933,7 +933,7 @@ test.describe("providers", () => {
 
     const priceModal = page.locator(".provider-price-item-modal").first();
     await priceModal.locator("input").nth(0).fill("PRICE-QA-01");
-    await priceModal.locator('input[type="number"]').fill("2500.50");
+    await priceModal.locator(".provider-price-editable-input").fill("2500.50");
     await priceModal.locator("select").nth(0).selectOption("1");
     await priceModal.locator("textarea").fill("Precio agregado por prueba E2E");
     await priceModal
@@ -970,6 +970,154 @@ test.describe("providers", () => {
       },
     ]);
 
+    await page.getByLabel("Crear lista de precios").click();
+    const importCreateListModal = page.locator(
+      ".provider-price-list-create-modal",
+    );
+    await importCreateListModal
+      .getByPlaceholder("Ej. Lista mayo 2026")
+      .fill("Lista Importada QA");
+    await importCreateListModal.locator("select").nth(0).selectOption("1");
+    await importCreateListModal
+      .locator("select")
+      .nth(1)
+      .selectOption("producto");
+
+    const templateDownloadPromise = page.waitForEvent("download");
+    await importCreateListModal.getByRole("button", { name: "Plantilla" }).click();
+    const templateDownload = await templateDownloadPromise;
+    expect(templateDownload.suggestedFilename()).toContain(
+      "plantilla-lista-precios",
+    );
+
+    const templatePath = await templateDownload.path();
+    expect(templatePath).toBeTruthy();
+
+    const templateWorkbook = XLSX.read(await readFile(templatePath));
+    expect(templateWorkbook.SheetNames).toEqual([
+      "Plantilla",
+      "Instrucciones",
+    ]);
+    const templateRows = XLSX.utils.sheet_to_json(
+      templateWorkbook.Sheets.Plantilla,
+      {
+        header: 1,
+        raw: false,
+        defval: "",
+      },
+    );
+    expect(templateRows).toEqual([
+      ["Codigo", "Descripcion", "Precio", "Moneda", "Estado", "Tipo"],
+    ]);
+
+    const importWorksheet = XLSX.utils.aoa_to_sheet([
+      templateRows[0],
+      [
+        "PRICE-QA-02",
+        "Precio importado desde Excel",
+        "3333.30",
+        "USD",
+        "Activo",
+        "Productos",
+      ],
+      ["", "Fila invalida sin codigo", "120.50", "USD", "Activo", "Productos"],
+      [
+        "PRICE-QA-01",
+        "Codigo duplicado del proveedor",
+        "140.00",
+        "USD",
+        "Activo",
+        "Productos",
+      ],
+    ]);
+    const importWorkbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(importWorkbook, importWorksheet, "Plantilla");
+    const importBuffer = XLSX.write(importWorkbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    });
+
+    await importCreateListModal.locator('input[type="file"]').setInputFiles({
+      name: "lista-importacion.xlsx",
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: importBuffer,
+    });
+    await expect(
+      importCreateListModal.getByText("lista-importacion.xlsx"),
+    ).toBeVisible();
+    await importCreateListModal
+      .getByRole("button", { name: "Revisar archivo" })
+      .click();
+
+    const validSummaryCard = importCreateListModal.locator(
+      ".provider-price-import-summary-card.is-valid",
+    );
+    const invalidSummaryCard = importCreateListModal.locator(
+      ".provider-price-import-summary-card.is-invalid",
+    );
+    await expect(validSummaryCard.getByText("2", { exact: true })).toBeVisible();
+    await expect(validSummaryCard.getByText("filas válidas")).toBeVisible();
+    await expect(invalidSummaryCard.getByText("1", { exact: true })).toBeVisible();
+    await expect(invalidSummaryCard.getByText("fila inválida")).toBeVisible();
+    await expect(importCreateListModal.getByText("Fila 3")).toBeVisible();
+    await expect(
+      importCreateListModal.getByText("El codigo es obligatorio."),
+    ).toBeVisible();
+
+    await importCreateListModal
+      .getByRole("button", { name: "Crear lista e importar" })
+      .click();
+
+    const importedList = fixture
+      .listPriceLists(Number(createdProvider?.id))
+      .find((priceList) => priceList.name === "Lista Importada QA");
+    expect(importedList).toBeTruthy();
+
+    await expect(page.getByText("PRICE-QA-02")).toBeVisible();
+    await expect(page.getByText("Precio importado desde Excel")).toBeVisible();
+
+    await expect
+      .poll(
+        () =>
+          fixture
+            .listPriceItems(
+              Number(createdProvider?.id),
+              Number(importedList?.id),
+            )
+            .find((item) => item.code === "PRICE-QA-02")?.price,
+      )
+      .toBe("3333.30");
+
+    await expect
+      .poll(
+        () =>
+          fixture
+            .listPriceItems(
+              Number(createdProvider?.id),
+              Number(importedList?.id),
+            )
+            .map((item) => item.code),
+      )
+      .toEqual(["PRICE-QA-02"]);
+
+    const importedListRow = listsTable
+      .locator("tbody tr")
+      .filter({ has: page.getByText("Lista Importada QA", { exact: true }) })
+      .first();
+    await importedListRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await importedListRow
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Activar", exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        "Ya existe una lista de precios activa para el proveedor.",
+      ),
+    ).toBeVisible();
+
+    await firstListRow.click();
+
     const createdPriceRow = page
       .locator(".provider-price-list-table tbody tr")
       .filter({ has: page.getByText("PRICE-QA-01", { exact: true }) })
@@ -993,7 +1141,7 @@ test.describe("providers", () => {
     await editPriceModal
       .locator("textarea")
       .fill("Precio editado por prueba E2E");
-    await editPriceModal.locator('input[type="number"]').fill("2750.00");
+    await editPriceModal.locator(".provider-price-editable-input").fill("2750.00");
     await editPriceModal
       .getByRole("button", { name: "Guardar cambios", exact: true })
       .click();
@@ -1075,7 +1223,9 @@ test.describe("providers", () => {
 
     await page.getByLabel("Crear lista de precios").click();
     const groupListModal = page.locator(".provider-price-list-create-modal");
-    await groupListModal.locator("input").fill("Lista Grupo QA");
+    await groupListModal
+      .getByPlaceholder("Ej. Lista mayo 2026")
+      .fill("Lista Grupo QA");
     await groupListModal.locator("select").nth(0).selectOption("1");
     await groupListModal
       .locator("select")
@@ -1122,7 +1272,9 @@ test.describe("providers", () => {
       .fill("PRICE-DEMO");
     await baseItemPicker
       .locator(".provider-group-search-results-code")
-      .getByRole("button", { name: /PRICE-DEMO-001/i })
+      .locator(".provider-group-search-card")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .getByRole("button", { name: "Seleccionar", exact: true })
       .click();
     await expect(groupCodeInput).toHaveValue("PRICE-DEMO-001");
     await expect(groupPriceModal.locator("textarea")).toHaveValue(
@@ -1159,6 +1311,11 @@ test.describe("providers", () => {
     await expect(
       groupPriceModal.locator(".provider-group-components-table"),
     ).toContainText(/1,999\.99|1999\.99/);
+    const componentRow = groupPriceModal
+      .locator(".provider-group-components-table tbody tr")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .first();
+    await componentRow.locator(".provider-group-price-input").fill("2500");
     await groupPriceModal
       .getByRole("button", { name: "Agregar producto", exact: true })
       .click();
@@ -1168,9 +1325,32 @@ test.describe("providers", () => {
         () =>
           fixture
             .listPriceItems(Number(createdProvider?.id), Number(groupList?.id))
-            .find((item) => item.code === "PRICE-DEMO-001-AJUSTADO")?.components
-            ?.length,
+            .find((item) => item.code === "PRICE-DEMO-001-AJUSTADO")?.components?.[0]
+            ?.unit_price_override,
       )
-      .toBe(1);
+      .toBe(2500);
+
+    const createdGroupPriceRow = page
+      .locator("tbody tr")
+      .filter({ has: page.getByText("PRICE-DEMO-001-AJUSTADO", { exact: true }) })
+      .first();
+    await createdGroupPriceRow
+      .getByRole("button", { name: "Abrir acciones" })
+      .click();
+    await createdGroupPriceRow
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Editar", exact: true })
+      .click();
+
+    const editGroupPriceModal = page
+      .locator(".provider-price-item-modal-group")
+      .first();
+    const editComponentRow = editGroupPriceModal
+      .locator(".provider-group-components-table tbody tr")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .first();
+    await expect(editComponentRow.locator(".provider-group-price-input")).toHaveValue(
+      "2,500",
+    );
   });
 });

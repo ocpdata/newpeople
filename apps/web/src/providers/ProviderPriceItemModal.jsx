@@ -47,9 +47,41 @@ export default function ProviderPriceItemModal({
     onAddGroupComponent,
     onStepGroupComponentQuantity,
     onUpdateGroupComponentQuantity,
+    onUpdateGroupComponentUnitPrice,
     onMoveGroupComponent,
     onRemoveGroupComponent,
   } = handlers;
+
+  function sanitizeEditablePriceInput(value) {
+    const rawValue = String(value || "").replace(/,/g, "").trim();
+    if (!rawValue) return "";
+
+    const sanitizedValue = rawValue.replace(/[^\d.]/g, "");
+    const [integerPart = "", ...decimalParts] = sanitizedValue.split(".");
+    const decimalPart = decimalParts.join("");
+
+    if (decimalParts.length > 0) {
+      return `${integerPart || "0"}.${decimalPart.slice(0, 2)}`;
+    }
+
+    return integerPart;
+  }
+
+  function formatEditablePriceInput(value) {
+    const sanitizedValue = sanitizeEditablePriceInput(value);
+    if (!sanitizedValue) return "";
+
+    const [integerPart = "0", decimalPart] = sanitizedValue.split(".");
+    const normalizedIntegerPart = integerPart.replace(/^0+(?=\d)/, "") || "0";
+    const formattedIntegerPart = normalizedIntegerPart.replace(
+      /\B(?=(\d{3})+(?!\d))/g,
+      ",",
+    );
+
+    return decimalPart !== undefined
+      ? `${formattedIntegerPart}.${decimalPart}`
+      : formattedIntegerPart;
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -64,7 +96,7 @@ export default function ProviderPriceItemModal({
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
             <h3 className="modal-title">
-              {editingPriceItemId ? "Editar precio" : "Agregar producto"}
+              {editingPriceItemId ? "Editar producto" : "Agregar producto"}
             </h3>
             <p className="field-hint opportunity-modal-subtitle">
               {providerPriceListModalProvider.name}
@@ -104,7 +136,7 @@ export default function ProviderPriceItemModal({
                     <div className="provider-group-item-card">
                       <div className="provider-group-item-card-header">
                         <span className="provider-group-item-step">
-                          1. Origen y codigo
+                          1. Origen y codigo del componente padre
                         </span>
                         <p className="field-hint">
                           Escribe un codigo propio o precargalo desde un precio
@@ -132,7 +164,7 @@ export default function ProviderPriceItemModal({
                           </span>
                           <div className="provider-group-item-picker">
                             <div className="provider-group-item-picker-header">
-                              <strong>Usar producto existente como base</strong>
+                              <strong>Usar producto existente como padre</strong>
                               <span className="field-hint">
                                 Al seleccionarlo se precargan el codigo y la
                                 descripcion, pero ambos siguen siendo editables.
@@ -186,16 +218,14 @@ export default function ProviderPriceItemModal({
                             filteredGroupBaseProviderItems.length > 0 ? (
                               <div className="provider-group-search-results provider-group-search-results-compact provider-group-search-results-code">
                                 {filteredGroupBaseProviderItems.map((item) => (
-                                  <button
+                                  <div
                                     key={item.id}
-                                    type="button"
                                     className={
                                       Number(selectedGroupBaseItem?.id) ===
                                       Number(item.id)
                                         ? "provider-group-search-card provider-group-search-card-selected"
                                         : "provider-group-search-card"
                                     }
-                                    onClick={() => onApplyBaseItem(item)}
                                   >
                                     <span className="provider-group-search-copy">
                                       <strong className="provider-group-search-copy-code">
@@ -211,10 +241,25 @@ export default function ProviderPriceItemModal({
                                         )}
                                       </span>
                                     </span>
-                                    <span className="provider-group-search-btn">
-                                      Seleccionar
-                                    </span>
-                                  </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary provider-group-search-btn"
+                                      aria-label="Seleccionar"
+                                      title="Seleccionar"
+                                      onClick={() => onApplyBaseItem(item)}
+                                    >
+                                      <svg
+                                        aria-hidden="true"
+                                        viewBox="0 0 24 24"
+                                        className="provider-group-search-btn-icon"
+                                      >
+                                        <path
+                                          d="M9.55 17.36 4.7 12.5l1.06-1.06 3.8 3.8 8.68-8.68 1.06 1.06-9.74 9.74Z"
+                                          fill="currentColor"
+                                        />
+                                      </svg>
+                                    </button>
+                                  </div>
                                 ))}
                               </div>
                             ) : null}
@@ -347,12 +392,15 @@ export default function ProviderPriceItemModal({
                     Precio <span className="required-mark">*</span>
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={priceItemForm.price}
+                    type="text"
+                    inputMode="decimal"
+                    className="provider-price-editable-input"
+                    value={formatEditablePriceInput(priceItemForm.price)}
                     onChange={(e) =>
-                      onPriceItemFieldChange("price", e.target.value)
+                      onPriceItemFieldChange(
+                        "price",
+                        sanitizeEditablePriceInput(e.target.value),
+                      )
                     }
                     required
                   />
@@ -386,7 +434,7 @@ export default function ProviderPriceItemModal({
             <section className="account-form-section account-modal-section provider-price-item-section provider-group-search-section">
               <div className="provider-group-section-header">
                 <div>
-                  <h4>Componentes del grupo</h4>
+                  <h4>Componentes del Bundle</h4>
                   <p className="field-hint">
                     Agrega productos o servicios propios activos. El total se
                     recalcula automaticamente.
@@ -458,15 +506,6 @@ export default function ProviderPriceItemModal({
                       <div
                         key={`component-${candidate.id}`}
                         className="provider-group-search-card"
-                        onClick={() => onAddGroupComponent(candidate)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            onAddGroupComponent(candidate);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
                       >
                         <span className="provider-group-search-copy">
                           <strong className="provider-group-search-copy-code">
@@ -485,12 +524,23 @@ export default function ProviderPriceItemModal({
                         <button
                           type="button"
                           className="btn-secondary provider-group-search-btn"
+                          aria-label="Agregar"
+                          title="Agregar"
                           onClick={(event) => {
                             event.stopPropagation();
                             onAddGroupComponent(candidate);
                           }}
                         >
-                          Agregar
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="provider-group-search-btn-icon"
+                          >
+                            <path
+                              d="M11.25 5.75a.75.75 0 0 1 1.5 0v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5Z"
+                              fill="currentColor"
+                            />
+                          </svg>
                         </button>
                       </div>
                     ))}
@@ -544,20 +594,6 @@ export default function ProviderPriceItemModal({
                           </td>
                           <td>
                             <div className="provider-group-quantity-control">
-                              <button
-                                type="button"
-                                className="btn-ghost provider-group-quantity-btn"
-                                aria-label="Reducir cantidad"
-                                title="Reducir cantidad"
-                                onClick={() =>
-                                  onStepGroupComponentQuantity(
-                                    component.componentItemId,
-                                    -1,
-                                  )
-                                }
-                              >
-                                <span aria-hidden="true">-</span>
-                              </button>
                               <input
                                 type="number"
                                 min="0"
@@ -588,31 +624,67 @@ export default function ProviderPriceItemModal({
                                   )
                                 }
                               />
-                              <button
-                                type="button"
-                                className="btn-ghost provider-group-quantity-btn"
-                                aria-label="Aumentar cantidad"
-                                title="Aumentar cantidad"
-                                onClick={() =>
-                                  onStepGroupComponentQuantity(
+                              <div className="provider-group-quantity-actions">
+                                <button
+                                  type="button"
+                                  className="btn-ghost provider-group-quantity-btn"
+                                  aria-label="Aumentar cantidad"
+                                  title="Aumentar cantidad"
+                                  onClick={() =>
+                                    onStepGroupComponentQuantity(
+                                      component.componentItemId,
+                                      1,
+                                    )
+                                  }
+                                >
+                                  <span aria-hidden="true">+</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost provider-group-quantity-btn"
+                                  aria-label="Reducir cantidad"
+                                  title="Reducir cantidad"
+                                  onClick={() =>
+                                    onStepGroupComponentQuantity(
+                                      component.componentItemId,
+                                      -1,
+                                    )
+                                  }
+                                >
+                                  <span aria-hidden="true">-</span>
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="field-group provider-group-price-field">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className="provider-group-quantity-input provider-group-price-input"
+                                value={formatEditablePriceInput(
+                                  component.unitPriceOverride,
+                                )}
+                                onChange={(e) =>
+                                  onUpdateGroupComponentUnitPrice(
                                     component.componentItemId,
-                                    1,
+                                    sanitizeEditablePriceInput(
+                                      e.target.value,
+                                    ),
                                   )
                                 }
-                              >
-                                <span aria-hidden="true">+</span>
-                              </button>
+                              />
+                              <span className="field-hint">
+                                Base: {formatPriceValue(
+                                  component.sourcePrice,
+                                  component.currencyCode,
+                                )}
+                              </span>
                             </div>
                           </td>
                           <td>
                             {formatPriceValue(
-                              component.price,
-                              component.currencyCode,
-                            )}
-                          </td>
-                          <td>
-                            {formatPriceValue(
-                              Number(component.price || 0) *
+                              Number(component.unitPriceOverride || 0) *
                                 Number(component.quantity || 0),
                               component.currencyCode,
                             )}
@@ -703,13 +775,17 @@ export default function ProviderPriceItemModal({
             </section>
           )}
 
-          <div className="modal-buttons" style={{ marginTop: 16 }}>
-            <button type="button" className="btn-secondary" onClick={onClose}>
+          <div className="modal-buttons provider-price-item-actions">
+            <button
+              type="button"
+              className="btn-secondary provider-price-item-action-btn provider-price-item-action-btn-secondary"
+              onClick={onClose}
+            >
               Cancelar
             </button>
             <button
               type="submit"
-              className="btn-primary"
+              className="btn-primary provider-price-item-action-btn provider-price-item-action-btn-primary"
               disabled={savingPriceItem}
             >
               {savingPriceItem

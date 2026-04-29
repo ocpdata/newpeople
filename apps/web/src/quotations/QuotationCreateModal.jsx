@@ -2976,6 +2976,7 @@ function QuotationCreateModal({
                     catalogs={catalogs}
                     onFieldChange={handleCommercialConditionChange}
                     notesRows={7}
+                    showPricingHelperText={false}
                   />
                 </section>
               </>

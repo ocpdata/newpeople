@@ -48,6 +48,7 @@ export function QuotationCommercialConditionsCard({
   catalogs,
   onFieldChange,
   notesRows = 7,
+  showPricingHelperText = true,
 }) {
   return (
     <div className="quotation-commercial-conditions-card">
@@ -168,10 +169,12 @@ export function QuotationCommercialConditionsCard({
           </div>
         </div>
 
-        <p className="quotation-commercial-conditions-helper-text">
-          "Precio Lista M.O." conserva la base original del proveedor y "Precio
-          de lista" muestra el valor convertido en la moneda de la cotizacion.
-        </p>
+        {showPricingHelperText ? (
+          <p className="quotation-commercial-conditions-helper-text">
+            "Precio Lista M.O." conserva la base original del proveedor y "Precio
+            de lista" muestra el valor convertido en la moneda de la cotizacion.
+          </p>
+        ) : null}
       </div>
 
       <div className="field-group quotation-commercial-conditions-notes-field">

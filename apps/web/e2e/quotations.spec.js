@@ -432,6 +432,7 @@ function createQuotationsFixture({
           code: "A-COMP-1",
           description: "Componente A1",
           itemType: "producto",
+          unitPriceOverride: "11",
           price: "10",
         },
         {
@@ -1697,6 +1698,39 @@ test.describe("quotations", () => {
     });
   });
 
+  test("al cargar un bundle en creacion usa el precio override persistido del componente", async ({
+    page,
+  }) => {
+    let capturedCreatePayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        onCreateQuotation(payload) {
+          capturedCreatePayload = payload;
+        },
+      }),
+    );
+
+    const createModal = await openCreateQuotationModal(page);
+
+    await addBundleRow(page, createModal, 0, "BUNDLE-A");
+    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+
+    await expect.poll(() => capturedCreatePayload).not.toBeNull();
+    expect(capturedCreatePayload.sections[0].items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          productCode: "A-COMP-1",
+          originalCurrencyCode: "USD",
+          originalListPriceUnit: 11,
+          listPriceUnit: 11,
+        }),
+      ]),
+    );
+  });
+
   test("actualiza Precio de lista al cambiar el tipo de cambio en la creacion", async ({
     page,
   }) => {
@@ -1832,6 +1866,36 @@ test.describe("quotations", () => {
         }),
       ]),
     );
+  });
+
+  test("en edicion permite salir del editor de descripcion con clic fuera o Escape", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route("**/api/**", createQuotationsFixture());
+
+    const editModal = await openEditQuotationModal(page);
+    await expect
+      .poll(() => getQuotationRowCodes(page))
+      .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
+
+    const componentRow = editModal.getByRole("row", { name: /A-COMP-1/ });
+    const descriptionInput = componentRow.locator("td:nth-child(4) input");
+    const descriptionEditor = editModal.locator(
+      ".quotation-description-editor-popover",
+    );
+
+    await descriptionInput.click();
+    await expect(descriptionEditor).toBeVisible();
+
+    await editModal.getByRole("heading", { name: "Editar cotizacion" }).click();
+    await expect(descriptionEditor).toBeHidden();
+
+    await descriptionInput.click();
+    await expect(descriptionEditor).toBeVisible();
+
+    await descriptionEditor.locator("textarea").press("Escape");
+    await expect(descriptionEditor).toBeHidden();
   });
 
   test("en edicion mantiene cambios locales hasta guardar la version completa", async ({

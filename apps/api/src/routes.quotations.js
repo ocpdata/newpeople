@@ -4,6 +4,7 @@ import { query, withTransaction } from "./db.js";
 import { requireAnyPermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
+import { getCompanyDocumentBranding } from "./settings.js";
 
 const router = express.Router();
 
@@ -1443,7 +1444,7 @@ async function getQuotationProductComponents(groupItemIds) {
 
   const placeholders = groupItemIds.map(() => "?").join(", ");
   const rows = await query(
-    `SELECT c.id, c.grupo_item_id, c.component_item_id, c.quantity, c.sort_order,
+    `SELECT c.id, c.grupo_item_id, c.component_item_id, c.unit_price_override, c.quantity, c.sort_order,
             child.provider_id AS component_provider_id,
             child.price_list_id AS component_price_list_id,
             child.code AS component_code,
@@ -1476,6 +1477,7 @@ async function getQuotationProductComponents(groupItemIds) {
     map.get(key).push({
       id: Number(row.id),
       componentItemId: Number(row.component_item_id),
+      unitPriceOverride: Number(row.unit_price_override),
       quantity: Number(row.quantity),
       sortOrder: Number(row.sort_order),
       providerId: Number(row.component_provider_id),
@@ -3338,7 +3340,11 @@ router.post(
       });
     }
 
-    const { buffer, fileName } = await buildQuotationPdfBuffer(parsed.data);
+    const company = await getCompanyDocumentBranding();
+    const { buffer, fileName } = await buildQuotationPdfBuffer({
+      ...parsed.data,
+      company,
+    });
 
     await logAuditEvent({
       req,

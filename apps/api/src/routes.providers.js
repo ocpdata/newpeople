@@ -20,6 +20,7 @@ async function ensureProviderPriceListItemComponentsTable() {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         grupo_item_id BIGINT UNSIGNED NOT NULL,
         component_item_id BIGINT UNSIGNED NOT NULL,
+        unit_price_override DECIMAL(12, 2) NOT NULL,
         quantity DECIMAL(12, 2) NOT NULL,
         sort_order INT UNSIGNED NOT NULL DEFAULT 0,
         created_by BIGINT UNSIGNED NOT NULL,
@@ -32,10 +33,41 @@ async function ensureProviderPriceListItemComponentsTable() {
         CONSTRAINT fk_provider_price_list_item_components_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
         CONSTRAINT uq_provider_price_list_item_components_pair UNIQUE (grupo_item_id, component_item_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-    `).catch((error) => {
+    `)
+      .then(async () => {
+        const columnRows = await query(
+          `SELECT 1
+           FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = 'provider_price_list_item_components'
+             AND COLUMN_NAME = 'unit_price_override'
+           LIMIT 1`,
+        );
+
+        if (!columnRows.length) {
+          await query(`
+            ALTER TABLE provider_price_list_item_components
+            ADD COLUMN unit_price_override DECIMAL(12, 2) NULL DEFAULT NULL
+            AFTER component_item_id
+          `);
+
+          await query(`
+            UPDATE provider_price_list_item_components component_link
+            INNER JOIN provider_price_list_items child ON child.id = component_link.component_item_id
+            SET component_link.unit_price_override = child.price
+            WHERE component_link.unit_price_override IS NULL
+          `);
+
+          await query(`
+            ALTER TABLE provider_price_list_item_components
+            MODIFY COLUMN unit_price_override DECIMAL(12, 2) NOT NULL DEFAULT 0
+          `);
+        }
+      })
+      .catch((error) => {
       ensureProviderPriceListItemComponentsTablePromise = undefined;
       throw error;
-    });
+      });
   }
 
   await ensureProviderPriceListItemComponentsTablePromise;
@@ -109,6 +141,7 @@ const priceListItemSchema = z
       .array(
         z.object({
           componentItemId: z.number().int().positive(),
+          unitPriceOverride: z.number().nonnegative().optional(),
           quantity: z.number().nonnegative(),
         }),
       )
@@ -388,7 +421,7 @@ async function getProviderPriceItemComponents(groupItemIds) {
   if (!groupItemIds.length) return new Map();
 
   const rows = await query(
-    `SELECT c.id, c.grupo_item_id, c.component_item_id, c.quantity, c.sort_order,
+    `SELECT c.id, c.grupo_item_id, c.component_item_id, c.unit_price_override, c.quantity, c.sort_order,
             child.provider_id AS component_provider_id,
             child.price_list_id AS component_price_list_id,
             child.code AS component_code,
@@ -420,6 +453,7 @@ async function getProviderPriceItemComponents(groupItemIds) {
     map.get(key).push({
       id: Number(row.id),
       component_item_id: Number(row.component_item_id),
+      unit_price_override: Number(row.unit_price_override),
       quantity: Number(row.quantity),
       sort_order: Number(row.sort_order),
       provider_id: Number(row.component_provider_id),
@@ -574,6 +608,10 @@ async function validateGroupComponents({
   const normalizedComponents = Array.isArray(components)
     ? components.map((component, index) => ({
         componentItemId: Number(component.componentItemId),
+        unitPriceOverride:
+          component.unitPriceOverride == null
+            ? null
+            : Number(component.unitPriceOverride),
         quantity: Number(component.quantity),
         sortOrder: index,
       }))
@@ -684,9 +722,27 @@ async function validateGroupComponents({
       };
     }
 
-    totalPrice += Number(candidate.price) * Number(component.quantity);
+    const unitPriceOverride =
+      component.unitPriceOverride == null
+        ? Number(candidate.price)
+        : Number(component.unitPriceOverride);
+
+    if (!Number.isFinite(unitPriceOverride)) {
+      return {
+        ok: false,
+        response: {
+          status: 400,
+          body: {
+            message: "Cada componente debe incluir un precio override valido",
+          },
+        },
+      };
+    }
+
+    totalPrice += unitPriceOverride * Number(component.quantity);
     resolvedComponents.push({
       componentItemId: Number(component.componentItemId),
+      unitPriceOverride,
       quantity: Number(component.quantity),
       sortOrder: Number(component.sortOrder),
       component: candidate,
@@ -715,11 +771,12 @@ async function replaceGroupComponents({
   for (const component of components) {
     await conn.query(
       `INSERT INTO provider_price_list_item_components
-        (grupo_item_id, component_item_id, quantity, sort_order, created_by, created_at, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (grupo_item_id, component_item_id, unit_price_override, quantity, sort_order, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         groupItemId,
         component.componentItemId,
+        component.unitPriceOverride,
         component.quantity,
         component.sortOrder,
         actorUserId,
@@ -1576,6 +1633,7 @@ router.post(
             body.itemType === "grupo_productos"
               ? groupComponents.resolvedComponents.map((component) => ({
                   component_item_id: component.componentItemId,
+                  unit_price_override: component.unitPriceOverride,
                   quantity: component.quantity,
                 }))
               : [],
@@ -1807,6 +1865,7 @@ router.put(
           parsed.data.itemType === "grupo_productos"
             ? groupComponents.resolvedComponents.map((component) => ({
                 component_item_id: component.componentItemId,
+                unit_price_override: component.unitPriceOverride,
                 quantity: component.quantity,
               }))
             : [],

@@ -2,6 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { api, getApiErrorMessage } from "../api";
 
+const IMPORTED_PRICE_LIST_HEADER_ALIASES = {
+  code: ["codigo", "código", "code"],
+  description: ["descripcion", "descripción", "description"],
+  price: ["precio", "price"],
+  status: ["estado", "status"],
+  currency: ["moneda", "currency"],
+  itemType: ["tipo", "item type", "tipo item", "tipo de item"],
+};
+
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -32,6 +41,107 @@ function buildExportFileName(provider, priceList) {
   return `lista-precios-${normalizedName || "proveedor"}-${listSuffix || "lista"}-${dateStamp}.xlsx`;
 }
 
+function buildImportTemplateFileName(provider, priceList) {
+  const normalizedName = String(provider?.name || "proveedor")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const listSuffix = String(priceList?.name || "lista")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+
+  return `plantilla-lista-precios-${normalizedName || "proveedor"}-${listSuffix || "lista"}.xlsx`;
+}
+
+function buildImportTemplateWorkbook({ currencyCode, itemTypeLabel }) {
+  const templateWorksheet = XLSX.utils.aoa_to_sheet([
+    ["Codigo", "Descripcion", "Precio", "Moneda", "Estado", "Tipo"],
+  ]);
+  templateWorksheet["!cols"] = [
+    { wch: 18 },
+    { wch: 42 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 22 },
+  ];
+
+  const instructionsWorksheet = XLSX.utils.aoa_to_sheet([
+    ["Campo", "Uso", "Valor esperado"],
+    ["Codigo", "Obligatorio", "Unico dentro del archivo y de la lista"],
+    ["Descripcion", "Opcional", "Texto libre"],
+    ["Precio", "Obligatorio", "Numero mayor o igual a 0"],
+    ["Moneda", "Opcional", currencyCode || "Debe coincidir con la lista"],
+    ["Estado", "Opcional", "Activo o Inactivo"],
+    ["Tipo", "Opcional", itemTypeLabel || "Debe coincidir con la lista"],
+  ]);
+  instructionsWorksheet["!cols"] = [{ wch: 18 }, { wch: 30 }, { wch: 34 }];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, templateWorksheet, "Plantilla");
+  XLSX.utils.book_append_sheet(workbook, instructionsWorksheet, "Instrucciones");
+  return workbook;
+}
+
+function parseImportedPrice(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : Number.NaN;
+  }
+
+  const rawValue = String(value || "").trim().replace(/[$\s]/g, "");
+
+  if (!rawValue) {
+    return Number.NaN;
+  }
+
+  const hasComma = rawValue.includes(",");
+  const hasDot = rawValue.includes(".");
+  let normalizedValue = rawValue;
+
+  if (hasComma && hasDot) {
+    normalizedValue = rawValue.replace(/,/g, "");
+  } else if (hasComma) {
+    normalizedValue = rawValue.replace(/,/g, ".");
+  }
+
+  if (!normalizedValue) {
+    return Number.NaN;
+  }
+
+  return Number(normalizedValue);
+}
+
+function isImportedRowEmpty(row) {
+  return row.every((cell) => String(cell || "").trim() === "");
+}
+
+function getImportedHeaderIndexes(headerRow) {
+  const indexMap = {};
+
+  headerRow.forEach((headerValue, index) => {
+    const normalizedHeader = normalizeText(headerValue);
+    Object.entries(IMPORTED_PRICE_LIST_HEADER_ALIASES).forEach(
+      ([fieldName, aliases]) => {
+        if (indexMap[fieldName] !== undefined) return;
+        if (aliases.some((alias) => normalizeText(alias) === normalizedHeader)) {
+          indexMap[fieldName] = index;
+        }
+      },
+    );
+  });
+
+  return indexMap;
+}
+
 export function useProviderPriceItems({
   providers,
   catalogs,
@@ -59,6 +169,8 @@ export function useProviderPriceItems({
     useState(null);
   const [savingPriceItem, setSavingPriceItem] = useState(false);
   const [exportingPriceList, setExportingPriceList] = useState(false);
+  const [importingPriceList, setImportingPriceList] = useState(false);
+  const [priceListImportPreview, setPriceListImportPreview] = useState(null);
   const [priceItemForm, setPriceItemForm] = useState({
     code: "",
     description: "",
@@ -181,6 +293,10 @@ export function useProviderPriceItems({
     const componentItemId = Number(
       overrides.componentItemId ?? item.component_item_id ?? item.id ?? 0,
     );
+    const sourcePrice = Number(item.price || 0);
+    const unitPriceOverride = Number(
+      overrides.unitPriceOverride ?? item.unit_price_override ?? item.price ?? 0,
+    );
 
     return {
       componentItemId,
@@ -195,7 +311,9 @@ export function useProviderPriceItems({
       itemTypeLabel:
         item.item_type_label ||
         getPriceItemTypeLabel(item.item_type || "producto"),
-      price: Number(item.price || 0),
+      price: sourcePrice,
+      sourcePrice,
+      unitPriceOverride,
       currencyId: Number(item.currency_id || 0),
       currencyCode: item.currency_code || "USD",
     };
@@ -362,7 +480,8 @@ export function useProviderPriceItems({
           .reduce(
             (sum, component) =>
               sum +
-              Number(component.price || 0) * Number(component.quantity || 0),
+              Number(component.unitPriceOverride || 0) *
+                Number(component.quantity || 0),
             0,
           )
           .toFixed(2),
@@ -621,6 +740,7 @@ export function useProviderPriceItems({
         item.components.map((component) =>
           normalizeGroupComponentSelection(component, {
             componentItemId: component.component_item_id,
+            unitPriceOverride: component.unit_price_override,
             quantity: component.quantity,
           }),
         ),
@@ -641,6 +761,7 @@ export function useProviderPriceItems({
     setEditingPriceItemId(null);
     setOpenPriceItemMenuId(null);
     setConfirmPriceItemStatusAction(null);
+    setPriceListImportPreview(null);
     resetGroupPriceItemState();
   }
 
@@ -676,6 +797,7 @@ export function useProviderPriceItems({
         components: isGroupItem
           ? groupPriceItemComponents.map((component) => ({
               componentItemId: Number(component.componentItemId),
+              unitPriceOverride: Number(component.unitPriceOverride || 0),
               quantity: Number(component.quantity),
             }))
           : undefined,
@@ -840,6 +962,314 @@ export function useProviderPriceItems({
     }
   }
 
+  function downloadProviderPriceListImportTemplate() {
+    if (!currentProviderForPriceList || !selectedProviderPriceList) {
+      return;
+    }
+
+    const selectedCurrencyCode = String(
+      selectedProviderPriceList.currency_code ||
+        catalogs.currencies.find(
+          (currency) =>
+            Number(currency.id) === Number(selectedProviderPriceList.currency_id),
+        )?.code ||
+        "",
+    );
+    const selectedItemTypeLabel = getPriceItemTypeLabel(
+      selectedProviderPriceList.item_type,
+    );
+
+    setError("");
+    setSuccess("");
+
+    try {
+      const workbook = buildImportTemplateWorkbook({
+        currencyCode: selectedCurrencyCode,
+        itemTypeLabel: selectedItemTypeLabel,
+      });
+      XLSX.writeFile(
+        workbook,
+        buildImportTemplateFileName(
+          currentProviderForPriceList,
+          selectedProviderPriceList,
+        ),
+      );
+      setSuccess("Plantilla de importacion descargada correctamente");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible descargar la plantilla de importacion",
+        ),
+      );
+    }
+  }
+
+  function closePriceListImportPreview() {
+    if (importingPriceList) return;
+    setPriceListImportPreview(null);
+  }
+
+  function buildPriceListImportPreview({
+    rows,
+    fileName,
+    selectedCurrencyCode,
+    selectedItemTypeLabel,
+    activeStatusId,
+    inactiveStatusId,
+  }) {
+    const headerIndexes = getImportedHeaderIndexes(rows[0]);
+    if (headerIndexes.code === undefined || headerIndexes.price === undefined) {
+      throw new Error(
+        "El Excel debe incluir al menos las columnas Codigo y Precio.",
+      );
+    }
+
+    const validItems = [];
+    const invalidRows = [];
+    const seenCodes = new Set();
+    let processedRows = 0;
+
+    rows.slice(1).forEach((row, rowIndex) => {
+      if (!Array.isArray(row) || isImportedRowEmpty(row)) {
+        return;
+      }
+
+      processedRows += 1;
+      const excelRowNumber = rowIndex + 2;
+      const code = String(row[headerIndexes.code] || "").trim();
+      const description = String(row[headerIndexes.description] || "").trim();
+      const price = parseImportedPrice(row[headerIndexes.price]);
+      const importedStatus = normalizeText(row[headerIndexes.status]);
+      const importedCurrency = normalizeText(row[headerIndexes.currency]);
+      const importedItemType = normalizeText(row[headerIndexes.itemType]);
+      const issues = [];
+
+      if (!code) {
+        issues.push("El codigo es obligatorio.");
+      } else if (seenCodes.has(normalizeText(code))) {
+        issues.push("El codigo esta duplicado en el archivo.");
+      }
+
+      if (!Number.isFinite(price) || price < 0) {
+        issues.push("El precio no es valido.");
+      }
+
+      if (
+        importedCurrency &&
+        normalizeText(selectedCurrencyCode) !== importedCurrency
+      ) {
+        issues.push(
+          `La moneda ${row[headerIndexes.currency]} no coincide con la lista seleccionada (${selectedCurrencyCode}).`,
+        );
+      }
+
+      if (
+        importedItemType &&
+        importedItemType !== normalizeText(selectedProviderPriceList.item_type) &&
+        importedItemType !== normalizeText(selectedItemTypeLabel)
+      ) {
+        issues.push(
+          `El tipo ${row[headerIndexes.itemType]} no coincide con la lista seleccionada (${selectedItemTypeLabel}).`,
+        );
+      }
+
+      let activationStatusId = activeStatusId;
+      if (importedStatus) {
+        if (importedStatus === "activo") {
+          activationStatusId = activeStatusId;
+        } else if (importedStatus === "inactivo") {
+          activationStatusId = inactiveStatusId;
+        } else {
+          issues.push("El estado debe ser Activo o Inactivo.");
+        }
+      }
+
+      if (issues.length > 0) {
+        invalidRows.push({
+          excelRowNumber,
+          code,
+          description,
+          price: String(row[headerIndexes.price] || "").trim(),
+          issues,
+        });
+        return;
+      }
+
+      seenCodes.add(normalizeText(code));
+      validItems.push({
+        code,
+        description,
+        itemType: selectedProviderPriceList.item_type,
+        price,
+        currencyId: Number(selectedProviderPriceList.currency_id),
+        activationStatusId,
+        excelRowNumber,
+      });
+    });
+
+    if (processedRows === 0) {
+      throw new Error("El archivo Excel no contiene filas para importar.");
+    }
+
+    return {
+      fileName,
+      totalRows: processedRows,
+      validItems,
+      invalidRows,
+    };
+  }
+
+  async function importProviderPriceListFromExcel() {
+    if (!providerPriceListModalProvider || !selectedProviderPriceList) {
+      return;
+    }
+
+    if (selectedProviderPriceList.item_type === "grupo_productos") {
+      setError(
+        "La importacion desde Excel no esta disponible para listas tipo Bundle.",
+      );
+      return;
+    }
+
+    const file = await new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".xlsx,.xls";
+      input.onchange = () => resolve(input.files?.[0] || null);
+      input.click();
+    });
+
+    if (!file) {
+      return;
+    }
+
+    const activeStatusId = Number(
+      catalogs.priceItemStatuses.find(
+        (status) => normalizeText(status.code) === "activo",
+      )?.id || 0,
+    );
+    const inactiveStatusId = Number(
+      catalogs.priceItemStatuses.find(
+        (status) => normalizeText(status.code) === "inactivo",
+      )?.id || 0,
+    );
+    const selectedCurrencyCode = String(
+      selectedProviderPriceList.currency_code ||
+        catalogs.currencies.find(
+          (currency) =>
+            Number(currency.id) === Number(selectedProviderPriceList.currency_id),
+        )?.code ||
+        "",
+    );
+    const selectedItemTypeLabel = getPriceItemTypeLabel(
+      selectedProviderPriceList.item_type,
+    );
+
+    setError("");
+    setSuccess("");
+    setPriceListImportPreview(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), {
+        type: "array",
+        cellDates: false,
+      });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+      });
+
+      if (!Array.isArray(rows) || rows.length < 2) {
+        throw new Error("El archivo Excel no contiene filas para importar.");
+      }
+
+      const preview = buildPriceListImportPreview({
+        rows,
+        fileName: String(file.name || "archivo.xlsx"),
+        selectedCurrencyCode,
+        selectedItemTypeLabel,
+        activeStatusId,
+        inactiveStatusId,
+      });
+
+      setPriceListImportPreview(preview);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : getApiErrorMessage(
+              err,
+              "No fue posible importar la lista de precios",
+            ),
+      );
+    }
+  }
+
+  async function confirmProviderPriceListImport() {
+    if (
+      !providerPriceListModalProvider ||
+      !selectedProviderPriceList ||
+      !priceListImportPreview
+    ) {
+      return;
+    }
+
+    if (priceListImportPreview.validItems.length === 0) {
+      setError("No hay filas validas para importar.");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setImportingPriceList(true);
+
+    try {
+      for (const item of priceListImportPreview.validItems) {
+        try {
+          await api.post(
+            `/api/providers/${providerPriceListModalProvider.id}/price-lists/${selectedProviderPriceList.id}/items`,
+            {
+              code: item.code,
+              description: item.description || undefined,
+              itemType: item.itemType,
+              price: item.price,
+              currencyId: item.currencyId,
+              activationStatusId: item.activationStatusId,
+            },
+          );
+        } catch (err) {
+          throw new Error(
+            `Fila ${item.excelRowNumber}: ${getApiErrorMessage(
+              err,
+              "No fue posible importar el producto",
+            )}`,
+          );
+        }
+      }
+
+      await refreshProviderPriceListItems();
+      setPriceListImportPreview(null);
+      setSuccess(
+        `${priceListImportPreview.validItems.length} producto${priceListImportPreview.validItems.length === 1 ? "" : "s"} importado${priceListImportPreview.validItems.length === 1 ? "" : "s"} correctamente`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : getApiErrorMessage(
+              err,
+              "No fue posible importar la lista de precios",
+            ),
+      );
+    } finally {
+      setImportingPriceList(false);
+    }
+  }
+
   function applyBaseItemToGroup(candidate) {
     setSelectedGroupBaseItem(candidate);
     setGroupBaseProviderId(String(candidate.provider_id || ""));
@@ -880,6 +1310,20 @@ export function useProviderPriceItems({
       prev.map((component) =>
         Number(component.componentItemId) === Number(componentItemId)
           ? { ...component, quantity: normalizedQuantity }
+          : component,
+      ),
+    );
+  }
+
+  function updateGroupComponentUnitPrice(componentItemId, nextValue) {
+    const unitPrice = Number(nextValue);
+    const normalizedUnitPrice = Number.isFinite(unitPrice)
+      ? Math.max(0, Math.round(unitPrice * 100) / 100)
+      : 0;
+    setGroupPriceItemComponents((prev) =>
+      prev.map((component) =>
+        Number(component.componentItemId) === Number(componentItemId)
+          ? { ...component, unitPriceOverride: normalizedUnitPrice }
           : component,
       ),
     );
@@ -986,6 +1430,8 @@ export function useProviderPriceItems({
     confirmPriceItemStatusAction,
     savingPriceItem,
     exportingPriceList,
+    importingPriceList,
+    priceListImportPreview,
     priceItemForm,
     groupPriceItemTotal,
     activeProvidersForGroupBase,
@@ -1023,6 +1469,10 @@ export function useProviderPriceItems({
     togglePriceItemMenu,
     runPriceItemAction,
     exportProviderPriceListToExcel,
+    downloadProviderPriceListImportTemplate,
+    importProviderPriceListFromExcel,
+    closePriceListImportPreview,
+    confirmProviderPriceListImport,
     savePriceItem,
     openPriceItemStatusConfirmation,
     closePriceItemStatusConfirmation,
@@ -1040,6 +1490,7 @@ export function useProviderPriceItems({
     addGroupComponent,
     stepGroupComponentQuantity,
     updateGroupComponentQuantity,
+    updateGroupComponentUnitPrice,
     moveGroupComponent,
     removeGroupComponent,
     togglePriceItemSort,

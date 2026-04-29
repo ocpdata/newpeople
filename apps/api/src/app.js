@@ -12,6 +12,7 @@ import opportunityRoutes from "./routes.opportunities.js";
 import quotationRoutes from "./routes.quotations.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
+import settingsRoutes from "./routes.settings.js";
 
 export function createApp() {
   const app = express();
@@ -34,6 +35,7 @@ export function createApp() {
   app.use("/api", authRequired, loadUser, quotationRoutes);
   app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
+  app.use("/api/settings", authRequired, loadUser, settingsRoutes);
 
   app.use((err, _req, res, _next) => {
     console.error(err);
