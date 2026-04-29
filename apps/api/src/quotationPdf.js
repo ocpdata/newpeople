@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import PDFDocument from "pdfkit";
+import SVGtoPDF from "svg-to-pdfkit";
 
 const PAGE_MARGIN = 42;
 const PAGE_WIDTH = 612 - PAGE_MARGIN * 2;
@@ -28,22 +29,67 @@ function asLines(value) {
     .filter(Boolean);
 }
 
+function decodeDataUrl(value) {
+  const safeValue = asText(value);
+  const separatorIndex = safeValue.indexOf(",");
+  if (!safeValue.startsWith("data:") || separatorIndex <= 5) {
+    return null;
+  }
+
+  const meta = safeValue.slice(5, separatorIndex);
+  const payload = safeValue.slice(separatorIndex + 1);
+  const [mimeType = "", ...flags] = meta.split(";");
+  const isBase64 = flags.includes("base64");
+
+  try {
+    return {
+      mimeType,
+      content: isBase64
+        ? Buffer.from(payload, "base64")
+        : Buffer.from(decodeURIComponent(payload), "utf8"),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function resolveLogoSource(value) {
   const safeValue = asText(value);
   if (!safeValue) return null;
 
   if (safeValue.startsWith("data:image/")) {
-    const separatorIndex = safeValue.indexOf(",");
-    if (separatorIndex <= 0) return null;
-    try {
-      return Buffer.from(safeValue.slice(separatorIndex + 1), "base64");
-    } catch {
-      return null;
+    const decoded = decodeDataUrl(safeValue);
+    if (!decoded) return null;
+
+    if (decoded.mimeType === "image/svg+xml") {
+      return {
+        kind: "svg",
+        value: decoded.content.toString("utf8"),
+      };
     }
+
+    return {
+      kind: "image",
+      value: decoded.content,
+    };
   }
 
   if (existsSync(safeValue)) {
-    return safeValue;
+    if (safeValue.toLowerCase().endsWith(".svg")) {
+      try {
+        return {
+          kind: "svg",
+          value: readFileSync(safeValue, "utf8"),
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    return {
+      kind: "image",
+      value: safeValue,
+    };
   }
 
   return null;
@@ -141,7 +187,11 @@ function drawOutlinedCard(doc, x, y, width, height) {
     .restore();
 }
 
-function measureTextHeight(doc, text, { width, font, fontSize, align = "left" }) {
+function measureTextHeight(
+  doc,
+  text,
+  { width, font, fontSize, align = "left" },
+) {
   return doc
     .font(font)
     .fontSize(fontSize)
@@ -165,20 +215,21 @@ function drawCardRows(doc, rows, { x, y, width, paddingX = 14 }) {
         .restore();
     }
 
-    const rowHeight = Math.max(
-      18,
-      measureTextHeight(doc, label, {
-        width: labelWidth,
-        font: "Helvetica",
-        fontSize: 10,
-      }),
-      measureTextHeight(doc, value, {
-        width: contentWidth,
-        font: "Helvetica-Bold",
-        fontSize: 10,
-        align: "right",
-      }),
-    ) + CARD_ROW_TEXT_PADDING;
+    const rowHeight =
+      Math.max(
+        18,
+        measureTextHeight(doc, label, {
+          width: labelWidth,
+          font: "Helvetica",
+          fontSize: 10,
+        }),
+        measureTextHeight(doc, value, {
+          width: contentWidth,
+          font: "Helvetica-Bold",
+          fontSize: 10,
+          align: "right",
+        }),
+      ) + CARD_ROW_TEXT_PADDING;
 
     doc
       .font("Helvetica")
@@ -219,7 +270,7 @@ function drawLabelValue(doc, { label, value, x, y, width, align = "left" }) {
     .text(safeValue, x, y + 11, { width, align });
 }
 
-function drawHeader(doc, model) {
+async function drawHeader(doc, model) {
   const company = model.company;
   const topY = doc.y;
   const leftX = doc.page.margins.left;
@@ -229,11 +280,19 @@ function drawHeader(doc, model) {
 
   if (logoSource) {
     try {
-      doc.image(logoSource, leftX, topY, {
-        fit: [150, 55],
-        align: "left",
-        valign: "top",
-      });
+      if (logoSource.kind === "svg") {
+        SVGtoPDF(doc, logoSource.value, leftX, topY, {
+          width: 150,
+          height: 55,
+          preserveAspectRatio: "xMinYMin meet",
+        });
+      } else {
+        doc.image(logoSource.value, leftX, topY, {
+          fit: [150, 55],
+          align: "left",
+          valign: "top",
+        });
+      }
     } catch {
       // Ignore logo rendering problems and keep the document available.
     }
@@ -468,8 +527,7 @@ function drawOutlinedParagraphCard(doc, title, content) {
     ensureSpace(doc, minimumCardHeight + 12);
 
     const topY = doc.y;
-    const availableHeight =
-      doc.page.height - doc.page.margins.bottom - topY;
+    const availableHeight = doc.page.height - doc.page.margins.bottom - topY;
     const availableContentHeight =
       availableHeight - cardPaddingTop - titleHeight - 10 - cardPaddingBottom;
 
@@ -700,9 +758,14 @@ function drawSummaryAndTerms(doc, model) {
     .font("Helvetica-Bold")
     .fontSize(11)
     .fillColor(COLORS.brand)
-    .text("Condiciones Comerciales", leftX + cardPaddingX, topY + cardPaddingTop, {
-      width: leftWidth - cardPaddingX * 2,
-    });
+    .text(
+      "Condiciones Comerciales",
+      leftX + cardPaddingX,
+      topY + cardPaddingTop,
+      {
+        width: leftWidth - cardPaddingX * 2,
+      },
+    );
 
   const terms = [
     ["Tiempo de entrega", model.commercialTerms.deliveryTime],
@@ -761,15 +824,16 @@ function drawSummaryAndTerms(doc, model) {
       fontSize: rowFontSize,
       align: "right",
     });
-    const rowHeight = Math.max(
-      isTotal ? 22 : 18,
-      measureTextHeight(doc, label, {
-        width: labelWidth,
-        font: rowFont,
-        fontSize: rowFontSize,
-      }),
-      amountHeight,
-    ) + CARD_ROW_TEXT_PADDING;
+    const rowHeight =
+      Math.max(
+        isTotal ? 22 : 18,
+        measureTextHeight(doc, label, {
+          width: labelWidth,
+          font: rowFont,
+          fontSize: rowFontSize,
+        }),
+        amountHeight,
+      ) + CARD_ROW_TEXT_PADDING;
     const amountY = currentY + Math.max(0, (rowHeight - amountHeight) / 2);
 
     if (index > 0) {
@@ -880,7 +944,8 @@ function normalizeModel(input) {
       total: asNumber(input?.summary?.total),
       showVat: Boolean(input?.summary?.showVat),
       vatMode:
-        input?.summary?.vatMode === "total" || input?.summary?.vatMode === "per_item"
+        input?.summary?.vatMode === "total" ||
+        input?.summary?.vatMode === "per_item"
           ? input.summary.vatMode
           : "without_vat",
       currencyCode: asText(input?.summary?.currencyCode) || "USD",
@@ -901,7 +966,7 @@ export async function buildQuotationPdfBuffer(input) {
   const doc = createDocument();
   const bufferPromise = bufferPdfDocument(doc);
 
-  drawHeader(doc, model);
+  await drawHeader(doc, model);
   drawPeopleSummary(doc, model);
   drawParagraphSection(doc, "Introduccion", model.introduction);
   for (const section of model.sections) {
