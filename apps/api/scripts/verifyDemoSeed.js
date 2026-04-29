@@ -6,22 +6,24 @@ const EXPECTED_DEMO_PROVIDER_NAMES = [
   "Bluecat Networks",
   "Cisco",
   "Servicios Access Quality",
+  "Electrodata",
   "Otros",
-  "Bundle F5",
+  "Bundles",
 ];
 const EXPECTED_DEMO_PROVIDER_PRICE_LIST_NAMES = [
-  "F5",
+  "Productos F5",
   "Lista base demo 02",
   "Lista base demo 03",
   "Servicios",
+  "Productos",
   "Lista base demo 05",
-  "Bundle F5",
+  "F5",
 ];
 const EXPECTED_DEMO_PROVIDERS = EXPECTED_DEMO_PROVIDER_NAMES.length;
 const EXPECTED_DEMO_PROVIDER_PRICE_LISTS = EXPECTED_DEMO_PROVIDERS;
-const EXPECTED_BUNDLES_GROUP_ITEMS = 20;
+const EXPECTED_BUNDLES_GROUP_ITEMS = 2;
 const EXPECTED_DEMO_PROVIDER_PRICE_ITEMS =
-  (EXPECTED_DEMO_PROVIDERS - 1) * 50 + EXPECTED_BUNDLES_GROUP_ITEMS;
+  2110 + 44 + 1 + (EXPECTED_DEMO_PROVIDERS - 4) * 50 + EXPECTED_BUNDLES_GROUP_ITEMS;
 const EXPECTED_DEMO_SERVICE_PRICE_LISTS = 1;
 const EXPECTED_DEMO_GROUP_PRICE_LISTS = 1;
 const EXPECTED_DEMO_PRODUCT_PRICE_LISTS =
@@ -29,6 +31,9 @@ const EXPECTED_DEMO_PRODUCT_PRICE_LISTS =
   EXPECTED_DEMO_SERVICE_PRICE_LISTS -
   EXPECTED_DEMO_GROUP_PRICE_LISTS;
 const EXPECTED_CURRENCY_CODE = "USD";
+const EXPECTED_F5_PRODUCTS_ITEMS = 2110;
+const EXPECTED_SERVICES_ITEMS = 44;
+const EXPECTED_ELECTRODATA_ITEMS = 1;
 
 function assertEqual(label, actual, expected) {
   if (Number(actual) !== Number(expected)) {
@@ -185,6 +190,48 @@ async function verifyProviderSeed() {
     console.log(`demo_provider_price_list_name_${index + 1}_ok`, actualListName);
   }
 
+  const [f5ProductsList] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN provider_price_lists ppl ON ppl.id = ppi.price_list_id
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     WHERE p.name = 'F5 Networks'
+       AND ppl.name = 'Productos F5'`,
+  );
+  assertEqual(
+    "demo_f5_products_items",
+    Number(f5ProductsList.count),
+    EXPECTED_F5_PRODUCTS_ITEMS,
+  );
+
+  const [servicesList] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN provider_price_lists ppl ON ppl.id = ppi.price_list_id
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     WHERE p.name = 'Servicios Access Quality'
+       AND ppl.name = 'Servicios'`,
+  );
+  assertEqual(
+    "demo_services_items",
+    Number(servicesList.count),
+    EXPECTED_SERVICES_ITEMS,
+  );
+
+  const [electrodataList] = await query(
+    `SELECT COUNT(*) AS count
+     FROM provider_price_list_items ppi
+     INNER JOIN provider_price_lists ppl ON ppl.id = ppi.price_list_id
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     WHERE p.name = 'Electrodata'
+       AND ppl.name = 'Productos'`,
+  );
+  assertEqual(
+    "demo_electrodata_items",
+    Number(electrodataList.count),
+    EXPECTED_ELECTRODATA_ITEMS,
+  );
+
   const [providersWithMultipleActiveLists] = await query(
     `SELECT COUNT(*) AS count
      FROM (
@@ -337,7 +384,7 @@ async function verifyProviderSeed() {
     `SELECT COUNT(*) AS count
      FROM provider_price_list_items ppi
      INNER JOIN providers p ON p.id = ppi.provider_id
-    WHERE p.name = 'Bundle F5'
+    WHERE p.name = 'Bundles'
        AND p.registration_code LIKE 'DEMO-PROV-%'
        AND ppi.item_type = 'grupo_productos'`,
   );

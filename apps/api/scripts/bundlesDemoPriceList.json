@@ -1,0 +1,53 @@
+[
+  {
+    "code": "AQ-F5-DCS-BASE-PACK-BDL",
+    "description": "Servicio de F5 Distributed Cloud Services anual. Incluye implementacion y soporte tecnico.",
+    "price": 35956,
+    "status": "Activo",
+    "components": [
+      {
+        "providerName": "F5 Networks",
+        "code": "F5-V-O-ALL-BASE-PKG",
+        "quantity": 1
+      },
+      {
+        "providerName": "Servicios Access Quality",
+        "code": "ELECT-INST-AVA",
+        "quantity": 1
+      },
+      {
+        "providerName": "Servicios Access Quality",
+        "code": "ELECT-ST-24X7-AN",
+        "quantity": 1
+      }
+    ]
+  },
+  {
+    "code": "AQ-F5-DCS-BASE-PACK-MON-BDL",
+    "description": "Servicio de F5 Distributed Cloud Services Anual. Incluye implementacion, soporte tecnico y Monitoreo 24x7",
+    "price": 42006,
+    "status": "Activo",
+    "components": [
+      {
+        "providerName": "F5 Networks",
+        "code": "F5-V-O-ALL-BASE-PKG",
+        "quantity": 1
+      },
+      {
+        "providerName": "Servicios Access Quality",
+        "code": "ELECT-INST-AVA",
+        "quantity": 1
+      },
+      {
+        "providerName": "Servicios Access Quality",
+        "code": "ELECT-ST-24X7-AN",
+        "quantity": 1
+      },
+      {
+        "providerName": "Electrodata",
+        "code": "ELECT-MON-12",
+        "quantity": 1
+      }
+    ]
+  }
+]

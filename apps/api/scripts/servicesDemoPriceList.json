@@ -1,0 +1,266 @@
+[
+  {
+    "code": "ELECT-VIA-VUE-LOC",
+    "description": "Transporte aereo local",
+    "price": 400,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-VUE-EXT",
+    "description": "Transporte aereo al extranejro",
+    "price": 1000,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-TRA-LOC",
+    "description": "Transporte terrestre local",
+    "price": 20,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-TRA-EXT",
+    "description": "Transporte terrestre en el extranjero",
+    "price": 50,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-TOT-LOC",
+    "description": "Transporte estadia y viaticos  local",
+    "price": 700,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-TOT-EXT",
+    "description": "Transporte estadia y viaticos  en el extranejro",
+    "price": 2000,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-OTR-LOC",
+    "description": "Otros consumos diarios locales",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-OTR-EXT",
+    "description": "Otros consumos diarios en el extranejro",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-VIA-HOT-LOC",
+    "description": "Precio diario de hotel local",
+    "price": 60,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-ST-24X7-MES",
+    "description": "Servicio de Soporte Tecnico en la modalidad 24x7. Costo por mes",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-ST-24X7-AN",
+    "description": "Servicio de Soporte Tecnico en la modalidad 24x7. Costo anual",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-INT",
+    "description": "Servicio de instalación y configuración de equipos categoría Básica. Precio total",
+    "price": 1500,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-HINT",
+    "description": "Servicio de instalación y configuración de equipos categoría Intermedia. Precio por hora",
+    "price": 150,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-HBAS",
+    "description": "Servicio de instalación y configuración de equipos categoría Básica. Precio por hora",
+    "price": 100,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-HAVA",
+    "description": "Servicio de instalación y configuración de equipos categoría Avanzada Precio por hora",
+    "price": 200,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-BAS",
+    "description": "Servicio de instalación y configuración de equipos categoría Básica. Precio total",
+    "price": 1000,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-INST-AVA",
+    "description": "Servicio de instalación y configuración de equipos categoría Avanzada. Precio total",
+    "price": 2000,
+    "status": "Activo"
+  },
+  {
+    "code": "ELECT-CAP-AVA",
+    "description": "Capacitación en Administración y Operación de equipos de seguridad y/o comunicaciones. Duración 8 horas para 4 personas",
+    "price": 4000,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-REACT-8x5",
+    "description": "Gestión de Incidentes 8x5 (Ilimitado)\r\nMesa de Ayuda 8x5\r\nGestión RMA\r\nSoporte con Fabricante\r\nReportes de Tickets/Incidencias\r\nReportes Post-Incidencias Cr&iacute;ticos y Altos\r\n01 Mantenimiento Preventivo Anual",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-REACT-24x7",
+    "description": "Gestión de Incidentes 24x7 (Ilimitado)\r\nMesa de Ayuda 24x7\r\nGestión RMA\r\nSoporte con Fabricante\r\nReportes de Tickets/Incidencias\r\nReportes Post-Incidencias Críticos y Altos\r\n01 Mantenimiento Preventivo Anual",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-UPGRADE",
+    "description": "Servicios de Upgrade de Plataformas",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-SEG-VULNER",
+    "description": "Análisis de Vulnerabilidades",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-SEG-INTEL",
+    "description": "Threath Intelligence",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-REUNIONES",
+    "description": "Reuniones Especiales",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-REPORTES",
+    "description": "Reportes Especiales",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-MANT-PREV-LOG",
+    "description": "Mantenimiento - Preventivo (Lógico)",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-MANT-PREV-FIS",
+    "description": "Mantenimiento - Preventivo (Físico)",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-ING-ONSITE",
+    "description": "Servicio de Ingeniero ON SITE Senior y/o Junior",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-IMPLEMENT-HORA",
+    "description": "Servicios de Implementación y Configuración por hora",
+    "price": 80,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-IMPLEMENT",
+    "description": "Servicios de Implementación y Configuración",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-HRS",
+    "description": "Bolsa de Horas de Servicios Profesionales",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-HA",
+    "description": "Servicios de Pruebas de Alta Disponibilidad",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-GS",
+    "description": "Gestión de Servicios",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-GP",
+    "description": "Gestión de Proyectos",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-EVAL-SEG",
+    "description": "Evaluación de Infraestructura de Seguridad\r\nInforme de Evaluación de Seguridad",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-EVAL-RED",
+    "description": "Evaluación de Infraestructura de Red\r\nInforme de Evaluación de Red",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-DRP",
+    "description": "Servicios de Pruebas de Disaster Recovery",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-DISENO",
+    "description": "Servicios de Diseño de Arquitectura y Soluciones",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-CAP",
+    "description": "Capacitación Técnica Access Quality",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROF-AUDIT",
+    "description": "Servicios de Auditoría de Procesos y Servicios",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROAC-MON-SEG",
+    "description": "Monitoreo de Seguridad\r\nCorrelacionamiento de Eventos\r\nReporte Estado de Salud",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROAC-MON",
+    "description": "Monitoreo de RED y Servicios\r\nReporte Estado de Salud N1 y/o N2",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROAC-ADM-SEG",
+    "description": "Gestión de Cambios/Configuraciones - Equipos y soluciones existentes (incluidos en el contrato/propuesta)\r\nGestión de Problemas\r\nUpgrade de parches de SW\r\nBackup de configuración\r\nGestión RMA\r\nSoporte con Fabricante\r\nReportes de Tickets/Incidencias\r\nReportes Post-Incidencias Críticos y Altos\r\nMantenimiento Preventivo Anual\r\nInventario de componentes y versiones\r\nReporte de Estado de Salud\r\nReporte de Estado de Salud",
+    "price": 0,
+    "status": "Activo"
+  },
+  {
+    "code": "EDATA-SERV-PROAC-ADM",
+    "description": "Gestión de Incidentes 24x7 (Ilimitado)\r\nGestión de Cambios/Configuraciones - Equipos y soluciones existentes (incluidos en el contrato/propuesta)\r\nGestión de Problemas\r\nUpgrade de parches de SW\r\nBackup de configuraci&oacute;n\r\nGestión RMA\r\nSoporte con Fabricante\r\nReportes de Tickets/Incidencias\r\nReportes Post-Incidencias Cr&iacute;ticos y Altos\r\nMantenimiento Preventivo Anual\r\nInventario de componentes y versiones\r\nReporte de Estado de Salud",
+    "price": 0,
+    "status": "Activo"
+  }
+]

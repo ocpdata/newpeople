@@ -1,6 +1,20 @@
+import { readFileSync } from "node:fs";
 import bcrypt from "bcryptjs";
 import { pool, query, withTransaction } from "../src/db.js";
 import { config } from "../src/config.js";
+
+const F5_PRODUCTS_PRICE_LIST = JSON.parse(
+  readFileSync(new URL("./f5DemoPriceList.json", import.meta.url), "utf8"),
+);
+const SERVICES_PRICE_LIST = JSON.parse(
+  readFileSync(new URL("./servicesDemoPriceList.json", import.meta.url), "utf8"),
+);
+const ELECTRODATA_PRICE_LIST = JSON.parse(
+  readFileSync(new URL("./electrodataDemoPriceList.json", import.meta.url), "utf8"),
+);
+const BUNDLES_PRICE_LIST = JSON.parse(
+  readFileSync(new URL("./bundlesDemoPriceList.json", import.meta.url), "utf8"),
+);
 
 const DEMO_MARKER = "DEMO_SEED_V1";
 const DEMO_REGISTRATION_PREFIX = "DEMO-ACC-";
@@ -11,18 +25,19 @@ const DEFAULT_COUNTS = {
   contactsMin: 2,
   contactsMax: 4,
   opportunitiesPerAccount: 4,
-  providers: 6,
+  providers: 7,
   providerPriceItemsMin: 50,
   providerPriceItemsMax: 50,
 };
 const SERVICE_ONLY_PROVIDER_INDEX = 3;
-const BUNDLES_PROVIDER_INDEX = 5;
+const BUNDLES_PROVIDER_INDEX = 6;
 const BUNDLES_GROUP_ITEMS_COUNT = 20;
 const DEMO_PROVIDER_BLUEPRINTS = [
   {
     providerName: "F5 Networks",
-    priceListName: "F5",
+    priceListName: "Productos F5",
     itemType: "producto",
+    seededItems: F5_PRODUCTS_PRICE_LIST,
   },
   {
     providerName: "Bluecat Networks",
@@ -38,6 +53,13 @@ const DEMO_PROVIDER_BLUEPRINTS = [
     providerName: "Servicios Access Quality",
     priceListName: "Servicios",
     itemType: "servicio_propio",
+    seededItems: SERVICES_PRICE_LIST,
+  },
+  {
+    providerName: "Electrodata",
+    priceListName: "Productos",
+    itemType: "producto",
+    seededItems: ELECTRODATA_PRICE_LIST,
   },
   {
     providerName: "Otros",
@@ -45,10 +67,11 @@ const DEMO_PROVIDER_BLUEPRINTS = [
     itemType: "producto",
   },
   {
-    providerName: "Bundle F5",
-    providerAliases: ["Bundles"],
-    priceListName: "Bundle F5",
+    providerName: "Bundles",
+    providerAliases: ["Bundle F5"],
+    priceListName: "F5",
     itemType: "grupo_productos",
+    seededItems: BUNDLES_PRICE_LIST,
   },
 ];
 const DEMO_CLOSED_OPPORTUNITY_TARGETS = {
@@ -1653,11 +1676,24 @@ function buildProviderItemType(index) {
   return getDemoProviderBlueprint(index).itemType;
 }
 
+function buildProviderSeedItems(index) {
+  return getDemoProviderBlueprint(index).seededItems || [];
+}
+
+function buildProviderPriceListIsActive(index) {
+  return getDemoProviderBlueprint(index).isActive ?? 1;
+}
+
 function makeProviderStatusId(catalogs) {
   return byCode(catalogs.providerStatuses, "activado");
 }
 
 function makeProviderPriceItemsCount(index) {
+  const seededItems = buildProviderSeedItems(index);
+  if (seededItems.length > 0) {
+    return seededItems.length;
+  }
+
   if (index === BUNDLES_PROVIDER_INDEX) {
     return BUNDLES_GROUP_ITEMS_COUNT;
   }
@@ -1671,7 +1707,11 @@ function makeProviderPriceItemsCount(index) {
   );
 }
 
-function makeProviderPriceItemStatusId({ catalogs }) {
+function makeProviderPriceItemStatusId({ catalogs, status = "activo" }) {
+  const normalizedStatus = normalizeSeedText(status).trim();
+  if (normalizedStatus === "inactivo") {
+    return byCode(catalogs.providerPriceItemStatuses, "inactivo");
+  }
   return byCode(catalogs.providerPriceItemStatuses, "activo");
 }
 
@@ -1740,6 +1780,34 @@ function buildBundleComponents({
   }
 
   return components;
+}
+
+function buildComponentLookupKey(providerName, code) {
+  return `${normalizeSeedText(providerName).trim()}::${normalizeSeedText(code).trim()}`;
+}
+
+function resolveSeededBundleComponents({ components, itemLookup }) {
+  return components.map((component, index) => {
+    const lookupKey = buildComponentLookupKey(
+      component.providerName,
+      component.code,
+    );
+    const resolvedItem = itemLookup.get(lookupKey);
+
+    if (!resolvedItem) {
+      throw new Error(
+        `No se encontro el componente ${component.providerName} / ${component.code} para el bundle demo`,
+      );
+    }
+
+    return {
+      componentItemId: Number(resolvedItem.id),
+      quantity: Number(component.quantity || 1),
+      price: Number(resolvedItem.price),
+      itemType: resolvedItem.itemType,
+      sortOrder: index,
+    };
+  });
 }
 
 async function resetDemoData(conn) {
@@ -2251,6 +2319,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
     let providerPriceItemsCounter = 0;
     const productComponentCandidates = [];
     const serviceComponentCandidates = [];
+    const itemLookup = new Map();
     const createdProviders = [];
     let createdProvidersCounter = 0;
     for (let index = 0; index < DEFAULT_COUNTS.providers; index += 1) {
@@ -2302,7 +2371,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
       createdProviders.push({ id: providerId, name: providerName });
       const providerPriceListName = buildProviderPriceListName(index);
-      const providerPriceListIsActive = 1;
+      const providerPriceListIsActive = buildProviderPriceListIsActive(index);
       const listCurrency = usdCurrency;
       const listItemType = buildProviderItemType(index);
 
@@ -2347,24 +2416,33 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
       );
       const providerPriceListId = Number(priceListInsert.insertId);
 
+      const seededItems = buildProviderSeedItems(index);
       const totalItems = makeProviderPriceItemsCount(index);
       for (let itemIndex = 0; itemIndex < totalItems; itemIndex += 1) {
         const familyName = pickRow(PROVIDER_PRICE_FAMILIES, index + itemIndex);
+        const seededItem = seededItems[itemIndex] || null;
         if (listItemType === "grupo_productos") {
-          const bundleComponents = buildBundleComponents({
-            itemIndex,
-            productCandidates: productComponentCandidates,
-            serviceCandidates: serviceComponentCandidates,
-          });
-          const bundlePrice = Number(
-            bundleComponents
-              .reduce(
-                (sum, component) =>
-                  sum + Number(component.price) * Number(component.quantity),
-                0,
-              )
-              .toFixed(2),
-          );
+          const bundleComponents = seededItem?.components?.length
+            ? resolveSeededBundleComponents({
+                components: seededItem.components,
+                itemLookup,
+              })
+            : buildBundleComponents({
+                itemIndex,
+                productCandidates: productComponentCandidates,
+                serviceCandidates: serviceComponentCandidates,
+              });
+          const bundlePrice = seededItem
+            ? Number(seededItem.price)
+            : Number(
+                bundleComponents
+                  .reduce(
+                    (sum, component) =>
+                      sum + Number(component.price) * Number(component.quantity),
+                    0,
+                  )
+                  .toFixed(2),
+              );
 
           const [groupItemInsert] = await conn.query(
             `INSERT INTO provider_price_list_items
@@ -2374,17 +2452,19 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             [
               providerId,
               providerPriceListId,
-              buildBundlesGroupItemCode(itemIndex),
-              buildBundlesGroupItemDescription(
-                itemIndex,
-                bundleComponents.length,
-              ),
+              seededItem?.code || buildBundlesGroupItemCode(itemIndex),
+              seededItem?.description ||
+                buildBundlesGroupItemDescription(
+                  itemIndex,
+                  bundleComponents.length,
+                ),
               byCode(catalogs.productTypes, listItemType),
               listItemType,
               bundlePrice,
               Number(listCurrency.id),
               makeProviderPriceItemStatusId({
                 catalogs,
+                status: seededItem?.status,
               }),
               adminUserId,
               now,
@@ -2408,7 +2488,7 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
                 groupItemId,
                 Number(component.componentItemId),
                 Number(component.quantity),
-                componentIndex,
+                component.sortOrder ?? componentIndex,
                 adminUserId,
                 now,
                 adminUserId,
@@ -2417,7 +2497,9 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             );
           }
         } else {
-          const itemPrice = 850 + index * 115 + itemIndex * 47.5;
+          const itemPrice = seededItem
+            ? Number(seededItem.price)
+            : 850 + index * 115 + itemIndex * 47.5;
           const [itemInsert] = await conn.query(
             `INSERT INTO provider_price_list_items
               (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
@@ -2426,18 +2508,20 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
             [
               providerId,
               providerPriceListId,
-              buildProviderPriceItemCode(index, itemIndex),
-              buildProviderPriceItemDescription({
-                providerName,
-                familyName,
-                currencyCode: listCurrency.code,
-              }),
+              seededItem?.code || buildProviderPriceItemCode(index, itemIndex),
+              seededItem?.description ||
+                buildProviderPriceItemDescription({
+                  providerName,
+                  familyName,
+                  currencyCode: listCurrency.code,
+                }),
               byCode(catalogs.productTypes, listItemType),
               listItemType,
               itemPrice,
               Number(listCurrency.id),
               makeProviderPriceItemStatusId({
                 catalogs,
+                status: seededItem?.status,
               }),
               adminUserId,
               now,
@@ -2448,8 +2532,15 @@ async function seedDemoData({ options, userSpecs, catalogs }) {
 
           const insertedItem = {
             id: Number(itemInsert.insertId),
+            providerName,
+            code: seededItem?.code || buildProviderPriceItemCode(index, itemIndex),
+            itemType: listItemType,
             price: Number(itemPrice),
           };
+          itemLookup.set(
+            buildComponentLookupKey(insertedItem.providerName, insertedItem.code),
+            insertedItem,
+          );
           if (listItemType === "servicio_propio") {
             serviceComponentCandidates.push(insertedItem);
           } else {
