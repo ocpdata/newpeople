@@ -88,7 +88,11 @@ function buildImportTemplateWorkbook({ currencyCode, itemTypeLabel }) {
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, templateWorksheet, "Plantilla");
-  XLSX.utils.book_append_sheet(workbook, instructionsWorksheet, "Instrucciones");
+  XLSX.utils.book_append_sheet(
+    workbook,
+    instructionsWorksheet,
+    "Instrucciones",
+  );
   return workbook;
 }
 
@@ -97,7 +101,9 @@ function parseImportedPrice(value) {
     return Number.isFinite(value) ? value : Number.NaN;
   }
 
-  const rawValue = String(value || "").trim().replace(/[$\s]/g, "");
+  const rawValue = String(value || "")
+    .trim()
+    .replace(/[$\s]/g, "");
 
   if (!rawValue) {
     return Number.NaN;
@@ -132,7 +138,9 @@ function getImportedHeaderIndexes(headerRow) {
     Object.entries(IMPORTED_PRICE_LIST_HEADER_ALIASES).forEach(
       ([fieldName, aliases]) => {
         if (indexMap[fieldName] !== undefined) return;
-        if (aliases.some((alias) => normalizeText(alias) === normalizedHeader)) {
+        if (
+          aliases.some((alias) => normalizeText(alias) === normalizedHeader)
+        ) {
           indexMap[fieldName] = index;
         }
       },
@@ -294,9 +302,12 @@ export function useProviderPriceItems({
       overrides.componentItemId ?? item.component_item_id ?? item.id ?? 0,
     );
     const sourcePrice = Number(item.price || 0);
-    const unitPriceOverride = Number(
-      overrides.unitPriceOverride ?? item.unit_price_override ?? item.price ?? 0,
-    );
+    const rawUnitPriceOverride =
+      overrides.unitPriceOverride ?? item.unit_price_override;
+    const unitPriceOverride =
+      Number(rawUnitPriceOverride) === 0 && sourcePrice > 0
+        ? sourcePrice
+        : Number(rawUnitPriceOverride ?? item.price ?? 0);
 
     return {
       componentItemId,
@@ -317,6 +328,88 @@ export function useProviderPriceItems({
       currencyId: Number(item.currency_id || 0),
       currencyCode: item.currency_code || "USD",
     };
+  }
+
+  function buildEditGroupPriceItemComponents(item) {
+    const normalizedComponents = Array.isArray(item?.components)
+      ? item.components.map((component) =>
+          normalizeGroupComponentSelection(component, {
+            componentItemId: component.component_item_id,
+            unitPriceOverride: component.unit_price_override,
+            quantity: component.quantity,
+          }),
+        )
+      : [];
+
+    const targetTotal = Number(item?.price || 0);
+    const resolvedTotal = normalizedComponents.reduce(
+      (sum, component) =>
+        sum +
+        Number(component.unitPriceOverride || 0) *
+          Number(component.quantity || 0),
+      0,
+    );
+    const unresolvedComponents = normalizedComponents.filter(
+      (component) =>
+        Number(component.unitPriceOverride || 0) <= 0 &&
+        Number(component.sourcePrice || 0) <= 0,
+    );
+
+    if (!unresolvedComponents.length || targetTotal <= resolvedTotal) {
+      return normalizedComponents;
+    }
+
+    const unresolvedQuantityTotal = unresolvedComponents.reduce(
+      (sum, component) => sum + Math.max(Number(component.quantity || 0), 0),
+      0,
+    );
+
+    if (!(unresolvedQuantityTotal > 0)) {
+      return normalizedComponents;
+    }
+
+    let remainingAmount = Math.round((targetTotal - resolvedTotal) * 100) / 100;
+
+    return normalizedComponents.map((component, index, components) => {
+      const isUnresolved =
+        Number(component.unitPriceOverride || 0) <= 0 &&
+        Number(component.sourcePrice || 0) <= 0;
+
+      if (!isUnresolved) {
+        return component;
+      }
+
+      const remainingUnresolved = components
+        .slice(index)
+        .filter(
+          (candidate) =>
+            Number(candidate.unitPriceOverride || 0) <= 0 &&
+            Number(candidate.sourcePrice || 0) <= 0,
+        );
+      const remainingQuantity = remainingUnresolved.reduce(
+        (sum, candidate) => sum + Math.max(Number(candidate.quantity || 0), 0),
+        0,
+      );
+      const componentQuantity = Math.max(Number(component.quantity || 0), 0);
+
+      if (!(componentQuantity > 0) || !(remainingQuantity > 0)) {
+        return component;
+      }
+
+      const nextUnitPrice =
+        remainingUnresolved.length === 1
+          ? Math.round((remainingAmount / componentQuantity) * 100) / 100
+          : Math.round((remainingAmount / remainingQuantity) * 100) / 100;
+      const assignedSubtotal =
+        Math.round(nextUnitPrice * componentQuantity * 100) / 100;
+      remainingAmount =
+        Math.round((remainingAmount - assignedSubtotal) * 100) / 100;
+
+      return {
+        ...component,
+        unitPriceOverride: nextUnitPrice,
+      };
+    });
   }
 
   const selectedPriceListItemType =
@@ -736,15 +829,7 @@ export function useProviderPriceItems({
       item.item_type === "grupo_productos" &&
       Array.isArray(item.components)
     ) {
-      setGroupPriceItemComponents(
-        item.components.map((component) =>
-          normalizeGroupComponentSelection(component, {
-            componentItemId: component.component_item_id,
-            unitPriceOverride: component.unit_price_override,
-            quantity: component.quantity,
-          }),
-        ),
-      );
+      setGroupPriceItemComponents(buildEditGroupPriceItemComponents(item));
     }
     setShowPriceItemModal(true);
   }
@@ -971,7 +1056,8 @@ export function useProviderPriceItems({
       selectedProviderPriceList.currency_code ||
         catalogs.currencies.find(
           (currency) =>
-            Number(currency.id) === Number(selectedProviderPriceList.currency_id),
+            Number(currency.id) ===
+            Number(selectedProviderPriceList.currency_id),
         )?.code ||
         "",
     );
@@ -1066,7 +1152,8 @@ export function useProviderPriceItems({
 
       if (
         importedItemType &&
-        importedItemType !== normalizeText(selectedProviderPriceList.item_type) &&
+        importedItemType !==
+          normalizeText(selectedProviderPriceList.item_type) &&
         importedItemType !== normalizeText(selectedItemTypeLabel)
       ) {
         issues.push(
@@ -1158,7 +1245,8 @@ export function useProviderPriceItems({
       selectedProviderPriceList.currency_code ||
         catalogs.currencies.find(
           (currency) =>
-            Number(currency.id) === Number(selectedProviderPriceList.currency_id),
+            Number(currency.id) ===
+            Number(selectedProviderPriceList.currency_id),
         )?.code ||
         "",
     );

@@ -523,6 +523,30 @@ function resolvePositiveDisplayOrder(value, fallbackDisplayOrder) {
   return toPositiveIntegerOrNull(fallbackDisplayOrder) || 1;
 }
 
+function resolveBundleComponentUnitPrice(component) {
+  const overrideValue = component?.unitPriceOverride;
+  const numericOverrideValue = Number(overrideValue);
+  const numericSourcePrice = Number(component?.price ?? 0);
+
+  if (
+    Number.isFinite(numericOverrideValue) &&
+    numericOverrideValue === 0 &&
+    numericSourcePrice > 0
+  ) {
+    return numericSourcePrice;
+  }
+
+  if (
+    overrideValue !== null &&
+    overrideValue !== undefined &&
+    String(overrideValue).trim() !== ""
+  ) {
+    return overrideValue;
+  }
+
+  return component?.price ?? 0;
+}
+
 function buildPersistedQuotationItemPayload(
   item,
   fallbackDisplayOrder = 1,
@@ -1002,6 +1026,10 @@ export function useQuotationsSection({
           : null,
       sellerUserName:
         quotation.sellerUserName ?? quotation.seller_user_name ?? null,
+      sellerUserEmail:
+        quotation.sellerUserEmail ?? quotation.seller_user_email ?? "",
+      sellerUserPhone:
+        quotation.sellerUserPhone ?? quotation.seller_user_phone ?? "",
       latestVersionId: Number(
         quotation.latestVersionId ?? quotation.latest_version_id ?? 0,
       ),
@@ -1417,6 +1445,8 @@ export function useQuotationsSection({
               id: Number(contact.id),
               account_id: Number(contact.accountId ?? contact.account_id),
               full_name: contact.fullName || contact.full_name || "",
+              email: contact.email || "",
+              phone: contact.phone || "",
             }))
           : [];
 
@@ -2392,7 +2422,7 @@ export function useQuotationsSection({
               if (bundleComponents.length) {
                 bundleComponents.forEach((component) => {
                   const componentUnitPrice =
-                    component.unitPriceOverride ?? component.price ?? 0;
+                    resolveBundleComponentUnitPrice(component);
                   nextItems.push({
                     ...buildItemDraft(catalogs.providers),
                     localId: `draft-item-${createItemDraftSequenceRef.current++}`,
@@ -3500,7 +3530,7 @@ export function useQuotationsSection({
           ? buildLocalEditItemsFromSources(
               product.components.map((component) => {
                 const componentUnitPrice =
-                  component.unitPriceOverride ?? component.price ?? 0;
+                  resolveBundleComponentUnitPrice(component);
 
                 return {
                   ...buildItemDraft(catalogs.providers),

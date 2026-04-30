@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon",
     "start": "node src/server.js",
+    "seed:demo:capture": "node scripts/captureDemoSeedSnapshot.js",
     "seed:demo": "node scripts/seedDemo.js",
     "seed:demo:reset-db": "node scripts/resetDemoDb.js",
     "test:db:prepare": "node test/setupTestDb.js",

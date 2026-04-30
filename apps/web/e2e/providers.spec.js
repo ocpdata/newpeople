@@ -984,7 +984,9 @@ test.describe("providers", () => {
       .selectOption("producto");
 
     const templateDownloadPromise = page.waitForEvent("download");
-    await importCreateListModal.getByRole("button", { name: "Plantilla" }).click();
+    await importCreateListModal
+      .getByRole("button", { name: "Plantilla" })
+      .click();
     const templateDownload = await templateDownloadPromise;
     expect(templateDownload.suggestedFilename()).toContain(
       "plantilla-lista-precios",
@@ -994,10 +996,7 @@ test.describe("providers", () => {
     expect(templatePath).toBeTruthy();
 
     const templateWorkbook = XLSX.read(await readFile(templatePath));
-    expect(templateWorkbook.SheetNames).toEqual([
-      "Plantilla",
-      "Instrucciones",
-    ]);
+    expect(templateWorkbook.SheetNames).toEqual(["Plantilla", "Instrucciones"]);
     const templateRows = XLSX.utils.sheet_to_json(
       templateWorkbook.Sheets.Plantilla,
       {
@@ -1056,9 +1055,13 @@ test.describe("providers", () => {
     const invalidSummaryCard = importCreateListModal.locator(
       ".provider-price-import-summary-card.is-invalid",
     );
-    await expect(validSummaryCard.getByText("2", { exact: true })).toBeVisible();
+    await expect(
+      validSummaryCard.getByText("2", { exact: true }),
+    ).toBeVisible();
     await expect(validSummaryCard.getByText("filas válidas")).toBeVisible();
-    await expect(invalidSummaryCard.getByText("1", { exact: true })).toBeVisible();
+    await expect(
+      invalidSummaryCard.getByText("1", { exact: true }),
+    ).toBeVisible();
     await expect(invalidSummaryCard.getByText("fila inválida")).toBeVisible();
     await expect(importCreateListModal.getByText("Fila 3")).toBeVisible();
     await expect(
@@ -1090,14 +1093,10 @@ test.describe("providers", () => {
       .toBe("3333.30");
 
     await expect
-      .poll(
-        () =>
-          fixture
-            .listPriceItems(
-              Number(createdProvider?.id),
-              Number(importedList?.id),
-            )
-            .map((item) => item.code),
+      .poll(() =>
+        fixture
+          .listPriceItems(Number(createdProvider?.id), Number(importedList?.id))
+          .map((item) => item.code),
       )
       .toEqual(["PRICE-QA-02"]);
 
@@ -1105,7 +1104,9 @@ test.describe("providers", () => {
       .locator("tbody tr")
       .filter({ has: page.getByText("Lista Importada QA", { exact: true }) })
       .first();
-    await importedListRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await importedListRow
+      .getByRole("button", { name: "Abrir acciones" })
+      .click();
     await importedListRow
       .locator(".user-kebab-menu")
       .getByRole("button", { name: "Activar", exact: true })
@@ -1134,14 +1135,16 @@ test.describe("providers", () => {
       .getByRole("button", { name: "Editar", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Editar precio" }),
+      page.getByRole("heading", { name: "Editar producto" }),
     ).toBeVisible();
 
     const editPriceModal = page.locator(".provider-price-item-modal").first();
     await editPriceModal
       .locator("textarea")
       .fill("Precio editado por prueba E2E");
-    await editPriceModal.locator(".provider-price-editable-input").fill("2750.00");
+    await editPriceModal
+      .locator(".provider-price-editable-input")
+      .fill("2750.00");
     await editPriceModal
       .getByRole("button", { name: "Guardar cambios", exact: true })
       .click();
@@ -1325,14 +1328,16 @@ test.describe("providers", () => {
         () =>
           fixture
             .listPriceItems(Number(createdProvider?.id), Number(groupList?.id))
-            .find((item) => item.code === "PRICE-DEMO-001-AJUSTADO")?.components?.[0]
-            ?.unit_price_override,
+            .find((item) => item.code === "PRICE-DEMO-001-AJUSTADO")
+            ?.components?.[0]?.unit_price_override,
       )
       .toBe(2500);
 
     const createdGroupPriceRow = page
       .locator("tbody tr")
-      .filter({ has: page.getByText("PRICE-DEMO-001-AJUSTADO", { exact: true }) })
+      .filter({
+        has: page.getByText("PRICE-DEMO-001-AJUSTADO", { exact: true }),
+      })
       .first();
     await createdGroupPriceRow
       .getByRole("button", { name: "Abrir acciones" })
@@ -1349,8 +1354,288 @@ test.describe("providers", () => {
       .locator(".provider-group-components-table tbody tr")
       .filter({ hasText: "PRICE-DEMO-001" })
       .first();
-    await expect(editComponentRow.locator(".provider-group-price-input")).toHaveValue(
-      "2,500",
+    await expect(
+      editComponentRow.locator(".provider-group-price-input"),
+    ).toHaveValue("2,500");
+  });
+
+  test("en bundles al editar un componente con override 0 muestra el precio base y subtotal correcto", async ({
+    page,
+  }) => {
+    const fixture = createProvidersFixture();
+
+    await bootstrapAuthenticatedSession(page);
+    await mockProvidersApi(page, fixture);
+    await page.goto("/providers");
+
+    const providerRow = page
+      .locator("tbody tr")
+      .filter({ has: page.getByText("Proveedor Demo", { exact: true }) })
+      .first();
+
+    await providerRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await page.getByRole("button", { name: "Listas de precios" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Listas de precios" }),
+    ).toBeVisible();
+
+    await page.getByLabel("Crear lista de precios").click();
+    const createListModal = page.locator(".provider-price-list-create-modal");
+    await createListModal
+      .getByPlaceholder("Ej. Lista mayo 2026")
+      .fill("Lista Bundle QA");
+    await createListModal.locator("select").nth(0).selectOption("1");
+    await createListModal
+      .locator("select")
+      .nth(1)
+      .selectOption("grupo_productos");
+    await page
+      .getByRole("button", { name: "Crear lista", exact: true })
+      .click();
+
+    const bundleList = fixture
+      .listPriceLists(1)
+      .find((priceList) => priceList.name === "Lista Bundle QA");
+    expect(bundleList).toBeTruthy();
+
+    const bundleListRow = page
+      .locator(".provider-price-lists-table tbody tr")
+      .filter({ has: page.getByText("Lista Bundle QA", { exact: true }) })
+      .first();
+    await bundleListRow.click();
+
+    await page.getByRole("button", { name: "Agregar producto" }).click();
+    const groupPriceModal = page
+      .locator(".provider-price-item-modal-group")
+      .first();
+    const groupCodeInput = groupPriceModal.getByPlaceholder(
+      "Ej. GP-SERVICIOS-001",
+    );
+    await groupCodeInput.fill("BUNDLE-OVERRIDE-CERO");
+
+    const groupCodeSelects = groupPriceModal.locator(
+      ".provider-group-code-panel select",
+    );
+    await groupCodeSelects.nth(0).selectOption("1");
+
+    const componentsSection = groupPriceModal.locator(
+      ".provider-group-search-section",
+    );
+    const componentSelects = componentsSection.locator("select");
+    await componentSelects.nth(0).selectOption("1");
+    await componentsSection
+      .getByPlaceholder("Busca por codigo o descripcion")
+      .fill("PRICE-DEMO-001");
+    const componentResults = componentsSection.locator(
+      ".provider-group-search-results-compact",
+    );
+    await componentResults
+      .locator(".provider-group-search-card")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .getByRole("button", { name: "Agregar", exact: true })
+      .click();
+
+    const componentRow = groupPriceModal
+      .locator(".provider-group-components-table tbody tr")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .first();
+    await componentRow.locator(".provider-group-price-input").fill("0");
+
+    await groupPriceModal
+      .getByRole("button", { name: "Agregar producto", exact: true })
+      .click();
+
+    const createdBundleRow = page
+      .locator(".provider-price-list-table tbody tr")
+      .filter({ has: page.getByText("BUNDLE-OVERRIDE-CERO", { exact: true }) })
+      .first();
+    await expect(createdBundleRow).toContainText(/1,999\.99|1999\.99/);
+
+    await createdBundleRow
+      .getByRole("button", { name: "Abrir acciones" })
+      .click();
+    await createdBundleRow
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Editar", exact: true })
+      .click();
+
+    const editGroupPriceModal = page
+      .locator(".provider-price-item-modal-group")
+      .first();
+    const editComponentRow = editGroupPriceModal
+      .locator(".provider-group-components-table tbody tr")
+      .filter({ hasText: "PRICE-DEMO-001" })
+      .first();
+
+    await expect(
+      editComponentRow.locator(".provider-group-price-input"),
+    ).toHaveValue("1,999.99");
+    await expect(editComponentRow.locator("td").nth(3)).toContainText(
+      /1,999\.99|1999\.99/,
+    );
+  });
+
+  test("en bundles historicos la edicion recompone el faltante para cuadrar con el total persistido", async ({
+    page,
+  }) => {
+    const fixture = createProvidersFixture();
+
+    fixture.priceItemsByListId.set(1, [
+      {
+        id: 2305,
+        provider_id: 1,
+        price_list_id: 1,
+        code: "ELECT-ST-247X7-AN",
+        description:
+          "Servicio de Soporte Tecnico en la modalidad 24x7. Costo anual",
+        item_type: "servicio_propio",
+        price: "37843.00",
+        currency_id: 1,
+        currency_code: "USD",
+        currency_name: "Dolar estadounidense",
+        currency_symbol: "$",
+        activation_status_id: 1,
+        activation_status_code: "activo",
+        activation_status: "Activo",
+        price_list_name: "Lista vigente",
+        price_list_is_active: 1,
+        created_by_name: "Demo Seller",
+        updated_by_name: "Demo Seller",
+        created_at: "2026-04-21T10:00:00.000Z",
+        updated_at: "2026-04-21T10:00:00.000Z",
+      },
+      {
+        id: 2304,
+        provider_id: 1,
+        price_list_id: 1,
+        code: "ELECT-INST-AVA",
+        description:
+          "Servicio de instalacion y configuracion de equipos categoria Avanzada. Precio total",
+        item_type: "servicio_propio",
+        price: "2000.00",
+        currency_id: 1,
+        currency_code: "USD",
+        currency_name: "Dolar estadounidense",
+        currency_symbol: "$",
+        activation_status_id: 1,
+        activation_status_code: "activo",
+        activation_status: "Activo",
+        price_list_name: "Lista vigente",
+        price_list_is_active: 1,
+        created_by_name: "Demo Seller",
+        updated_by_name: "Demo Seller",
+        created_at: "2026-04-21T10:00:00.000Z",
+        updated_at: "2026-04-21T10:00:00.000Z",
+      },
+      {
+        id: 2303,
+        provider_id: 1,
+        price_list_id: 1,
+        code: "F5-V-O-ALL-BASE-PKG",
+        description: "Distributed Cloud Services Base Package (Per Month)",
+        item_type: "producto",
+        price: "2163.00",
+        currency_id: 1,
+        currency_code: "USD",
+        currency_name: "Dolar estadounidense",
+        currency_symbol: "$",
+        activation_status_id: 1,
+        activation_status_code: "activo",
+        activation_status: "Activo",
+        price_list_name: "Lista vigente",
+        price_list_is_active: 1,
+        created_by_name: "Demo Seller",
+        updated_by_name: "Demo Seller",
+        created_at: "2026-04-21T10:00:00.000Z",
+        updated_at: "2026-04-21T10:00:00.000Z",
+      },
+      ...(fixture.priceItemsByListId.get(1) || []),
+    ]);
+
+    const bundleList = fixture.createPriceList(1, {
+      name: "F5",
+      currencyId: 1,
+      itemType: "grupo_productos",
+    });
+    fixture.updatePriceListStatus(1, bundleList.id, "activa");
+    const createdBundle = fixture.createPriceItem(1, bundleList.id, {
+      code: "AQ-F5-DCS-BASE-PACK-BDL",
+      description:
+        "Servicio de F5 Distributed Cloud Services anual. Incluye implementacion y soporte tecnico.",
+      itemType: "grupo_productos",
+      currencyId: 1,
+      activationStatusId: 1,
+      components: [
+        { componentItemId: 2303, unitPriceOverride: 2163, quantity: 1 },
+        { componentItemId: 2304, unitPriceOverride: 2000, quantity: 1 },
+        { componentItemId: 2305, unitPriceOverride: 37843, quantity: 1 },
+      ],
+    });
+    const bundleItem = fixture
+      .listPriceItems(1, bundleList.id)
+      .find((item) => item.id === createdBundle.item.id);
+    bundleItem.price = "42006.00";
+    bundleItem.components = bundleItem.components.map((component) =>
+      Number(component.component_item_id) === 2305
+        ? {
+            ...component,
+            unit_price_override: 0,
+            price: 0,
+          }
+        : component,
+    );
+
+    await bootstrapAuthenticatedSession(page);
+    await mockProvidersApi(page, fixture);
+    await page.goto("/providers");
+
+    const providerRow = page
+      .locator("tbody tr")
+      .filter({ has: page.getByText("Proveedor Demo", { exact: true }) })
+      .first();
+    await providerRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await page.getByRole("button", { name: "Listas de precios" }).click();
+
+    const bundleListRow = page
+      .locator(".provider-price-lists-table tbody tr")
+      .filter({ has: page.getByText("F5", { exact: true }) })
+      .first();
+    await bundleListRow.click();
+
+    const bundleRow = page
+      .locator(".provider-price-list-table tbody tr")
+      .filter({
+        has: page.getByText("AQ-F5-DCS-BASE-PACK-BDL", { exact: true }),
+      })
+      .first();
+    await expect(bundleRow).toContainText(/42,006\.00|42006\.00/);
+
+    await bundleRow.getByRole("button", { name: "Abrir acciones" }).click();
+    await bundleRow
+      .locator(".user-kebab-menu")
+      .getByRole("button", { name: "Editar", exact: true })
+      .click();
+
+    const editGroupPriceModal = page
+      .locator(".provider-price-item-modal-group")
+      .first();
+    await expect(
+      editGroupPriceModal
+        .locator(".provider-group-review-field")
+        .filter({ hasText: "Precio" })
+        .locator("input")
+        .first(),
+    ).toHaveValue("42,006.00");
+
+    const missingComponentRow = editGroupPriceModal
+      .locator(".provider-group-components-table tbody tr")
+      .filter({ hasText: "ELECT-ST-247X7-AN" })
+      .first();
+    await expect(
+      missingComponentRow.locator(".provider-group-price-input"),
+    ).toHaveValue("37,843");
+    await expect(missingComponentRow.locator("td").nth(3)).toContainText(
+      /37,843\.00|37843\.00/,
     );
   });
 });

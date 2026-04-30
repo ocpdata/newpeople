@@ -365,54 +365,89 @@ async function drawHeader(doc, model) {
 function drawPeopleSummary(doc, model) {
   const blockTop = doc.y;
   const columnWidth = (PAGE_WIDTH - 18) / 2;
+  const leftX = doc.page.margins.left;
   const rightX = doc.page.margins.left + columnWidth + 18;
+  const cardPaddingX = 11;
+  const cardPaddingTop = 7;
+  const cardPaddingBottom = 6;
+  const contactTitle = "Contacto";
+  const sellerTitle = "Ejecutivo comercial";
+  const contactLines = [
+    model.header.contactName,
+    model.header.contactEmail,
+    model.header.contactPhone,
+  ].filter(Boolean);
+  const sellerLines = [
+    model.header.sellerName,
+    model.header.sellerEmail,
+    model.header.sellerPhone,
+  ].filter(Boolean);
+  const contentWidth = columnWidth - cardPaddingX * 2;
+  const titleHeight = Math.max(
+    measureTextHeight(doc, contactTitle, {
+      width: contentWidth,
+      font: "Helvetica-Bold",
+      fontSize: 10,
+    }),
+    measureTextHeight(doc, sellerTitle, {
+      width: contentWidth,
+      font: "Helvetica-Bold",
+      fontSize: 10,
+    }),
+  );
+  const bodyTop = blockTop + cardPaddingTop + titleHeight + 3;
+  const lineHeight =
+    measureTextHeight(doc, "Ag", {
+      width: contentWidth,
+      font: "Helvetica",
+      fontSize: 10,
+    }) + 1;
+  const visibleLineCount = Math.max(
+    contactLines.length || 1,
+    sellerLines.length || 1,
+  );
+  const bodyHeight = visibleLineCount * lineHeight;
+  const cardHeight =
+    cardPaddingTop + titleHeight + 3 + bodyHeight + cardPaddingBottom;
+
+  function drawColumnLines(x, lines) {
+    const safeLines = lines.length ? lines : ["-"];
+
+    safeLines.forEach((line, index) => {
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor(COLORS.text)
+        .text(line, x + cardPaddingX, bodyTop + index * lineHeight, {
+          width: contentWidth,
+          lineBreak: false,
+        });
+    });
+  }
+
+  drawOutlinedCard(doc, leftX, blockTop, columnWidth, cardHeight);
+  drawOutlinedCard(doc, rightX, blockTop, columnWidth, cardHeight);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor(COLORS.brand)
-    .text("Contacto", doc.page.margins.left, blockTop, { width: columnWidth });
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fillColor(COLORS.text)
-    .text(
-      [
-        model.header.contactName,
-        model.header.contactEmail,
-        model.header.contactPhone,
-      ]
-        .filter(Boolean)
-        .join("\n") || "-",
-      doc.page.margins.left,
-      blockTop + 15,
-      { width: columnWidth, lineGap: 2 },
-    );
+    .text(contactTitle, leftX + cardPaddingX, blockTop + cardPaddingTop, {
+      width: contentWidth,
+    });
+  drawColumnLines(leftX, contactLines);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor(COLORS.brand)
-    .text("Ejecutivo comercial", rightX, blockTop, { width: columnWidth });
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fillColor(COLORS.text)
-    .text(
-      [
-        model.header.sellerName,
-        model.header.sellerEmail,
-        model.header.sellerPhone,
-      ]
-        .filter(Boolean)
-        .join("\n") || "-",
-      rightX,
-      blockTop + 15,
-      { width: columnWidth, lineGap: 2 },
-    );
+    .text(sellerTitle, rightX + cardPaddingX, blockTop + cardPaddingTop, {
+      width: contentWidth,
+    });
+  drawColumnLines(rightX, sellerLines);
 
-  const nextY = Math.max(doc.y, blockTop + 70);
-  doc.y = nextY;
+  const nextY = Math.max(blockTop + cardHeight, blockTop + 50);
+  doc.y = nextY + 6;
   drawDivider(doc, COLORS.accent);
 }
 

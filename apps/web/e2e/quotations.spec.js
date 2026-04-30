@@ -61,7 +61,15 @@ function createQuotationsFixture({
   };
 
   const accounts = [{ id: 1, name: "Cuenta Demo" }];
-  const contacts = [{ id: 101, account_id: 1, full_name: "Ana Contacto" }];
+  const contacts = [
+    {
+      id: 101,
+      account_id: 1,
+      full_name: "Ana Contacto",
+      email: "ana@example.com",
+      phone: "555-0101",
+    },
+  ];
   const opportunities = [
     {
       id: 11,
@@ -178,6 +186,8 @@ function createQuotationsFixture({
       opportunityCloseDate: "2026-05-30",
       sellerUserId: 7,
       sellerUserName: "Demo Seller",
+      sellerUserEmail: "seller@example.com",
+      sellerUserPhone: "555-0202",
       latestVersionId: 1001,
       latestVersionNumber: 1,
       latestStatusCode: "borrador",
@@ -441,6 +451,7 @@ function createQuotationsFixture({
           code: "A-COMP-2",
           description: "Componente A2",
           itemType: "producto",
+          unitPriceOverride: "0",
           price: "20",
         },
       ],
@@ -461,6 +472,7 @@ function createQuotationsFixture({
           code: "B-COMP-1",
           description: "Componente B1",
           itemType: "producto",
+          unitPriceOverride: "0",
           price: "15",
         },
         {
@@ -469,6 +481,7 @@ function createQuotationsFixture({
           code: "B-COMP-2",
           description: "Componente B2",
           itemType: "producto",
+          unitPriceOverride: "0",
           price: "25",
         },
       ],
@@ -1716,6 +1729,15 @@ test.describe("quotations", () => {
     const createModal = await openCreateQuotationModal(page);
 
     await addBundleRow(page, createModal, 0, "BUNDLE-A");
+
+    const createComponentRow = getQuotationRowByCode(page, "A-COMP-2");
+    await expect(
+      createComponentRow.locator("td:nth-child(6) input"),
+    ).toHaveValue("20");
+    await expect(createComponentRow.locator("td:nth-child(7)")).toContainText(
+      "20.00",
+    );
+
     await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
@@ -1726,6 +1748,12 @@ test.describe("quotations", () => {
           originalCurrencyCode: "USD",
           originalListPriceUnit: 11,
           listPriceUnit: 11,
+        }),
+        expect.objectContaining({
+          productCode: "A-COMP-2",
+          originalCurrencyCode: "USD",
+          originalListPriceUnit: 20,
+          listPriceUnit: 20,
         }),
       ]),
     );
@@ -2108,10 +2136,16 @@ test.describe("quotations", () => {
       .toBe("Cuenta Demo");
     await expect
       .poll(() => renderedPdfPayload?.header?.contactEmail || "")
-      .toBe("");
+      .toBe("ana@example.com");
+    await expect
+      .poll(() => renderedPdfPayload?.header?.contactPhone || "")
+      .toBe("555-0101");
     await expect
       .poll(() => renderedPdfPayload?.header?.sellerEmail || "")
-      .toBe("");
+      .toBe("seller@example.com");
+    await expect
+      .poll(() => renderedPdfPayload?.header?.sellerPhone || "")
+      .toBe("555-0202");
     await expect
       .poll(() => renderedPdfPayload?.sections?.[0]?.subtotal ?? null)
       .toBe(60);
@@ -2859,6 +2893,67 @@ test.describe("quotations", () => {
         "B-COMP-1",
         "B-COMP-2",
       ]);
+  });
+
+  test("en edicion al seleccionar un bundle en una fila nueva persiste precios base de componentes sin override", async ({
+    page,
+  }) => {
+    let capturedUpdatePayload = null;
+
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        onUpdateQuotationVersion(payload) {
+          capturedUpdatePayload = payload;
+        },
+      }),
+    );
+
+    const editModal = await openEditQuotationModal(page);
+
+    await addEditProductRow(page, editModal, "BUNDLE-B");
+
+    await expect
+      .poll(() => getQuotationRowCodes(page))
+      .toEqual([
+        "BUNDLE-A",
+        "A-COMP-1",
+        "A-COMP-2",
+        "BUNDLE-B",
+        "B-COMP-1",
+        "B-COMP-2",
+      ]);
+
+    const editComponentRow = getQuotationRowByCode(page, "B-COMP-1");
+    await expect(editComponentRow.locator("td:nth-child(6) input")).toHaveValue(
+      "15",
+    );
+    await expect(editComponentRow.locator("td:nth-child(7)")).toContainText(
+      "15.00",
+    );
+
+    await editModal
+      .getByRole("button", { name: "Guardar como version actual" })
+      .click();
+
+    await expect.poll(() => capturedUpdatePayload).not.toBeNull();
+    expect(capturedUpdatePayload.sections[0].items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          productCode: "B-COMP-1",
+          originalCurrencyCode: "USD",
+          originalListPriceUnit: 15,
+          listPriceUnit: 15,
+        }),
+        expect.objectContaining({
+          productCode: "B-COMP-2",
+          originalCurrencyCode: "USD",
+          originalListPriceUnit: 25,
+          listPriceUnit: 25,
+        }),
+      ]),
+    );
   });
 
   test("permite convertir una fila existente en bundle desde el picker en edicion", async ({

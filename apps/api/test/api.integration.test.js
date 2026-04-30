@@ -519,10 +519,16 @@ describe("API integration baseline", () => {
     return {
       accountId,
       contactId,
+      contactEmail: `fixture.${suffix}@example.com`,
+      contactPhone: `555${suffix.slice(-6)}`,
       alternateContactId,
+      alternateContactEmail: `fixture.${suffix}_alt@example.com`,
+      alternateContactPhone: `555${`${suffix}_alt`.slice(-6)}`,
       opportunityId,
       sellerUserId: ctx.sellerUserId,
       sellerUserName: "API Seller Fixture",
+      sellerUserEmail: `${TEST_PREFIX}.seller@example.com`,
+      sellerUserPhone: "",
     };
   }
 
@@ -691,7 +697,9 @@ describe("API integration baseline", () => {
       .send(payload);
 
     expect(updateResponse.status).toBe(200);
-    expect(updateResponse.body.profile.commercialName).toBe(payload.commercialName);
+    expect(updateResponse.body.profile.commercialName).toBe(
+      payload.commercialName,
+    );
     expect(updateResponse.body.profile.phone).toBe(payload.phone);
 
     const brandingResponse = await request(app)
@@ -2569,10 +2577,9 @@ describe("API integration baseline", () => {
     );
     expect(Number(itemsResponse.body[0].price)).toBe(
       Number(
-        (
-          productComponentOverride * 2 +
-          serviceComponentOverride * 3
-        ).toFixed(2),
+        (productComponentOverride * 2 + serviceComponentOverride * 3).toFixed(
+          2,
+        ),
       ),
     );
 
@@ -4030,6 +4037,38 @@ describe("API integration baseline", () => {
           id: Number(createResponse.body.quotationId),
           sellerUserId: fixture.sellerUserId,
           sellerUserName: fixture.sellerUserName,
+          sellerUserEmail: fixture.sellerUserEmail,
+          sellerUserPhone: fixture.sellerUserPhone,
+        }),
+      ]),
+    );
+  });
+
+  test("cotizaciones.contactos de oportunidad exponen email y telefono del contacto", async () => {
+    const fixture = await createOwnedQuoteOpportunityFixture(
+      `${TEST_PREFIX}_quote_opportunity_contacts`,
+    );
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.operation@example.com`,
+    );
+
+    const contactsResponse = await request(app)
+      .get(`/api/quotation-opportunities/${fixture.opportunityId}/contacts`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(contactsResponse.status).toBe(200);
+    expect(contactsResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: fixture.contactId,
+          email: fixture.contactEmail,
+          phone: fixture.contactPhone,
+        }),
+        expect.objectContaining({
+          id: fixture.alternateContactId,
+          email: fixture.alternateContactEmail,
+          phone: fixture.alternateContactPhone,
         }),
       ]),
     );
@@ -4074,6 +4113,8 @@ describe("API integration baseline", () => {
           id: Number(createResponse.body.quotationId),
           sellerUserId: fixture.sellerUserId,
           sellerUserName: fixture.sellerUserName,
+          sellerUserEmail: fixture.sellerUserEmail,
+          sellerUserPhone: fixture.sellerUserPhone,
         }),
       ]),
     );

@@ -1477,7 +1477,11 @@ async function getQuotationProductComponents(groupItemIds) {
     map.get(key).push({
       id: Number(row.id),
       componentItemId: Number(row.component_item_id),
-      unitPriceOverride: Number(row.unit_price_override),
+      unitPriceOverride:
+        row.unit_price_override === null ||
+        row.unit_price_override === undefined
+          ? null
+          : Number(row.unit_price_override),
       quantity: Number(row.quantity),
       sortOrder: Number(row.sort_order),
       providerId: Number(row.component_provider_id),
@@ -1847,7 +1851,9 @@ router.get(
 
     const rows = await query(
       `SELECT c.id, c.account_id,
-              CONCAT(c.first_name, ' ', c.last_name) AS full_name
+              CONCAT(c.first_name, ' ', c.last_name) AS full_name,
+              c.email,
+              COALESCE(NULLIF(TRIM(c.phone), ''), NULLIF(TRIM(c.mobile), '')) AS phone
        FROM contacts c
        INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        WHERE c.account_id = ?
@@ -1861,6 +1867,8 @@ router.get(
         id: Number(row.id),
         accountId: Number(row.account_id),
         fullName: row.full_name,
+        email: row.email || "",
+        phone: row.phone || "",
       })),
     );
   },
@@ -1942,7 +1950,9 @@ router.get(
 
     const rows = await query(
       `SELECT c.id, c.account_id,
-              CONCAT(c.first_name, ' ', c.last_name) AS full_name
+              CONCAT(c.first_name, ' ', c.last_name) AS full_name,
+              c.email,
+              COALESCE(NULLIF(TRIM(c.phone), ''), NULLIF(TRIM(c.mobile), '')) AS phone
        FROM contacts c
        INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        WHERE c.account_id = ?
@@ -1956,6 +1966,8 @@ router.get(
         id: Number(row.id),
         accountId: Number(row.account_id),
         fullName: row.full_name,
+        email: row.email || "",
+        phone: row.phone || "",
       })),
     );
   },
@@ -2060,6 +2072,8 @@ router.get(
         o.close_date AS opportunity_close_date,
         o.seller_user_id,
         su.full_name AS seller_user_name,
+        su.email AS seller_user_email,
+        su.mobile AS seller_user_phone,
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
               qs.code AS latest_status_code,
@@ -2098,6 +2112,8 @@ router.get(
         opportunityCloseDate: formatDateOnly(row.opportunity_close_date),
         sellerUserId: row.seller_user_id ? Number(row.seller_user_id) : null,
         sellerUserName: row.seller_user_name || "",
+        sellerUserEmail: row.seller_user_email || "",
+        sellerUserPhone: row.seller_user_phone || "",
         latestVersionId: row.latest_version_id
           ? Number(row.latest_version_id)
           : null,
@@ -2155,6 +2171,8 @@ router.get(
         o.close_date AS opportunity_close_date,
         o.seller_user_id,
         su.full_name AS seller_user_name,
+        su.email AS seller_user_email,
+        su.mobile AS seller_user_phone,
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
               qs.code AS latest_status_code,
@@ -2193,6 +2211,8 @@ router.get(
         opportunityCloseDate: formatDateOnly(row.opportunity_close_date),
         sellerUserId: row.seller_user_id ? Number(row.seller_user_id) : null,
         sellerUserName: row.seller_user_name || "",
+        sellerUserEmail: row.seller_user_email || "",
+        sellerUserPhone: row.seller_user_phone || "",
         latestVersionId: row.latest_version_id
           ? Number(row.latest_version_id)
           : null,

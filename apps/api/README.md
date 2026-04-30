@@ -17,11 +17,15 @@ API REST construida con Node.js, Express 5, MySQL2 y Zod. Centraliza autenticaci
 ```bash
 npm run dev
 npm run start
+npm run seed:demo:capture
 npm run seed:demo
 npm run seed:demo:reset-db
 npm run test
 npm run test:watch
 ```
+
+`seed:demo` restaura unicamente el snapshot `scripts/demoSeedSnapshot.sql`.
+Si ese archivo no existe, primero debes generarlo con `npm run seed:demo:capture`.
 
 ## Entradas principales
 

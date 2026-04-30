@@ -17,6 +17,8 @@ function mapContactOption(contact) {
     id: Number(contact.id),
     account_id: Number(contact.accountId ?? contact.account_id),
     full_name: contact.fullName || contact.full_name || "",
+    email: contact.email || "",
+    phone: contact.phone || "",
   };
 }
 
