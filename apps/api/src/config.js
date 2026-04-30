@@ -13,6 +13,7 @@ const envFileName =
 dotenv.config({ path: resolve(__dirname, envFileName) });
 
 export const config = {
+  nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4000),
   jwtSecret: process.env.JWT_SECRET || "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "8h",
@@ -63,5 +64,12 @@ export const config = {
         phone: process.env.QUOTATION_COMPANY_PHONE || "",
       },
     },
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    enableWebSearch:
+      String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },
 };

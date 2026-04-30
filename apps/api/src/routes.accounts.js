@@ -3,6 +3,10 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import {
+  accountDraftAnalysisRequestSchema,
+  analyzeAccountDraft,
+} from "./accountDraftAnalysis.js";
 
 const router = express.Router();
 
@@ -194,6 +198,34 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
   );
   res.json(rows);
 });
+
+router.post(
+  "/draft-analysis",
+  requireAnyPermission(accountCreatePermissions),
+  async (req, res) => {
+    const parsed = accountDraftAnalysisRequestSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const analysis = await analyzeAccountDraft({
+        draft: parsed.data.draft,
+        options: parsed.data.options,
+        user: req.user,
+      });
+      return res.json(analysis);
+    } catch (error) {
+      console.error(error);
+      return res
+        .status(500)
+        .json({ message: "No fue posible analizar el borrador de cuenta" });
+    }
+  },
+);
 
 router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
   const id = Number(req.params.id);

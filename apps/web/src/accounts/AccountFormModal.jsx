@@ -1,3 +1,5 @@
+import AccountDraftAnalysisPanel from "./AccountDraftAnalysisPanel";
+
 function AccountFormModal({
   isOpen,
   editingAccountId,
@@ -13,6 +15,16 @@ function AccountFormModal({
   toggleOwnerUser,
   onClose,
   onSubmit,
+  onAnalyzeDraft,
+  onUseAdministrativeDescription,
+  onUseCommercialDescription,
+  onApplySuggestedWebsite,
+  onApplySuggestedEconomicSector,
+  onApplySuggestedContactData,
+  onApplySuggestedRegistration,
+  accountDraftAnalysis,
+  accountDraftAnalysisError,
+  analyzingAccountDraft,
   formatDateTime,
 }) {
   if (!isOpen) return null;
@@ -216,7 +228,7 @@ function AccountFormModal({
             <h4>Descripcion</h4>
             <div className="field-group">
               <textarea
-                placeholder="Describe brevemente la cuenta, notas comerciales o contexto"
+                placeholder="Describe que hace la empresa, a que se dedica y cualquier contexto publico o comercial relevante"
                 value={form.description}
                 onChange={(event) =>
                   setForm({ ...form, description: event.target.value })
@@ -224,6 +236,22 @@ function AccountFormModal({
               />
             </div>
           </section>
+
+          {!editingAccountId && (
+            <AccountDraftAnalysisPanel
+              analysis={accountDraftAnalysis}
+              error={accountDraftAnalysisError}
+              loading={analyzingAccountDraft}
+              onAnalyze={onAnalyzeDraft}
+              onApplyAdministrativeDescription={onUseAdministrativeDescription}
+              onApplyCommercialDescription={onUseCommercialDescription}
+              onApplySuggestedWebsite={onApplySuggestedWebsite}
+              onApplySuggestedEconomicSector={onApplySuggestedEconomicSector}
+              onApplySuggestedContactData={onApplySuggestedContactData}
+              onApplySuggestedRegistration={onApplySuggestedRegistration}
+              isDisabled={!form.name.trim() || !form.countryId}
+            />
+          )}
 
           <section className="account-form-section account-modal-section account-owners-section">
             <h4>

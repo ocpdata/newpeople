@@ -25,6 +25,9 @@ function AccountsPage({ can, currentUser }) {
     openAccountMenuId,
     confirmAccountStatusAction,
     creatingAccount,
+    analyzingAccountDraft,
+    accountDraftAnalysis,
+    accountDraftAnalysisError,
     catalogs,
     error,
     success,
@@ -59,6 +62,9 @@ function AccountsPage({ can, currentUser }) {
     closeAccountModal,
     toggleAccountSort,
     getAccountSortArrow,
+    analyzeAccountDraft,
+    useSuggestedAccountDescription,
+    useSuggestedAccountField,
   } = useAccountsCrud({ currentUser });
 
   const {
@@ -144,6 +150,26 @@ function AccountsPage({ can, currentUser }) {
         toggleOwnerUser={toggleOwnerUser}
         onClose={closeAccountModal}
         onSubmit={saveAccount}
+        onAnalyzeDraft={analyzeAccountDraft}
+        onUseAdministrativeDescription={() =>
+          useSuggestedAccountDescription("administrative")
+        }
+        onUseCommercialDescription={() =>
+          useSuggestedAccountDescription("commercial")
+        }
+        onApplySuggestedWebsite={() => useSuggestedAccountField("website")}
+        onApplySuggestedEconomicSector={() =>
+          useSuggestedAccountField("economicSector")
+        }
+        onApplySuggestedContactData={() =>
+          useSuggestedAccountField("contactData")
+        }
+        onApplySuggestedRegistration={() =>
+          useSuggestedAccountField("registration")
+        }
+        accountDraftAnalysis={accountDraftAnalysis}
+        accountDraftAnalysisError={accountDraftAnalysisError}
+        analyzingAccountDraft={analyzingAccountDraft}
         formatDateTime={formatDateTime}
       />
 

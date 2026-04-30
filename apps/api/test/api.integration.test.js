@@ -1,6 +1,8 @@
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
+import { config } from "../src/config.js";
+import { analyzeAccountDraft } from "../src/accountDraftAnalysis.js";
 import { pool, query } from "../src/db.js";
 import {
   TEST_PREFIX,
@@ -1118,6 +1120,681 @@ describe("API integration baseline", () => {
       "active",
       "active",
     ]);
+  });
+
+  test("cuentas draft-analysis devuelve hallazgos y duplicados potenciales", async () => {
+    const fixtureAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}-draft-analysis`,
+    });
+    cleanup.accountIds.push(fixtureAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, registration_code = ?, website = ?, country_id = ?
+       WHERE id = ?`,
+      [
+        `Cuenta IA ${TEST_PREFIX}`,
+        `DRAFT-${TEST_PREFIX}`,
+        `https://draft-${TEST_PREFIX}.example.com`,
+        ctx.catalogIds.countryMxId,
+        fixtureAccountId,
+      ],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const response = await request(app)
+      .post("/api/accounts/draft-analysis")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        draft: {
+          name: `Cuenta IA ${TEST_PREFIX}`,
+          accountTypeId: ctx.catalogIds.accountTypeId,
+          registrationCode: "",
+          phone: "",
+          economicSectorId: ctx.catalogIds.economicSectorId,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [],
+        },
+        options: {
+          allowExternalEnrichment: false,
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.overallAssessment.status).toBe("needs_review");
+    expect(response.body.duplicateWarnings).toHaveLength(1);
+    expect(response.body.duplicateWarnings[0]).toMatchObject({
+      severity: "high",
+      matchReason: "normalized_name_same_country",
+      accountId: fixtureAccountId,
+    });
+    expect(response.body.suggestedWebsite).toMatchObject({
+      value: `https://draft-${TEST_PREFIX}.example.com`,
+      confidence: "high",
+      canAutoApply: true,
+    });
+    expect(response.body.registrationAssistance).toMatchObject({
+      status: "missing",
+      requiresManualValidation: true,
+      confidence: "low",
+    });
+    expect(
+      response.body.dataQualityFindings.map((finding) => finding.code),
+    ).toEqual(
+      expect.arrayContaining(["missing_description", "missing_website"]),
+    );
+    expect(response.body.suggestedAdministrativeDescription.text).toBeTruthy();
+    expect(response.body.suggestedCommercialDescription.text).toBeTruthy();
+    expect(response.body.suggestedAdministrativeDescription.text).toContain(
+      "se dedica",
+    );
+    expect(response.body.nextRecommendedStep.action).toBe(
+      "Validar duplicado antes de continuar",
+    );
+    expect(response.body.meta.provider).toBe("heuristic");
+  });
+
+  test("cuentas draft-analysis reporta una sola advertencia util cuando OpenAI no tiene cuota", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            message: "You exceeded your current quota.",
+            type: "insufficient_quota",
+            code: "insufficient_quota",
+          },
+        }),
+    }));
+
+    config.openai.apiKey = "test-key";
+    config.openai.enableWebSearch = true;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.meta.usedAiGeneration).toBe(false);
+      expect(result.meta.usedExternalEnrichment).toBe(false);
+      expect(result.warnings).toEqual([
+        "OpenAI no esta disponible por cuota o facturacion en este momento; se muestran recomendaciones internas.",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis puede sugerir website y contacto desde busqueda publica por nombre sin OpenAI", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx">Totalplay Oficial</a>
+              <div class="result__snippet">Internet, television y telefonia para hogar y empresa.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head>
+              <title>Totalplay Empresas</title>
+              <meta name="description" content="Servicios de internet, voz y datos para empresas" />
+              <script type="application/ld+json">
+                {
+                  "@context": "https://schema.org",
+                  "@type": "Organization",
+                  "telephone": "+52 55 1234 5678",
+                  "address": {
+                    "@type": "PostalAddress",
+                    "streetAddress": "Av. San Jeronimo 123",
+                    "addressLocality": "Ciudad de Mexico",
+                    "addressRegion": "CDMX",
+                    "postalCode": "01000"
+                  }
+                }
+              </script>
+            </head>
+            <body>Conectividad para empresas</body>
+          </html>
+        `,
+      });
+
+    config.openai.apiKey = "";
+    config.openai.enableWebSearch = false;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.meta.usedExternalEnrichment).toBe(true);
+      expect(result.suggestedWebsite.value).toBe("https://www.totalplay.com.mx/");
+      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
+      expect(result.suggestedContactData.stateRegion).toBe("CDMX");
+      expect(result.suggestedContactData.postalCode).toBe("01000");
+      expect(result.suggestedContactData.phone).toBe("+52 55 1234 5678");
+      expect(result.suggestedEconomicSector.sectorName).toBe("Telecomunicaciones");
+      expect(result.suggestedEconomicSector.canAutoApply).toBe(true);
+      expect(result.warnings).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis completa ubicacion desde snippets publicos adicionales sin OpenAI", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx">Totalplay Oficial</a>
+              <div class="result__snippet">Internet, television y telefonia para hogar y empresa.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head>
+              <title>Totalplay Empresas</title>
+              <meta name="description" content="Servicios de internet, voz y datos para empresas" />
+            </head>
+            <body>Llamanos al +52 55 1234 5678 para ventas empresariales.</body>
+          </html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx/contacto">Contacto Totalplay</a>
+              <div class="result__snippet">Direccion: Av. San Jeronimo 123, Ciudad de Mexico, CDMX, C.P. 01000. Telefono: +52 55 1234 5678</div>
+            </div>
+          </body></html>
+        `,
+      });
+
+    config.openai.apiKey = "";
+    config.openai.enableWebSearch = false;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.meta.usedExternalEnrichment).toBe(true);
+      expect(result.suggestedWebsite.value).toBe("https://www.totalplay.com.mx/");
+      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
+      expect(result.suggestedContactData.stateRegion).toBe("CDMX");
+      expect(result.suggestedContactData.postalCode).toBe("01000");
+      expect(result.suggestedContactData.phone).toBe("+52 55 1234 5678");
+      expect(result.warnings).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis ignora ruido del HTML del buscador para no inventar direccion o telefono", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <header>DuckDuckGo All Regions Argentina Australia Austria Belgium Canada 61572841051009</header>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.ar">Totalplay Argentina</a>
+              <div class="result__snippet">Servicios de conectividad y telecomunicaciones.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head><title>Totalplay Argentina</title></head>
+            <body>Servicios empresariales.</body>
+          </html>
+        `,
+      });
+
+    config.openai.apiKey = "";
+    config.openai.enableWebSearch = false;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryArId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.suggestedContactData.addressLine).toBe("");
+      expect(result.suggestedContactData.city).toBe("");
+      expect(result.suggestedContactData.stateRegion).toBe("");
+      expect(result.suggestedContactData.postalCode).toBe("");
+      expect(result.suggestedContactData.phone).toBe("");
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis completa ubicacion con busqueda publica asistida cuando la heuristica no alcanza", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn(async (input) => {
+      const url = String(input || "");
+
+      if (
+        url.includes("html.duckduckgo.com/html/") &&
+        url.includes(encodeURIComponent("sitio oficial"))
+      ) {
+        return {
+          ok: true,
+          text: async () => `
+            <html><body>
+              <div class="result">
+                <a class="result__a" href="https://www.totalplay.com.mx">Totalplay Oficial</a>
+                <div class="result__snippet">Internet, television y telefonia para hogar y empresa.</div>
+              </div>
+            </body></html>
+          `,
+        };
+      }
+
+      if (url === "https://www.totalplay.com.mx/") {
+        return {
+          ok: true,
+          headers: {
+            get: (name) => (name === "content-type" ? "text/html" : null),
+          },
+          text: async () => `
+            <html>
+              <head>
+                <title>Totalplay Empresas</title>
+                <meta name="description" content="Servicios de internet, voz y datos para empresas" />
+              </head>
+              <body>Llamanos al +52 55 1234 5678 para ventas empresariales.</body>
+            </html>
+          `,
+        };
+      }
+
+      if (url.includes("html.duckduckgo.com/html/") && url.includes("direccion")) {
+        return {
+          ok: true,
+          text: async () => `
+            <html><body>
+              <div class="result">
+                <a class="result__a" href="https://www.totalplay.com.mx/contacto">Contacto Totalplay</a>
+                <div class="result__snippet">Telefonos y canales de atencion de Totalplay.</div>
+              </div>
+            </body></html>
+          `,
+        };
+      }
+
+      if (url === "https://www.totalplay.com.mx/contacto") {
+        return {
+          ok: true,
+          headers: {
+            get: (name) => (name === "content-type" ? "text/html" : null),
+          },
+          text: async () => `
+            <html>
+              <head><title>Contacto Totalplay</title></head>
+              <body>Canales de atencion y telefonos empresariales.</body>
+            </html>
+          `,
+        };
+      }
+
+      if (url.endsWith("/responses")) {
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestedContactData: {
+                addressLine: "Av. San Jeronimo 123",
+                city: "Ciudad de Mexico",
+                stateRegion: "CDMX",
+                postalCode: "01000",
+                phone: "+52 55 1234 5678",
+                confidence: "high",
+                reason:
+                  "Se encontro direccion completa en resultados publicos adicionales y fuentes de contacto de la empresa.",
+              },
+              warnings: [],
+            }),
+          }),
+        };
+      }
+
+      if (url.endsWith("/chat/completions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    suggestedAdministrativeDescription:
+                      "Total Play se dedica a servicios de conectividad y telecomunicaciones para empresas y hogares.",
+                    suggestedCommercialDescription:
+                      "Total Play ofrece servicios de conectividad y telecomunicaciones, por lo que conviene validar rapidamente su oferta principal antes de abrir una oportunidad.",
+                    suggestedWebsite: "https://www.totalplay.com.mx/",
+                    websiteConfidence: "high",
+                    websiteReason: "Se identifico el sitio oficial de la empresa.",
+                    suggestedContactData: {
+                      addressLine: "",
+                      city: "",
+                      stateRegion: "",
+                      postalCode: "",
+                      phone: "",
+                      confidence: "low",
+                      reason: "",
+                    },
+                    suggestedRegistrationCode: "",
+                    registrationConfidence: "low",
+                    registrationReason: "",
+                    suggestedImprovements: [],
+                    nextRecommendedStep: {
+                      action: "Registrar contacto principal",
+                      reason:
+                        "La cuenta ya tiene contexto suficiente para continuar con el flujo comercial.",
+                    },
+                    confidence: "medium",
+                    warnings: [],
+                  }),
+                },
+              },
+            ],
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL in assisted location test: ${url}`);
+    });
+
+    config.openai.apiKey = "test-key";
+    config.openai.enableWebSearch = true;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.meta.usedExternalEnrichment).toBe(true);
+      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
+      expect(result.suggestedContactData.stateRegion).toBe("CDMX");
+      expect(result.suggestedContactData.postalCode).toBe("01000");
+      expect(result.suggestedContactData.phone).toBe("+52 55 1234 5678");
+      expect(result.warnings).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis puede sugerir registro desde busquedas publicas sin OpenAI", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx">Totalplay Oficial</a>
+              <div class="result__snippet">Internet y telefonia para empresas.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head><title>Totalplay</title></head>
+            <body>Servicios empresariales.</body>
+          </html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://facturacion.totalplay.com.mx">Facturacion Totalplay</a>
+              <div class="result__snippet">RFC TPT8907019A1 para facturacion electronica.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head><title>Facturacion Totalplay</title></head>
+            <body>RFC TPT8907019A1</body>
+          </html>
+        `,
+      });
+
+    config.openai.apiKey = "";
+    config.openai.enableWebSearch = false;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [],
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.registrationAssistance.status).toBe("candidate");
+      expect(result.registrationAssistance.value).toBe("TPT8907019A1");
+      expect(result.registrationAssistance.sourceType).toBe("external_public_source");
+      expect(result.registrationAssistance.canAutoApply).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
   });
 
   test("cuentas.read_all permite ver cuentas sin ser propietario", async () => {

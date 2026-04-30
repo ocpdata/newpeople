@@ -27,6 +27,10 @@ export function useAccountsCrud({ currentUser }) {
   const [confirmAccountStatusAction, setConfirmAccountStatusAction] =
     useState(null);
   const [creatingAccount, setCreatingAccount] = useState(false);
+  const [analyzingAccountDraft, setAnalyzingAccountDraft] = useState(false);
+  const [accountDraftAnalysis, setAccountDraftAnalysis] = useState(null);
+  const [accountDraftAnalysisError, setAccountDraftAnalysisError] =
+    useState("");
   const [catalogs, setCatalogs] = useState({
     countries: [],
     accountTypes: [],
@@ -157,6 +161,8 @@ export function useAccountsCrud({ currentUser }) {
   function openCreateAccountModal() {
     setError("");
     setSuccess("");
+    setAccountDraftAnalysis(null);
+    setAccountDraftAnalysisError("");
     setEditingAccountId(null);
     setEditAccountAudit(null);
     setUsers((prev) => prev.filter((user) => !isInactiveOwner(user)));
@@ -166,6 +172,8 @@ export function useAccountsCrud({ currentUser }) {
 
   function closeAccountModal() {
     if (creatingAccount) return;
+    setAccountDraftAnalysis(null);
+    setAccountDraftAnalysisError("");
     setShowCreateAccountModal(false);
     setEditingAccountId(null);
     setEditAccountAudit(null);
@@ -206,6 +214,8 @@ export function useAccountsCrud({ currentUser }) {
         : await api.post("/api/accounts", payload);
 
       setForm(buildDefaultAccountForm());
+      setAccountDraftAnalysis(null);
+      setAccountDraftAnalysisError("");
       setEditingAccountId(null);
       setShowCreateAccountModal(false);
       await load();
@@ -382,6 +392,8 @@ export function useAccountsCrud({ currentUser }) {
   async function openEditAccountModal(accountId) {
     setError("");
     setSuccess("");
+    setAccountDraftAnalysis(null);
+    setAccountDraftAnalysisError("");
     try {
       const { data } = await api.get(`/api/accounts/${accountId}`);
       setUsers((prev) => mergeOwnerOptions(prev, data.owners || []));
@@ -627,6 +639,113 @@ export function useAccountsCrud({ currentUser }) {
     return accountSortDirection === "asc" ? "↑" : "↓";
   }
 
+  async function analyzeAccountDraft() {
+    if (editingAccountId) return;
+
+    setAccountDraftAnalysisError("");
+    setAnalyzingAccountDraft(true);
+
+    try {
+      const payload = {
+        draft: {
+          name: form.name,
+          accountTypeId: form.accountTypeId ? Number(form.accountTypeId) : null,
+          registrationCode: form.registrationCode,
+          phone: form.phone,
+          economicSectorId: form.economicSectorId
+            ? Number(form.economicSectorId)
+            : null,
+          website: form.website,
+          city: form.city,
+          stateRegion: form.stateRegion,
+          countryId: form.countryId ? Number(form.countryId) : null,
+          description: form.description,
+          addressLine: form.addressLine,
+          postalCode: form.postalCode,
+          ownerUserIds: form.ownerUserIds.map(Number),
+        },
+        options: {
+          allowExternalEnrichment: true,
+        },
+      };
+
+      const { data } = await api.post("/api/accounts/draft-analysis", payload);
+      setAccountDraftAnalysis(data);
+      setSuccess("Analisis de cuenta generado");
+    } catch (err) {
+      setAccountDraftAnalysis(null);
+      setAccountDraftAnalysisError(
+        getApiErrorMessage(err, "No fue posible analizar el borrador de cuenta"),
+      );
+    } finally {
+      setAnalyzingAccountDraft(false);
+    }
+  }
+
+  function useSuggestedAccountDescription(kind) {
+    const nextDescription =
+      kind === "commercial"
+        ? accountDraftAnalysis?.suggestedCommercialDescription?.text
+        : accountDraftAnalysis?.suggestedAdministrativeDescription?.text;
+
+    if (!nextDescription) return;
+
+    setForm((prev) => ({
+      ...prev,
+      description: nextDescription,
+    }));
+    setSuccess("Descripcion sugerida aplicada al formulario");
+  }
+
+  function useSuggestedAccountField(field) {
+    if (field === "economicSector") {
+      const nextSectorId = accountDraftAnalysis?.suggestedEconomicSector?.sectorId;
+      if (!nextSectorId) return;
+
+      setForm((prev) => ({
+        ...prev,
+        economicSectorId: String(nextSectorId),
+      }));
+      setSuccess("Sector economico sugerido aplicado al formulario");
+      return;
+    }
+
+    if (field === "contactData") {
+      const nextContactData = accountDraftAnalysis?.suggestedContactData;
+      if (!nextContactData?.canAutoApply) return;
+
+      setForm((prev) => ({
+        ...prev,
+        addressLine: nextContactData.addressLine || prev.addressLine,
+        city: nextContactData.city || prev.city,
+        stateRegion: nextContactData.stateRegion || prev.stateRegion,
+        postalCode: nextContactData.postalCode || prev.postalCode,
+        phone: nextContactData.phone || prev.phone,
+      }));
+
+      setSuccess("Direccion y telefono sugeridos aplicados al formulario");
+      return;
+    }
+
+    const fieldValue =
+      field === "website"
+        ? accountDraftAnalysis?.suggestedWebsite?.value
+        : accountDraftAnalysis?.registrationAssistance?.value;
+
+    if (!fieldValue) return;
+
+    setForm((prev) => ({
+      ...prev,
+      [field === "website" ? "website" : "registrationCode"]: fieldValue,
+    }));
+
+    setSuccess(
+      field === "website"
+        ? "Sitio web sugerido aplicado al formulario"
+        : "Registro sugerido aplicado al formulario; validalo antes de guardar",
+    );
+  }
+
   return {
     users,
     accountStatusFilter,
@@ -643,6 +762,9 @@ export function useAccountsCrud({ currentUser }) {
     openAccountMenuId,
     confirmAccountStatusAction,
     creatingAccount,
+    analyzingAccountDraft,
+    accountDraftAnalysis,
+    accountDraftAnalysisError,
     catalogs,
     error,
     success,
@@ -677,5 +799,8 @@ export function useAccountsCrud({ currentUser }) {
     closeAccountModal,
     toggleAccountSort,
     getAccountSortArrow,
+    analyzeAccountDraft,
+    useSuggestedAccountDescription,
+    useSuggestedAccountField,
   };
 }
