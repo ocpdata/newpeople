@@ -1,6 +1,10 @@
-import { z } from "zod";
 import { config } from "./config.js";
 import { query } from "./db.js";
+import {
+  accountDraftAnalysisRequestSchema,
+  normalizeAccountDraft,
+  normalizeDraftAnalysisOptions,
+} from "./accounts/draft-analysis/schemas.js";
 import {
   buildStructuredResearchSchema,
   runProfiledStructuredWebResearch,
@@ -10,30 +14,6 @@ import {
   accountCompanyResearchProfile,
   accountLocationResearchProfile,
 } from "./aiResearchProfiles.js";
-
-export const accountDraftAnalysisRequestSchema = z.object({
-  draft: z.object({
-    name: z.string().trim().min(2).max(180),
-    accountTypeId: z.number().int().positive().optional().nullable(),
-    registrationCode: z.string().trim().max(80).optional().default(""),
-    phone: z.string().trim().max(40).optional().default(""),
-    economicSectorId: z.number().int().positive().optional().nullable(),
-    website: z.string().trim().max(300).optional().default(""),
-    city: z.string().trim().max(120).optional().default(""),
-    stateRegion: z.string().trim().max(120).optional().default(""),
-    countryId: z.number().int().positive().optional().nullable(),
-    description: z.string().trim().max(10000).optional().default(""),
-    addressLine: z.string().trim().max(255).optional().default(""),
-    postalCode: z.string().trim().max(20).optional().default(""),
-    ownerUserIds: z.array(z.number().int().positive()).optional().default([]),
-  }),
-  options: z
-    .object({
-      allowExternalEnrichment: z.boolean().optional().default(true),
-    })
-    .optional()
-    .default({ allowExternalEnrichment: true }),
-});
 
 function normalizeText(value) {
   return String(value || "")
@@ -81,7 +61,8 @@ function calculateNameSimilarity(left, right) {
   if (
     leftNormalized.length >= 6 &&
     rightNormalized.length >= 6 &&
-    (leftNormalized.includes(rightNormalized) || rightNormalized.includes(leftNormalized))
+    (leftNormalized.includes(rightNormalized) ||
+      rightNormalized.includes(leftNormalized))
   ) {
     return 0.93;
   }
@@ -150,14 +131,20 @@ function normalizeUrlCandidate(value) {
 function hasMeaningfulContactData(contactData) {
   return Boolean(
     contactData?.addressLine ||
-      contactData?.city ||
-      contactData?.stateRegion ||
-      contactData?.postalCode ||
-      contactData?.phone,
+    contactData?.city ||
+    contactData?.stateRegion ||
+    contactData?.postalCode ||
+    contactData?.phone,
   );
 }
 
-function buildSuggestedContactData({ draft, contactData, sourceType, reason, confidence }) {
+function buildSuggestedContactData({
+  draft,
+  contactData,
+  sourceType,
+  reason,
+  confidence,
+}) {
   if (!hasMeaningfulContactData(contactData)) {
     return {
       addressLine: "",
@@ -175,9 +162,13 @@ function buildSuggestedContactData({ draft, contactData, sourceType, reason, con
   }
 
   return {
-    addressLine: String(contactData.addressLine || draft.addressLine || "").trim(),
+    addressLine: String(
+      contactData.addressLine || draft.addressLine || "",
+    ).trim(),
     city: String(contactData.city || draft.city || "").trim(),
-    stateRegion: String(contactData.stateRegion || draft.stateRegion || "").trim(),
+    stateRegion: String(
+      contactData.stateRegion || draft.stateRegion || "",
+    ).trim(),
     postalCode: String(contactData.postalCode || draft.postalCode || "").trim(),
     phone: String(contactData.phone || draft.phone || "").trim(),
     confidence: confidence || "medium",
@@ -199,7 +190,13 @@ const ECONOMIC_SECTOR_KEYWORDS = {
   Finanzas: ["finanzas", "financiera", "banco", "credito", "seguros"],
   Gobierno: ["gobierno", "secretaria", "ministerio", "municipio", "publico"],
   Hoteleria: ["hotel", "hoteleria", "hospedaje", "turismo", "resort"],
-  Industria: ["industria", "industrial", "manufactura", "fabrica", "produccion"],
+  Industria: [
+    "industria",
+    "industrial",
+    "manufactura",
+    "fabrica",
+    "produccion",
+  ],
   Informacion: ["software", "tecnologia", "datos", "informacion", "digital"],
   Mineria: ["mineria", "minero", "extraccion"],
   Otros: [],
@@ -224,19 +221,21 @@ function buildSuggestedEconomicSector({
   draft,
   economicSectorOptions,
   externalContext,
-  suggestedAdministrativeDescription,
-  suggestedCommercialDescription,
+  suggestedCompanyDescription,
 }) {
   if (draft.economicSectorId) {
     const selectedSector = economicSectorOptions.find(
       (option) => Number(option.id) === Number(draft.economicSectorId),
     );
     return {
-      sectorId: selectedSector ? Number(selectedSector.id) : Number(draft.economicSectorId),
+      sectorId: selectedSector
+        ? Number(selectedSector.id)
+        : Number(draft.economicSectorId),
       sectorName: selectedSector?.name || "",
       confidence: "high",
       sourceType: "user_input",
-      reason: "El borrador ya incluye un sector economico seleccionado por el usuario.",
+      reason:
+        "El borrador ya incluye un sector economico seleccionado por el usuario.",
       canAutoApply: false,
     };
   }
@@ -247,8 +246,7 @@ function buildSuggestedEconomicSector({
       externalContext?.title,
       externalContext?.metaDescription,
       externalContext?.bodyText,
-      suggestedAdministrativeDescription?.text,
-      suggestedCommercialDescription?.text,
+      suggestedCompanyDescription?.text,
     ]
       .filter(Boolean)
       .join(" "),
@@ -260,7 +258,8 @@ function buildSuggestedEconomicSector({
       sectorName: "",
       confidence: "low",
       sourceType: "crm_internal",
-      reason: "No hay suficiente contexto para sugerir un sector economico confiable todavia.",
+      reason:
+        "No hay suficiente contexto para sugerir un sector economico confiable todavia.",
       canAutoApply: false,
     };
   }
@@ -294,7 +293,8 @@ function buildSuggestedEconomicSector({
       sectorName: "",
       confidence: "low",
       sourceType: externalContext ? "external_public_source" : "crm_internal",
-      reason: "No hubo evidencia suficiente para mapear el negocio a un sector economico del catalogo.",
+      reason:
+        "No hubo evidencia suficiente para mapear el negocio a un sector economico del catalogo.",
       canAutoApply: false,
     };
   }
@@ -415,7 +415,13 @@ function splitAddressCandidate(addressText) {
 
   const postalCode = extractPostalCodeFromText(cleaned);
   const withoutPostalCode = postalCode
-    ? cleaned.replace(new RegExp(`(?:c\\.?p\\.?\\s*)?${postalCode}`), " ")
+    ? cleaned.replace(
+        new RegExp(
+          `(?:c\\.?p\\.?|codigo postal|postal code)?\\s*${postalCode}`,
+          "i",
+        ),
+        " ",
+      )
     : cleaned;
   const segments = withoutPostalCode
     .split(",")
@@ -428,8 +434,27 @@ function splitAddressCandidate(addressText) {
     )
     .filter((segment) => segment && /[a-z0-9]/i.test(segment));
 
+  function looksLikeStreetSegment(value) {
+    return /\d|\b(?:av(?:enida)?|calle|blvd|boulevard|carretera|km|paseo|camino|prol(?:ongacion)?|periferico|autopista)\b/i.test(
+      String(value || ""),
+    );
+  }
+
+  function looksLikeStateSegment(value) {
+    const normalized = String(value || "").trim();
+    if (!normalized) return false;
+    return (
+      /^[A-Z]{2,5}$/.test(normalized) ||
+      /\b(?:estado de|provincia de|nuevo leon|queretaro|cdmx|ciudad de mexico|jalisco|puebla|guanajuato|yucatan|sonora|chihuahua|veracruz|coahuila|tamaulipas)\b/i.test(
+        normalized,
+      )
+    );
+  }
+
   if (segments.length === 0) {
-    return postalCode ? { addressLine: "", city: "", stateRegion: "", postalCode } : null;
+    return postalCode
+      ? { addressLine: "", city: "", stateRegion: "", postalCode }
+      : null;
   }
 
   let city = "";
@@ -440,10 +465,23 @@ function splitAddressCandidate(addressText) {
     stateRegion = addressSegments.pop() || "";
     city = addressSegments.pop() || "";
   } else if (addressSegments.length === 2) {
-    city = addressSegments.pop() || "";
+    const [firstSegment, secondSegment] = addressSegments;
+    if (
+      !looksLikeStreetSegment(firstSegment) &&
+      (postalCode || looksLikeStateSegment(secondSegment))
+    ) {
+      city = firstSegment;
+      stateRegion = secondSegment;
+      addressSegments.length = 0;
+    } else {
+      city = addressSegments.pop() || "";
+    }
   }
 
-  stateRegion = stateRegion.replace(/^(?:c\.?p\.?|codigo postal|postal code)\s*:?\s*/i, "");
+  stateRegion = stateRegion.replace(
+    /^(?:c\.?p\.?|codigo postal|postal code)\s*:?\s*/i,
+    "",
+  );
   city = city.replace(/^(?:c\.?p\.?|codigo postal|postal code)\s*:?\s*/i, "");
 
   return {
@@ -457,9 +495,11 @@ function splitAddressCandidate(addressText) {
 function mergeContactData(...sources) {
   return sources.reduce(
     (merged, source) => ({
-      addressLine: merged.addressLine || String(source?.addressLine || "").trim(),
+      addressLine:
+        merged.addressLine || String(source?.addressLine || "").trim(),
       city: merged.city || String(source?.city || "").trim(),
-      stateRegion: merged.stateRegion || String(source?.stateRegion || "").trim(),
+      stateRegion:
+        merged.stateRegion || String(source?.stateRegion || "").trim(),
       postalCode: merged.postalCode || String(source?.postalCode || "").trim(),
       phone: merged.phone || String(source?.phone || "").trim(),
     }),
@@ -546,7 +586,9 @@ function extractContactDataFromSearchHtml(html) {
     }
   });
 
-  candidates.sort((left, right) => scoreContactData(right) - scoreContactData(left));
+  candidates.sort(
+    (left, right) => scoreContactData(right) - scoreContactData(left),
+  );
   return candidates[0] || null;
 }
 
@@ -567,7 +609,9 @@ function extractPublicSearchCandidates(html) {
     );
     const rawHref = decodeHtmlEntities(linkMatch[1]);
     const title = cleanHtmlSnippet(linkMatch[2]);
-    const snippet = cleanHtmlSnippet(snippetMatch?.[1] || snippetMatch?.[2] || "");
+    const snippet = cleanHtmlSnippet(
+      snippetMatch?.[1] || snippetMatch?.[2] || "",
+    );
 
     let href = rawHref;
     if (href.startsWith("//duckduckgo.com/l/?")) {
@@ -594,8 +638,12 @@ function extractPublicSearchCandidates(html) {
 function scorePublicSearchCandidate({ draft, candidate }) {
   const domain = normalizeDomain(candidate.website);
   const normalizedName = normalizeText(draft.name);
-  const nameTokens = normalizedName.split(" ").filter((token) => token.length >= 4);
-  const searchableText = normalizeText(`${candidate.title} ${candidate.snippet} ${domain}`);
+  const nameTokens = normalizedName
+    .split(" ")
+    .filter((token) => token.length >= 4);
+  const searchableText = normalizeText(
+    `${candidate.title} ${candidate.snippet} ${domain}`,
+  );
   const blockedDomains = [
     "linkedin.com",
     "facebook.com",
@@ -612,10 +660,16 @@ function scorePublicSearchCandidate({ draft, candidate }) {
   if (nameTokens.some((token) => searchableText.includes(token))) {
     score += 30;
   }
-  if (nameTokens.length > 0 && nameTokens.every((token) => searchableText.includes(token))) {
+  if (
+    nameTokens.length > 0 &&
+    nameTokens.every((token) => searchableText.includes(token))
+  ) {
     score += 20;
   }
-  if (domain && normalizedName.replace(/\s+/g, "").includes(domain.replace(/\./g, ""))) {
+  if (
+    domain &&
+    normalizedName.replace(/\s+/g, "").includes(domain.replace(/\./g, ""))
+  ) {
     score += 25;
   }
   if (domain.endsWith(".com") || domain.endsWith(".com.mx")) {
@@ -628,7 +682,12 @@ function scorePublicSearchCandidate({ draft, candidate }) {
 }
 
 async function discoverPublicWebsiteByName({ draft, catalogContext }) {
-  const queryText = [draft.name, catalogContext.countryName, draft.city, "sitio oficial"]
+  const queryText = [
+    draft.name,
+    catalogContext.countryName,
+    draft.city,
+    "sitio oficial",
+  ]
     .filter(Boolean)
     .join(" ");
   const response = await fetch(
@@ -677,7 +736,10 @@ async function discoverPublicWebsiteByName({ draft, catalogContext }) {
       title: websiteContext.title,
       metaDescription: websiteContext.metaDescription,
       bodyText: websiteContext.bodyText,
-      contactData: mergeContactData(websiteContext.contactData, searchContactData),
+      contactData: mergeContactData(
+        websiteContext.contactData,
+        searchContactData,
+      ),
     };
   }
 
@@ -690,15 +752,23 @@ async function discoverPublicContactDataByName({
   preferredWebsite,
 }) {
   const searchQueries = [
-    [draft.name, catalogContext.countryName, "direccion telefono"].filter(Boolean).join(" "),
-    [draft.name, catalogContext.countryName, "contacto oficinas"].filter(Boolean).join(" "),
-    [draft.name, catalogContext.countryName, "codigo postal direccion"].filter(Boolean).join(" "),
+    [draft.name, catalogContext.countryName, "direccion telefono"]
+      .filter(Boolean)
+      .join(" "),
+    [draft.name, catalogContext.countryName, "contacto oficinas"]
+      .filter(Boolean)
+      .join(" "),
+    [draft.name, catalogContext.countryName, "codigo postal direccion"]
+      .filter(Boolean)
+      .join(" "),
   ];
   const preferredDomain = normalizeDomain(preferredWebsite);
 
   if (preferredDomain) {
     searchQueries.unshift(
-      [draft.name, `site:${preferredDomain}`, "contacto direccion"].filter(Boolean).join(" "),
+      [draft.name, `site:${preferredDomain}`, "contacto direccion"]
+        .filter(Boolean)
+        .join(" "),
     );
   }
 
@@ -737,7 +807,10 @@ async function discoverPublicContactDataByName({
         continue;
       }
 
-      const mergedCandidate = mergeContactData(pageContext.contactData, searchContactData);
+      const mergedCandidate = mergeContactData(
+        pageContext.contactData,
+        searchContactData,
+      );
       if (scoreContactData(mergedCandidate) > scoreContactData(bestCandidate)) {
         bestCandidate = mergedCandidate;
       }
@@ -839,7 +912,10 @@ function scoreRegistrationCandidate({ value, sourceText, draft, profile }) {
   if (normalizedText.includes(normalizeText(profile.label))) {
     score += 30;
   }
-  if (normalizedName && normalizedText.includes(normalizedName.split(" ")[0] || "")) {
+  if (
+    normalizedName &&
+    normalizedText.includes(normalizedName.split(" ")[0] || "")
+  ) {
     score += 20;
   }
   if (value.length >= 10) {
@@ -849,10 +925,16 @@ function scoreRegistrationCandidate({ value, sourceText, draft, profile }) {
   return score;
 }
 
-async function discoverPublicRegistrationByName({ draft, catalogContext, preferredWebsite }) {
+async function discoverPublicRegistrationByName({
+  draft,
+  catalogContext,
+  preferredWebsite,
+}) {
   const profile = getCountryRegistrationProfile(catalogContext);
   const searchQueries = profile.queries.map((querySuffix) =>
-    [draft.name, catalogContext.countryName, querySuffix].filter(Boolean).join(" "),
+    [draft.name, catalogContext.countryName, querySuffix]
+      .filter(Boolean)
+      .join(" "),
   );
   const seenValues = new Set();
   const candidates = [];
@@ -861,7 +943,9 @@ async function discoverPublicRegistrationByName({ draft, catalogContext, preferr
     const preferredDomain = normalizeDomain(preferredWebsite);
     if (preferredDomain) {
       searchQueries.unshift(
-        [draft.name, `site:${preferredDomain}`, profile.label].filter(Boolean).join(" "),
+        [draft.name, `site:${preferredDomain}`, profile.label]
+          .filter(Boolean)
+          .join(" "),
       );
     }
   }
@@ -899,7 +983,9 @@ async function discoverPublicRegistrationByName({ draft, catalogContext, preferr
       candidates.push(candidate);
     });
 
-    const strongHtmlCandidate = candidates.find((candidate) => candidate.score >= 45);
+    const strongHtmlCandidate = candidates.find(
+      (candidate) => candidate.score >= 45,
+    );
     if (strongHtmlCandidate) {
       return {
         value: strongHtmlCandidate.value,
@@ -930,7 +1016,9 @@ async function discoverPublicRegistrationByName({ draft, catalogContext, preferr
         candidates.push(candidate);
       });
 
-      const strongSnippetCandidate = candidates.find((candidate) => candidate.score >= 45);
+      const strongSnippetCandidate = candidates.find(
+        (candidate) => candidate.score >= 45,
+      );
       if (strongSnippetCandidate) {
         return {
           value: strongSnippetCandidate.value,
@@ -965,7 +1053,9 @@ async function discoverPublicRegistrationByName({ draft, catalogContext, preferr
         candidates.push(candidate);
       });
 
-      const strongPageCandidate = candidates.find((candidate) => candidate.score >= 45);
+      const strongPageCandidate = candidates.find(
+        (candidate) => candidate.score >= 45,
+      );
       if (strongPageCandidate) {
         return {
           value: strongPageCandidate.value,
@@ -1057,14 +1147,9 @@ function buildDescriptionsFromExternalContext({ draft, externalContext }) {
   if (!externalContext?.summary) return null;
 
   const baseSummary = trimSentence(externalContext.summary);
-  return {
-    administrative: trimSentence(
-      `${draft.name.trim()} ${baseSummary.replace(/^[A-ZÁÉÍÓÚÑa-záéíóúñ0-9]/, (char) => char.toLowerCase())}`,
-    ),
-    commercial: trimSentence(
-      `${draft.name.trim()} ${baseSummary.replace(/^[A-ZÁÉÍÓÚÑa-záéíóúñ0-9]/, (char) => char.toLowerCase())} Esta descripcion se apoya en referencias publicas y conviene validarla con el cliente antes de abrir una oportunidad.`,
-    ),
-  };
+  return trimSentence(
+    `${draft.name.trim()} ${baseSummary.replace(/^[A-ZÁÉÍÓÚÑa-záéíóúñ0-9]/, (char) => char.toLowerCase())}`,
+  );
 }
 
 async function searchPublicCompanyInfo({ draft, catalogContext }) {
@@ -1089,9 +1174,11 @@ async function searchPublicCompanyLocationInfo({
 }
 
 function formatLocation(draft, catalogContext) {
-  const parts = [draft.city, draft.stateRegion, catalogContext.countryName].filter(
-    Boolean,
-  );
+  const parts = [
+    draft.city,
+    draft.stateRegion,
+    catalogContext.countryName,
+  ].filter(Boolean);
   return parts.join(", ");
 }
 
@@ -1119,29 +1206,20 @@ function buildBusinessActivityPhrase({ draft, catalogContext }) {
   return "desarrolla actividades que aun deben validarse con una fuente publica o con el cliente";
 }
 
-function buildSuggestedDescriptions({ draft, catalogContext }) {
+function buildSuggestedCompanyDescription({ draft, catalogContext }) {
   const location = formatLocation(draft, catalogContext);
   const businessActivityPhrase = buildBusinessActivityPhrase({
     draft,
     catalogContext,
   });
   const websiteDomain = normalizeDomain(draft.website);
-  const administrativeParts = [
+  const descriptionParts = [
     `${draft.name.trim()} ${businessActivityPhrase}`,
     location ? `y tiene presencia declarada en ${location}` : "",
     websiteDomain ? `segun referencias disponibles en ${websiteDomain}` : "",
   ].filter(Boolean);
 
-  const commercialParts = [
-    `${draft.name.trim()} ${businessActivityPhrase}`,
-    `por lo que conviene validar rapidamente su oferta principal, clientes objetivo y responsables de compra antes de abrir una oportunidad`,
-    websiteDomain ? `tomando como referencia inicial su presencia digital en ${websiteDomain}` : "",
-  ].filter(Boolean);
-
-  return {
-    administrative: trimSentence(administrativeParts.join(" ")),
-    commercial: trimSentence(commercialParts.join(" ")),
-  };
+  return trimSentence(descriptionParts.join(" "));
 }
 
 function buildWebsiteSuggestion({ draft, duplicateWarnings }) {
@@ -1155,7 +1233,9 @@ function buildWebsiteSuggestion({ draft, duplicateWarnings }) {
     };
   }
 
-  const duplicateWithWebsite = duplicateWarnings.find((warning) => warning.website);
+  const duplicateWithWebsite = duplicateWarnings.find(
+    (warning) => warning.website,
+  );
   if (duplicateWithWebsite?.website) {
     return {
       value: duplicateWithWebsite.website,
@@ -1179,7 +1259,11 @@ function buildWebsiteSuggestion({ draft, duplicateWarnings }) {
   };
 }
 
-function buildRegistrationAssistance({ draft, duplicateWarnings, catalogContext }) {
+function buildRegistrationAssistance({
+  draft,
+  duplicateWarnings,
+  catalogContext,
+}) {
   const registrationCode = String(draft.registrationCode || "").trim();
   if (registrationCode) {
     return {
@@ -1223,24 +1307,38 @@ function buildRegistrationAssistance({ draft, duplicateWarnings, catalogContext 
   };
 }
 
-function buildSuggestedImprovements({ draft, duplicateWarnings, dataQualityFindings }) {
+function buildSuggestedImprovements({
+  draft,
+  duplicateWarnings,
+  dataQualityFindings,
+}) {
   const improvements = [];
 
   if (duplicateWarnings.some((warning) => warning.severity === "high")) {
-    improvements.push("Revisar primero la coincidencia fuerte detectada antes de guardar la cuenta.");
+    improvements.push(
+      "Revisar primero la coincidencia fuerte detectada antes de guardar la cuenta.",
+    );
   } else if (duplicateWarnings.length > 0) {
-    improvements.push("Validar las coincidencias internas sugeridas para evitar duplicados.");
+    improvements.push(
+      "Validar las coincidencias internas sugeridas para evitar duplicados.",
+    );
   }
 
   const descriptionFinding = dataQualityFindings.find(
-    (finding) => finding.code === "missing_description" || finding.code === "weak_description",
+    (finding) =>
+      finding.code === "missing_description" ||
+      finding.code === "weak_description",
   );
   if (descriptionFinding) {
-    improvements.push("Completar una descripcion comercial util para el seguimiento posterior.");
+    improvements.push(
+      "Completar una descripcion comercial util para el seguimiento posterior.",
+    );
   }
 
   if (!draft.website) {
-    improvements.push("Confirmar o capturar el sitio web oficial de la cuenta.");
+    improvements.push(
+      "Confirmar o capturar el sitio web oficial de la cuenta.",
+    );
   }
 
   if (!draft.registrationCode) {
@@ -1250,13 +1348,19 @@ function buildSuggestedImprovements({ draft, duplicateWarnings, dataQualityFindi
   }
 
   if (!draft.economicSectorId) {
-    improvements.push("Definir el sector economico para mejorar el contexto comercial.");
+    improvements.push(
+      "Definir el sector economico para mejorar el contexto comercial.",
+    );
   }
 
   return improvements.slice(0, 5);
 }
 
-function buildNextRecommendedStep({ draft, duplicateWarnings, dataQualityFindings }) {
+function buildNextRecommendedStep({
+  draft,
+  duplicateWarnings,
+  dataQualityFindings,
+}) {
   if (duplicateWarnings.some((warning) => warning.severity === "high")) {
     return {
       action: "Validar duplicado antes de continuar",
@@ -1268,7 +1372,8 @@ function buildNextRecommendedStep({ draft, duplicateWarnings, dataQualityFinding
   if (
     dataQualityFindings.some(
       (finding) =>
-        finding.code === "missing_description" || finding.code === "weak_description",
+        finding.code === "missing_description" ||
+        finding.code === "weak_description",
     )
   ) {
     return {
@@ -1322,13 +1427,19 @@ function summarizeAssessment({ duplicateWarnings, dataQualityFindings }) {
 async function getCatalogContext(draft) {
   const [accountTypeRows, sectorRows, countryRows] = await Promise.all([
     draft.accountTypeId
-      ? query("SELECT name FROM account_types WHERE id = ? LIMIT 1", [draft.accountTypeId])
+      ? query("SELECT name FROM account_types WHERE id = ? LIMIT 1", [
+          draft.accountTypeId,
+        ])
       : Promise.resolve([]),
     draft.economicSectorId
-      ? query("SELECT name FROM economic_sectors WHERE id = ? LIMIT 1", [draft.economicSectorId])
+      ? query("SELECT name FROM economic_sectors WHERE id = ? LIMIT 1", [
+          draft.economicSectorId,
+        ])
       : Promise.resolve([]),
     draft.countryId
-      ? query("SELECT name FROM countries WHERE id = ? LIMIT 1", [draft.countryId])
+      ? query("SELECT name FROM countries WHERE id = ? LIMIT 1", [
+          draft.countryId,
+        ])
       : Promise.resolve([]),
   ]);
 
@@ -1383,11 +1494,19 @@ function buildDuplicateWarnings({ draft, candidates }) {
     let matchReason = "";
     let sortRank = 0;
 
-    if (draftRegistration && candidateRegistration && draftRegistration === candidateRegistration) {
+    if (
+      draftRegistration &&
+      candidateRegistration &&
+      draftRegistration === candidateRegistration
+    ) {
       severity = "high";
       matchReason = "country_registration";
       sortRank = 400;
-    } else if (draftDomain && candidateDomain && draftDomain === candidateDomain) {
+    } else if (
+      draftDomain &&
+      candidateDomain &&
+      draftDomain === candidateDomain
+    ) {
       severity = "high";
       matchReason = "website_domain";
       sortRank = 350;
@@ -1431,13 +1550,15 @@ function buildDuplicateWarnings({ draft, candidates }) {
 
 function buildDataQualityFindings({ draft }) {
   const findings = [];
-  const descriptionLength = String(draft.description || "").trim().length;
+  const descriptionLength = String(draft.companyDescription || "").trim()
+    .length;
 
   if (!draft.countryId) {
     findings.push({
       code: "missing_country",
       severity: "high",
-      message: "Falta el pais y eso limita validacion, desambiguacion y enriquecimiento.",
+      message:
+        "Falta el pais y eso limita validacion, desambiguacion y enriquecimiento.",
     });
   }
 
@@ -1453,7 +1574,8 @@ function buildDataQualityFindings({ draft }) {
     findings.push({
       code: "missing_description",
       severity: "high",
-      message: "La descripcion esta vacia y limita el contexto comercial posterior.",
+      message:
+        "La descripcion esta vacia y limita el contexto comercial posterior.",
     });
   } else if (descriptionLength < 40) {
     findings.push({
@@ -1532,7 +1654,7 @@ function buildEvidence({
             ? "Se uso una busqueda publica por nombre para encontrar un posible sitio oficial."
             : externalContext?.sourceLabel === "openai_general"
               ? "Se usaron sugerencias publicas generadas por OpenAI a partir del nombre y pais de la cuenta."
-            : "Se uso una fuente publica controlada con apoyo de OpenAI.",
+              : "Se uso una fuente publica controlada con apoyo de OpenAI.",
     });
   }
 
@@ -1648,7 +1770,10 @@ async function generateOpenAiSuggestions({
   return extractJsonObject(content);
 }
 
-export async function analyzeAccountDraft({ draft, options, user }) {
+export async function analyzeLegacyAccountDraft({ draft, options, user }) {
+  draft = normalizeAccountDraft(draft);
+  options = normalizeDraftAnalysisOptions(options);
+
   const [catalogContext, economicSectorOptions] = await Promise.all([
     getCatalogContext(draft),
     getEconomicSectorOptions(),
@@ -1656,7 +1781,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
   const candidates = await getDuplicateCandidates({ draft, user });
   const duplicateWarnings = buildDuplicateWarnings({ draft, candidates });
   const dataQualityFindings = buildDataQualityFindings({ draft });
-  const fallbackDescriptions = buildSuggestedDescriptions({
+  const fallbackCompanyDescription = buildSuggestedCompanyDescription({
     draft,
     catalogContext,
   });
@@ -1687,18 +1812,16 @@ export async function analyzeAccountDraft({ draft, options, user }) {
 
   let usedAiGeneration = false;
   let usedExternalEnrichment = false;
-  let confidence = duplicateWarnings.some((warning) => warning.severity === "high")
+  let confidence = duplicateWarnings.some(
+    (warning) => warning.severity === "high",
+  )
     ? "high"
     : dataQualityFindings.some((finding) => finding.severity === "high")
       ? "medium"
       : "high";
   let warnings = [];
-  let suggestedAdministrativeDescription = {
-    text: fallbackDescriptions.administrative,
-    sourceType: "crm_internal",
-  };
-  let suggestedCommercialDescription = {
-    text: fallbackDescriptions.commercial,
+  let suggestedCompanyDescription = {
+    text: fallbackCompanyDescription,
     sourceType: "crm_internal",
   };
   let suggestedImprovements = fallbackImprovements;
@@ -1708,7 +1831,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
   let registrationAssistance = fallbackRegistrationAssistance;
   let openAiProviderIssue = "";
 
-  if (options.allowExternalEnrichment) {
+  if (options.allowExternalFetch) {
     const websiteCandidates = buildWebsiteFetchCandidates({
       draft,
       fallbackWebsiteSuggestion,
@@ -1725,17 +1848,13 @@ export async function analyzeAccountDraft({ draft, options, user }) {
       };
       usedExternalEnrichment = true;
 
-      const externalDescriptions = buildDescriptionsFromExternalContext({
+      const externalCompanyDescription = buildDescriptionsFromExternalContext({
         draft,
         externalContext,
       });
-      if (externalDescriptions) {
-        suggestedAdministrativeDescription = {
-          text: externalDescriptions.administrative,
-          sourceType: "external_public_source",
-        };
-        suggestedCommercialDescription = {
-          text: externalDescriptions.commercial,
+      if (externalCompanyDescription) {
+        suggestedCompanyDescription = {
+          text: externalCompanyDescription,
           sourceType: "external_public_source",
         };
       }
@@ -1757,7 +1876,8 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           draft,
           contactData: websiteContext.contactData,
           sourceType: "external_public_source",
-          reason: "Se identificaron datos de contacto publicos en el sitio de la cuenta.",
+          reason:
+            "Se identificaron datos de contacto publicos en el sitio de la cuenta.",
           confidence: "medium",
         });
       }
@@ -1791,17 +1911,14 @@ export async function analyzeAccountDraft({ draft, options, user }) {
             canAutoApply: true,
           };
 
-          const externalDescriptions = buildDescriptionsFromExternalContext({
-            draft,
-            externalContext,
-          });
-          if (externalDescriptions) {
-            suggestedAdministrativeDescription = {
-              text: externalDescriptions.administrative,
-              sourceType: "external_public_source",
-            };
-            suggestedCommercialDescription = {
-              text: externalDescriptions.commercial,
+          const externalCompanyDescription =
+            buildDescriptionsFromExternalContext({
+              draft,
+              externalContext,
+            });
+          if (externalCompanyDescription) {
+            suggestedCompanyDescription = {
+              text: externalCompanyDescription,
               sourceType: "external_public_source",
             };
           }
@@ -1824,11 +1941,13 @@ export async function analyzeAccountDraft({ draft, options, user }) {
 
     if (!String(registrationAssistance.value || "").trim()) {
       try {
-        const publicRegistrationResult = await discoverPublicRegistrationByName({
-          draft,
-          catalogContext,
-          preferredWebsite: suggestedWebsite.value,
-        });
+        const publicRegistrationResult = await discoverPublicRegistrationByName(
+          {
+            draft,
+            catalogContext,
+            preferredWebsite: suggestedWebsite.value,
+          },
+        );
 
         if (publicRegistrationResult?.value) {
           registrationAssistance = {
@@ -1876,7 +1995,8 @@ export async function analyzeAccountDraft({ draft, options, user }) {
               publicContactResult.reason ||
                 "Se completaron datos de direccion o telefono desde referencias publicas adicionales.",
             ),
-            confidence: publicContactResult.confidence || suggestedContactData.confidence,
+            confidence:
+              publicContactResult.confidence || suggestedContactData.confidence,
           });
 
           if (!externalContext) {
@@ -1894,6 +2014,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
 
     if (
       (hasLocationGaps(suggestedContactData) || !suggestedContactData.phone) &&
+      options.allowWebSearchTool &&
       config.openai.apiKey &&
       config.openai.enableWebSearch
     ) {
@@ -1905,7 +2026,9 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           currentContactData: suggestedContactData,
         });
 
-        if (hasMeaningfulContactData(locationSearchResult?.suggestedContactData)) {
+        if (
+          hasMeaningfulContactData(locationSearchResult?.suggestedContactData)
+        ) {
           suggestedContactData = buildSuggestedContactData({
             draft,
             contactData: mergeContactData(
@@ -1951,7 +2074,12 @@ export async function analyzeAccountDraft({ draft, options, user }) {
       }
     }
 
-    if (!externalContext && config.openai.apiKey && config.openai.enableWebSearch) {
+    if (
+      !externalContext &&
+      options.allowWebSearchTool &&
+      config.openai.apiKey &&
+      config.openai.enableWebSearch
+    ) {
       try {
         const webSearchResult = await searchPublicCompanyInfo({
           draft,
@@ -1970,17 +2098,14 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           );
 
           if (externalContext.summary) {
-            const externalDescriptions = buildDescriptionsFromExternalContext({
-              draft,
-              externalContext,
-            });
-            if (externalDescriptions) {
-              suggestedAdministrativeDescription = {
-                text: externalDescriptions.administrative,
-                sourceType: "external_public_source",
-              };
-              suggestedCommercialDescription = {
-                text: externalDescriptions.commercial,
+            const externalCompanyDescription =
+              buildDescriptionsFromExternalContext({
+                draft,
+                externalContext,
+              });
+            if (externalCompanyDescription) {
+              suggestedCompanyDescription = {
+                text: externalCompanyDescription,
                 sourceType: "external_public_source",
               };
             }
@@ -2016,7 +2141,9 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           if (String(webSearchResult.suggestedRegistrationCode || "").trim()) {
             registrationAssistance = {
               status: "candidate",
-              value: String(webSearchResult.suggestedRegistrationCode || "").trim(),
+              value: String(
+                webSearchResult.suggestedRegistrationCode || "",
+              ).trim(),
               confidence: webSearchResult.registrationConfidence || "medium",
               sourceType: "external_public_source",
               reason: trimSentence(
@@ -2050,7 +2177,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
     }
   }
 
-  if ((options.allowExternalEnrichment || config.openai.apiKey) && !openAiProviderIssue) {
+  if (options.allowAiSynthesis && !openAiProviderIssue) {
     try {
       const openAiSuggestions = await generateOpenAiSuggestions({
         draft,
@@ -2063,28 +2190,26 @@ export async function analyzeAccountDraft({ draft, options, user }) {
       if (openAiSuggestions) {
         usedAiGeneration = true;
         confidence = openAiSuggestions.confidence || confidence;
-        if (openAiSuggestions.suggestedAdministrativeDescription) {
-          if (!externalContext && options.allowExternalEnrichment) {
+        if (openAiSuggestions.suggestedCompanyDescription) {
+          if (!externalContext && options.allowExternalFetch) {
             externalContext = {
               sourceType: "external_public_source",
               sourceLabel: "openai_general",
-              summary: trimSentence(openAiSuggestions.suggestedAdministrativeDescription),
+              summary: trimSentence(
+                openAiSuggestions.suggestedCompanyDescription,
+              ),
             };
             usedExternalEnrichment = true;
           }
-          suggestedAdministrativeDescription = {
-            text: trimSentence(openAiSuggestions.suggestedAdministrativeDescription),
-            sourceType: externalContext ? "external_public_source" : "crm_internal",
-          };
-        }
-        if (openAiSuggestions.suggestedCommercialDescription) {
-          suggestedCommercialDescription = {
-            text: trimSentence(openAiSuggestions.suggestedCommercialDescription),
-            sourceType: externalContext ? "external_public_source" : "crm_internal",
+          suggestedCompanyDescription = {
+            text: trimSentence(openAiSuggestions.suggestedCompanyDescription),
+            sourceType: externalContext
+              ? "external_public_source"
+              : "crm_internal",
           };
         }
         if (openAiSuggestions.suggestedWebsite) {
-          if (!externalContext && options.allowExternalEnrichment) {
+          if (!externalContext && options.allowExternalFetch) {
             externalContext = {
               sourceType: "external_public_source",
               sourceLabel: "openai_general",
@@ -2095,14 +2220,19 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           suggestedWebsite = {
             value: String(openAiSuggestions.suggestedWebsite || "").trim(),
             confidence:
-              openAiSuggestions.websiteConfidence || suggestedWebsite.confidence,
-            sourceType: externalContext ? "external_public_source" : "crm_internal",
+              openAiSuggestions.websiteConfidence ||
+              suggestedWebsite.confidence,
+            sourceType: externalContext
+              ? "external_public_source"
+              : "crm_internal",
             reason: trimSentence(openAiSuggestions.websiteReason),
-            canAutoApply: Boolean(String(openAiSuggestions.suggestedWebsite || "").trim()),
+            canAutoApply: Boolean(
+              String(openAiSuggestions.suggestedWebsite || "").trim(),
+            ),
           };
         }
         if (hasMeaningfulContactData(openAiSuggestions.suggestedContactData)) {
-          if (!externalContext && options.allowExternalEnrichment) {
+          if (!externalContext && options.allowExternalFetch) {
             externalContext = {
               sourceType: "external_public_source",
               sourceLabel: "openai_general",
@@ -2113,12 +2243,20 @@ export async function analyzeAccountDraft({ draft, options, user }) {
           suggestedContactData = buildSuggestedContactData({
             draft,
             contactData: openAiSuggestions.suggestedContactData,
-            sourceType: externalContext ? "external_public_source" : "crm_internal",
+            sourceType: externalContext
+              ? "external_public_source"
+              : "crm_internal",
             reason: trimSentence(openAiSuggestions.suggestedContactData.reason),
-            confidence: openAiSuggestions.suggestedContactData.confidence || "medium",
+            confidence:
+              openAiSuggestions.suggestedContactData.confidence || "medium",
           });
-        } else if (suggestedWebsite.value && !hasMeaningfulContactData(suggestedContactData)) {
-          const websiteContext = await fetchWebsiteContext(suggestedWebsite.value);
+        } else if (
+          suggestedWebsite.value &&
+          !hasMeaningfulContactData(suggestedContactData)
+        ) {
+          const websiteContext = await fetchWebsiteContext(
+            suggestedWebsite.value,
+          );
           if (hasMeaningfulContactData(websiteContext?.contactData)) {
             suggestedContactData = buildSuggestedContactData({
               draft,
@@ -2133,11 +2271,15 @@ export async function analyzeAccountDraft({ draft, options, user }) {
         if (openAiSuggestions.suggestedRegistrationCode) {
           registrationAssistance = {
             status: "candidate",
-            value: String(openAiSuggestions.suggestedRegistrationCode || "").trim(),
+            value: String(
+              openAiSuggestions.suggestedRegistrationCode || "",
+            ).trim(),
             confidence:
               openAiSuggestions.registrationConfidence ||
               registrationAssistance.confidence,
-            sourceType: externalContext ? "external_public_source" : "crm_internal",
+            sourceType: externalContext
+              ? "external_public_source"
+              : "crm_internal",
             reason: trimSentence(openAiSuggestions.registrationReason),
             requiresManualValidation: true,
             canAutoApply: Boolean(
@@ -2159,7 +2301,11 @@ export async function analyzeAccountDraft({ draft, options, user }) {
     }
   }
 
-  if (options.allowExternalEnrichment && !usedExternalEnrichment && !openAiProviderIssue) {
+  if (
+    options.allowExternalFetch &&
+    !usedExternalEnrichment &&
+    !openAiProviderIssue
+  ) {
     warnings.push(
       "No fue posible obtener informacion publica util para esta cuenta; el analisis se baso en datos internos.",
     );
@@ -2169,8 +2315,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
     draft,
     economicSectorOptions,
     externalContext,
-    suggestedAdministrativeDescription,
-    suggestedCommercialDescription,
+    suggestedCompanyDescription,
   });
 
   return {
@@ -2178,8 +2323,7 @@ export async function analyzeAccountDraft({ draft, options, user }) {
     overallAssessment,
     duplicateWarnings,
     dataQualityFindings,
-    suggestedAdministrativeDescription,
-    suggestedCommercialDescription,
+    suggestedCompanyDescription,
     suggestedWebsite,
     suggestedContactData,
     suggestedEconomicSector,
@@ -2202,3 +2346,33 @@ export async function analyzeAccountDraft({ draft, options, user }) {
     },
   };
 }
+
+export {
+  hasMeaningfulContactData,
+  buildSuggestedContactData,
+  buildSuggestedEconomicSector,
+  mergeContactData,
+  hasLocationGaps,
+  discoverPublicWebsiteByName,
+  discoverPublicContactDataByName,
+  discoverPublicRegistrationByName,
+  buildWebsiteFetchCandidates,
+  fetchWebsiteContext,
+  buildDescriptionsFromExternalContext,
+  buildSuggestedCompanyDescription,
+  getEconomicSectorOptions,
+  getCatalogContext,
+  getDuplicateCandidates,
+  buildDuplicateWarnings,
+  buildDataQualityFindings,
+  buildEvidence,
+  classifyOpenAiError,
+  buildOpenAiProviderWarning,
+  buildWebsiteSuggestion,
+  buildRegistrationAssistance,
+  buildSuggestedImprovements,
+  buildNextRecommendedStep,
+  summarizeAssessment,
+};
+
+export const analyzeAccountDraft = analyzeLegacyAccountDraft;

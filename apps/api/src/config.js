@@ -17,6 +17,12 @@ export const config = {
   port: Number(process.env.PORT || 4000),
   jwtSecret: process.env.JWT_SECRET || "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "8h",
+  features: {
+    opportunityStageAnswerSuggestionsEnabled:
+      String(
+        process.env.OPPORTUNITY_STAGE_ANSWER_SUGGESTIONS_ENABLED || "true",
+      ) === "true",
+  },
   app: {
     inviteSetupUrl:
       process.env.APP_INVITE_SETUP_URL || "http://localhost:5173/set-password",
@@ -41,6 +47,66 @@ export const config = {
     connectionLimit: Number(process.env.DB_POOL_SIZE || 10),
   },
   documents: {
+    storage: {
+      provider: process.env.DOCUMENT_STORAGE_PROVIDER || "local_fs",
+      localRoot:
+        process.env.DOCUMENT_STORAGE_LOCAL_ROOT ||
+        resolve(__dirname, "../../.data/documents"),
+      s3Bucket: process.env.DOCUMENT_STORAGE_S3_BUCKET || "",
+      s3Region: process.env.DOCUMENT_STORAGE_S3_REGION || "us-east-1",
+      s3Endpoint: process.env.DOCUMENT_STORAGE_S3_ENDPOINT || "",
+      s3ForcePathStyle:
+        String(process.env.DOCUMENT_STORAGE_S3_FORCE_PATH_STYLE || "true") ===
+        "true",
+      s3AccessKeyId: process.env.DOCUMENT_STORAGE_S3_ACCESS_KEY_ID || "",
+      s3SecretAccessKey:
+        process.env.DOCUMENT_STORAGE_S3_SECRET_ACCESS_KEY || "",
+      maxSessionFiles: Number(process.env.DOCUMENT_MAX_SESSION_FILES || 8),
+      maxSessionBytes: Number(
+        process.env.DOCUMENT_MAX_SESSION_BYTES || 120 * 1024 * 1024,
+      ),
+      maxAudioFilesPerSession: Number(
+        process.env.DOCUMENT_MAX_AUDIO_FILES_PER_SESSION || 3,
+      ),
+      maxAudioDurationSecondsPerFile: Number(
+        process.env.DOCUMENT_MAX_AUDIO_DURATION_SECONDS_PER_FILE || 20 * 60,
+      ),
+      maxAudioDurationSecondsPerSession: Number(
+        process.env.DOCUMENT_MAX_AUDIO_DURATION_SECONDS_PER_SESSION || 40 * 60,
+      ),
+      allowedMimeTypes: (
+        process.env.DOCUMENT_ALLOWED_MIME_TYPES ||
+        [
+          "application/pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.ms-excel",
+          "text/csv",
+          "text/plain",
+          "message/rfc822",
+          "image/png",
+          "image/jpeg",
+          "audio/mpeg",
+          "audio/wav",
+          "audio/x-wav",
+          "audio/mp4",
+          "audio/x-m4a",
+        ].join(",")
+      )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    },
+    processing: {
+      mode: process.env.DOCUMENT_PROCESSING_MODE || "sync",
+      pollIntervalMs: Number(
+        process.env.DOCUMENT_PROCESSING_POLL_INTERVAL_MS || 5000,
+      ),
+      maxAttempts: Number(process.env.DOCUMENT_PROCESSING_MAX_ATTEMPTS || 3),
+      retryBaseDelayMs: Number(
+        process.env.DOCUMENT_PROCESSING_RETRY_BASE_DELAY_MS || 15000,
+      ),
+    },
     quotation: {
       company: {
         logoPath:
@@ -68,6 +134,8 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    transcriptionModel:
+      process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
     baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",

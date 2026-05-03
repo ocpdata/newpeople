@@ -2,8 +2,12 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
-import { analyzeAccountDraft } from "../src/accountDraftAnalysis.js";
+import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
+import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
+import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
+import { ensurePotentialOpportunityPermissions } from "../src/potential-opportunities/permissions.js";
+import { ensurePotentialOpportunitySchema } from "../src/potential-opportunities/schema.js";
 import {
   TEST_PREFIX,
   cleanupArtifacts,
@@ -39,6 +43,9 @@ describe("API integration baseline", () => {
   const ctx = {};
 
   beforeAll(async () => {
+    await ensurePotentialOpportunityPermissions();
+    await ensurePotentialOpportunitySchema();
+
     const sellerRole = await ensureNamedRole("Vendedor");
     if (sellerRole.created) {
       cleanup.roleIds.push(sellerRole.roleId);
@@ -146,6 +153,19 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_dynamic_permissions`,
       permissionCodes: ["contactos.request"],
     });
+    ctx.interactionsManagerRoleId = await createRole({
+      name: `${TEST_PREFIX}_interactions_manager`,
+      permissionCodes: [
+        "interacciones.read",
+        "interacciones.create",
+        "interacciones.update",
+        "interacciones.analyze",
+        "interacciones.resolve",
+        "cuentas.create",
+        "contactos.create",
+        "oportunidades.create",
+      ],
+    });
     ctx.userCrudRoleId = await createRole({
       name: `${TEST_PREFIX}_users_crud`,
       permissionCodes: ["usuarios.create", "usuarios.update"],
@@ -172,6 +192,7 @@ describe("API integration baseline", () => {
       ctx.roleManagerRoleId,
       ctx.configurationManagerRoleId,
       ctx.dynamicPermissionRoleId,
+      ctx.interactionsManagerRoleId,
       ctx.userCrudRoleId,
     );
 
@@ -390,6 +411,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.dynamic.permissions@example.com`,
       roleIds: [ctx.dynamicPermissionRoleId],
     });
+    ctx.interactionsManagerUserId = await createUser({
+      fullName: "API Interactions Manager",
+      email: `${TEST_PREFIX}.interactions.manager@example.com`,
+      roleIds: [ctx.interactionsManagerRoleId],
+    });
     ctx.userCrudUserId = await createUser({
       fullName: "API User CRUD",
       email: `${TEST_PREFIX}.users.crud@example.com`,
@@ -418,6 +444,7 @@ describe("API integration baseline", () => {
       ctx.quotationAdminUserId,
       ctx.quotationExternalUserId,
       ctx.dynamicPermissionUserId,
+      ctx.interactionsManagerUserId,
       ctx.userCrudUserId,
     );
 
@@ -629,7 +656,7 @@ describe("API integration baseline", () => {
 
   async function getAuditActionsForOpportunity(opportunityId, action) {
     return query(
-      `SELECT id, action, entity_id
+      `SELECT id, action, entity_id, detail, changed_fields
        FROM audit_log
        WHERE entity_type = 'opportunity'
          AND entity_id = ?
@@ -637,6 +664,74 @@ describe("API integration baseline", () => {
        ORDER BY id`,
       [opportunityId, action],
     );
+  }
+
+  async function attachOpportunityDocumentForTest({
+    opportunityId,
+    uploadedByUserId,
+    suffix,
+    text,
+  }) {
+    await ensureOpportunityDocumentSchema();
+    const normalizedSuffix = String(suffix || "fixture")
+      .replace(/[^a-z0-9]/gi, "")
+      .toLowerCase()
+      .slice(0, 32);
+    const publicId = `doc_stage_${normalizedSuffix}_${Date.now()}`.slice(0, 60);
+    const sha256 = normalizedSuffix.padEnd(64, "a").slice(0, 64);
+    const now = new Date();
+    const insert = await query(
+      `INSERT INTO documents
+         (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+          storage_bucket, storage_key, original_file_name, stored_file_name,
+          mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+          processing_status, processing_error, duration_seconds, is_deleted,
+          uploaded_by_user_id, created_at, updated_at)
+       VALUES (?, NULL, 'opportunity', ?, 'local_fs', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review_ready', NULL, NULL, 0, ?, ?, ?)`,
+      [
+        publicId,
+        opportunityId,
+        `local_fs/opportunity/${normalizedSuffix}.txt`,
+        `${normalizedSuffix}.txt`,
+        `${normalizedSuffix}.txt`,
+        "text/plain",
+        ".txt",
+        Buffer.byteLength(String(text || ""), "utf8"),
+        sha256,
+        "txt",
+        "fixture_stage_answers",
+        uploadedByUserId,
+        now,
+        now,
+      ],
+    );
+    const documentId = Number(insert.insertId);
+
+    await query(
+      `INSERT INTO document_contents
+         (document_id, extraction_status, transcription_status, detected_format,
+          raw_text, normalized_text, transcript_text, content_summary,
+          extracted_at, created_at, updated_at)
+       VALUES (?, 'completed', 'pending', 'txt', ?, ?, '', ?, ?, ?, ?)`,
+      [
+        documentId,
+        String(text || ""),
+        String(text || ""),
+        String(text || "").slice(0, 300),
+        now,
+        now,
+        now,
+      ],
+    );
+
+    await query(
+      `INSERT INTO opportunity_document_links
+         (opportunity_id, document_id, link_type, created_by_user_id, created_at)
+       VALUES (?, ?, 'source_document', ?, ?)`,
+      [opportunityId, documentId, uploadedByUserId, now],
+    );
+
+    return { documentId, publicId };
   }
 
   afterAll(async () => {
@@ -1162,24 +1257,30 @@ describe("API integration baseline", () => {
           city: "CDMX",
           stateRegion: "CDMX",
           countryId: ctx.catalogIds.countryMxId,
-          description: "",
+          companyDescription: "",
           addressLine: "",
           postalCode: "",
           ownerUserIds: [],
         },
         options: {
-          allowExternalEnrichment: false,
+          allowExternalFetch: false,
+          allowAiSynthesis: false,
+          allowWebSearchTool: false,
         },
       });
 
     expect(response.status).toBe(200);
     expect(response.body.overallAssessment.status).toBe("needs_review");
-    expect(response.body.duplicateWarnings).toHaveLength(1);
-    expect(response.body.duplicateWarnings[0]).toMatchObject({
-      severity: "high",
-      matchReason: "normalized_name_same_country",
-      accountId: fixtureAccountId,
-    });
+    expect(response.body.duplicateWarnings.length).toBeGreaterThan(0);
+    expect(response.body.duplicateWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          matchReason: "normalized_name_same_country",
+          accountId: fixtureAccountId,
+        }),
+      ]),
+    );
     expect(response.body.suggestedWebsite).toMatchObject({
       value: `https://draft-${TEST_PREFIX}.example.com`,
       confidence: "high",
@@ -1195,9 +1296,8 @@ describe("API integration baseline", () => {
     ).toEqual(
       expect.arrayContaining(["missing_description", "missing_website"]),
     );
-    expect(response.body.suggestedAdministrativeDescription.text).toBeTruthy();
-    expect(response.body.suggestedCommercialDescription.text).toBeTruthy();
-    expect(response.body.suggestedAdministrativeDescription.text).toContain(
+    expect(response.body.suggestedCompanyDescription.text).toBeTruthy();
+    expect(response.body.suggestedCompanyDescription.text).toContain(
       "se dedica",
     );
     expect(response.body.nextRecommendedStep.action).toBe(
@@ -1343,13 +1443,19 @@ describe("API integration baseline", () => {
       });
 
       expect(result.meta.usedExternalEnrichment).toBe(true);
-      expect(result.suggestedWebsite.value).toBe("https://www.totalplay.com.mx/");
-      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedWebsite.value).toBe(
+        "https://www.totalplay.com.mx/",
+      );
+      expect(result.suggestedContactData.addressLine).toBe(
+        "Av. San Jeronimo 123",
+      );
       expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
       expect(result.suggestedContactData.stateRegion).toBe("CDMX");
       expect(result.suggestedContactData.postalCode).toBe("01000");
       expect(result.suggestedContactData.phone).toBe("+52 55 1234 5678");
-      expect(result.suggestedEconomicSector.sectorName).toBe("Telecomunicaciones");
+      expect(result.suggestedEconomicSector.sectorName).toBe(
+        "Telecomunicaciones",
+      );
       expect(result.suggestedEconomicSector.canAutoApply).toBe(true);
       expect(result.warnings).toEqual([]);
     } finally {
@@ -1434,8 +1540,12 @@ describe("API integration baseline", () => {
       });
 
       expect(result.meta.usedExternalEnrichment).toBe(true);
-      expect(result.suggestedWebsite.value).toBe("https://www.totalplay.com.mx/");
-      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedWebsite.value).toBe(
+        "https://www.totalplay.com.mx/",
+      );
+      expect(result.suggestedContactData.addressLine).toBe(
+        "Av. San Jeronimo 123",
+      );
       expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
       expect(result.suggestedContactData.stateRegion).toBe("CDMX");
       expect(result.suggestedContactData.postalCode).toBe("01000");
@@ -1446,6 +1556,150 @@ describe("API integration baseline", () => {
       config.openai.apiKey = originalApiKey;
       config.openai.enableWebSearch = originalEnableWebSearch;
     }
+  });
+
+  test("cuentas draft-analysis preserva ciudad, estado y codigo postal desde snippets sin calle", async () => {
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx">Totalplay Oficial</a>
+              <div class="result__snippet">Internet, television y telefonia para hogar y empresa.</div>
+            </div>
+          </body></html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name) => (name === "content-type" ? "text/html" : null),
+        },
+        text: async () => `
+          <html>
+            <head>
+              <title>Totalplay Empresas</title>
+              <meta name="description" content="Servicios de internet, voz y datos para empresas" />
+            </head>
+            <body>Llamanos al +52 55 1234 5678 para ventas empresariales.</body>
+          </html>
+        `,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => `
+          <html><body>
+            <div class="result">
+              <a class="result__a" href="https://www.totalplay.com.mx/contacto">Contacto Totalplay</a>
+              <div class="result__snippet">Ubicacion: Ciudad de Mexico, CDMX, C.P. 01000. Telefono: +52 55 1234 5678</div>
+            </div>
+          </body></html>
+        `,
+      });
+
+    config.openai.apiKey = "";
+    config.openai.enableWebSearch = false;
+    global.fetch = fetchMock;
+
+    try {
+      const result = await analyzeAccountDraft({
+        draft: {
+          name: "Total Play",
+          accountTypeId: null,
+          registrationCode: "RFC-VALIDAR-MANUAL",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          companyDescription: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalFetch: true,
+          allowAiSynthesis: false,
+          allowWebSearchTool: false,
+        },
+        user: {
+          id: ctx.accountCreateUserId,
+          permissionSet: new Set(["cuentas.read_all"]),
+        },
+      });
+
+      expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
+      expect(result.suggestedContactData.stateRegion).toBe("CDMX");
+      expect(result.suggestedContactData.postalCode).toBe("01000");
+      expect(result.suggestedContactData.phone).toBe("+52 55 1234 5678");
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas draft-analysis expone etapas del pipeline y plan de ejecucion", async () => {
+    const result = await analyzeAccountDraft({
+      draft: {
+        name: "Acme Pipeline SA",
+        accountTypeId: null,
+        registrationCode: "",
+        phone: "",
+        economicSectorId: null,
+        website: "",
+        city: "",
+        stateRegion: "",
+        countryId: ctx.catalogIds.countryMxId,
+        companyDescription: "",
+        addressLine: "",
+        postalCode: "",
+        ownerUserIds: [ctx.accountCreateUserId],
+      },
+      options: {
+        allowExternalFetch: false,
+        allowAiSynthesis: false,
+        allowWebSearchTool: false,
+      },
+      user: {
+        id: ctx.accountCreateUserId,
+        permissionSet: new Set(["cuentas.read_all"]),
+      },
+    });
+
+    expect(result.meta.executionPlan).toEqual(
+      expect.objectContaining({
+        mode: "sync",
+        canDefer: true,
+        queueName: "account-draft-analysis",
+        strategy: "heuristic_pipeline",
+      }),
+    );
+    expect(result.meta.pipeline).toEqual(
+      expect.objectContaining({
+        stages: expect.arrayContaining([
+          expect.objectContaining({
+            stage: "context",
+            status: "completed",
+          }),
+          expect.objectContaining({
+            stage: "discovery",
+            status: "skipped",
+            reason: "external_fetch_disabled",
+          }),
+          expect.objectContaining({
+            stage: "structured_extraction",
+            status: "skipped",
+          }),
+        ]),
+      }),
+    );
   });
 
   test("cuentas draft-analysis ignora ruido del HTML del buscador para no inventar direccion o telefono", async () => {
@@ -1563,7 +1817,10 @@ describe("API integration baseline", () => {
         };
       }
 
-      if (url.includes("html.duckduckgo.com/html/") && url.includes("direccion")) {
+      if (
+        url.includes("html.duckduckgo.com/html/") &&
+        url.includes("direccion")
+      ) {
         return {
           ok: true,
           text: async () => `
@@ -1596,19 +1853,29 @@ describe("API integration baseline", () => {
         return {
           ok: true,
           json: async () => ({
-            output_text: JSON.stringify({
-              suggestedContactData: {
-                addressLine: "Av. San Jeronimo 123",
-                city: "Ciudad de Mexico",
-                stateRegion: "CDMX",
-                postalCode: "01000",
-                phone: "+52 55 1234 5678",
-                confidence: "high",
-                reason:
-                  "Se encontro direccion completa en resultados publicos adicionales y fuentes de contacto de la empresa.",
+            output: [
+              {
+                type: "message",
+                content: [
+                  {
+                    type: "output_text",
+                    text: JSON.stringify({
+                      suggestedContactData: {
+                        addressLine: "Av. San Jeronimo 123",
+                        city: "Ciudad de Mexico",
+                        stateRegion: "CDMX",
+                        postalCode: "01000",
+                        phone: "+52 55 1234 5678",
+                        confidence: "high",
+                        reason:
+                          "Se encontro direccion completa en resultados publicos adicionales y fuentes de contacto de la empresa.",
+                      },
+                      warnings: [],
+                    }),
+                  },
+                ],
               },
-              warnings: [],
-            }),
+            ],
           }),
         };
       }
@@ -1621,13 +1888,12 @@ describe("API integration baseline", () => {
               {
                 message: {
                   content: JSON.stringify({
-                    suggestedAdministrativeDescription:
+                    suggestedCompanyDescription:
                       "Total Play se dedica a servicios de conectividad y telecomunicaciones para empresas y hogares.",
-                    suggestedCommercialDescription:
-                      "Total Play ofrece servicios de conectividad y telecomunicaciones, por lo que conviene validar rapidamente su oferta principal antes de abrir una oportunidad.",
                     suggestedWebsite: "https://www.totalplay.com.mx/",
                     websiteConfidence: "high",
-                    websiteReason: "Se identifico el sitio oficial de la empresa.",
+                    websiteReason:
+                      "Se identifico el sitio oficial de la empresa.",
                     suggestedContactData: {
                       addressLine: "",
                       city: "",
@@ -1690,7 +1956,9 @@ describe("API integration baseline", () => {
       });
 
       expect(result.meta.usedExternalEnrichment).toBe(true);
-      expect(result.suggestedContactData.addressLine).toBe("Av. San Jeronimo 123");
+      expect(result.suggestedContactData.addressLine).toBe(
+        "Av. San Jeronimo 123",
+      );
       expect(result.suggestedContactData.city).toBe("Ciudad de Mexico");
       expect(result.suggestedContactData.stateRegion).toBe("CDMX");
       expect(result.suggestedContactData.postalCode).toBe("01000");
@@ -1788,7 +2056,9 @@ describe("API integration baseline", () => {
 
       expect(result.registrationAssistance.status).toBe("candidate");
       expect(result.registrationAssistance.value).toBe("TPT8907019A1");
-      expect(result.registrationAssistance.sourceType).toBe("external_public_source");
+      expect(result.registrationAssistance.sourceType).toBe(
+        "external_public_source",
+      );
       expect(result.registrationAssistance.canAutoApply).toBe(true);
     } finally {
       global.fetch = originalFetch;
@@ -2295,6 +2565,1329 @@ describe("API integration baseline", () => {
       },
     );
     expect(statusCode).toBe("activada");
+  });
+
+  test("interacciones comerciales permite registrar, consultar catalogos y actualizar una interaccion de cuenta", async () => {
+    const interactionAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_crud`,
+    });
+    cleanup.accountIds.push(interactionAccountId);
+
+    const contactOneId = await createDirectContact({
+      accountId: interactionAccountId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_contact_1`,
+    });
+    const contactTwoId = await createDirectContact({
+      accountId: interactionAccountId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_contact_2`,
+    });
+    cleanup.contactIds.push(contactOneId, contactTwoId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const typesResponse = await request(app)
+      .get("/api/catalogs/account-interaction-types")
+      .set("Authorization", `Bearer ${token}`);
+    expect(typesResponse.status).toBe(200);
+    expect(typesResponse.body.some((item) => item.code === "meeting")).toBe(
+      true,
+    );
+
+    const resultsResponse = await request(app)
+      .get("/api/catalogs/account-interaction-results")
+      .set("Authorization", `Bearer ${token}`);
+    expect(resultsResponse.status).toBe(200);
+    const exploringResult = resultsResponse.body.find(
+      (item) => item.code === "exploring",
+    );
+    const followUpResult = resultsResponse.body.find(
+      (item) => item.code === "follow_up_required",
+    );
+    const meetingType = typesResponse.body.find(
+      (item) => item.code === "meeting",
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/accounts/${interactionAccountId}/interactions`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        interactionTypeId: meetingType.id,
+        resultId: exploringResult.id,
+        title: `Discovery comercial ${TEST_PREFIX}`,
+        summary: "Se reviso contexto del cliente y se detecto interes inicial.",
+        nextStep: "Enviar minuta y validar patrocinador interno.",
+        occurredAt: "2026-01-15T10:30:00.000Z",
+        followUpAt: "2026-01-18T16:00:00.000Z",
+        contactIds: [contactOneId, contactTwoId],
+      });
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.interaction.title).toBe(
+      `Discovery comercial ${TEST_PREFIX}`,
+    );
+    expect(createResponse.body.interaction.contacts).toHaveLength(2);
+    const interactionId = Number(createResponse.body.interaction.id);
+
+    const listResponse = await request(app)
+      .get(`/api/accounts/${interactionAccountId}/interactions`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.items).toHaveLength(1);
+    expect(listResponse.body.items[0].contacts).toHaveLength(2);
+
+    const contactOptionsResponse = await request(app)
+      .get(`/api/accounts/${interactionAccountId}/interactions/contact-options`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(contactOptionsResponse.status).toBe(200);
+    expect(contactOptionsResponse.body).toHaveLength(2);
+
+    const updateResponse = await request(app)
+      .put(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        interactionTypeId: meetingType.id,
+        resultId: followUpResult.id,
+        title: `Discovery comercial actualizado ${TEST_PREFIX}`,
+        summary: "Se acordaron responsables y fecha para la siguiente sesion.",
+        nextStep: "Preparar demo tecnica.",
+        occurredAt: "2026-01-15T10:30:00.000Z",
+        followUpAt: "2026-01-22T09:00:00.000Z",
+        contactIds: [contactOneId],
+      });
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.body.interaction.result.code).toBe(
+      "follow_up_required",
+    );
+    expect(updateResponse.body.interaction.contacts).toHaveLength(1);
+
+    const detailResponse = await request(app)
+      .get(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.nextStep).toBe("Preparar demo tecnica.");
+    expect(detailResponse.body.contacts).toHaveLength(1);
+  });
+
+  test("interacciones comerciales permite adjuntar documentos y promover la interaccion a oportunidad", async () => {
+    const interactionAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_docs`,
+    });
+    cleanup.accountIds.push(interactionAccountId);
+
+    await query(
+      "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, NOW(3), ?)",
+      [
+        interactionAccountId,
+        ctx.opportunityFlowUserId,
+        ctx.accountCreateUserId,
+      ],
+    );
+
+    const interactionContactId = await createDirectContact({
+      accountId: interactionAccountId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_docs_contact`,
+    });
+    cleanup.contactIds.push(interactionContactId);
+
+    const typesResponse = await request(app)
+      .get("/api/catalogs/account-interaction-types")
+      .set(
+        "Authorization",
+        `Bearer ${(await login(request(app), `${TEST_PREFIX}.accounts.create@example.com`)).body.token}`,
+      );
+    const resultsResponse = await request(app)
+      .get("/api/catalogs/account-interaction-results")
+      .set(
+        "Authorization",
+        `Bearer ${(await login(request(app), `${TEST_PREFIX}.accounts.create@example.com`)).body.token}`,
+      );
+    const presentationType = typesResponse.body.find(
+      (item) => item.code === "presentation",
+    );
+    const opportunityDetectedResult = resultsResponse.body.find(
+      (item) => item.code === "opportunity_detected",
+    );
+
+    const accountLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+    const accountToken = accountLoginResponse.body.token;
+
+    const createInteractionResponse = await request(app)
+      .post(`/api/accounts/${interactionAccountId}/interactions`)
+      .set("Authorization", `Bearer ${accountToken}`)
+      .send({
+        interactionTypeId: presentationType.id,
+        resultId: opportunityDetectedResult.id,
+        title: `Presentacion tecnica ${TEST_PREFIX}`,
+        summary:
+          "El cliente solicito propuesta economica y validacion de alcance.",
+        nextStep: "Transformar en oportunidad y adjuntar minuta.",
+        occurredAt: "2026-02-10T12:00:00.000Z",
+        followUpAt: null,
+        contactIds: [interactionContactId],
+      });
+
+    expect(createInteractionResponse.status).toBe(201);
+    const interactionId = Number(createInteractionResponse.body.interaction.id);
+
+    const uploadResponse = await request(app)
+      .post(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}/documents`,
+      )
+      .set("Authorization", `Bearer ${accountToken}`)
+      .attach(
+        "files",
+        Buffer.from("Minuta comercial con requerimientos iniciales", "utf8"),
+        {
+          filename: `interaction_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(uploadResponse.status).toBe(201);
+    expect(uploadResponse.body).toHaveLength(1);
+    const documentPublicId = uploadResponse.body[0].publicId;
+
+    const documentsResponse = await request(app)
+      .get(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}/documents`,
+      )
+      .set("Authorization", `Bearer ${accountToken}`);
+    expect(documentsResponse.status).toBe(200);
+    expect(documentsResponse.body).toHaveLength(1);
+
+    const contentResponse = await request(app)
+      .get(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}/documents/${documentPublicId}/content`,
+      )
+      .set("Authorization", `Bearer ${accountToken}`);
+    expect(contentResponse.status).toBe(200);
+    expect(String(contentResponse.text)).toContain("Minuta comercial");
+
+    const opportunityLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+    const opportunityToken = opportunityLoginResponse.body.token;
+
+    const promoteResponse = await request(app)
+      .post(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}/create-opportunity`,
+      )
+      .set("Authorization", `Bearer ${opportunityToken}`)
+      .send({
+        name: `Oportunidad derivada ${TEST_PREFIX}`,
+        amountUsd: 245000,
+        closeDate: "2026-05-30",
+        contactId: interactionContactId,
+        businessLineId: ctx.catalogIds.businessLineId,
+        sellerUserId: ctx.sellerUserId,
+        presalesUserId: null,
+        documentPublicIds: [documentPublicId],
+      });
+
+    expect(promoteResponse.status).toBe(201);
+    const opportunityId = Number(promoteResponse.body.opportunityId);
+    cleanup.opportunityIds.push(opportunityId);
+
+    const linkedDocsRows = await query(
+      `SELECT odl.id
+       FROM opportunity_document_links odl
+       INNER JOIN documents d ON d.id = odl.document_id
+       WHERE odl.opportunity_id = ? AND d.public_id = ?`,
+      [opportunityId, documentPublicId],
+    );
+    expect(linkedDocsRows).toHaveLength(1);
+
+    const [interactionRow] = await query(
+      `SELECT ai.linked_opportunity_id, air.code AS result_code
+       FROM account_interactions ai
+       INNER JOIN account_interaction_results air ON air.id = ai.result_id
+       WHERE ai.id = ?`,
+      [interactionId],
+    );
+    expect(Number(interactionRow.linked_opportunity_id)).toBe(opportunityId);
+    expect(interactionRow.result_code).toBe("converted_to_opportunity");
+
+    const deleteResponse = await request(app)
+      .delete(
+        `/api/accounts/${interactionAccountId}/interactions/${interactionId}/documents/${documentPublicId}`,
+      )
+      .set("Authorization", `Bearer ${accountToken}`);
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.body).toHaveLength(0);
+
+    const deletedDocumentRows = await query(
+      `SELECT is_deleted
+       FROM documents
+       WHERE public_id = ?
+       LIMIT 1`,
+      [documentPublicId],
+    );
+    expect(deletedDocumentRows).toHaveLength(1);
+    expect(Number(deletedDocumentRows[0].is_deleted)).toBe(1);
+  });
+
+  test("interacciones comerciales respeta acceso por ownership y read_all", async () => {
+    const guardedAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_interactions_access`,
+    });
+    cleanup.accountIds.push(guardedAccountId);
+
+    const accountLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+    const createToken = accountLoginResponse.body.token;
+
+    const typeId = await getCatalogId("account_interaction_types", "call");
+    const resultId = await getCatalogId(
+      "account_interaction_results",
+      "no_defined_opportunity",
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/accounts/${guardedAccountId}/interactions`)
+      .set("Authorization", `Bearer ${createToken}`)
+      .send({
+        interactionTypeId: typeId,
+        resultId,
+        title: `Llamada exploratoria ${TEST_PREFIX}`,
+        summary: "No se identifico oportunidad concreta en esta etapa.",
+        nextStep: null,
+        occurredAt: "2026-03-01T09:00:00.000Z",
+        followUpAt: null,
+        contactIds: [],
+      });
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.interaction.id);
+
+    const ownedReadLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.read@example.com`,
+    );
+    const ownedReadResponse = await request(app)
+      .get(`/api/accounts/${guardedAccountId}/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${ownedReadLogin.body.token}`);
+    expect(ownedReadResponse.status).toBe(404);
+
+    const globalReadLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.read.all@example.com`,
+    );
+    const globalReadResponse = await request(app)
+      .get(`/api/accounts/${guardedAccountId}/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${globalReadLogin.body.token}`);
+    expect(globalReadResponse.status).toBe(200);
+    expect(globalReadResponse.body.title).toBe(
+      `Llamada exploratoria ${TEST_PREFIX}`,
+    );
+  });
+
+  test("interacciones permite registrar y analizar una interaccion top-level", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion top-level ${TEST_PREFIX}`)
+      .field(
+        "sourceNotes",
+        "Seguimiento posterior a una reunion de descubrimiento.",
+      )
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Integrado Alpha",
+            "Contacto: Maria Gomez",
+            "Tema: Renovacion de plataforma F5",
+            "Accion realizada: Reunion de descubrimiento comercial",
+            "Proximo paso: Enviar propuesta ejecutiva",
+            "Oportunidad: Renovacion F5 Alpha",
+            "Correo: maria.gomez@alpha.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_top_level_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.analysisStatus).toBe("analyzed");
+    expect(createResponse.body.documents).toHaveLength(1);
+    expect(createResponse.body.suggestedAccount.name).toContain(
+      "Prospecto Integrado Alpha",
+    );
+    expect(createResponse.body.suggestedContacts).toHaveLength(1);
+    expect(createResponse.body.suggestedOpportunities).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+
+    const listResponse = await request(app)
+      .get("/api/interactions")
+      .set("Authorization", `Bearer ${token}`);
+    expect(listResponse.status).toBe(200);
+    expect(
+      listResponse.body.items.some((item) => Number(item.id) === interactionId),
+    ).toBe(true);
+
+    const detailResponse = await request(app)
+      .get(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.summary).toContain("Prospecto Integrado Alpha");
+  });
+
+  test("interacciones permite registrar y analizar una interaccion top-level desde un .eml", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion eml ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "From: Laura Perez <laura.perez@alpha.example.com>",
+            "To: ventas@newpeople.local",
+            "Subject: Seguimiento renovacion F5 Alpha",
+            "MIME-Version: 1.0",
+            "Content-Type: text/plain; charset=utf-8",
+            "",
+            "Cuenta: Prospecto Integrado Alpha",
+            "Contacto: Laura Perez",
+            "Tema: Renovacion de plataforma F5",
+            "Accion realizada: Seguimiento por correo despues de discovery",
+            "Proximo paso: Coordinar propuesta ejecutiva",
+            "Oportunidad: Renovacion F5 Alpha",
+          ].join("\r\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_top_level_${TEST_PREFIX}.eml`,
+          contentType: "message/rfc822",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.analysisStatus).toBe("analyzed");
+    expect(createResponse.body.documents).toHaveLength(1);
+    expect(createResponse.body.suggestedAccount.name).toContain(
+      "Prospecto Integrado Alpha",
+    );
+    expect(createResponse.body.suggestedContacts).toHaveLength(1);
+    expect(createResponse.body.suggestedOpportunities).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+
+    const detailResponse = await request(app)
+      .get(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.summary).toContain("Prospecto Integrado Alpha");
+  });
+
+  test("interacciones permite eliminar un documento adjunto top-level", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion delete doc ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Gamma",
+            "Contacto: Ana Ruiz",
+            "Tema: Servicio administrado",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_delete_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.documents).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+    const documentPublicId = createResponse.body.documents[0].publicId;
+
+    const deleteResponse = await request(app)
+      .delete(
+        `/api/interactions/${interactionId}/documents/${documentPublicId}`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.body.documents).toHaveLength(0);
+
+    const deletedDocumentRows = await query(
+      `SELECT is_deleted
+       FROM documents
+       WHERE public_id = ?
+       LIMIT 1`,
+      [documentPublicId],
+    );
+    expect(deletedDocumentRows).toHaveLength(1);
+    expect(Number(deletedDocumentRows[0].is_deleted)).toBe(1);
+
+    const detailResponse = await request(app)
+      .get(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.documents).toHaveLength(0);
+  });
+
+  test("oportunidades potenciales detecta desde interacciones analizadas y permite convertir el caso", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_potential_opportunities`,
+      permissionCodes: [
+        "oportunidades_potenciales.read",
+        "oportunidades_potenciales.review",
+        "oportunidades_potenciales.assign",
+        "oportunidades_potenciales.convert",
+        "oportunidades.create",
+      ],
+    });
+    cleanup.roleIds.push(roleId);
+
+    const email = `${TEST_PREFIX}.potential.opps@example.com`;
+    const userId = await createUser({
+      fullName: "Potential Opps User",
+      email,
+      roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+
+    const accountId = await createDirectAccount({
+      ownerUserId: userId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_potopp`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_potopp`,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const now = new Date();
+    const interactionPublicId = `int_${TEST_PREFIX}_potential`;
+    const interactionRows = await query(
+      `INSERT INTO interactions
+         (public_id, title, source_notes, summary, analysis_status,
+          topics_json, actions_taken_json, next_steps_json,
+          suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
+          account_id, analyzed_at, created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'analyzed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        interactionPublicId,
+        `Interaccion potencial ${TEST_PREFIX}`,
+        "Cliente solicita propuesta para renovacion de plataforma y reunion de seguimiento.",
+        "Se detecta renovacion de plataforma con interes claro y necesidad de propuesta ejecutiva.",
+        JSON.stringify(["Renovacion plataforma", "Propuesta ejecutiva"]),
+        JSON.stringify(["Discovery comercial", "Revision de alcance"]),
+        JSON.stringify([
+          "Agendar reunion con compras",
+          "Enviar propuesta ejecutiva",
+        ]),
+        JSON.stringify({
+          name: `Cuenta fixture ${TEST_PREFIX}_potopp`,
+          confidence: "high",
+        }),
+        JSON.stringify([
+          {
+            fullName: `Contacto Fixture ${TEST_PREFIX}_potopp`,
+            confidence: "high",
+          },
+        ]),
+        JSON.stringify([
+          {
+            name: `Renovacion plataforma ${TEST_PREFIX}`,
+            summary:
+              "Renovacion de plataforma ya validada con siguiente paso comercial.",
+            confidence: "high",
+            reason: "Existe necesidad documentada y propuesta solicitada.",
+          },
+        ]),
+        accountId,
+        now,
+        userId,
+        userId,
+        now,
+        now,
+      ],
+    );
+    const interactionId = Number(interactionRows.insertId);
+    await query(
+      `INSERT INTO interaction_contact_links (interaction_id, contact_id, created_at)
+       VALUES (?, ?, ?)`,
+      [interactionId, contactId, now],
+    );
+
+    const loginResponse = await login(request(app), email);
+    const token = loginResponse.body.token;
+
+    const detectionResponse = await request(app)
+      .post("/api/potential-opportunities/run-detection")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sourceEntityIds: [interactionId] });
+
+    expect(detectionResponse.status).toBe(200);
+    expect(detectionResponse.body.created).toBe(1);
+
+    const listResponse = await request(app)
+      .get("/api/potential-opportunities")
+      .set("Authorization", `Bearer ${token}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.items.length).toBeGreaterThan(0);
+    const createdCase = listResponse.body.items.find(
+      (item) => item.account.id === accountId,
+    );
+    expect(createdCase).toBeTruthy();
+    expect(createdCase.caseType).toBe("reactivacion");
+    expect(createdCase.owner).toBeNull();
+    expect(createdCase.accountOwners).toEqual([
+      {
+        id: userId,
+        fullName: "Potential Opps User",
+      },
+    ]);
+
+    const summaryResponse = await request(app)
+      .get("/api/potential-opportunities/summary")
+      .set("Authorization", `Bearer ${token}`);
+    expect(summaryResponse.status).toBe(200);
+    expect(summaryResponse.body.kpis.withoutOwnerCount).toBeGreaterThanOrEqual(
+      1,
+    );
+
+    const detailResponse = await request(app)
+      .get(`/api/potential-opportunities/${createdCase.publicId}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.signals).toHaveLength(1);
+    expect(detailResponse.body.account.id).toBe(accountId);
+    expect(detailResponse.body.owner).toBeNull();
+    expect(detailResponse.body.accountOwners).toEqual([
+      {
+        id: userId,
+        fullName: "Potential Opps User",
+      },
+    ]);
+
+    const convertResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/convert`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: `Renovacion plataforma ${TEST_PREFIX}`,
+        amountUsd: 25000,
+        closeDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10),
+        primaryContactId: contactId,
+        ownerUserId: userId,
+        businessLineId: ctx.catalogIds.businessLineId,
+      });
+
+    expect(convertResponse.status).toBe(201);
+    expect(Number(convertResponse.body.opportunityId)).toBeGreaterThan(0);
+    cleanup.opportunityIds.push(Number(convertResponse.body.opportunityId));
+    const convertedDetailResponse = await request(app)
+      .get(`/api/potential-opportunities/${createdCase.publicId}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(convertedDetailResponse.status).toBe(200);
+    expect(convertedDetailResponse.body.state).toBe("converted");
+    expect(convertedDetailResponse.body.convertedOpportunity.id).toBe(
+      Number(convertResponse.body.opportunityId),
+    );
+  });
+
+  test("oportunidades potenciales asigna acceso operativo a vendedor y control a gerencia comercial", async () => {
+    const sellerRole = await ensureNamedRole("Vendedor");
+    if (sellerRole.created) {
+      cleanup.roleIds.push(sellerRole.roleId);
+    }
+
+    const managerRole = await ensureNamedRole("Gerente Comercial");
+    if (managerRole.created) {
+      cleanup.roleIds.push(managerRole.roleId);
+    }
+
+    await ensurePotentialOpportunityPermissions();
+
+    const permissionRows = await query(
+      `SELECT r.name, p.code
+       FROM role_permissions rp
+       JOIN roles r ON r.id = rp.role_id
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE r.id IN (?, ?)
+         AND p.code LIKE 'oportunidades_potenciales.%'
+       ORDER BY r.name ASC, p.code ASC`,
+      [sellerRole.roleId, managerRole.roleId],
+    );
+
+    const permissionsByRole = new Map();
+    for (const row of permissionRows) {
+      const roleName = String(row.name);
+      if (!permissionsByRole.has(roleName)) {
+        permissionsByRole.set(roleName, new Set());
+      }
+      permissionsByRole.get(roleName).add(String(row.code));
+    }
+
+    expect(Array.from(permissionsByRole.get("Vendedor") || [])).toEqual([
+      "oportunidades_potenciales.convert",
+      "oportunidades_potenciales.read",
+    ]);
+    expect(
+      Array.from(permissionsByRole.get("Gerente Comercial") || []),
+    ).toEqual([
+      "oportunidades_potenciales.analytics",
+      "oportunidades_potenciales.assign",
+      "oportunidades_potenciales.convert",
+      "oportunidades_potenciales.read",
+      "oportunidades_potenciales.read_all",
+      "oportunidades_potenciales.review",
+    ]);
+  });
+
+  test("oportunidades potenciales solo permite asignar despues de aprobacion gerencial y restringe asignados a owners de cuenta", async () => {
+    const sellerRole = await ensureNamedRole("Vendedor");
+    if (sellerRole.created) {
+      cleanup.roleIds.push(sellerRole.roleId);
+    }
+
+    const managerRole = await ensureNamedRole("Gerente Comercial");
+    if (managerRole.created) {
+      cleanup.roleIds.push(managerRole.roleId);
+    }
+
+    await ensurePotentialOpportunityPermissions();
+
+    const sellerOwnerEmail = `${TEST_PREFIX}.potential.owner@example.com`;
+    const sellerOwnerUserId = await createUser({
+      fullName: "Potential Owner Seller",
+      email: sellerOwnerEmail,
+      roleIds: [sellerRole.roleId],
+    });
+    cleanup.userIds.push(sellerOwnerUserId);
+
+    const sellerAltEmail = `${TEST_PREFIX}.potential.alt@example.com`;
+    const sellerAltUserId = await createUser({
+      fullName: "Potential Alt Seller",
+      email: sellerAltEmail,
+      roleIds: [sellerRole.roleId],
+    });
+    cleanup.userIds.push(sellerAltUserId);
+
+    const managerEmail = `${TEST_PREFIX}.potential.manager@example.com`;
+    const managerUserId = await createUser({
+      fullName: "Potential Manager",
+      email: managerEmail,
+      roleIds: [managerRole.roleId],
+    });
+    cleanup.userIds.push(managerUserId);
+
+    const accountId = await createDirectAccount({
+      ownerUserId: sellerOwnerUserId,
+      actorUserId: sellerOwnerUserId,
+      suffix: `${TEST_PREFIX}_potassign`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: sellerOwnerUserId,
+      suffix: `${TEST_PREFIX}_potassign`,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const now = new Date();
+    const interactionPublicId = `int_${TEST_PREFIX}_potential_assign`;
+    const interactionRows = await query(
+      `INSERT INTO interactions
+         (public_id, title, source_notes, summary, analysis_status,
+          topics_json, actions_taken_json, next_steps_json,
+          suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
+          account_id, analyzed_at, created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'analyzed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        interactionPublicId,
+        `Interaccion potencial asignacion ${TEST_PREFIX}`,
+        "Cliente solicita reunion de seguimiento para validar renovacion.",
+        "Se detecta necesidad validable con interes comercial claro.",
+        JSON.stringify(["Renovacion", "Seguimiento"]),
+        JSON.stringify(["Discovery comercial"]),
+        JSON.stringify(["Agendar revision gerencial"]),
+        JSON.stringify({
+          name: `Cuenta fixture ${TEST_PREFIX}_potassign`,
+          confidence: "high",
+        }),
+        JSON.stringify([
+          {
+            fullName: `Contacto Fixture ${TEST_PREFIX}_potassign`,
+            confidence: "high",
+          },
+        ]),
+        JSON.stringify([
+          {
+            name: `Renovacion servicio ${TEST_PREFIX}`,
+            summary: "Caso con suficiente contexto para evaluacion gerencial.",
+            confidence: "high",
+            reason: "La interaccion ya documenta necesidad y siguiente paso.",
+          },
+        ]),
+        accountId,
+        now,
+        managerUserId,
+        managerUserId,
+        now,
+        now,
+      ],
+    );
+    const interactionId = Number(interactionRows.insertId);
+    await query(
+      `INSERT INTO interaction_contact_links (interaction_id, contact_id, created_at)
+       VALUES (?, ?, ?)`,
+      [interactionId, contactId, now],
+    );
+
+    const managerLoginResponse = await login(request(app), managerEmail);
+    const managerToken = managerLoginResponse.body.token;
+
+    const detectionResponse = await request(app)
+      .post("/api/potential-opportunities/run-detection")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ sourceEntityIds: [interactionId] });
+
+    expect(detectionResponse.status).toBe(200);
+    expect(detectionResponse.body.created).toBe(1);
+
+    const listResponse = await request(app)
+      .get("/api/potential-opportunities")
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(listResponse.status).toBe(200);
+    const createdCase = listResponse.body.items.find(
+      (item) => item.account.id === accountId,
+    );
+    expect(createdCase).toBeTruthy();
+
+    const blockedOptionsResponse = await request(app)
+      .get(
+        `/api/potential-opportunities/${createdCase.publicId}/assignment-options`,
+      )
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(blockedOptionsResponse.status).toBe(200);
+    expect(blockedOptionsResponse.body.assignmentAllowed).toBe(false);
+    expect(blockedOptionsResponse.body.items).toEqual([]);
+
+    const blockedAssignResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ ownerUserId: sellerOwnerUserId });
+    expect(blockedAssignResponse.status).toBe(409);
+
+    const acceptResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/accept`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({});
+    expect(acceptResponse.status).toBe(200);
+
+    const allowedOptionsResponse = await request(app)
+      .get(
+        `/api/potential-opportunities/${createdCase.publicId}/assignment-options`,
+      )
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(allowedOptionsResponse.status).toBe(200);
+    expect(allowedOptionsResponse.body.assignmentAllowed).toBe(true);
+    expect(allowedOptionsResponse.body.selectionMode).toBe("account_owners");
+    expect(allowedOptionsResponse.body.items).toEqual([
+      {
+        id: sellerOwnerUserId,
+        fullName: "Potential Owner Seller",
+        email: sellerOwnerEmail,
+        roles: "Vendedor",
+      },
+    ]);
+
+    const invalidAssignResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ ownerUserId: sellerAltUserId });
+    expect(invalidAssignResponse.status).toBe(400);
+
+    const validAssignResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ ownerUserId: sellerOwnerUserId });
+    expect(validAssignResponse.status).toBe(200);
+
+    const detailResponse = await request(app)
+      .get(`/api/potential-opportunities/${createdCase.publicId}`)
+      .set("Authorization", `Bearer ${managerToken}`);
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.state).toBe("accepted");
+    expect(detailResponse.body.owner).toEqual({
+      id: sellerOwnerUserId,
+      fullName: "Potential Owner Seller",
+    });
+  });
+
+  test("interacciones permite agregar mas archivos a una interaccion existente", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion append docs ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Delta",
+            "Contacto: Laura Perez",
+            "Tema: Sesion inicial de discovery",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_append_initial_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.documents).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+
+    const appendResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/documents`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Delta",
+            "Contacto: Laura Perez",
+            "Tema: Solicitud de propuesta tecnica",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_append_extra_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      )
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Delta",
+            "Contacto: Laura Perez",
+            "Proximo paso: Agendar demo ejecutiva",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_append_followup_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(appendResponse.status).toBe(201);
+    expect(appendResponse.body.analysisStatus).toBe("analyzed");
+    expect(appendResponse.body.documents).toHaveLength(3);
+    expect(
+      appendResponse.body.documents.map(
+        (document) => document.originalFileName,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        `interaction_append_initial_${TEST_PREFIX}.txt`,
+        `interaction_append_extra_${TEST_PREFIX}.txt`,
+        `interaction_append_followup_${TEST_PREFIX}.txt`,
+      ]),
+    );
+
+    const documentRows = await query(
+      `SELECT COUNT(*) AS total
+       FROM documents
+       WHERE entity_type = 'interaction'
+         AND entity_id = ?
+         AND is_deleted = 0`,
+      [interactionId],
+    );
+    expect(Number(documentRows[0]?.total || 0)).toBe(3);
+  });
+
+  test("interacciones permite eliminar una interacción no resuelta", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion delete ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Delta",
+            "Contacto: Julia Soto",
+            "Tema: Servicio de monitoreo",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_delete_full_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+
+    const deleteResponse = await request(app)
+      .delete(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.body.message).toBe("Interacción eliminada");
+
+    const interactionRows = await query(
+      `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
+      [interactionId],
+    );
+    expect(interactionRows).toHaveLength(0);
+
+    const documentRows = await query(
+      `SELECT id
+       FROM documents
+       WHERE entity_type = 'interaction' AND entity_id = ?
+       LIMIT 1`,
+      [interactionId],
+    );
+    expect(documentRows).toHaveLength(0);
+  });
+
+  test("interacciones bloquea eliminar una interacción resuelta", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion delete blocked ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Epsilon Seguridad",
+            "Contacto: Laura Perez",
+            "Tema: Servicios administrados de seguridad",
+            "Oportunidad: Servicios de seguridad administrada Epsilon",
+            "Correo: laura.perez@epsilon.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_delete_blocked_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "create_new",
+          draft: {
+            name:
+              createResponse.body.suggestedAccount?.name ||
+              `Cuenta delete blocked ${TEST_PREFIX}`,
+            website: "",
+            phone: "",
+            city: "",
+            stateRegion: "",
+            countryId: ctx.catalogIds.countryMxId,
+            description: createResponse.body.summary,
+          },
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "create_new",
+            draft: {
+              firstName: firstContactSuggestion.firstName || "Laura",
+              lastName: firstContactSuggestion.lastName || "Perez",
+              email:
+                firstContactSuggestion.email ||
+                "laura.perez@epsilon.example.com",
+              phone: firstContactSuggestion.phone || "",
+              mobile: firstContactSuggestion.mobile || "",
+              positionTitle: firstContactSuggestion.positionTitle || "Compras",
+              department: firstContactSuggestion.department || "TI",
+              countryId: ctx.catalogIds.countryMxId,
+              stateRegion: "CDMX",
+              city: "Ciudad de Mexico",
+            },
+          },
+        ],
+        opportunityResolutions: [
+          {
+            suggestionId: firstOpportunitySuggestion.suggestionId,
+            mode: "create_new",
+            isPrimary: true,
+            draft: {
+              name:
+                firstOpportunitySuggestion.name ||
+                `Oportunidad delete blocked ${TEST_PREFIX}`,
+              contactId: null,
+              amountUsd: 125000,
+              closeDate: "2026-07-15",
+              businessLineId: ctx.catalogIds.businessLineId,
+              sellerUserId: ctx.sellerUserId,
+              presalesUserId: null,
+              summary:
+                firstOpportunitySuggestion.summary ||
+                "Propuesta derivada desde interacción top-level.",
+            },
+          },
+        ],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    cleanup.accountIds.push(resolveResponse.body.accountId);
+    cleanup.contactIds.push(resolveResponse.body.contacts[0].id);
+    cleanup.opportunityIds.push(resolveResponse.body.opportunities[0].id);
+
+    const deleteResponse = await request(app)
+      .delete(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(deleteResponse.status).toBe(409);
+    expect(deleteResponse.body.message).toBe(
+      "No puedes eliminar una interaccion que ya fue resuelta",
+    );
+
+    const interactionRows = await query(
+      `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
+      [interactionId],
+    );
+    expect(interactionRows).toHaveLength(1);
+  });
+
+  test("interacciones resuelve cuenta, contacto y oportunidad sin duplicar la fuente documental", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Resolucion top-level ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Beta Seguridad",
+            "Contacto: Laura Perez",
+            "Tema: Servicios administrados de seguridad",
+            "Accion realizada: Demo tecnica inicial",
+            "Proximo paso: Preparar propuesta economica",
+            "Oportunidad: Servicios de seguridad administrada Beta",
+            "Correo: laura.perez@beta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_resolve_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "create_new",
+          draft: {
+            name:
+              createResponse.body.suggestedAccount?.name ||
+              `Cuenta derivada ${TEST_PREFIX}`,
+            website: "",
+            phone: "",
+            city: "",
+            stateRegion: "",
+            countryId: ctx.catalogIds.countryMxId,
+            description: createResponse.body.summary,
+          },
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "create_new",
+            draft: {
+              firstName: firstContactSuggestion.firstName || "Laura",
+              lastName: firstContactSuggestion.lastName || "Perez",
+              email:
+                firstContactSuggestion.email || "laura.perez@beta.example.com",
+              phone: firstContactSuggestion.phone || "",
+              mobile: firstContactSuggestion.mobile || "",
+              positionTitle: firstContactSuggestion.positionTitle || "Compras",
+              department: firstContactSuggestion.department || "TI",
+              countryId: ctx.catalogIds.countryMxId,
+              stateRegion: "CDMX",
+              city: "Ciudad de Mexico",
+            },
+          },
+        ],
+        opportunityResolutions: [
+          {
+            suggestionId: firstOpportunitySuggestion.suggestionId,
+            mode: "create_new",
+            isPrimary: true,
+            draft: {
+              name:
+                firstOpportunitySuggestion.name ||
+                `Oportunidad derivada ${TEST_PREFIX}`,
+              contactId: null,
+              amountUsd: 125000,
+              closeDate: "2026-07-15",
+              businessLineId: ctx.catalogIds.businessLineId,
+              sellerUserId: ctx.sellerUserId,
+              presalesUserId: null,
+              summary:
+                firstOpportunitySuggestion.summary ||
+                "Propuesta derivada desde interacción top-level.",
+            },
+          },
+        ],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.analysisStatus).toBe("resolved");
+    expect(resolveResponse.body.accountId).not.toBeNull();
+    expect(resolveResponse.body.contacts).toHaveLength(1);
+    expect(resolveResponse.body.opportunities).toHaveLength(1);
+    expect(resolveResponse.body.opportunities[0].isPrimary).toBe(true);
+    cleanup.accountIds.push(resolveResponse.body.accountId);
+    cleanup.contactIds.push(resolveResponse.body.contacts[0].id);
+    cleanup.opportunityIds.push(resolveResponse.body.opportunities[0].id);
+
+    const linkedDocsRows = await query(
+      `SELECT odl.id
+       FROM opportunity_document_links odl
+       INNER JOIN documents d ON d.id = odl.document_id
+       WHERE odl.opportunity_id = ?
+         AND d.entity_type = 'interaction'
+         AND d.entity_id = ?`,
+      [resolveResponse.body.opportunities[0].id, interactionId],
+    );
+    expect(linkedDocsRows.length).toBeGreaterThan(0);
+
+    const [interactionRow] = await query(
+      `SELECT account_id, primary_opportunity_id, analysis_status
+       FROM interactions
+       WHERE id = ?
+       LIMIT 1`,
+      [interactionId],
+    );
+    expect(Number(interactionRow.account_id)).toBe(
+      resolveResponse.body.accountId,
+    );
+    expect(Number(interactionRow.primary_opportunity_id)).toBe(
+      resolveResponse.body.opportunities[0].id,
+    );
+    expect(interactionRow.analysis_status).toBe("resolved");
   });
 
   test("contactos.request crea pendiente y no permite activar sin contactos.create", async () => {
@@ -3420,6 +5013,372 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("oportunidades documentos soporta sesion, revision, transferencia y vinculos de etapa", async () => {
+    const documentAccountId = await createDirectAccount({
+      ownerUserId: ctx.opportunityFlowUserId,
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_opportunity_documents`,
+    });
+    cleanup.accountIds.push(documentAccountId);
+
+    const documentContactId = await createDirectContact({
+      accountId: documentAccountId,
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_opportunity_documents`,
+    });
+    cleanup.contactIds.push(documentContactId);
+
+    const [accountRow] = await query(
+      `SELECT id, name FROM accounts WHERE id = ? LIMIT 1`,
+      [documentAccountId],
+    );
+    const [contactRow] = await query(
+      `SELECT id, TRIM(CONCAT_WS(' ', first_name, last_name)) AS full_name
+       FROM contacts
+       WHERE id = ?
+       LIMIT 1`,
+      [documentContactId],
+    );
+    const [sellerRow] = await query(
+      `SELECT id, full_name FROM users WHERE id = ? LIMIT 1`,
+      [ctx.sellerUserId],
+    );
+    const [businessLineRow] = await query(
+      `SELECT id, name FROM opportunity_business_lines WHERE id = ? LIMIT 1`,
+      [ctx.catalogIds.businessLineId],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createSessionResponse = await request(app)
+      .post("/api/opportunities/document-upload-sessions")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(createSessionResponse.status).toBe(201);
+    const sessionPublicId = createSessionResponse.body.session.publicId;
+
+    const textDocument = [
+      `Nombre de la oportunidad: Oportunidad documental ${TEST_PREFIX}`,
+      "Monto: 125000",
+      "Fecha de cierre: 2026-08-15",
+      `Cuenta: ${accountRow.name}`,
+      `Contacto: ${contactRow.full_name}`,
+      `Linea de negocio: ${businessLineRow.name}`,
+      `Vendedor: ${sellerRow.full_name}`,
+      "Preventa: ",
+      "Notas: Proyecto derivado de propuesta comercial y llamada de descubrimiento.",
+    ].join("\n");
+
+    const uploadResponse = await request(app)
+      .post(
+        `/api/opportunities/document-upload-sessions/${sessionPublicId}/files`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .attach("files", Buffer.from(textDocument, "utf8"), {
+        filename: `oportunidad_${TEST_PREFIX}.txt`,
+        contentType: "text/plain",
+      });
+
+    expect(uploadResponse.status).toBe(201);
+    expect(uploadResponse.body.documents).toHaveLength(1);
+    const documentPublicId = uploadResponse.body.documents[0].publicId;
+
+    const reviewResponse = await request(app)
+      .get(
+        `/api/opportunities/document-upload-sessions/${sessionPublicId}/review`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(reviewResponse.status).toBe(200);
+    expect(reviewResponse.body.review.suggestedFields.suggestedName).toBe(
+      `Oportunidad documental ${TEST_PREFIX}`,
+    );
+    expect(
+      reviewResponse.body.review.suggestedFields.matchedAccount.matchStatus,
+    ).toBe("single_match");
+    expect(
+      reviewResponse.body.review.suggestedFields.matchedBusinessLine
+        .matchStatus,
+    ).toBe("single_match");
+
+    const applyResponse = await request(app)
+      .post(
+        `/api/opportunities/document-upload-sessions/${sessionPublicId}/apply-to-draft`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        fieldOverrides: {
+          name: `Oportunidad documental ajustada ${TEST_PREFIX}`,
+          amountUsd: 130500,
+        },
+        matchSelections: {
+          accountId: documentAccountId,
+          contactId: documentContactId,
+          businessLineId: Number(businessLineRow.id),
+          sellerUserId: Number(sellerRow.id),
+          presalesUserId: null,
+        },
+      });
+
+    expect(applyResponse.status).toBe(200);
+    expect(applyResponse.body.appliedDraft.name).toBe(
+      `Oportunidad documental ajustada ${TEST_PREFIX}`,
+    );
+    expect(applyResponse.body.appliedDraft.amountUsd).toBe(130500);
+    expect(applyResponse.body.appliedDraft.accountId).toBe(documentAccountId);
+    expect(applyResponse.body.appliedDraft.contactId).toBe(documentContactId);
+    expect(applyResponse.body.appliedDraft.businessLineId).toBe(
+      Number(businessLineRow.id),
+    );
+    expect(applyResponse.body.appliedDraft.sellerUserId).toBe(
+      Number(sellerRow.id),
+    );
+    expect(applyResponse.body.appliedDraft.presalesUserId).toBeNull();
+
+    const createOpportunityResponse = await request(app)
+      .post("/api/opportunities")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: applyResponse.body.appliedDraft.name,
+        amountUsd: applyResponse.body.appliedDraft.amountUsd,
+        accountId: applyResponse.body.appliedDraft.accountId,
+        closeDate: applyResponse.body.appliedDraft.closeDate,
+        contactId: applyResponse.body.appliedDraft.contactId,
+        businessLineId: applyResponse.body.appliedDraft.businessLineId,
+        sellerUserId: ctx.sellerUserId,
+        presalesUserId: null,
+        activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
+        uploadSessionPublicId: sessionPublicId,
+      });
+
+    expect(createOpportunityResponse.status).toBe(201);
+    cleanup.opportunityIds.push(Number(createOpportunityResponse.body.id));
+
+    const opportunityDocumentsResponse = await request(app)
+      .get(`/api/opportunities/${createOpportunityResponse.body.id}/documents`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(opportunityDocumentsResponse.status).toBe(200);
+    expect(opportunityDocumentsResponse.body).toHaveLength(1);
+    expect(opportunityDocumentsResponse.body[0].publicId).toBe(
+      documentPublicId,
+    );
+
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+    const stageAnswerResponse = await request(app)
+      .post(
+        `/api/opportunities/${createOpportunityResponse.body.id}/stage-answers`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        answers: [
+          {
+            questionId: Number(firstQuestion.id),
+            answerValue: "El cliente busca consolidar alcance y presupuesto.",
+          },
+        ],
+      });
+
+    expect(stageAnswerResponse.status).toBe(200);
+
+    const linkStageResponse = await request(app)
+      .post(
+        `/api/opportunities/${createOpportunityResponse.body.id}/stages/${ctx.catalogIds.salesStageInitialId}/documents/${documentPublicId}/link`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({ linkRole: "evidence" });
+
+    expect(linkStageResponse.status).toBe(201);
+
+    const [stageAnswerRow] = await query(
+      `SELECT id
+       FROM opportunity_stage_question_answers
+       WHERE opportunity_id = ?
+         AND question_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [createOpportunityResponse.body.id, Number(firstQuestion.id)],
+    );
+
+    const linkAnswerSourceResponse = await request(app)
+      .post(
+        `/api/opportunities/stage-answer-sources/${stageAnswerRow.id}/documents/${documentPublicId}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({ evidenceExcerpt: "Proyecto derivado de propuesta comercial." });
+
+    expect(linkAnswerSourceResponse.status).toBe(201);
+
+    const linkedStageRows = await query(
+      `SELECT id
+       FROM opportunity_stage_document_links
+       WHERE opportunity_id = ?
+         AND sales_stage_id = ?`,
+      [createOpportunityResponse.body.id, ctx.catalogIds.salesStageInitialId],
+    );
+    expect(linkedStageRows).toHaveLength(1);
+
+    const linkedAnswerSourceRows = await query(
+      `SELECT id
+       FROM opportunity_stage_answer_document_sources
+       WHERE stage_answer_id = ?`,
+      [stageAnswerRow.id],
+    );
+    expect(linkedAnswerSourceRows).toHaveLength(1);
+  });
+
+  test("oportunidades documentos expone multiples nombres sugeridos cuando el documento trae mas de una oportunidad", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createSessionResponse = await request(app)
+      .post("/api/opportunities/document-upload-sessions")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(createSessionResponse.status).toBe(201);
+    const sessionPublicId = createSessionResponse.body.session.publicId;
+
+    const textDocument = [
+      `Nombre de la oportunidad: Renovacion documental ${TEST_PREFIX}`,
+      `Nombre de la oportunidad: Expansion documental ${TEST_PREFIX}`,
+      "Monto: 125000",
+      "Fecha de cierre: 2026-08-15",
+      "Notas: El documento resume dos iniciativas comerciales separadas.",
+    ].join("\n");
+
+    const uploadResponse = await request(app)
+      .post(
+        `/api/opportunities/document-upload-sessions/${sessionPublicId}/files`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .attach("files", Buffer.from(textDocument, "utf8"), {
+        filename: `oportunidades_multiples_${TEST_PREFIX}.txt`,
+        contentType: "text/plain",
+      });
+
+    expect(uploadResponse.status).toBe(201);
+
+    const reviewResponse = await request(app)
+      .get(
+        `/api/opportunities/document-upload-sessions/${sessionPublicId}/review`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(reviewResponse.status).toBe(200);
+    expect(reviewResponse.body.review.suggestedFields.suggestedName).toBe(
+      `Renovacion documental ${TEST_PREFIX}`,
+    );
+    expect(
+      reviewResponse.body.review.suggestedFields.suggestedNameOptions,
+    ).toEqual([
+      `Renovacion documental ${TEST_PREFIX}`,
+      `Expansion documental ${TEST_PREFIX}`,
+    ]);
+  });
+
+  test("oportunidades documentos puede diferir procesamiento y completarlo por worker", async () => {
+    const originalProcessingMode = config.documents.processing.mode;
+    const timeoutSpy = vi
+      .spyOn(global, "setTimeout")
+      .mockImplementation(() => 0);
+
+    config.documents.processing.mode = "async_in_process";
+
+    try {
+      const documentAccountId = await createDirectAccount({
+        ownerUserId: ctx.opportunityFlowUserId,
+        actorUserId: ctx.opportunityFlowUserId,
+        suffix: `${TEST_PREFIX}_opportunity_documents_async`,
+      });
+      cleanup.accountIds.push(documentAccountId);
+
+      const documentContactId = await createDirectContact({
+        accountId: documentAccountId,
+        actorUserId: ctx.opportunityFlowUserId,
+        suffix: `${TEST_PREFIX}_opportunity_documents_async`,
+      });
+      cleanup.contactIds.push(documentContactId);
+
+      const [accountRow] = await query(
+        `SELECT id, name FROM accounts WHERE id = ? LIMIT 1`,
+        [documentAccountId],
+      );
+
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.opps.flow@example.com`,
+      );
+      const token = loginResponse.body.token;
+
+      const createSessionResponse = await request(app)
+        .post("/api/opportunities/document-upload-sessions")
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+
+      expect(createSessionResponse.status).toBe(201);
+      const sessionPublicId = createSessionResponse.body.session.publicId;
+
+      const uploadResponse = await request(app)
+        .post(
+          `/api/opportunities/document-upload-sessions/${sessionPublicId}/files`,
+        )
+        .set("Authorization", `Bearer ${token}`)
+        .attach(
+          "files",
+          Buffer.from(
+            [
+              `Nombre de la oportunidad: Oportunidad async ${TEST_PREFIX}`,
+              "Monto: 88000",
+              `Cuenta: ${accountRow.name}`,
+            ].join("\n"),
+            "utf8",
+          ),
+          {
+            filename: `oportunidad_async_${TEST_PREFIX}.txt`,
+            contentType: "text/plain",
+          },
+        );
+
+      expect(uploadResponse.status).toBe(201);
+      expect(uploadResponse.body.review.executionPlan.mode).toBe(
+        "async_in_process",
+      );
+      expect(uploadResponse.body.documents[0].processingStatus).toBe(
+        "uploaded",
+      );
+
+      await processPendingOpportunityDocumentJobs({ limit: 5 });
+
+      const reviewResponse = await request(app)
+        .get(
+          `/api/opportunities/document-upload-sessions/${sessionPublicId}/review`,
+        )
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(reviewResponse.status).toBe(200);
+      expect(reviewResponse.body.session.status).toBe("ready");
+      expect(reviewResponse.body.documents[0].processingStatus).toBe(
+        "review_ready",
+      );
+      expect(reviewResponse.body.review.suggestedFields.suggestedName).toBe(
+        `Oportunidad async ${TEST_PREFIX}`,
+      );
+    } finally {
+      config.documents.processing.mode = originalProcessingMode;
+      timeoutSpy.mockRestore();
+    }
+  });
+
   test("oportunidades.read_all extiende oportunidades y catalogos asociados a cuentas ajenas", async () => {
     const foreignAccountId = await createDirectAccount({
       ownerUserId: ctx.opportunityRequestUserId,
@@ -3787,6 +5746,756 @@ describe("API integration baseline", () => {
       isBypassed: false,
       reason: null,
     });
+    expect(stageViewResponse.body.features).toEqual(
+      expect.objectContaining({
+        documentAnswerSuggestionsEnabled: expect.any(Boolean),
+        rolloutKey: "opportunity_stage_answer_suggestions",
+        configuredByEnv: expect.any(Boolean),
+      }),
+    );
+  });
+
+  test("oportunidades.propose-answers devuelve propuestas y resumen para la etapa seleccionada", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_suggestions`,
+    );
+    const waitingQuestions = await getStageQuestionRowsByCode("waiting");
+    const [firstQuestion] = waitingQuestions;
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer`,
+      text: `El cliente confirmo que comparara postores durante mayo y definira al ganador la siguiente semana.`,
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            suggestions: [
+              {
+                questionId: Number(firstQuestion.id),
+                status: "proposed",
+                proposalKind: "fill_empty",
+                proposedAnswer:
+                  "El cliente decidira entre varios postores y espera cerrar la definicion la siguiente semana.",
+                reason:
+                  "La minuta indica comparacion entre postores con una decision cercana.",
+              },
+            ],
+          }),
+        }),
+      });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toHaveLength(1);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.summary).toEqual({
+        proposedCount: 1,
+        fillCount: 1,
+        replaceCount: 0,
+        ambiguousCount: 0,
+        insufficientCount: 0,
+      });
+      expect(response.body.meta).toEqual(
+        expect.objectContaining({
+          questionCount: 1,
+          documentCount: 1,
+          stageGuideAvailable: true,
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers responde 404 cuando la feature está deshabilitada", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_suggestions_disabled`,
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = false;
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(404);
+      expect(response.body.message).toContain("no estan habilitadas");
+    } finally {
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers reintenta con una segunda pasada de IA cuando la evidencia es fuerte", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_interest_fallback`,
+    );
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_contact_interest_answer`,
+      text: "Durante la reunion inicial, el cliente se intereso en las soluciones de F5 Distributed Cloud Services para proteger aplicaciones criticas.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Modelo demasiado conservador para esta evidencia.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "proposed",
+                  proposalKind: "fill_empty",
+                  proposedAnswer:
+                    "El cliente esta interesado en las soluciones de F5 Distributed Cloud Services para proteger aplicaciones criticas.",
+                  reason:
+                    "La evidencia describe de forma directa el interes del cliente.",
+                },
+              ],
+            }),
+          }),
+        });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toHaveLength(1);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.suggestions[0].proposedAnswer).toContain(
+        "F5 Distributed Cloud Services",
+      );
+      expect(response.body.summary).toEqual({
+        proposedCount: 1,
+        fillCount: 1,
+        replaceCount: 0,
+        ambiguousCount: 0,
+        insufficientCount: 0,
+      });
+      expect(response.body.meta.focusedRetryQuestionCount).toBe(1);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers incluye contexto documental amplio para evidencia semantica", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_semantic_context`,
+    );
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_semantic_interest_answer`,
+      text: "En la reunion de arranque se confirmo prioridad por blindar aplicaciones publicas y reducir riesgo operativo en servicios expuestos a internet.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockImplementation(async (_url, options) => {
+        const payload = JSON.parse(String(options?.body || "{}"));
+        const requestBody = JSON.parse(
+          String(payload?.input?.[1]?.content || "{}"),
+        );
+        const documentCorpus = String(requestBody?.documentCorpus || "");
+        const sawRelevantText = documentCorpus.includes(
+          "blindar aplicaciones publicas",
+        );
+
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: sawRelevantText
+                    ? "proposed"
+                    : "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: sawRelevantText
+                    ? "El cliente busca blindar aplicaciones publicas y reducir riesgo operativo en servicios expuestos a internet."
+                    : "",
+                  reason: sawRelevantText
+                    ? "El corpus documental amplio contiene evidencia semantica suficiente para responder la pregunta."
+                    : "La IA no recibio el texto documental relevante.",
+                },
+              ],
+            }),
+          }),
+        };
+      });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toHaveLength(1);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.suggestions[0].proposedAnswer).toContain(
+        "blindar aplicaciones publicas",
+      );
+      expect(global.fetch).toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers orienta a la IA a responder interes del cliente desde necesidad documentada", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_interest_semantics`,
+    );
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_achfoods_interest_answer`,
+      text: "Durante la reunion se reviso la necesidad de fortalecer la seguridad en el acceso a las aplicaciones que la organizacion mantiene en la nube. La conversacion se enfoco en proteger credenciales, validar identidades y contar con mayores controles de autenticacion y visibilidad sobre los accesos. Como siguiente paso, se acordo realizar una demostracion de la solucion propuesta.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockImplementation(async (_url, options) => {
+        const payload = JSON.parse(String(options?.body || "{}"));
+        const systemPrompt = String(payload?.input?.[0]?.content || "");
+        const requestBody = JSON.parse(
+          String(payload?.input?.[1]?.content || "{}"),
+        );
+        const allowsSemanticEquivalence = systemPrompt.includes(
+          "equivalencias semanticas claras",
+        );
+        const semanticRuleEnabled =
+          requestBody?.rules?.allowClearSemanticEquivalence === true;
+
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status:
+                    allowsSemanticEquivalence && semanticRuleEnabled
+                      ? "proposed"
+                      : "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer:
+                    allowsSemanticEquivalence && semanticRuleEnabled
+                      ? "El cliente esta interesado en fortalecer la seguridad de acceso a sus aplicaciones en la nube, proteger credenciales, validar identidades y mejorar los controles de autenticacion y visibilidad."
+                      : "",
+                  reason:
+                    allowsSemanticEquivalence && semanticRuleEnabled
+                      ? "La necesidad documentada describe de forma suficiente el interes del cliente."
+                      : "La solicitud no instruyo a la IA para usar equivalencia semantica clara.",
+                },
+              ],
+            }),
+          }),
+        };
+      });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toHaveLength(1);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.suggestions[0].proposedAnswer).toContain(
+        "seguridad de acceso",
+      );
+      expect(global.fetch).toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers hace una tercera pasada de recuperacion semantica cuando la IA sigue conservadora", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_semantic_recovery`,
+    );
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_semantic_recovery_answer`,
+      text: "Se reviso la necesidad de fortalecer la seguridad en el acceso a aplicaciones en la nube, proteger credenciales, validar identidades y mejorar los controles de autenticacion. Tambien se acordo realizar una demostracion.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Primera pasada demasiado conservadora.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Segunda pasada aun conservadora.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockImplementationOnce(async (_url, options) => {
+          const payload = JSON.parse(String(options?.body || "{}"));
+          const systemPrompt = String(payload?.input?.[0]?.content || "");
+          const hasRecoveryExample = systemPrompt.includes(
+            "Ejemplo 1: pregunta '¿En qué está interesado el cliente?'",
+          );
+
+          return {
+            ok: true,
+            json: async () => ({
+              output_text: JSON.stringify({
+                suggestions: [
+                  {
+                    questionId: Number(firstQuestion.id),
+                    status: hasRecoveryExample
+                      ? "proposed"
+                      : "insufficient_evidence",
+                    proposalKind: "fill_empty",
+                    proposedAnswer: hasRecoveryExample
+                      ? "El cliente esta interesado en fortalecer la seguridad de acceso a aplicaciones en la nube, proteger credenciales, validar identidades y mejorar los controles de autenticacion."
+                      : "",
+                    reason: hasRecoveryExample
+                      ? "La tercera pasada permitio recuperar la respuesta desde la necesidad documentada."
+                      : "No se encontro la instruccion de recuperacion semantica.",
+                  },
+                ],
+              }),
+            }),
+          };
+        });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toHaveLength(1);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.suggestions[0].proposedAnswer).toContain(
+        "fortalecer la seguridad de acceso",
+      );
+      expect(response.body.meta.focusedRetryQuestionCount).toBe(1);
+      expect(response.body.meta.semanticRecoveryQuestionCount).toBe(1);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers hace recuperacion dirigida por pregunta cuando aun no propone respuesta", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_targeted_recovery`,
+    );
+    const [firstQuestion] =
+      await getStageQuestionRowsByCode("contacto_inicial");
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_targeted_recovery_answer`,
+      text: "Durante la reunion se reviso la necesidad de fortalecer la seguridad de acceso a aplicaciones en la nube, proteger credenciales y validar identidades. Tambien se acordo realizar una demostracion.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Primera pasada demasiado conservadora.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Segunda pasada demasiado conservadora.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(firstQuestion.id),
+                  status: "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer: "",
+                  reason: "Tercera pasada aun sin propuesta.",
+                },
+              ],
+            }),
+          }),
+        })
+        .mockImplementationOnce(async (_url, options) => {
+          const payload = JSON.parse(String(options?.body || "{}"));
+          const requestBody = JSON.parse(
+            String(payload?.input?.[1]?.content || "{}"),
+          );
+          const hasSingleQuestionMode =
+            requestBody?.rules?.analyzeSingleQuestion === true;
+          const candidateEvidence = Array.isArray(
+            requestBody?.question?.candidateEvidence,
+          )
+            ? requestBody.question.candidateEvidence
+            : [];
+
+          return {
+            ok: true,
+            json: async () => ({
+              output_text: JSON.stringify({
+                suggestions: [
+                  {
+                    questionId: Number(firstQuestion.id),
+                    status:
+                      hasSingleQuestionMode && candidateEvidence.length
+                        ? "proposed"
+                        : "insufficient_evidence",
+                    proposalKind: "fill_empty",
+                    proposedAnswer:
+                      hasSingleQuestionMode && candidateEvidence.length
+                        ? "El cliente esta interesado en fortalecer la seguridad de acceso a aplicaciones en la nube, proteger credenciales y validar identidades."
+                        : "",
+                    reason:
+                      hasSingleQuestionMode && candidateEvidence.length
+                        ? "La recuperacion dirigida por pregunta permitio responder desde los fragmentos mas relevantes."
+                        : "No se envio la pregunta dirigida con evidencia candidata.",
+                  },
+                ],
+              }),
+            }),
+          };
+        });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(response.body.suggestions[0].proposedAnswer).toContain(
+        "fortalecer la seguridad de acceso",
+      );
+      expect(response.body.meta.focusedRetryQuestionCount).toBe(1);
+      expect(response.body.meta.semanticRecoveryQuestionCount).toBe(1);
+      expect(response.body.meta.targetedRecoveryQuestionCount).toBe(1);
+      expect(global.fetch).toHaveBeenCalledTimes(4);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers enriquece la pregunta para IA con instruccion comun y override por codigo", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_enriched_prompt_config`,
+    );
+    const identificationQuestions = await getStageQuestionRowsByCode(
+      "identificacion_oportunidad",
+    );
+    const budgetQuestion = identificationQuestions.find(
+      (question) => question.code === "identificacion_presupuesto_cliente",
+    );
+
+    expect(budgetQuestion).toBeTruthy();
+
+    await query(
+      "UPDATE opportunities SET sales_stage_id = ?, updated_at = NOW(3) WHERE id = ?",
+      [ctx.catalogIds.salesStageIdentificationId, fixture.opportunityId],
+    );
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_budget_prompt_enrichment`,
+      text: "El cliente indico que el presupuesto aun no esta aprobado, pero espera definir un rango estimado durante el siguiente comite financiero.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockImplementation(async (_url, options) => {
+        const payload = JSON.parse(String(options?.body || "{}"));
+        const requestBody = JSON.parse(
+          String(payload?.input?.[1]?.content || "{}"),
+        );
+        const questionContexts = String(requestBody?.questionContexts || "");
+        const hasCommonEvidenceInstruction = questionContexts.includes(
+          "Responde solo con hechos suficientemente sustentados por evidencia especifica",
+        );
+        const hasBudgetOverride = questionContexts.includes(
+          "presupuesto aprobado, rango estimado",
+        );
+        const hasInsufficientCriterion = questionContexts.includes(
+          "Si no hay cifra, rango, restriccion o proceso presupuestal concreto, responde insufficient_evidence.",
+        );
+        const hasConservativeTemperature = Number(payload?.temperature) === 0.1;
+        const hasConservativeTopP = Number(payload?.top_p) === 1;
+
+        return {
+          ok: true,
+          json: async () => ({
+            output_text: JSON.stringify({
+              suggestions: [
+                {
+                  questionId: Number(budgetQuestion.id),
+                  status:
+                    hasCommonEvidenceInstruction &&
+                    hasBudgetOverride &&
+                    hasInsufficientCriterion &&
+                    hasConservativeTemperature &&
+                    hasConservativeTopP
+                      ? "proposed"
+                      : "insufficient_evidence",
+                  proposalKind: "fill_empty",
+                  proposedAnswer:
+                    hasCommonEvidenceInstruction &&
+                    hasBudgetOverride &&
+                    hasInsufficientCriterion &&
+                    hasConservativeTemperature &&
+                    hasConservativeTopP
+                      ? "El cliente aun no tiene presupuesto aprobado y espera definir un rango estimado en el siguiente comite financiero."
+                      : "",
+                  reason:
+                    hasCommonEvidenceInstruction &&
+                    hasBudgetOverride &&
+                    hasInsufficientCriterion &&
+                    hasConservativeTemperature &&
+                    hasConservativeTopP
+                      ? "La pregunta llego enriquecida con criterio estricto y parametros conservadores del modelo."
+                      : "El payload no incluyo el endurecimiento esperado para la IA.",
+                },
+              ],
+            }),
+          }),
+        };
+      });
+
+      const response = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageIdentificationId}/propose-answers`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.suggestions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            questionId: Number(budgetQuestion.id),
+            status: "proposed",
+            proposalKind: "fill_empty",
+          }),
+        ]),
+      );
+      expect(global.fetch).toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
   });
 
   test("oportunidades.commercial-context expone motivo de bypass para la etapa destino del bypass", async () => {
@@ -3854,6 +6563,20 @@ describe("API integration baseline", () => {
 
     expect(secondSaveResponse.status).toBe(200);
 
+    const thirdSaveResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        answers: [
+          {
+            questionId: Number(firstQuestion.id),
+            answerValue: "",
+          },
+        ],
+      });
+
+    expect(thirdSaveResponse.status).toBe(200);
+
     const answerRows = await query(
       `SELECT COUNT(*) AS total
        FROM opportunity_stage_question_answers
@@ -3861,22 +6584,31 @@ describe("API integration baseline", () => {
          AND question_id = ?`,
       [fixture.opportunityId, Number(firstQuestion.id)],
     );
-    expect(Number(answerRows[0].total)).toBe(2);
+    expect(Number(answerRows[0].total)).toBe(3);
+
+    const latestAnswerRows = await query(
+      `SELECT answer_value
+       FROM opportunity_stage_question_answers
+       WHERE opportunity_id = ?
+         AND question_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [fixture.opportunityId, Number(firstQuestion.id)],
+    );
+    expect(latestAnswerRows[0].answer_value).toBe("");
 
     const contextResponse = await request(app)
       .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
       .set("Authorization", `Bearer ${fixture.token}`);
 
     expect(contextResponse.status).toBe(200);
-    expect(contextResponse.body.answers[0].answer_value).toBe(
-      "Interes inicial actualizado en seguridad de aplicaciones",
-    );
+    expect(contextResponse.body.answers[0].answer_value).toBe("");
 
     const auditRows = await getAuditActionsForOpportunity(
       fixture.opportunityId,
       "stage_answers_saved",
     );
-    expect(auditRows.length).toBe(2);
+    expect(auditRows.length).toBe(3);
   });
 
   test("oportunidades.stage-transition rechaza avance sin obligatorias y permite avanzar con respuestas completas", async () => {
@@ -4031,31 +6763,561 @@ describe("API integration baseline", () => {
     expect(auditRows.length).toBe(1);
   });
 
-  test("oportunidades.validate-current-stage audita la validacion manual sin mover la oportunidad", async () => {
+  test("oportunidades.validate-current-stage corrige un rechazo demasiado conservador en Contacto Inicial cuando la respuesta ya demuestra necesidad y siguiente paso", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_validate_stage`,
     );
 
-    const validateResponse = await request(app)
-      .post(
-        `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
-      )
-      .set("Authorization", `Bearer ${fixture.token}`)
-      .send({ note: "Validacion registrada desde flujo manual" });
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toContain("/responses");
+      const payload = JSON.parse(init.body);
+      expect(payload.temperature).toBe(0.1);
+      expect(payload.top_p).toBe(1);
+      const rawInput = JSON.parse(payload.input[1].content);
+      expect(rawInput.expectedJsonShape.decision).toContain("ready_to_advance");
 
-    expect(validateResponse.status).toBe(200);
-    expect(validateResponse.body.message).toContain("validada");
+      return {
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    decision: "not_ready_to_advance",
+                    summary:
+                      "Falta concretar el interes real del cliente y los siguientes pasos de la etapa.",
+                    reasons: [
+                      "Las respuestas actuales siguen demasiado generales para demostrar que la etapa cumplio su objetivo.",
+                    ],
+                    suggestions: [
+                      "Aterriza la necesidad puntual del cliente y confirma un siguiente paso comercial concreto.",
+                    ],
+                    confidence: "high",
+                    questionAssessments: [
+                      {
+                        questionId: rawInput.questionContexts.includes(
+                          "Pregunta 1:",
+                        )
+                          ? 1
+                          : 0,
+                        status: "weak",
+                        reason:
+                          "La respuesta no prueba con suficiente precision el objetivo de la etapa.",
+                        suggestion:
+                          "Haz la respuesta mas especifica y vinculada a una necesidad real.",
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    });
 
-    const snapshot = await getOpportunityCommercialSnapshot(
-      fixture.opportunityId,
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      const answersPayload = {
+        answers: stageViewResponse.body.answers.map((answer, index) => ({
+          questionId: Number(answer.question_id),
+          answerValue:
+            index === 0
+              ? "El cliente confirmo interes en revisar una alternativa concreta y agendar seguimiento."
+              : "Se programara una reunion de seguimiento para profundizar la oportunidad.",
+        })),
+      };
+
+      const saveResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send(answersPayload);
+
+      expect(saveResponse.status).toBe(200);
+
+      const validateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Validacion IA registrada" });
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.message).toContain("lista para avanzar");
+      expect(validateResponse.body.validation.decision).toBe(
+        "ready_to_advance",
+      );
+      expect(validateResponse.body.validation.summary).toContain(
+        "necesidad concreta del cliente",
+      );
+      expect(validateResponse.body.validation.reasons).toEqual([
+        "La respuesta actual expresa una necesidad o interes concreto del cliente.",
+        "Tambien deja claro un siguiente paso de seguimiento o validacion tecnica, que cumple el criterio de cierre de Contacto Inicial.",
+      ]);
+      expect(validateResponse.body.validation.suggestions).toEqual([
+        "Ejecuta la reunion o prueba tecnica y documenta los hallazgos para desarrollar la oportunidad en la siguiente etapa.",
+      ]);
+
+      const snapshot = await getOpportunityCommercialSnapshot(
+        fixture.opportunityId,
+      );
+      expect(snapshot.sales_stage_code).toBe("contacto_inicial");
+
+      const auditRows = await getAuditActionsForOpportunity(
+        fixture.opportunityId,
+        "stage_validated",
+      );
+      expect(auditRows.length).toBe(1);
+      expect(auditRows[0].detail).toContain("IA");
+      expect(auditRows[0].changed_fields).toMatchObject({
+        validation_decision: {
+          after: "ready_to_advance",
+        },
+      });
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage deja Contacto Inicial con reservas cuando ya existe necesidad clara pero aun no se documenta el siguiente paso", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_validate_stage_need_only`,
     );
-    expect(snapshot.sales_stage_code).toBe("contacto_inicial");
 
-    const auditRows = await getAuditActionsForOpportunity(
-      fixture.opportunityId,
-      "stage_validated",
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "not_ready_to_advance",
+                  summary:
+                    "No se confirma todavia que la etapa este lista para avanzar.",
+                  reasons: [
+                    "La IA considera que aun falta sustento para cerrar la etapa.",
+                  ],
+                  suggestions: [
+                    "Documenta mejor la situacion actual antes de avanzar.",
+                  ],
+                  confidence: "high",
+                  questionAssessments: [
+                    {
+                      questionId: 1,
+                      status: "inconsistent",
+                      reason:
+                        "La respuesta describe una necesidad pero no confirma el cierre completo de la etapa.",
+                      suggestion:
+                        "Documenta el siguiente paso comercial para eliminar dudas.",
+                    },
+                  ],
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      const saveResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue:
+              "El cliente expresa la necesidad concreta de obtener visibilidad y control del trafico que consumen sus APIs en AWS por incidentes recientes de seguridad y por el crecimiento proyectado de usuarios antes de julio.",
+          })),
+        });
+
+      expect(saveResponse.status).toBe(200);
+
+      const validateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.message).toContain(
+        "puede avanzar con reservas",
+      );
+      expect(validateResponse.body.validation.decision).toBe(
+        "advance_with_caution",
+      );
+      expect(validateResponse.body.validation.summary).toContain(
+        "puede avanzar con reservas",
+      );
+      expect(validateResponse.body.validation.reasons).toEqual([
+        "La respuesta actual ya demuestra una necesidad o interes concreto del cliente.",
+        "Aun falta documentar con mayor precision la reunion, demo o siguiente paso que cerrara la etapa con mas solidez.",
+      ]);
+      expect(validateResponse.body.validation.suggestions).toEqual([
+        "Confirma y registra el siguiente paso comercial o tecnico para avanzar con mayor respaldo a la siguiente etapa.",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage reconcilia la decision para cualquier etapa cuando los assessments contradicen el dictamen crudo de la IA", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_reconciled`,
     );
-    expect(auditRows.length).toBe(1);
+    const identificationQuestions = await getStageQuestionRowsByCode(
+      "identificacion_oportunidad",
+    );
+
+    await query(
+      "UPDATE opportunities SET sales_stage_id = ?, updated_at = NOW(3) WHERE id = ?",
+      [ctx.catalogIds.salesStageIdentificationId, fixture.opportunityId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "not_ready_to_advance",
+                  summary:
+                    "La IA considera que la etapa aun no esta lista para avanzar.",
+                  reasons: [
+                    "El dictamen crudo sigue siendo demasiado conservador.",
+                  ],
+                  suggestions: ["No avances hasta tener mas certeza."],
+                  confidence: "low",
+                  questionAssessments: identificationQuestions.map(
+                    (question) => ({
+                      questionId: Number(question.id),
+                      status: "adequate",
+                      reason:
+                        "La respuesta es concreta, accionable y suficiente para esta etapa.",
+                      suggestion: "Sin accion inmediata.",
+                    }),
+                  ),
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const saveResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: [
+            {
+              questionId: Number(identificationQuestions[0].id),
+              answerValue:
+                "El cliente requiere proteger y controlar sus APIs en AWS con WAF, politicas de acceso, mitigacion de bots y visibilidad operativa sin interrumpir produccion.",
+            },
+            {
+              questionId: Number(identificationQuestions[1].id),
+              answerValue:
+                "Busca reducir riesgo de incidentes y asegurar continuidad operativa antes del crecimiento previsto de transacciones en julio.",
+            },
+            {
+              questionId: Number(identificationQuestions[2].id),
+              answerValue:
+                "El presupuesto saldra del frente de seguridad y cloud, con un rango preliminar que se validara en la aprobacion interna posterior a la propuesta tecnica.",
+            },
+            {
+              questionId: Number(identificationQuestions[3].id),
+              answerValue:
+                "La compra debe cerrarse antes de julio porque el incremento de trafico elevara el riesgo operativo; retrasarla aumentaria exposicion y presion sobre el equipo interno.",
+            },
+            {
+              questionId: Number(identificationQuestions[4].id),
+              answerValue:
+                "Participan seguridad, infraestructura, el equipo responsable de APIs y compras; el proceso contempla validacion tecnica, revision economica y aprobacion interna antes de emitir la orden.",
+            },
+            {
+              questionId: Number(identificationQuestions[5].id),
+              answerValue:
+                "Tenemos experiencia en proteccion de APIs y aplicaciones, enfoque consultivo de diagnostico y capacidad de implementar una arquitectura segura alineada al crecimiento del cliente.",
+            },
+            {
+              questionId: Number(identificationQuestions[6].id),
+              answerValue:
+                "La estrategia es confirmar alcance tecnico, validar riesgos y prioridades del cliente, y convertirlo en una propuesta de valor y arquitectura que facilite la aprobacion y el paso a desarrollo.",
+            },
+          ],
+        });
+
+      expect(saveResponse.status).toBe(200);
+
+      const validateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.validation.decision).toBe(
+        "ready_to_advance",
+      );
+      expect(validateResponse.body.validation.summary).toContain(
+        "lista para avanzar",
+      );
+      expect(validateResponse.body.validation.reasons).toEqual([
+        "Se evaluaron 7 pregunta(s) obligatoria(s) y todas quedaron con nivel adecuado para sustentar el avance.",
+      ]);
+      expect(validateResponse.body.validation.suggestions).toEqual([
+        "Avanza a la siguiente etapa y documenta los hallazgos nuevos que se obtengan durante su desarrollo.",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage detalla las respuestas debiles cuando la reconciliacion deja avance con reservas", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_detailed_caution`,
+    );
+    const identificationQuestions = await getStageQuestionRowsByCode(
+      "identificacion_oportunidad",
+    );
+
+    await query(
+      "UPDATE opportunities SET sales_stage_id = ?, updated_at = NOW(3) WHERE id = ?",
+      [ctx.catalogIds.salesStageIdentificationId, fixture.opportunityId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "ready_to_advance",
+                  summary: "La IA cree que todo esta listo.",
+                  reasons: ["La senal general parece positiva."],
+                  suggestions: ["Avanza sin cambios."],
+                  confidence: "medium",
+                  questionAssessments: identificationQuestions.map(
+                    (question, index) => ({
+                      questionId: Number(question.id),
+                      status: index < 2 ? "weak" : "adequate",
+                      reason:
+                        index === 0
+                          ? "La necesidad esta descrita, pero falta precisar impacto medible, criticidad o alcance tecnico verificable."
+                          : index === 1
+                            ? "La motivacion es entendible, pero falta aterrizar urgencia de negocio, prioridad o consecuencia de no actuar."
+                            : "La respuesta es suficiente para esta etapa.",
+                      suggestion:
+                        index === 0
+                          ? "Agrega ejemplos concretos del riesgo actual, activos afectados o metas tecnicas que se quieren proteger."
+                          : index === 1
+                            ? "Explica con un ejemplo la urgencia del cliente, el evento que dispara la compra o el costo de no resolverlo."
+                            : "Sin accion inmediata.",
+                    }),
+                  ),
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const saveResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: identificationQuestions.map((question) => ({
+            questionId: Number(question.id),
+            answerValue:
+              "Respuesta presente para permitir que la reconciliacion dependa del assessment estructurado y no de faltantes.",
+          })),
+        });
+
+      expect(saveResponse.status).toBe(200);
+
+      const validateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.validation.decision).toBe(
+        "advance_with_caution",
+      );
+      expect(validateResponse.body.validation.reasons).toContain(
+        "Las preguntas obligatorias ya tienen respuesta, pero 2 siguen siendo debiles o poco verificables para cerrar la etapa con total solidez.",
+      );
+      expect(validateResponse.body.validation.reasons).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            ": La necesidad esta descrita, pero falta precisar impacto medible, criticidad o alcance tecnico verificable.",
+          ),
+          expect.stringContaining(
+            ": La motivacion es entendible, pero falta aterrizar urgencia de negocio, prioridad o consecuencia de no actuar.",
+          ),
+        ]),
+      );
+      expect(validateResponse.body.validation.suggestions).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            "Agrega ejemplos concretos del riesgo actual, activos afectados o metas tecnicas que se quieren proteger.",
+          ),
+          expect.stringContaining(
+            "Explica con un ejemplo la urgencia del cliente, el evento que dispara la compra o el costo de no resolverlo.",
+          ),
+        ]),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage genera ejemplos utiles cuando la IA deja reasons y suggestions vacios", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_fallback_examples`,
+    );
+    const identificationQuestions = await getStageQuestionRowsByCode(
+      "identificacion_oportunidad",
+    );
+
+    await query(
+      "UPDATE opportunities SET sales_stage_id = ?, updated_at = NOW(3) WHERE id = ?",
+      [ctx.catalogIds.salesStageIdentificationId, fixture.opportunityId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "advance_with_caution",
+                  summary: "La etapa puede avanzar con reservas.",
+                  reasons: ["Existen respuestas debiles."],
+                  suggestions: ["Fortalece las respuestas."],
+                  confidence: "medium",
+                  questionAssessments: identificationQuestions.map(
+                    (question, index) => ({
+                      questionId: Number(question.id),
+                      status: index < 2 ? "weak" : "adequate",
+                      reason: "",
+                      suggestion: "",
+                    }),
+                  ),
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const saveResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: identificationQuestions.map((question) => ({
+            questionId: Number(question.id),
+            answerValue:
+              "Respuesta presente, pero sin suficiente detalle para que el backend deba construir el ejemplo util a partir del prompt.",
+          })),
+        });
+
+      expect(saveResponse.status).toBe(200);
+
+      const validateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.validation.decision).toBe(
+        "advance_with_caution",
+      );
+      expect(validateResponse.body.validation.reasons).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            "La respuesta actual existe, pero sigue siendo debil porque no deja claramente resuelto",
+          ),
+          expect.stringContaining(
+            "qué problema quiere resolver o qué resultado quiere lograr el cliente",
+          ),
+        ]),
+      );
+      expect(validateResponse.body.validation.suggestions).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            "Ejemplo de como fortalecerla: responde de forma explicita",
+          ),
+          expect.stringContaining(
+            "monto, fecha, responsable, sistema afectado, riesgo, objetivo o siguiente paso",
+          ),
+        ]),
+      );
+      expect(validateResponse.body.validation.reasons).not.toEqual(
+        expect.arrayContaining([
+          "La IA no devolvio un dictamen especifico para esta respuesta; se conserva como debil por falta de confirmacion suficiente.",
+        ]),
+      );
+      expect(validateResponse.body.validation.suggestions).not.toEqual(
+        expect.arrayContaining([
+          "Haz la respuesta mas concreta y verificable antes de avanzar.",
+        ]),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
   });
 
   test("oportunidades.stage-bypass avanza sin validar obligatorias y audita el motivo", async () => {

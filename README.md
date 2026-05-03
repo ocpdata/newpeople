@@ -196,6 +196,7 @@ Cobertura automatizada:
 
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
+- Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
 - Modulo de cotizaciones: [readme/cotizaciones.md](./readme/cotizaciones.md)
   Politicas de impresion y vista previa PDF incluidas en ese documento.

@@ -48,8 +48,7 @@ export const ACCOUNT_LOCATION_RESEARCH_FIELDS = [
 ];
 
 export const ACCOUNT_DRAFT_ANALYSIS_SCHEMA_FIELDS = [
-  { key: "suggestedAdministrativeDescription", type: "string" },
-  { key: "suggestedCommercialDescription", type: "string" },
+  { key: "suggestedCompanyDescription", type: "string" },
   { key: "suggestedWebsite", type: "string" },
   { key: "websiteConfidence", ...AI_CONFIDENCE_FIELD },
   { key: "websiteReason", type: "string" },

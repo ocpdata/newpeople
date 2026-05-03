@@ -2,6 +2,19 @@ import jwt from "jsonwebtoken";
 import { config } from "./config.js";
 import { query } from "./db.js";
 
+const ADMIN_FALLBACK_PERMISSIONS = [
+  "configuracion.read",
+  "configuracion.update",
+  "roles.read",
+  "permissions.read",
+  "oportunidades_potenciales.read",
+  "oportunidades_potenciales.read_all",
+  "oportunidades_potenciales.review",
+  "oportunidades_potenciales.assign",
+  "oportunidades_potenciales.convert",
+  "oportunidades_potenciales.analytics",
+];
+
 export async function getUserAuthContext(userId) {
   const users = await query(
     `SELECT id, full_name, email, avatar_url, status
@@ -38,8 +51,9 @@ export async function getUserAuthContext(userId) {
 
   let effectivePermissions = permissions.map((permission) => permission.code);
   if (isAdministrator) {
-    const allPermissions = await query("SELECT code FROM permissions");
-    effectivePermissions = allPermissions.map((permission) => permission.code);
+    effectivePermissions = Array.from(
+      new Set([...effectivePermissions, ...ADMIN_FALLBACK_PERMISSIONS]),
+    );
   }
 
   const user = users[0];

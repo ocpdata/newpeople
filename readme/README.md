@@ -5,6 +5,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 ## Indice
 
 - [Logica de negocio](./logica-negocio.md)
+- [Uso de IA](./ia.md)
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)

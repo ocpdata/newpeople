@@ -2,12 +2,158 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
+const PROPOSE_ANSWERS_TIMEOUT_MS = 60000;
+
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
+}
+
+function buildDocumentReviewOverrides(review) {
+  const suggestedFields = review?.suggestedFields || {};
+  const suggestedNameOptions = Array.isArray(
+    suggestedFields.suggestedNameOptions,
+  )
+    ? suggestedFields.suggestedNameOptions
+    : [];
+  const selectedSuggestedName =
+    suggestedNameOptions.find((value) => String(value || "").trim()) ||
+    suggestedFields.suggestedName ||
+    "";
+
+  return {
+    fieldOverrides: {
+      name: String(selectedSuggestedName || ""),
+      amountUsd:
+        suggestedFields.suggestedAmountUsd === null ||
+        suggestedFields.suggestedAmountUsd === undefined
+          ? ""
+          : String(suggestedFields.suggestedAmountUsd),
+      closeDate: String(suggestedFields.suggestedCloseDate || ""),
+    },
+    matchSelections: {
+      accountId: suggestedFields.matchedAccount?.selectedEntityId
+        ? String(suggestedFields.matchedAccount.selectedEntityId)
+        : "",
+      contactId: suggestedFields.matchedContact?.selectedEntityId
+        ? String(suggestedFields.matchedContact.selectedEntityId)
+        : "",
+      businessLineId: suggestedFields.matchedBusinessLine?.selectedEntityId
+        ? String(suggestedFields.matchedBusinessLine.selectedEntityId)
+        : "",
+      sellerUserId: suggestedFields.matchedSeller?.selectedEntityId
+        ? String(suggestedFields.matchedSeller.selectedEntityId)
+        : "",
+      presalesUserId: suggestedFields.matchedPresales?.selectedEntityId
+        ? String(suggestedFields.matchedPresales.selectedEntityId)
+        : "",
+    },
+  };
+}
+
+function buildDocumentReviewAppliedState() {
+  return {
+    fieldKeys: {},
+    matchKeys: {},
+  };
+}
+
+function mergeDocumentReviewAppliedState(
+  currentState,
+  selectedFieldKeys,
+  selectedMatchKeys,
+) {
+  const defaultFieldKeys = ["name", "amountUsd", "closeDate"];
+  const defaultMatchKeys = [
+    "accountId",
+    "contactId",
+    "businessLineId",
+    "sellerUserId",
+    "presalesUserId",
+  ];
+
+  const fieldKeysToApply = Array.isArray(selectedFieldKeys)
+    ? selectedFieldKeys
+    : Array.isArray(selectedMatchKeys)
+      ? []
+      : defaultFieldKeys;
+  const matchKeysToApply = Array.isArray(selectedMatchKeys)
+    ? selectedMatchKeys
+    : Array.isArray(selectedFieldKeys)
+      ? []
+      : defaultMatchKeys;
+
+  return {
+    fieldKeys: {
+      ...(currentState?.fieldKeys || {}),
+      ...Object.fromEntries(fieldKeysToApply.map((key) => [key, true])),
+    },
+    matchKeys: {
+      ...(currentState?.matchKeys || {}),
+      ...Object.fromEntries(matchKeysToApply.map((key) => [key, true])),
+    },
+  };
+}
+
+function getDocumentSessionCreationErrorMessage(error) {
+  const status = Number(error?.response?.status || 0);
+  const reason = String(error?.response?.data?.reason || "").trim();
+
+  if (status === 401 || status === 403) {
+    return "No tienes permisos para iniciar una sesion documental en oportunidades.";
+  }
+
+  if (reason === "document_schema_not_available") {
+    return "La carga documental no esta disponible todavia porque falta instalar el esquema documental en la API.";
+  }
+
+  if (!error?.response) {
+    return "No fue posible contactar la API para iniciar la sesion documental. Verifica que el backend este levantado y accesible.";
+  }
+
+  if (status >= 500) {
+    return "La API respondio con un error al iniciar la sesion documental. Revisa el backend o intenta mas tarde.";
+  }
+
+  return getApiErrorMessage(
+    error,
+    "No fue posible preparar la sesion documental",
+  );
+}
+
+function formatStageValidationFeedback(validation, fallbackMessage) {
+  const decision = String(validation?.decision || "").trim();
+  const summary = String(validation?.summary || "").trim();
+  const reasons = Array.isArray(validation?.reasons)
+    ? validation.reasons
+        .map((reason) => String(reason || "").trim())
+        .filter(Boolean)
+    : [];
+  const suggestions = Array.isArray(validation?.suggestions)
+    ? validation.suggestions
+        .map((suggestion) => String(suggestion || "").trim())
+        .filter(Boolean)
+    : [];
+
+  return [
+    decision === "not_ready_to_advance"
+      ? "No lista para avanzar."
+      : decision === "advance_with_caution"
+        ? "Lista para avanzar con reservas."
+        : decision === "ready_to_advance"
+          ? "Lista para avanzar."
+          : "",
+    summary || String(fallbackMessage || "").trim(),
+    reasons.length ? `Motivos: ${reasons.slice(0, 2).join(" | ")}` : "",
+    suggestions.length
+      ? `Sugerencias: ${suggestions.slice(0, 2).join(" | ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function useOpportunitiesPage({
@@ -47,9 +193,36 @@ export function useOpportunitiesPage({
   });
   const [showStageBypassModal, setShowStageBypassModal] = useState(false);
   const [stageBypassReason, setStageBypassReason] = useState("");
+  const [stageValidationResult, setStageValidationResult] = useState(null);
   const [openOpportunityMenuId, setOpenOpportunityMenuId] = useState(null);
   const [savingOpportunity, setSavingOpportunity] = useState(false);
   const [savingCommercialAction, setSavingCommercialAction] = useState("");
+  const [analyzingCommercialSuggestions, setAnalyzingCommercialSuggestions] =
+    useState(false);
+  const [documentUploadSession, setDocumentUploadSession] = useState(null);
+  const [opportunityDocuments, setOpportunityDocuments] = useState([]);
+  const [documentReview, setDocumentReview] = useState(null);
+  const [documentReviewOverrides, setDocumentReviewOverrides] = useState(
+    buildDocumentReviewOverrides(null),
+  );
+  const [documentReviewApplied, setDocumentReviewApplied] = useState(
+    buildDocumentReviewAppliedState(),
+  );
+  const [loadingDocumentSession, setLoadingDocumentSession] = useState(false);
+  const [loadingOpportunityDocuments, setLoadingOpportunityDocuments] =
+    useState(false);
+  const [uploadingOpportunityDocuments, setUploadingOpportunityDocuments] =
+    useState(false);
+  const [applyingDocumentSuggestions, setApplyingDocumentSuggestions] =
+    useState(false);
+  const [deletingOpportunityDocumentId, setDeletingOpportunityDocumentId] =
+    useState("");
+  const [linkingAnswerSourceId, setLinkingAnswerSourceId] = useState("");
+  const [answerDocumentSelections, setAnswerDocumentSelections] = useState({});
+  const [
+    commercialAnswerSuggestionsByStageId,
+    setCommercialAnswerSuggestionsByStageId,
+  ] = useState({});
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const explicitOpportunityPermissions = useMemo(
@@ -268,6 +441,18 @@ export function useOpportunitiesPage({
     return {
       salesStage: normalizedSalesStage,
       currentSalesStage: normalizedCurrentSalesStage,
+      features: data.features
+        ? {
+            documentAnswerSuggestionsEnabled:
+              data.features.documentAnswerSuggestionsEnabled !== false,
+            rolloutKey: String(data.features.rolloutKey || ""),
+            configuredByEnv: data.features.configuredByEnv !== false,
+          }
+        : {
+            documentAnswerSuggestionsEnabled: true,
+            rolloutKey: "",
+            configuredByEnv: true,
+          },
       bypassInfo: data.bypassInfo
         ? {
             isBypassed: Boolean(data.bypassInfo.isBypassed),
@@ -312,8 +497,15 @@ export function useOpportunitiesPage({
       answers: Array.isArray(data.answers)
         ? data.answers.map((answer) => ({
             ...answer,
+            stage_answer_id: answer.stage_answer_id
+              ? Number(answer.stage_answer_id)
+              : null,
             question_id: Number(answer.question_id),
             answer_value:
+              answer.answer_value === null || answer.answer_value === undefined
+                ? ""
+                : String(answer.answer_value),
+            original_answer_value:
               answer.answer_value === null || answer.answer_value === undefined
                 ? ""
                 : String(answer.answer_value),
@@ -503,6 +695,7 @@ export function useOpportunitiesPage({
   function resetCommercialDraftState() {
     setCommercialContext(null);
     setCommercialStageViewsById({});
+    setCommercialAnswerSuggestionsByStageId({});
     setDraftStageAction(null);
     setSelectedCommercialStageId("");
     setLoadingCommercialStageView(false);
@@ -513,11 +706,412 @@ export function useOpportunitiesPage({
     setCommercialCloseModalState({ statusCode: "", reason: "" });
     setShowStageBypassModal(false);
     setStageBypassReason("");
+    setLinkingAnswerSourceId("");
+    setAnswerDocumentSelections({});
+  }
+
+  function resetOpportunityDocumentState() {
+    setDocumentUploadSession(null);
+    setOpportunityDocuments([]);
+    setDocumentReview(null);
+    setDocumentReviewOverrides(buildDocumentReviewOverrides(null));
+    setDocumentReviewApplied(buildDocumentReviewAppliedState());
+    setLoadingDocumentSession(false);
+    setLoadingOpportunityDocuments(false);
+    setUploadingOpportunityDocuments(false);
+    setApplyingDocumentSuggestions(false);
+    setDeletingOpportunityDocumentId("");
+    setLinkingAnswerSourceId("");
+    setAnswerDocumentSelections({});
+  }
+
+  function hydrateDocumentSessionState(payload) {
+    setDocumentUploadSession(payload?.session || null);
+    setOpportunityDocuments((prev) =>
+      Array.isArray(payload?.documents) ? payload.documents : prev,
+    );
+    setDocumentReview(payload?.review || null);
+    setDocumentReviewOverrides(buildDocumentReviewOverrides(payload?.review));
+    setDocumentReviewApplied(buildDocumentReviewAppliedState());
+  }
+
+  function setDocumentReviewFieldOverride(field, value) {
+    setDocumentReviewApplied((prev) => ({
+      ...prev,
+      fieldKeys: {
+        ...prev.fieldKeys,
+        [field]: false,
+      },
+    }));
+    setDocumentReviewOverrides((prev) => ({
+      ...prev,
+      fieldOverrides: {
+        ...prev.fieldOverrides,
+        [field]: value,
+      },
+    }));
+  }
+
+  function setDocumentReviewMatchSelection(field, value) {
+    setDocumentReviewApplied((prev) => ({
+      ...prev,
+      matchKeys: {
+        ...prev.matchKeys,
+        [field]: false,
+      },
+    }));
+    setDocumentReviewOverrides((prev) => ({
+      ...prev,
+      matchSelections: {
+        ...prev.matchSelections,
+        [field]: value,
+      },
+    }));
+  }
+
+  function buildOpportunityDocumentApplyPayload({
+    selectedFieldKeys,
+    selectedMatchKeys,
+  } = {}) {
+    const { fieldOverrides, matchSelections } = documentReviewOverrides;
+
+    const fieldEntries = Object.entries({
+      name: String(fieldOverrides.name || "").trim(),
+      amountUsd:
+        String(fieldOverrides.amountUsd || "").trim() === ""
+          ? null
+          : parseOpportunityAmountInput(fieldOverrides.amountUsd),
+      closeDate: String(fieldOverrides.closeDate || "").trim(),
+    }).filter(([key, value]) => {
+      if (
+        Array.isArray(selectedFieldKeys) &&
+        !selectedFieldKeys.includes(key)
+      ) {
+        return false;
+      }
+
+      if (key === "closeDate") {
+        return value !== "";
+      }
+
+      if (key === "amountUsd") {
+        return value !== null;
+      }
+
+      return value !== "";
+    });
+
+    const matchEntries = Object.entries(matchSelections)
+      .filter(([key]) => {
+        if (!Array.isArray(selectedMatchKeys)) {
+          return true;
+        }
+        return selectedMatchKeys.includes(key);
+      })
+      .filter(([, value]) => String(value || "").trim() !== "")
+      .map(([key, value]) => [key, Number(value)]);
+
+    return {
+      fieldOverrides: Object.fromEntries(fieldEntries),
+      matchSelections: Object.fromEntries(matchEntries),
+    };
+  }
+
+  async function createOpportunityDocumentSession() {
+    setLoadingDocumentSession(true);
+    try {
+      const { data } = await api.post(
+        "/api/opportunities/document-upload-sessions",
+        {},
+      );
+      hydrateDocumentSessionState(data);
+      return data?.session || null;
+    } catch (err) {
+      setError(getDocumentSessionCreationErrorMessage(err));
+      return null;
+    } finally {
+      setLoadingDocumentSession(false);
+    }
+  }
+
+  async function ensureOpportunityDocumentSession() {
+    if (documentUploadSession?.publicId) {
+      return documentUploadSession;
+    }
+    return createOpportunityDocumentSession();
+  }
+
+  async function loadExistingOpportunityDocuments(opportunityId) {
+    if (!opportunityId) return;
+    setLoadingOpportunityDocuments(true);
+    try {
+      const { data } = await api.get(
+        `/api/opportunities/${opportunityId}/documents`,
+      );
+      setOpportunityDocuments(Array.isArray(data) ? data : []);
+      setDocumentReview(null);
+      setDocumentUploadSession(null);
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar los documentos de la oportunidad",
+        ),
+      );
+    } finally {
+      setLoadingOpportunityDocuments(false);
+    }
+  }
+
+  async function uploadOpportunityDocuments(nextFiles) {
+    const files = Array.from(nextFiles || []);
+    if (!files.length) return;
+
+    setError("");
+    setSuccess("");
+    setUploadingOpportunityDocuments(true);
+
+    try {
+      const formData = new FormData();
+      files.forEach((file) => formData.append("files", file));
+
+      if (editingOpportunityId) {
+        await api.post(
+          `/api/opportunities/${editingOpportunityId}/documents`,
+          formData,
+          {
+            headers: { "Content-Type": "multipart/form-data" },
+          },
+        );
+        await loadExistingOpportunityDocuments(editingOpportunityId);
+        setSuccess("Documentos vinculados a la oportunidad correctamente");
+      } else {
+        const session = await ensureOpportunityDocumentSession();
+        if (!session?.publicId) return;
+        const { data } = await api.post(
+          `/api/opportunities/document-upload-sessions/${session.publicId}/files`,
+          formData,
+          {
+            headers: { "Content-Type": "multipart/form-data" },
+          },
+        );
+        hydrateDocumentSessionState(data);
+        setSuccess("Archivos cargados y analizados correctamente");
+      }
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar los documentos"));
+    } finally {
+      setUploadingOpportunityDocuments(false);
+    }
+  }
+
+  async function applyOpportunityDocumentSuggestions({
+    selectedFieldKeys,
+    selectedMatchKeys,
+    successMessage,
+  } = {}) {
+    if (!documentUploadSession?.publicId) return;
+
+    setError("");
+    setSuccess("");
+    setApplyingDocumentSuggestions(true);
+
+    try {
+      const payload = buildOpportunityDocumentApplyPayload({
+        selectedFieldKeys,
+        selectedMatchKeys,
+      });
+
+      if (
+        !Object.keys(payload.fieldOverrides).length &&
+        !Object.keys(payload.matchSelections).length
+      ) {
+        setError("No hay una sugerencia valida para aplicar en ese campo.");
+        return;
+      }
+
+      const { data } = await api.post(
+        `/api/opportunities/document-upload-sessions/${documentUploadSession.publicId}/apply-to-draft`,
+        payload,
+      );
+      hydrateDocumentSessionState(data);
+      setForm((prev) => ({
+        ...prev,
+        name:
+          (!Array.isArray(selectedFieldKeys) ||
+            selectedFieldKeys.includes("name")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "name")
+            ? data.appliedDraft.name || ""
+            : prev.name,
+        amountUsd:
+          (!Array.isArray(selectedFieldKeys) ||
+            selectedFieldKeys.includes("amountUsd")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "amountUsd") &&
+          data.appliedDraft.amountUsd !== null &&
+          data.appliedDraft.amountUsd !== undefined
+            ? formatOpportunityAmountInput(String(data.appliedDraft.amountUsd))
+            : prev.amountUsd,
+        accountId:
+          (!Array.isArray(selectedMatchKeys) ||
+            selectedMatchKeys.includes("accountId")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "accountId")
+            ? data.appliedDraft.accountId
+              ? String(data.appliedDraft.accountId)
+              : ""
+            : prev.accountId,
+        contactId:
+          (!Array.isArray(selectedMatchKeys) ||
+            selectedMatchKeys.includes("contactId")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "contactId")
+            ? data.appliedDraft.contactId
+              ? String(data.appliedDraft.contactId)
+              : ""
+            : prev.contactId,
+        closeDate:
+          (!Array.isArray(selectedFieldKeys) ||
+            selectedFieldKeys.includes("closeDate")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "closeDate")
+            ? data.appliedDraft.closeDate || ""
+            : prev.closeDate,
+        businessLineId:
+          (!Array.isArray(selectedMatchKeys) ||
+            selectedMatchKeys.includes("businessLineId")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "businessLineId")
+            ? data.appliedDraft.businessLineId
+              ? String(data.appliedDraft.businessLineId)
+              : ""
+            : prev.businessLineId,
+        sellerUserId:
+          (!Array.isArray(selectedMatchKeys) ||
+            selectedMatchKeys.includes("sellerUserId")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "sellerUserId")
+            ? data.appliedDraft.sellerUserId
+              ? String(data.appliedDraft.sellerUserId)
+              : ""
+            : prev.sellerUserId,
+        presalesUserId:
+          (!Array.isArray(selectedMatchKeys) ||
+            selectedMatchKeys.includes("presalesUserId")) &&
+          data?.appliedDraft &&
+          Object.hasOwn(data.appliedDraft, "presalesUserId")
+            ? data.appliedDraft.presalesUserId
+              ? String(data.appliedDraft.presalesUserId)
+              : ""
+            : prev.presalesUserId,
+      }));
+      setDocumentReviewApplied(
+        mergeDocumentReviewAppliedState(
+          documentReviewApplied,
+          selectedFieldKeys,
+          selectedMatchKeys,
+        ),
+      );
+      setSuccess(
+        successMessage || "Sugerencia documental aplicada al borrador",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible aplicar las sugerencias documentales",
+        ),
+      );
+    } finally {
+      setApplyingDocumentSuggestions(false);
+    }
+  }
+
+  async function deleteDraftOpportunityDocument(documentPublicId) {
+    if (!documentUploadSession?.publicId || !documentPublicId) return;
+
+    setError("");
+    setSuccess("");
+    setDeletingOpportunityDocumentId(documentPublicId);
+
+    try {
+      const { data } = await api.delete(
+        `/api/opportunities/document-upload-sessions/${documentUploadSession.publicId}/files/${documentPublicId}`,
+      );
+      hydrateDocumentSessionState(data);
+      setSuccess("Documento eliminado del borrador");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible eliminar el documento"));
+    } finally {
+      setDeletingOpportunityDocumentId("");
+    }
+  }
+
+  async function downloadOpportunityDocument(documentPublicId, fileName) {
+    setError("");
+    try {
+      const response = await api.get(
+        `/api/opportunities/documents/${documentPublicId}/content`,
+        { responseType: "blob" },
+      );
+      const objectUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = fileName || "documento";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible abrir el documento"));
+    }
+  }
+
+  function setAnswerDocumentSelection(questionId, documentPublicId) {
+    setAnswerDocumentSelections((prev) => ({
+      ...prev,
+      [questionId]: documentPublicId,
+    }));
+  }
+
+  async function linkOpportunityDocumentToAnswer(questionId) {
+    const answer = commercialContext?.answers?.find(
+      (item) => Number(item.question_id) === Number(questionId),
+    );
+    const documentPublicId = answerDocumentSelections[questionId];
+    if (!answer?.stage_answer_id || !documentPublicId) {
+      setError(
+        "Guarda la respuesta y selecciona un documento para vincular evidencia",
+      );
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setLinkingAnswerSourceId(String(questionId));
+    try {
+      await api.post(
+        `/api/opportunities/stage-answer-sources/${answer.stage_answer_id}/documents/${documentPublicId}`,
+        { evidenceExcerpt: answer.answer_value || null },
+      );
+      setSuccess("Documento vinculado como soporte de la respuesta");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible vincular el documento a la respuesta",
+        ),
+      );
+    } finally {
+      setLinkingAnswerSourceId("");
+    }
   }
 
   function seedCommercialDraftState(baseContext) {
     setCommercialContext(baseContext);
     setCommercialStageViewsById({});
+    setCommercialAnswerSuggestionsByStageId({});
     setDraftStageAction(null);
     setSelectedCommercialStageId(
       baseContext?.salesStage?.id ? String(baseContext.salesStage.id) : "",
@@ -536,6 +1130,7 @@ export function useOpportunitiesPage({
     setSuccess("");
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
+    resetOpportunityDocumentState();
     const defaultCommercialContext = buildDefaultCommercialContext();
     seedCommercialDraftState(defaultCommercialContext);
     setForm(buildDefaultOpportunityForm());
@@ -548,6 +1143,8 @@ export function useOpportunitiesPage({
         api.get(`/api/opportunities/${opportunityId}`),
         api.get(`/api/opportunities/${opportunityId}/commercial-context`),
       ]);
+
+      await loadExistingOpportunityDocuments(opportunityId);
 
       setForm({
         name: data.name || "",
@@ -578,6 +1175,7 @@ export function useOpportunitiesPage({
         normalizeCommercialContext(commercialData);
       setCommercialContext(normalizedCommercialContext);
       setDraftStageAction(null);
+      setCommercialAnswerSuggestionsByStageId({});
       setCommercialStageViewsById(
         normalizedCommercialContext?.salesStage?.id
           ? {
@@ -630,7 +1228,13 @@ export function useOpportunitiesPage({
     setShowOpportunityModal(false);
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
+    setStageValidationResult(null);
     resetCommercialDraftState();
+    resetOpportunityDocumentState();
+  }
+
+  function closeStageValidationResult() {
+    setStageValidationResult(null);
   }
 
   const filteredOpportunities = useMemo(
@@ -867,6 +1471,147 @@ export function useOpportunitiesPage({
     });
   }
 
+  function clearCommercialAnswerSuggestion(questionId, stageId = null) {
+    const targetStageId = String(
+      stageId ||
+        selectedCommercialStageId ||
+        commercialContext?.salesStage?.id ||
+        "",
+    );
+    if (!targetStageId || !questionId) return;
+
+    setCommercialAnswerSuggestionsByStageId((prev) => {
+      const stageSuggestions = prev[targetStageId];
+      if (!stageSuggestions || !stageSuggestions[questionId]) {
+        return prev;
+      }
+
+      const nextStageSuggestions = { ...stageSuggestions };
+      delete nextStageSuggestions[questionId];
+
+      if (!Object.keys(nextStageSuggestions).length) {
+        const nextState = { ...prev };
+        delete nextState[targetStageId];
+        return nextState;
+      }
+
+      return {
+        ...prev,
+        [targetStageId]: nextStageSuggestions,
+      };
+    });
+  }
+
+  async function analyzeCommercialStageAnswers() {
+    const stageId = String(
+      selectedCommercialStageId || commercialContext?.salesStage?.id || "",
+    );
+    if (!editingOpportunityId || !stageId) return;
+    if (
+      commercialContext?.features?.documentAnswerSuggestionsEnabled === false
+    ) {
+      setError(
+        "Las sugerencias documentales no estan habilitadas en este entorno",
+      );
+      return;
+    }
+    if (!commercialContext?.isSelectedStageCurrent) {
+      setError(
+        "Solo puedes proponer respuestas sobre la etapa actual de la oportunidad",
+      );
+      return;
+    }
+    if (isCommercialFlowClosed) {
+      setError(
+        "No puedes proponer respuestas documentales en una oportunidad cerrada",
+      );
+      return;
+    }
+    if (!opportunityDocuments.length) {
+      setError(
+        "Carga al menos un documento en la oportunidad antes de solicitar propuestas",
+      );
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setAnalyzingCommercialSuggestions(true);
+
+    try {
+      const { data } = await api.post(
+        `/api/opportunities/${editingOpportunityId}/stage-view/${stageId}/propose-answers`,
+        {},
+        { timeout: PROPOSE_ANSWERS_TIMEOUT_MS },
+      );
+      const suggestions = Array.isArray(data?.suggestions)
+        ? data.suggestions
+        : [];
+      const stageSuggestions = Object.fromEntries(
+        suggestions.map((suggestion) => [
+          Number(suggestion.questionId),
+          suggestion,
+        ]),
+      );
+
+      setCommercialAnswerSuggestionsByStageId((prev) => ({
+        ...prev,
+        [stageId]: stageSuggestions,
+      }));
+
+      const proposedCount = Number(data?.summary?.proposedCount || 0);
+      const ambiguousCount = Number(data?.summary?.ambiguousCount || 0);
+      const insufficientCount = Number(data?.summary?.insufficientCount || 0);
+      setSuccess(
+        proposedCount
+          ? `Se generaron ${proposedCount} propuestas documentales para la etapa seleccionada. ${ambiguousCount} quedaron ambiguas y ${insufficientCount} sin evidencia suficiente.`
+          : "No se encontraron respuestas documentales confiables para esta etapa",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible analizar los documentos para proponer respuestas",
+        ),
+      );
+    } finally {
+      setAnalyzingCommercialSuggestions(false);
+    }
+  }
+
+  function applyCommercialAnswerSuggestion(questionId) {
+    const stageId = String(
+      selectedCommercialStageId || commercialContext?.salesStage?.id || "",
+    );
+    const suggestion =
+      commercialAnswerSuggestionsByStageId?.[stageId]?.[Number(questionId)];
+    if (!suggestion || suggestion.status !== "proposed") {
+      return;
+    }
+
+    const currentAnswer = commercialContext?.answers?.find(
+      (answer) => Number(answer.question_id) === Number(questionId),
+    );
+    const currentValue = String(currentAnswer?.answer_value || "").trim();
+    if (
+      currentValue &&
+      suggestion.proposalKind === "replace_existing" &&
+      !window.confirm(
+        "Esta pregunta ya tiene una respuesta. ¿Deseas reemplazarla por la sugerencia documental?",
+      )
+    ) {
+      return;
+    }
+
+    updateCommercialAnswer(questionId, suggestion.proposedAnswer || "");
+    clearCommercialAnswerSuggestion(questionId, stageId);
+    setSuccess(
+      suggestion.proposalKind === "replace_existing"
+        ? "Respuesta reemplazada con la propuesta documental"
+        : "Respuesta sugerida aplicada al borrador de la etapa",
+    );
+  }
+
   function buildStageAnswersPayload() {
     if (
       !commercialContext?.answers?.length ||
@@ -875,11 +1620,20 @@ export function useOpportunitiesPage({
       return [];
     }
     return commercialContext.answers
-      .map((answer) => ({
-        questionId: Number(answer.question_id),
-        answerValue: String(answer.answer_value || "").trim(),
-      }))
-      .filter((answer) => answer.answerValue);
+      .map((answer) => {
+        const nextValue = String(answer.answer_value || "").trim();
+        const originalValue = String(answer.original_answer_value || "").trim();
+        return {
+          questionId: Number(answer.question_id),
+          answerValue: nextValue,
+          isModified: nextValue !== originalValue,
+        };
+      })
+      .filter((answer) => answer.isModified)
+      .map(({ questionId, answerValue }) => ({
+        questionId,
+        answerValue,
+      }));
   }
 
   async function refreshOpportunityCommercialView() {
@@ -1050,7 +1804,15 @@ export function useOpportunitiesPage({
       return false;
     }
     const answersPayload = buildStageAnswersPayload();
+    const hasExistingAnswers = Array.isArray(commercialContext?.answers)
+      ? commercialContext.answers.some((answer) =>
+          String(answer?.answer_value || "").trim(),
+        )
+      : false;
     if (!answersPayload.length) {
+      if (hasExistingAnswers) {
+        return true;
+      }
       if (!requireAnswers) {
         return true;
       }
@@ -1153,10 +1915,29 @@ export function useOpportunitiesPage({
       );
 
       await refreshOpportunityCommercialView();
-      setSuccess(
-        data?.message ||
+      const validationDecision = String(
+        data?.validation?.decision || "",
+      ).trim();
+      setStageValidationResult({
+        message:
+          data?.message ||
           `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-      );
+        feedbackMessage: formatStageValidationFeedback(
+          data?.validation,
+          data?.message ||
+            `Etapa ${currentCommercialStage?.name || "actual"} validada`,
+        ),
+        validation: data?.validation || null,
+      });
+      if (validationDecision === "not_ready_to_advance") {
+        setError("Validacion completada: la etapa no esta lista para avanzar.");
+      } else if (validationDecision === "advance_with_caution") {
+        setSuccess(
+          "Validacion completada: la etapa puede avanzar con reservas.",
+        );
+      } else {
+        setSuccess("Validacion completada: la etapa esta lista para avanzar.");
+      }
     } catch (err) {
       setError(
         getApiErrorMessage(err, "No fue posible validar la etapa actual"),
@@ -1345,6 +2126,9 @@ export function useOpportunitiesPage({
 
       if (!editingOpportunityId) {
         payload.salesStageId = Number(form.salesStageId);
+        if (documentUploadSession?.publicId) {
+          payload.uploadSessionPublicId = documentUploadSession.publicId;
+        }
       } else if (form.salesStageId) {
         payload.salesStageId = Number(form.salesStageId);
       }
@@ -1372,8 +2156,10 @@ export function useOpportunitiesPage({
       setShowOpportunityModal(false);
       setEditingOpportunityId(null);
       setEditOpportunityAudit(null);
+      setStageValidationResult(null);
       setCommercialContext(null);
       setCommercialStageViewsById({});
+      setCommercialAnswerSuggestionsByStageId({});
       setDraftStageAction(null);
       setSelectedCommercialStageId("");
       setCommercialCloseReason("");
@@ -1382,6 +2168,7 @@ export function useOpportunitiesPage({
       setCommercialCloseModalState({ statusCode: "", reason: "" });
       setShowStageBypassModal(false);
       setStageBypassReason("");
+      resetOpportunityDocumentState();
       await load();
     } catch (err) {
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
@@ -1580,9 +2367,21 @@ export function useOpportunitiesPage({
     showStageBypassModal,
     stageBypassReason,
     setStageBypassReason,
+    stageValidationResult,
     openOpportunityMenuId,
     savingOpportunity,
     savingCommercialAction,
+    analyzingCommercialSuggestions,
+    documentUploadSession,
+    opportunityDocuments,
+    documentReview,
+    documentReviewOverrides,
+    documentReviewApplied,
+    loadingDocumentSession,
+    loadingOpportunityDocuments,
+    uploadingOpportunityDocuments,
+    applyingDocumentSuggestions,
+    deletingOpportunityDocumentId,
     error,
     success,
     canCreateOrRequestOpportunities,
@@ -1610,7 +2409,9 @@ export function useOpportunitiesPage({
     canOpenCommercialStatusReason,
     pendingCommercialCloseStatusName,
     commercialContext,
+    commercialAnswerSuggestionsByStageId,
     contactOptions,
+    answerDocumentSelections,
     formatDateTime,
     formatCloseDate,
     formatOpportunityAmountInput,
@@ -1626,11 +2427,14 @@ export function useOpportunitiesPage({
     openCreateOpportunityModal,
     openEditOpportunityModal,
     closeOpportunityModal,
+    closeStageValidationResult,
     toggleOpportunitySort,
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
     closeCommercialStatusReasonModal,
     updateCommercialAnswer,
+    analyzeCommercialStageAnswers,
+    applyCommercialAnswerSuggestion,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     handleStageBypass,
@@ -1641,6 +2445,15 @@ export function useOpportunitiesPage({
     closeCommercialCloseModal,
     confirmCommercialCloseDraft,
     saveOpportunity,
+    uploadOpportunityDocuments,
+    applyOpportunityDocumentSuggestions,
+    deleteDraftOpportunityDocument,
+    downloadOpportunityDocument,
+    linkingAnswerSourceId,
+    setDocumentReviewFieldOverride,
+    setDocumentReviewMatchSelection,
+    setAnswerDocumentSelection,
+    linkOpportunityDocumentToAnswer,
     toggleOpportunityMenu,
     runOpportunityAction,
     updateOpportunityStatus,

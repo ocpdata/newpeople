@@ -17,8 +17,12 @@ const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
 const UsersPage = lazy(() => import("./UsersPage"));
 const RolesPage = lazy(() => import("./RolesPage"));
 const AccountsPage = lazy(() => import("./AccountsPage"));
+const InteractionsPage = lazy(() => import("./InteractionsPage"));
 const ProvidersPage = lazy(() => import("./ProvidersPage"));
 const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
+const PotentialOpportunitiesPage = lazy(
+  () => import("./PotentialOpportunitiesPage"),
+);
 const ContactsPage = lazy(() => import("./ContactsPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
@@ -43,6 +47,15 @@ function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
 
 function RouteFallback() {
   return <div className="centered">Cargando...</div>;
+}
+
+function SidebarNavGroup({ title, children }) {
+  return (
+    <div className="sidebar-nav-group">
+      <div className="sidebar-nav-group-title">{title}</div>
+      <div className="sidebar-nav-group-links">{children}</div>
+    </div>
+  );
 }
 
 function getUserInitials(fullName) {
@@ -91,6 +104,11 @@ export default function AppShell({
     "cotizaciones.administracion",
     "cotizaciones.externo",
   ].some(can);
+  const canAccessInteractions =
+    can("interacciones.read") || can("interacciones.read_all");
+  const canAccessPotentialOpportunities =
+    can("oportunidades_potenciales.read") ||
+    can("oportunidades_potenciales.read_all");
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
 
@@ -138,6 +156,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/interactions"
+          element={
+            can("interacciones.read") || can("interacciones.read_all") ? (
+              <InteractionsPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/providers"
           element={
             can("proveedores.read") ? (
@@ -162,6 +190,16 @@ export default function AppShell({
           element={
             can("oportunidades.read") ? (
               <OpportunitiesPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/potential-opportunities"
+          element={
+            canAccessPotentialOpportunities ? (
+              <PotentialOpportunitiesPage can={can} currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
             )
@@ -213,80 +251,129 @@ export default function AppShell({
       <aside className="sidebar">
         <h1>NewPeople CRM</h1>
         <nav>
-          <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
-            Dashboard
-          </GuardedNavLink>
-          {can("usuarios.read") && (
-            <GuardedNavLink to="/users" onBeforeNavigate={confirmRouteChange}>
-              Usuarios
+          <SidebarNavGroup title="General">
+            <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
+              Dashboard
             </GuardedNavLink>
+          </SidebarNavGroup>
+
+          {(can("cuentas.read") ||
+            can("contactos.read") ||
+            canAccessInteractions ||
+            canAccessPotentialOpportunities ||
+            can("oportunidades.read") ||
+            canAccessQuotations) && (
+            <SidebarNavGroup title="Comercial">
+              {can("cuentas.read") && (
+                <GuardedNavLink
+                  to="/accounts"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Cuentas
+                </GuardedNavLink>
+              )}
+              {can("contactos.read") && (
+                <GuardedNavLink
+                  to="/contacts"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Contactos
+                </GuardedNavLink>
+              )}
+              {canAccessInteractions && (
+                <GuardedNavLink
+                  to="/interactions"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Interacciones
+                </GuardedNavLink>
+              )}
+              {can("oportunidades.read") && (
+                <GuardedNavLink
+                  to="/opportunities"
+                  end
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Oportunidades
+                </GuardedNavLink>
+              )}
+              {canAccessPotentialOpportunities && (
+                <GuardedNavLink
+                  to="/potential-opportunities"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Oportunidades potenciales
+                </GuardedNavLink>
+              )}
+              {canAccessQuotations && (
+                <GuardedNavLink
+                  to="/quotations"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Cotizaciones
+                </GuardedNavLink>
+              )}
+            </SidebarNavGroup>
           )}
-          {can("roles.read") && (
-            <GuardedNavLink to="/roles" onBeforeNavigate={confirmRouteChange}>
-              Roles
-            </GuardedNavLink>
+
+          {(can("proveedores.read") || can("oportunidades.update")) && (
+            <SidebarNavGroup title="Operacion comercial">
+              {can("proveedores.read") && (
+                <GuardedNavLink
+                  to="/providers"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Proveedores
+                </GuardedNavLink>
+              )}
+              {can("oportunidades.update") && (
+                <GuardedNavLink
+                  to="/opportunities/questions"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Preguntas comerciales
+                </GuardedNavLink>
+              )}
+            </SidebarNavGroup>
           )}
-          {can("configuracion.read") && (
-            <GuardedNavLink
-              to="/settings"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Configuracion
-            </GuardedNavLink>
+
+          {(can("usuarios.read") ||
+            can("roles.read") ||
+            can("configuracion.read")) && (
+            <SidebarNavGroup title="Administracion">
+              {can("usuarios.read") && (
+                <GuardedNavLink
+                  to="/users"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Usuarios
+                </GuardedNavLink>
+              )}
+              {can("roles.read") && (
+                <GuardedNavLink
+                  to="/roles"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Roles
+                </GuardedNavLink>
+              )}
+              {can("configuracion.read") && (
+                <GuardedNavLink
+                  to="/settings"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Configuracion
+                </GuardedNavLink>
+              )}
+            </SidebarNavGroup>
           )}
-          {can("cuentas.read") && (
-            <GuardedNavLink
-              to="/accounts"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Cuentas
-            </GuardedNavLink>
-          )}
-          {can("proveedores.read") && (
-            <GuardedNavLink
-              to="/providers"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Proveedores
-            </GuardedNavLink>
-          )}
-          {can("oportunidades.read") && (
-            <GuardedNavLink
-              to="/opportunities"
-              end
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Oportunidades
-            </GuardedNavLink>
-          )}
-          {canAccessQuotations && (
-            <GuardedNavLink
-              to="/quotations"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Cotizaciones
-            </GuardedNavLink>
-          )}
-          {can("oportunidades.update") && (
-            <GuardedNavLink
-              to="/opportunities/questions"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Preguntas comerciales
-            </GuardedNavLink>
-          )}
-          {can("contactos.read") && (
-            <GuardedNavLink
-              to="/contacts"
-              onBeforeNavigate={confirmRouteChange}
-            >
-              Contactos
-            </GuardedNavLink>
-          )}
+
           {can("audit.read") && (
-            <GuardedNavLink to="/audit" onBeforeNavigate={confirmRouteChange}>
-              Auditoria
-            </GuardedNavLink>
+            <SidebarNavGroup title="Control">
+              <GuardedNavLink to="/audit" onBeforeNavigate={confirmRouteChange}>
+                Auditoria
+              </GuardedNavLink>
+            </SidebarNavGroup>
           )}
         </nav>
         <button

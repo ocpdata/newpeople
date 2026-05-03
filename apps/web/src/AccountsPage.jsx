@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { ConfirmationModal } from "./AppModals";
 import AccountContactsModal from "./accounts/AccountContactsModal";
 import AccountFormModal from "./accounts/AccountFormModal";
+import { useAccountInteractions } from "./accounts/useAccountInteractions";
 import AccountsListSection from "./accounts/AccountsListSection";
 import AccountOpportunitiesModal from "./accounts/AccountOpportunitiesModal";
 import { useAccountsCrud } from "./accounts/useAccountsCrud";
@@ -63,7 +64,7 @@ function AccountsPage({ can, currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
-    useSuggestedAccountDescription,
+    useSuggestedCompanyDescription,
     useSuggestedAccountField,
   } = useAccountsCrud({ currentUser });
 
@@ -87,6 +88,51 @@ function AccountsPage({ can, currentUser }) {
     getOpportunityStatusBadgeClass,
     getContactStatusBadgeClass,
   } = useAccountRelatedRecords();
+
+  const {
+    interactionTypes,
+    interactionResults,
+    accountContactOptions,
+    promotionCatalogs,
+    accountInteractions,
+    visibleAccountInteractions,
+    loadingAccountInteractions,
+    showInteractionModal,
+    editingInteractionId,
+    interactionForm,
+    setInteractionForm,
+    interactionDocuments,
+    savingInteraction,
+    uploadingInteractionDocuments,
+    deletingInteractionDocumentId,
+    interactionTypeFilter,
+    setInteractionTypeFilter,
+    interactionResultFilter,
+    setInteractionResultFilter,
+    interactionQuery,
+    setInteractionQuery,
+    showPromotionPanel,
+    setShowPromotionPanel,
+    promotionForm,
+    setPromotionForm,
+    promotingInteraction,
+    error: accountInteractionError,
+    success: accountInteractionSuccess,
+    openCreateInteractionModal,
+    openEditInteractionModal,
+    closeInteractionModal,
+    saveInteraction,
+    uploadInteractionDocuments,
+    deleteInteractionDocument,
+    downloadInteractionDocument,
+    promoteInteractionToOpportunity,
+    toggleInteractionContact,
+    togglePromotionDocument,
+    formatAmountInput: formatInteractionPromotionAmountInput,
+  } = useAccountInteractions({
+    editingAccountId,
+    isAccountModalOpen: showCreateAccountModal,
+  });
 
   return (
     <section className="panel">
@@ -151,12 +197,7 @@ function AccountsPage({ can, currentUser }) {
         onClose={closeAccountModal}
         onSubmit={saveAccount}
         onAnalyzeDraft={analyzeAccountDraft}
-        onUseAdministrativeDescription={() =>
-          useSuggestedAccountDescription("administrative")
-        }
-        onUseCommercialDescription={() =>
-          useSuggestedAccountDescription("commercial")
-        }
+        onUseSuggestedCompanyDescription={useSuggestedCompanyDescription}
         onApplySuggestedWebsite={() => useSuggestedAccountField("website")}
         onApplySuggestedEconomicSector={() =>
           useSuggestedAccountField("economicSector")
@@ -170,6 +211,50 @@ function AccountsPage({ can, currentUser }) {
         accountDraftAnalysis={accountDraftAnalysis}
         accountDraftAnalysisError={accountDraftAnalysisError}
         analyzingAccountDraft={analyzingAccountDraft}
+        accountInteractions={accountInteractions}
+        visibleAccountInteractions={visibleAccountInteractions}
+        interactionTypes={interactionTypes}
+        interactionResults={interactionResults}
+        interactionTypeFilter={interactionTypeFilter}
+        setInteractionTypeFilter={setInteractionTypeFilter}
+        interactionResultFilter={interactionResultFilter}
+        setInteractionResultFilter={setInteractionResultFilter}
+        interactionQuery={interactionQuery}
+        setInteractionQuery={setInteractionQuery}
+        loadingAccountInteractions={loadingAccountInteractions}
+        interactionModalOpen={showInteractionModal}
+        editingInteractionId={editingInteractionId}
+        interactionForm={interactionForm}
+        setInteractionForm={setInteractionForm}
+        interactionDocuments={interactionDocuments}
+        savingInteraction={savingInteraction}
+        uploadingInteractionDocuments={uploadingInteractionDocuments}
+        deletingInteractionDocumentId={deletingInteractionDocumentId}
+        showPromotionPanel={showPromotionPanel}
+        setShowPromotionPanel={setShowPromotionPanel}
+        promotionForm={promotionForm}
+        setPromotionForm={setPromotionForm}
+        promotionCatalogs={promotionCatalogs}
+        promotingInteraction={promotingInteraction}
+        accountInteractionError={accountInteractionError}
+        accountInteractionSuccess={accountInteractionSuccess}
+        accountContactOptions={accountContactOptions}
+        openCreateInteractionModal={openCreateInteractionModal}
+        openEditInteractionModal={openEditInteractionModal}
+        closeInteractionModal={closeInteractionModal}
+        saveInteraction={saveInteraction}
+        toggleInteractionContact={toggleInteractionContact}
+        uploadInteractionDocuments={uploadInteractionDocuments}
+        deleteInteractionDocument={deleteInteractionDocument}
+        downloadInteractionDocument={downloadInteractionDocument}
+        promoteInteractionToOpportunity={promoteInteractionToOpportunity}
+        togglePromotionDocument={togglePromotionDocument}
+        formatInteractionPromotionAmountInput={
+          formatInteractionPromotionAmountInput
+        }
+        onOpenLinkedOpportunity={(opportunityId) =>
+          navigate(`/opportunities?edit=${opportunityId}`)
+        }
         formatDateTime={formatDateTime}
       />
 

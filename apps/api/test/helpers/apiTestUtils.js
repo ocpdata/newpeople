@@ -343,6 +343,21 @@ export async function cleanupArtifacts({
   userIds = [],
   roleIds = [],
 }) {
+  if (userIds.length) {
+    await query(
+      `DELETE FROM documents WHERE uploaded_by_user_id IN (${placeholders(userIds.length)})`,
+      userIds,
+    );
+    await query(
+      `DELETE FROM opportunity_document_upload_sessions WHERE created_by_user_id IN (${placeholders(userIds.length)})`,
+      userIds,
+    );
+    await query(
+      `DELETE FROM interactions WHERE created_by IN (${placeholders(userIds.length)}) OR updated_by IN (${placeholders(userIds.length)})`,
+      [...userIds, ...userIds],
+    );
+  }
+
   if (quotationIds.length) {
     await query(
       `DELETE FROM quotations WHERE id IN (${placeholders(quotationIds.length)})`,

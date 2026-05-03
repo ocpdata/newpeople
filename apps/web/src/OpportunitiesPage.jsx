@@ -32,12 +32,25 @@ function OpportunitiesPage({ currentUser }) {
     showStageBypassModal,
     stageBypassReason,
     setStageBypassReason,
+    stageValidationResult,
     openOpportunityMenuId,
     savingOpportunity,
     savingCommercialAction,
+    documentUploadSession,
+    analyzingCommercialSuggestions,
+    opportunityDocuments,
+    documentReview,
+    documentReviewOverrides,
+    documentReviewApplied,
+    loadingDocumentSession,
+    loadingOpportunityDocuments,
+    uploadingOpportunityDocuments,
+    applyingDocumentSuggestions,
+    deletingOpportunityDocumentId,
     error,
     success,
     canCreateOrRequestOpportunities,
+    answerDocumentSelections,
     canChangeOpportunityActivationStatus,
     catalogs,
     form,
@@ -78,11 +91,14 @@ function OpportunitiesPage({ currentUser }) {
     openCreateOpportunityModal,
     openEditOpportunityModal,
     closeOpportunityModal,
+    closeStageValidationResult,
     toggleOpportunitySort,
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
     closeCommercialStatusReasonModal,
     updateCommercialAnswer,
+    analyzeCommercialStageAnswers,
+    applyCommercialAnswerSuggestion,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     handleStageBypass,
@@ -93,9 +109,21 @@ function OpportunitiesPage({ currentUser }) {
     closeCommercialCloseModal,
     confirmCommercialCloseDraft,
     saveOpportunity,
+    uploadOpportunityDocuments,
+    applyOpportunityDocumentSuggestions,
+    deleteDraftOpportunityDocument,
+    downloadOpportunityDocument,
+    setDocumentReviewFieldOverride,
+    setDocumentReviewMatchSelection,
     toggleOpportunityMenu,
     runOpportunityAction,
     updateOpportunityStatus,
+    linkingStageDocumentId,
+    linkingAnswerSourceId,
+    setAnswerDocumentSelection,
+    linkOpportunityDocumentToSelectedStage,
+    linkOpportunityDocumentToAnswer,
+    commercialAnswerSuggestionsByStageId,
   } = useOpportunitiesPage({ currentUser, searchParams, setSearchParams });
 
   return (
@@ -165,6 +193,11 @@ function OpportunitiesPage({ currentUser }) {
         displayedCommercialCloseReason={displayedCommercialCloseReason}
         pendingCommercialCloseStatusName={pendingCommercialCloseStatusName}
         openCommercialStatusReasonModal={openCommercialStatusReasonModal}
+        commercialAnswerSuggestionsByStageId={
+          commercialAnswerSuggestionsByStageId
+        }
+        stageValidationResult={stageValidationResult}
+        closeStageValidationResult={closeStageValidationResult}
         handleCommercialStageSelect={handleCommercialStageSelect}
         handleCurrentStageValidation={handleCurrentStageValidation}
         handleStageBypass={handleStageBypass}
@@ -178,7 +211,36 @@ function OpportunitiesPage({ currentUser }) {
         closeOpportunityModal={closeOpportunityModal}
         saveOpportunity={saveOpportunity}
         savingOpportunity={savingOpportunity}
+        documentUploadSession={documentUploadSession}
+        opportunityDocuments={opportunityDocuments}
+        documentReview={documentReview}
+        documentReviewOverrides={documentReviewOverrides}
+        documentReviewApplied={documentReviewApplied}
+        loadingDocumentSession={loadingDocumentSession}
+        loadingOpportunityDocuments={loadingOpportunityDocuments}
+        uploadingOpportunityDocuments={uploadingOpportunityDocuments}
+        applyingDocumentSuggestions={applyingDocumentSuggestions}
+        deletingOpportunityDocumentId={deletingOpportunityDocumentId}
+        uploadOpportunityDocuments={uploadOpportunityDocuments}
+        applyOpportunityDocumentSuggestions={
+          applyOpportunityDocumentSuggestions
+        }
+        deleteDraftOpportunityDocument={deleteDraftOpportunityDocument}
+        downloadOpportunityDocument={downloadOpportunityDocument}
         formatDateTime={formatDateTime}
+        setDocumentReviewFieldOverride={setDocumentReviewFieldOverride}
+        setDocumentReviewMatchSelection={setDocumentReviewMatchSelection}
+        answerDocumentSelections={answerDocumentSelections}
+        linkingStageDocumentId={linkingStageDocumentId}
+        linkingAnswerSourceId={linkingAnswerSourceId}
+        setAnswerDocumentSelection={setAnswerDocumentSelection}
+        linkOpportunityDocumentToSelectedStage={
+          linkOpportunityDocumentToSelectedStage
+        }
+        linkOpportunityDocumentToAnswer={linkOpportunityDocumentToAnswer}
+        analyzingCommercialSuggestions={analyzingCommercialSuggestions}
+        analyzeCommercialStageAnswers={analyzeCommercialStageAnswers}
+        applyCommercialAnswerSuggestion={applyCommercialAnswerSuggestion}
       />
 
       <StageBypassConfirmationModal

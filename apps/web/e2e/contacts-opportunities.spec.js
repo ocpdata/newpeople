@@ -9,6 +9,9 @@ function bootstrapAuthenticatedSession(page, token = "jwt-token") {
 function createCommercialFlowFixture({
   opportunityName = "Expansion 2026",
   finalCloseStatus = null,
+  opportunityDocuments = [],
+  documentAnswerSuggestionsEnabled = true,
+  proposeAnswerResponse = null,
 } = {}) {
   const stages = [
     {
@@ -43,7 +46,8 @@ function createCommercialFlowFixture({
         id: 9001,
         sales_stage_id: 1,
         code: "contacto_inicial_interes_cliente",
-        prompt: "¿En qué está interesado el cliente?",
+        prompt:
+          "¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad?",
         response_type: "long_text",
         display_order: 1,
         is_required: 1,
@@ -142,6 +146,11 @@ function createCommercialFlowFixture({
         isBypassed: false,
         reason: null,
       },
+      features: {
+        documentAnswerSuggestionsEnabled,
+        rolloutKey: "opportunity_stage_answer_suggestions",
+        configuredByEnv: documentAnswerSuggestionsEnabled,
+      },
       isSelectedStageCurrent: currentStage.code === selectedStage.code,
       stages: stages.map((stage) => ({
         id: stage.id,
@@ -215,6 +224,8 @@ function createCommercialFlowFixture({
     latestAnswersByStage,
     bypassInfoByStage,
     closeReason,
+    opportunityDocuments,
+    proposeAnswerResponse,
     buildCommercialContext,
     listOpportunities,
     updateStageByDirection,
@@ -336,6 +347,36 @@ async function mockCommercialFlowApi(
         (stage) => Number(stage.id) === Number(salesStageId),
       );
       return json(fixture.buildCommercialContext(selectedStage?.code));
+    }
+
+    if (pathname === "/api/opportunities/501/documents" && method === "GET") {
+      return json(fixture.opportunityDocuments);
+    }
+
+    if (
+      pathname.startsWith("/api/opportunities/501/stage-view/") &&
+      pathname.endsWith("/propose-answers") &&
+      method === "POST"
+    ) {
+      return json(
+        fixture.proposeAnswerResponse || {
+          salesStageId: fixture.getCurrentStage().id,
+          salesStageName: fixture.getCurrentStage().name,
+          suggestions: [],
+          summary: {
+            proposedCount: 0,
+            fillCount: 0,
+            replaceCount: 0,
+            ambiguousCount: 0,
+            insufficientCount: 1,
+          },
+          meta: {
+            questionCount: fixture.getCurrentQuestions().length,
+            documentCount: fixture.opportunityDocuments.length,
+            stageGuideAvailable: true,
+          },
+        },
+      );
     }
 
     if (
@@ -958,7 +999,9 @@ test.describe("contacts opportunities", () => {
 
     await page.getByRole("button", { name: /Contacto inicial/i }).click();
     await expect(
-      page.getByLabel("¿En qué está interesado el cliente? *"),
+      page.getByLabel(
+        "¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad? *",
+      ),
     ).toBeEnabled();
 
     await page.getByRole("button", { name: "Avanzar etapa" }).click();
@@ -969,7 +1012,9 @@ test.describe("contacts opportunities", () => {
     ).toBeVisible();
 
     await page
-      .getByLabel("¿En qué está interesado el cliente? *")
+      .getByLabel(
+        "¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad? *",
+      )
       .fill("Cliente interesado en renovación de servicios gestionados");
     await page.getByRole("button", { name: "Guardar cambios" }).click();
     await expect(page.getByText(/Oportunidad actualizada/i)).toBeVisible();
@@ -991,7 +1036,9 @@ test.describe("contacts opportunities", () => {
     ).toBeVisible();
 
     await page
-      .getByLabel("¿En qué está interesado el cliente? *")
+      .getByLabel(
+        "¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad? *",
+      )
       .fill("Cliente interesado en renovación de servicios gestionados");
     await page.getByRole("button", { name: "Avanzar etapa" }).click();
     await expect(
@@ -1103,6 +1150,68 @@ test.describe("contacts opportunities", () => {
     await expect(
       page.getByText("Etapa: Contacto inicial", { exact: false }),
     ).toBeVisible();
+  });
+
+  test("propone respuestas desde documentos y permite aplicarlas", async ({
+    page,
+  }) => {
+    const proposedAnswer =
+      "Busca automatizar el seguimiento comercial y ordenar la priorizacion de cuentas clave.";
+    const fixture = createCommercialFlowFixture({
+      opportunityName: "Expansion documental 2026",
+      opportunityDocuments: [
+        {
+          id: 301,
+          publicId: "doc_demo_301",
+          originalFileName: "brief-comercial.txt",
+          processingStatus: "review_ready",
+        },
+      ],
+      proposeAnswerResponse: {
+        salesStageId: 1,
+        salesStageName: "Contacto inicial",
+        suggestions: [
+          {
+            questionId: 9001,
+            status: "proposed",
+            proposalKind: "fill_empty",
+            proposedAnswer,
+            reason:
+              "El brief comercial describe el objetivo principal del cliente con suficiente claridad.",
+          },
+        ],
+        summary: {
+          proposedCount: 1,
+          fillCount: 1,
+          replaceCount: 0,
+          ambiguousCount: 0,
+          insufficientCount: 0,
+        },
+        meta: {
+          questionCount: 1,
+          documentCount: 1,
+          stageGuideAvailable: true,
+        },
+      },
+    });
+
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture);
+    await page.goto("http://127.0.0.1:4173/opportunities");
+
+    await openOpportunityEditor(page, "Expansion documental 2026");
+    await page
+      .getByRole("button", { name: /Proponer respuestas desde documentos/i })
+      .click();
+
+    await expect(page.getByText("Sugerencia documental")).toBeVisible();
+    await expect(page.getByText(proposedAnswer)).toBeVisible();
+
+    await page.getByRole("button", { name: "Aplicar sugerencia" }).click();
+
+    await expect(page.getByLabel(/interesado el cliente/i)).toHaveValue(
+      proposedAnswer,
+    );
   });
 
   test("permite cerrar la oportunidad como perdida con motivo visible", async ({

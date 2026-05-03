@@ -2,6 +2,7 @@ import express from "express";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { listProductTypes } from "./productTypes.js";
+import { ensureAccountInteractionsSchema } from "./account-interactions/schema.js";
 
 const router = express.Router();
 const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
@@ -277,6 +278,60 @@ async function ensureQuotationWarrantyCatalog() {
 
   await ensureQuotationWarrantyCatalogPromise;
 }
+
+router.get(
+  "/account-interaction-types",
+  requireAnyPermission([
+    "cuentas.read",
+    "cuentas.create",
+    "cuentas.request",
+    "cuentas.update",
+  ]),
+  async (_req, res) => {
+    await ensureAccountInteractionsSchema();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM account_interaction_types
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(
+      rows.map((row) => ({
+        id: Number(row.id),
+        code: String(row.code),
+        name: String(row.name),
+        displayOrder: Number(row.display_order || 0),
+      })),
+    );
+  },
+);
+
+router.get(
+  "/account-interaction-results",
+  requireAnyPermission([
+    "cuentas.read",
+    "cuentas.create",
+    "cuentas.request",
+    "cuentas.update",
+  ]),
+  async (_req, res) => {
+    await ensureAccountInteractionsSchema();
+    const rows = await query(
+      `SELECT id, code, name, display_order
+       FROM account_interaction_results
+       WHERE is_active = 1
+       ORDER BY display_order, id`,
+    );
+    res.json(
+      rows.map((row) => ({
+        id: Number(row.id),
+        code: String(row.code),
+        name: String(row.name),
+        displayOrder: Number(row.display_order || 0),
+      })),
+    );
+  },
+);
 
 async function ensureQuotationPaymentTermsCatalog() {
   if (!ensureQuotationPaymentTermsCatalogPromise) {

@@ -24,7 +24,10 @@ function buildFieldSchema(field) {
       type: "object",
       additionalProperties: false,
       properties: Object.fromEntries(
-        field.fields.map((childField) => [childField.key, buildFieldSchema(childField)]),
+        field.fields.map((childField) => [
+          childField.key,
+          buildFieldSchema(childField),
+        ]),
       ),
       required: field.fields
         .filter((childField) => childField.required !== false)
@@ -50,7 +53,10 @@ function buildExpectedValue(field) {
 
   if (field.type === "object") {
     return Object.fromEntries(
-      field.fields.map((childField) => [childField.key, buildExpectedValue(childField)]),
+      field.fields.map((childField) => [
+        childField.key,
+        buildExpectedValue(childField),
+      ]),
     );
   }
 
@@ -74,6 +80,20 @@ function extractJsonObject(value) {
       return null;
     }
   }
+}
+
+function extractResponseOutputText(data) {
+  const directOutputText = String(data?.output_text || "").trim();
+  if (directOutputText) return directOutputText;
+
+  const outputEntries = Array.isArray(data?.output) ? data.output : [];
+  const contentText = outputEntries
+    .flatMap((entry) => (Array.isArray(entry?.content) ? entry.content : []))
+    .filter((part) => part?.type === "output_text")
+    .map((part) => String(part?.text || "").trim())
+    .find(Boolean);
+
+  return contentText || "";
 }
 
 export async function runStructuredWebResearch({
@@ -124,11 +144,13 @@ export async function runStructuredWebResearch({
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI web search failed: ${response.status} ${errorText}`);
+    throw new Error(
+      `OpenAI web search failed: ${response.status} ${errorText}`,
+    );
   }
 
   const data = await response.json();
-  return extractJsonObject(data?.output_text || "");
+  return extractJsonObject(extractResponseOutputText(data));
 }
 
 export async function runProfiledStructuredWebResearch(profile, args) {

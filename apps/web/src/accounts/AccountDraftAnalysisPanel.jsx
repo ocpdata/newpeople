@@ -13,26 +13,159 @@ function renderAssessmentLabel(status) {
   return "Incompleta";
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isSuggestedContactDataApplied(form, suggestedContactData) {
+  if (!form || !suggestedContactData?.canAutoApply) return false;
+
+  const comparableFields = [
+    ["addressLine", suggestedContactData.addressLine],
+    ["city", suggestedContactData.city],
+    ["stateRegion", suggestedContactData.stateRegion],
+    ["postalCode", suggestedContactData.postalCode],
+    ["phone", suggestedContactData.phone],
+  ].filter(([, value]) => normalizeText(value));
+
+  if (!comparableFields.length) return false;
+
+  return comparableFields.every(
+    ([fieldName, value]) =>
+      normalizeText(form[fieldName]) === normalizeText(value),
+  );
+}
+
+function renderSuggestedFieldCard({
+  title,
+  value,
+  applied,
+  onApply,
+  disabled,
+  emptyLabel,
+  applyLabel,
+  appliedLabel,
+}) {
+  return (
+    <article className="account-ai-description-card account-ai-description-card-compact">
+      <div className="account-ai-card-header">
+        <strong>{title}</strong>
+        <div className="account-ai-card-header-actions">
+          {applied ? (
+            <span className="account-ai-mini-badge info">Aplicado</span>
+          ) : null}
+          <button
+            type="button"
+            className="account-ai-suggestion-icon-button"
+            onClick={onApply}
+            disabled={disabled}
+            aria-label={applied ? appliedLabel : applyLabel}
+            title={applied ? appliedLabel : applyLabel}
+          >
+            {applied ? "✓" : "↗"}
+          </button>
+        </div>
+      </div>
+      <p className="account-ai-suggestion-value" title={value || emptyLabel}>
+        {value || emptyLabel}
+      </p>
+    </article>
+  );
+}
+
 function AccountDraftAnalysisPanel({
   analysis,
   error,
   loading,
   onAnalyze,
-  onApplyAdministrativeDescription,
-  onApplyCommercialDescription,
+  onApplySuggestedCompanyDescription,
   onApplySuggestedWebsite,
   onApplySuggestedEconomicSector,
   onApplySuggestedContactData,
   onApplySuggestedRegistration,
   isDisabled,
+  form,
 }) {
+  const isSuggestedWebsiteApplied =
+    analysis?.suggestedWebsite?.canAutoApply &&
+    normalizeText(form?.website) ===
+      normalizeText(analysis?.suggestedWebsite?.value);
+  const isSuggestedCompanyDescriptionApplied =
+    normalizeText(form?.companyDescription) ===
+    normalizeText(analysis?.suggestedCompanyDescription?.text);
+  const isSuggestedRegistrationApplied =
+    analysis?.registrationAssistance?.canAutoApply &&
+    normalizeText(form?.registrationCode) ===
+      normalizeText(analysis?.registrationAssistance?.value);
+  const isSuggestedEconomicSectorApplied =
+    analysis?.suggestedEconomicSector?.canAutoApply &&
+    String(form?.economicSectorId || "") ===
+      String(analysis?.suggestedEconomicSector?.sectorId || "");
+  const isSuggestedContactApplied = isSuggestedContactDataApplied(
+    form,
+    analysis?.suggestedContactData,
+  );
+  const suggestedContactFields = [
+    {
+      key: "addressLine",
+      title: "Direccion",
+      value: normalizeText(analysis?.suggestedContactData?.addressLine),
+      applied:
+        normalizeText(analysis?.suggestedContactData?.addressLine) &&
+        normalizeText(form?.addressLine) ===
+          normalizeText(analysis?.suggestedContactData?.addressLine),
+      emptyLabel: "No hay direccion sugerida todavia.",
+    },
+    {
+      key: "city",
+      title: "Ciudad",
+      value: normalizeText(analysis?.suggestedContactData?.city),
+      applied:
+        normalizeText(analysis?.suggestedContactData?.city) &&
+        normalizeText(form?.city) ===
+          normalizeText(analysis?.suggestedContactData?.city),
+      emptyLabel: "No hay ciudad sugerida todavia.",
+    },
+    {
+      key: "stateRegion",
+      title: "Estado",
+      value: normalizeText(analysis?.suggestedContactData?.stateRegion),
+      applied:
+        normalizeText(analysis?.suggestedContactData?.stateRegion) &&
+        normalizeText(form?.stateRegion) ===
+          normalizeText(analysis?.suggestedContactData?.stateRegion),
+      emptyLabel: "No hay estado sugerido todavia.",
+    },
+    {
+      key: "postalCode",
+      title: "Codigo postal",
+      value: normalizeText(analysis?.suggestedContactData?.postalCode),
+      applied:
+        normalizeText(analysis?.suggestedContactData?.postalCode) &&
+        normalizeText(form?.postalCode) ===
+          normalizeText(analysis?.suggestedContactData?.postalCode),
+      emptyLabel: "No hay codigo postal sugerido todavia.",
+    },
+    {
+      key: "phone",
+      title: "Telefono",
+      value: normalizeText(analysis?.suggestedContactData?.phone),
+      applied:
+        normalizeText(analysis?.suggestedContactData?.phone) &&
+        normalizeText(form?.phone) ===
+          normalizeText(analysis?.suggestedContactData?.phone),
+      emptyLabel: "No hay telefono sugerido todavia.",
+    },
+  ];
+
   return (
     <section className="account-form-section account-modal-section account-ai-section">
       <div className="account-ai-toolbar">
         <div>
           <h4>Asistente IA</h4>
           <p className="field-hint account-ai-toolbar-hint">
-            Revisa duplicados, calidad del borrador y sugiere una descripcion centrada en que hace la empresa y a que se dedica.
+            Revisa duplicados, calidad del borrador y sugiere una descripcion
+            centrada en que hace la empresa y a que se dedica.
           </p>
         </div>
         <button
@@ -41,7 +174,11 @@ function AccountDraftAnalysisPanel({
           onClick={onAnalyze}
           disabled={isDisabled || loading}
         >
-          {loading ? "Analizando..." : analysis ? "Reanalizar con IA" : "Analizar con IA"}
+          {loading
+            ? "Analizando..."
+            : analysis
+              ? "Reanalizar con IA"
+              : "Analizar con IA"}
         </button>
       </div>
 
@@ -56,7 +193,9 @@ function AccountDraftAnalysisPanel({
       {analysis && (
         <div className="account-ai-results">
           <div className="account-ai-banner">
-            <span className={`account-ai-badge ${analysis.overallAssessment.status}`}>
+            <span
+              className={`account-ai-badge ${analysis.overallAssessment.status}`}
+            >
               {renderAssessmentLabel(analysis.overallAssessment.status)}
             </span>
             <span>{analysis.overallAssessment.summary}</span>
@@ -78,10 +217,15 @@ function AccountDraftAnalysisPanel({
               <h5>Duplicados potenciales</h5>
               <div className="account-ai-card-list">
                 {analysis.duplicateWarnings.map((warning) => (
-                  <article key={`${warning.accountId}-${warning.matchReason}`} className="account-ai-card">
+                  <article
+                    key={`${warning.accountId}-${warning.matchReason}`}
+                    className="account-ai-card"
+                  >
                     <div className="account-ai-card-header">
                       <strong>{warning.accountName}</strong>
-                      <span className={`account-ai-mini-badge ${warning.severity}`}>
+                      <span
+                        className={`account-ai-mini-badge ${warning.severity}`}
+                      >
                         {renderFindingSeverityLabel(warning.severity)}
                       </span>
                     </div>
@@ -108,218 +252,79 @@ function AccountDraftAnalysisPanel({
             </div>
           )}
 
-          {analysis.dataQualityFindings?.length > 0 && (
-            <div className="account-ai-subsection">
-              <h5>Hallazgos de calidad</h5>
-              <div className="account-ai-card-list">
-                {analysis.dataQualityFindings.map((finding) => (
-                  <article key={finding.code} className="account-ai-card compact">
-                    <div className="account-ai-card-header">
-                      <strong>{finding.code}</strong>
-                      <span className={`account-ai-mini-badge ${finding.severity}`}>
-                        {renderFindingSeverityLabel(finding.severity)}
-                      </span>
-                    </div>
-                    <p>{finding.message}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="account-ai-subsection">
-            <h5>Descripciones sugeridas sobre la empresa</h5>
-            <div className="account-ai-description-grid">
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Que hace la empresa</strong>
-                  <span className="account-ai-mini-badge info">
-                    {analysis.suggestedAdministrativeDescription?.sourceType === "crm_internal"
-                      ? "Interna"
-                      : "Externa"}
-                  </span>
-                </div>
-                <p>{analysis.suggestedAdministrativeDescription?.text || "Sin sugerencia"}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplyAdministrativeDescription}
-                  disabled={!analysis.suggestedAdministrativeDescription?.text}
-                >
-                  Usar esta descripcion
-                </button>
-              </article>
-
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Descripcion para contexto comercial</strong>
-                  <span className="account-ai-mini-badge info">
-                    {analysis.suggestedCommercialDescription?.sourceType === "crm_internal"
-                      ? "Interna"
-                      : "Externa"}
-                  </span>
-                </div>
-                <p>{analysis.suggestedCommercialDescription?.text || "Sin sugerencia"}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplyCommercialDescription}
-                  disabled={!analysis.suggestedCommercialDescription?.text}
-                >
-                  Usar esta descripcion
-                </button>
-              </article>
-            </div>
-          </div>
-
           <div className="account-ai-subsection">
             <h5>Campos sugeridos</h5>
             <div className="account-ai-description-grid">
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Sitio web</strong>
-                  <span className="account-ai-mini-badge info">
-                    Confianza {analysis.suggestedWebsite?.confidence || "baja"}
-                  </span>
-                </div>
-                <p>{analysis.suggestedWebsite?.value || "No hay sugerencia confiable todavia."}</p>
-                <p className="account-ai-note">{analysis.suggestedWebsite?.reason}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplySuggestedWebsite}
-                  disabled={!analysis.suggestedWebsite?.canAutoApply}
-                >
-                  Usar sitio web sugerido
-                </button>
-              </article>
+              {renderSuggestedFieldCard({
+                title: "Descripcion de la empresa",
+                value: analysis.suggestedCompanyDescription?.text,
+                applied: isSuggestedCompanyDescriptionApplied,
+                onApply: onApplySuggestedCompanyDescription,
+                disabled:
+                  !analysis.suggestedCompanyDescription?.text ||
+                  isSuggestedCompanyDescriptionApplied,
+                emptyLabel: "Sin sugerencia.",
+                applyLabel: "Usar descripcion sugerida",
+                appliedLabel: "Descripcion aplicada",
+              })}
 
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Registro</strong>
-                  <span className="account-ai-mini-badge info">
-                    Confianza {analysis.registrationAssistance?.confidence || "baja"}
-                  </span>
-                </div>
-                <p>
-                  {analysis.registrationAssistance?.value ||
-                    "No hay registro sugerido; se requiere validacion manual."}
-                </p>
-                <p className="account-ai-note">{analysis.registrationAssistance?.reason}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplySuggestedRegistration}
-                  disabled={!analysis.registrationAssistance?.canAutoApply}
-                >
-                  Usar registro sugerido
-                </button>
-              </article>
+              {renderSuggestedFieldCard({
+                title: "Pagina web",
+                value: analysis.suggestedWebsite?.value,
+                applied: isSuggestedWebsiteApplied,
+                onApply: onApplySuggestedWebsite,
+                disabled:
+                  !analysis.suggestedWebsite?.canAutoApply ||
+                  isSuggestedWebsiteApplied,
+                emptyLabel: "No hay sugerencia confiable todavia.",
+                applyLabel: "Usar sitio web sugerido",
+                appliedLabel: "Sitio web aplicado",
+              })}
 
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Sector economico</strong>
-                  <span className="account-ai-mini-badge info">
-                    Confianza {analysis.suggestedEconomicSector?.confidence || "baja"}
-                  </span>
-                </div>
-                <p>
-                  {analysis.suggestedEconomicSector?.sectorName ||
-                    "No hay sector sugerido confiable todavia."}
-                </p>
-                <p className="account-ai-note">{analysis.suggestedEconomicSector?.reason}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplySuggestedEconomicSector}
-                  disabled={!analysis.suggestedEconomicSector?.canAutoApply}
-                >
-                  Usar sector sugerido
-                </button>
-              </article>
+              {renderSuggestedFieldCard({
+                title: "Registro",
+                value: analysis.registrationAssistance?.value,
+                applied: isSuggestedRegistrationApplied,
+                onApply: onApplySuggestedRegistration,
+                disabled:
+                  !analysis.registrationAssistance?.canAutoApply ||
+                  isSuggestedRegistrationApplied,
+                emptyLabel:
+                  "No hay registro sugerido; se requiere validacion manual.",
+                applyLabel: "Usar registro sugerido",
+                appliedLabel: "Registro aplicado",
+              })}
 
-              <article className="account-ai-description-card">
-                <div className="account-ai-card-header">
-                  <strong>Direccion y contacto</strong>
-                  <span className="account-ai-mini-badge info">
-                    Confianza {analysis.suggestedContactData?.confidence || "baja"}
-                  </span>
-                </div>
-                <p>
-                  {analysis.suggestedContactData?.addressLine ||
-                  analysis.suggestedContactData?.city ||
-                  analysis.suggestedContactData?.stateRegion ||
-                  analysis.suggestedContactData?.postalCode
-                    ? [
-                        analysis.suggestedContactData?.addressLine,
-                        analysis.suggestedContactData?.city,
-                        analysis.suggestedContactData?.stateRegion,
-                        analysis.suggestedContactData?.postalCode,
-                      ]
-                        .filter(Boolean)
-                        .join(", ")
-                    : "No hay direccion sugerida todavia."}
-                </p>
-                <p>
-                  {analysis.suggestedContactData?.phone
-                    ? `Telefono: ${analysis.suggestedContactData.phone}`
-                    : "No hay telefono sugerido todavia."}
-                </p>
-                <p className="account-ai-note">{analysis.suggestedContactData?.reason}</p>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onApplySuggestedContactData}
-                  disabled={!analysis.suggestedContactData?.canAutoApply}
-                >
-                  Usar direccion y contacto sugeridos
-                </button>
-              </article>
+              {renderSuggestedFieldCard({
+                title: "Sector economico",
+                value: analysis.suggestedEconomicSector?.sectorName,
+                applied: isSuggestedEconomicSectorApplied,
+                onApply: onApplySuggestedEconomicSector,
+                disabled:
+                  !analysis.suggestedEconomicSector?.canAutoApply ||
+                  isSuggestedEconomicSectorApplied,
+                emptyLabel: "No hay sector sugerido confiable todavia.",
+                applyLabel: "Usar sector sugerido",
+                appliedLabel: "Sector aplicado",
+              })}
+
+              {suggestedContactFields.map((field) =>
+                renderSuggestedFieldCard({
+                  title: field.title,
+                  value: field.value,
+                  applied: field.applied,
+                  onApply: onApplySuggestedContactData,
+                  disabled:
+                    !analysis.suggestedContactData?.canAutoApply ||
+                    isSuggestedContactApplied ||
+                    !field.value,
+                  emptyLabel: field.emptyLabel,
+                  applyLabel: "Usar valor sugerido",
+                  appliedLabel: "Aplicado",
+                }),
+              )}
             </div>
           </div>
-
-          {analysis.suggestedImprovements?.length > 0 && (
-            <div className="account-ai-subsection">
-              <h5>Mejoras sugeridas</h5>
-              <ul className="account-ai-list">
-                {analysis.suggestedImprovements.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {analysis.nextRecommendedStep && (
-            <div className="account-ai-subsection">
-              <h5>Siguiente paso recomendado</h5>
-              <article className="account-ai-card compact">
-                <div className="account-ai-card-header">
-                  <strong>{analysis.nextRecommendedStep.action}</strong>
-                  <span className="account-ai-mini-badge info">
-                    Confianza {analysis.confidence || "media"}
-                  </span>
-                </div>
-                <p>{analysis.nextRecommendedStep.reason}</p>
-              </article>
-            </div>
-          )}
-
-          {analysis.evidence?.length > 0 && (
-            <div className="account-ai-subsection">
-              <h5>Evidencia usada</h5>
-              <div className="account-ai-card-list">
-                {analysis.evidence.map((item) => (
-                  <article key={`${item.sourceType}-${item.label}`} className="account-ai-card compact">
-                    <div className="account-ai-card-header">
-                      <strong>{item.label}</strong>
-                      <span className="account-ai-mini-badge info">{item.sourceType}</span>
-                    </div>
-                    <p>{item.value}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </section>

@@ -10,6 +10,8 @@ import contactRoutes from "./routes.contacts.js";
 import providerRoutes from "./routes.providers.js";
 import opportunityRoutes from "./routes.opportunities.js";
 import quotationRoutes from "./routes.quotations.js";
+import interactionRoutes from "./routes.interactions.js";
+import potentialOpportunityRoutes from "./routes.potential-opportunities.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import settingsRoutes from "./routes.settings.js";
@@ -32,14 +34,28 @@ export function createApp() {
   app.use("/api/contacts", authRequired, loadUser, contactRoutes);
   app.use("/api/providers", authRequired, loadUser, providerRoutes);
   app.use("/api/opportunities", authRequired, loadUser, opportunityRoutes);
+  app.use("/api/interactions", authRequired, loadUser, interactionRoutes);
+  app.use(
+    "/api/potential-opportunities",
+    authRequired,
+    loadUser,
+    potentialOpportunityRoutes,
+  );
   app.use("/api", authRequired, loadUser, quotationRoutes);
   app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
 
   app.use((err, _req, res, _next) => {
-    console.error(err);
-    res.status(500).json({ message: "Error interno del servidor" });
+    const status = Number(err?.status) || 500;
+    if (status >= 500) {
+      console.error(err);
+      return res.status(500).json({ message: "Error interno del servidor" });
+    }
+
+    return res.status(status).json({
+      message: err?.message || "No fue posible completar la solicitud",
+    });
   });
 
   return app;

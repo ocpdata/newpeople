@@ -72,7 +72,7 @@ export function useAccountsCrud({ currentUser }) {
       website: "",
       city: "",
       stateRegion: "",
-      description: "",
+      companyDescription: "",
       addressLine: "",
       postalCode: "",
       accountTypeId: defaultAccountTypeId,
@@ -404,7 +404,7 @@ export function useAccountsCrud({ currentUser }) {
         website: data.website || "",
         city: data.city || "",
         stateRegion: data.state_region || "",
-        description: data.description || "",
+        companyDescription: data.companyDescription || data.description || "",
         addressLine: data.address_line || "",
         postalCode: data.postal_code || "",
         accountTypeId: String(data.account_type_id || ""),
@@ -659,47 +659,53 @@ export function useAccountsCrud({ currentUser }) {
           city: form.city,
           stateRegion: form.stateRegion,
           countryId: form.countryId ? Number(form.countryId) : null,
-          description: form.description,
+          companyDescription: form.companyDescription,
           addressLine: form.addressLine,
           postalCode: form.postalCode,
           ownerUserIds: form.ownerUserIds.map(Number),
         },
         options: {
-          allowExternalEnrichment: true,
+          allowExternalFetch: true,
+          allowAiSynthesis: true,
+          allowWebSearchTool: true,
         },
       };
 
-      const { data } = await api.post("/api/accounts/draft-analysis", payload);
+      const { data } = await api.post("/api/accounts/draft-analysis", payload, {
+        timeout: 45000,
+      });
       setAccountDraftAnalysis(data);
       setSuccess("Analisis de cuenta generado");
     } catch (err) {
       setAccountDraftAnalysis(null);
       setAccountDraftAnalysisError(
-        getApiErrorMessage(err, "No fue posible analizar el borrador de cuenta"),
+        getApiErrorMessage(
+          err,
+          "No fue posible analizar el borrador de cuenta",
+        ),
       );
     } finally {
       setAnalyzingAccountDraft(false);
     }
   }
 
-  function useSuggestedAccountDescription(kind) {
+  function useSuggestedCompanyDescription() {
     const nextDescription =
-      kind === "commercial"
-        ? accountDraftAnalysis?.suggestedCommercialDescription?.text
-        : accountDraftAnalysis?.suggestedAdministrativeDescription?.text;
+      accountDraftAnalysis?.suggestedCompanyDescription?.text;
 
     if (!nextDescription) return;
 
     setForm((prev) => ({
       ...prev,
-      description: nextDescription,
+      companyDescription: nextDescription,
     }));
     setSuccess("Descripcion sugerida aplicada al formulario");
   }
 
   function useSuggestedAccountField(field) {
     if (field === "economicSector") {
-      const nextSectorId = accountDraftAnalysis?.suggestedEconomicSector?.sectorId;
+      const nextSectorId =
+        accountDraftAnalysis?.suggestedEconomicSector?.sectorId;
       if (!nextSectorId) return;
 
       setForm((prev) => ({
@@ -800,7 +806,7 @@ export function useAccountsCrud({ currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
-    useSuggestedAccountDescription,
+    useSuggestedCompanyDescription,
     useSuggestedAccountField,
   };
 }

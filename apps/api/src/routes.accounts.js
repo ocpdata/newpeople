@@ -6,9 +6,12 @@ import { logAuditEvent } from "./audit.js";
 import {
   accountDraftAnalysisRequestSchema,
   analyzeAccountDraft,
-} from "./accountDraftAnalysis.js";
+} from "./accounts/draft-analysis/index.js";
+import accountInteractionsRoutes from "./routes.account-interactions.js";
 
 const router = express.Router();
+
+router.use("/:accountId/interactions", accountInteractionsRoutes);
 
 const accountSchema = z.object({
   name: z.string().min(2).max(180),
@@ -24,12 +27,22 @@ const accountSchema = z.object({
   city: z.string().max(120).optional(),
   stateRegion: z.string().max(120).optional(),
   countryId: z.number().int().positive(),
+  companyDescription: z.string().max(10000).optional(),
   description: z.string().max(10000).optional(),
   addressLine: z.string().max(255).optional(),
   postalCode: z.string().max(20).optional(),
   activationStatusId: z.number().int().positive(),
   ownerUserIds: z.array(z.number().int().positive()).min(1),
 });
+
+function normalizeAccountPayload(body) {
+  return {
+    ...body,
+    companyDescription: String(
+      body.companyDescription || body.description || "",
+    ).trim(),
+  };
+}
 
 const accountStatusSchema = z.object({
   statusCode: z.enum(["activada", "desactivada", "pendiente_activacion"]),
@@ -269,7 +282,11 @@ router.get("/:id", requirePermission("cuentas.read"), async (req, res) => {
     [id],
   );
 
-  res.json({ ...rows[0], owners });
+  res.json({
+    ...rows[0],
+    companyDescription: String(rows[0].description || ""),
+    owners,
+  });
 });
 
 router.post(
@@ -284,7 +301,7 @@ router.post(
     }
 
     const now = new Date();
-    const body = parsed.data;
+    const body = normalizeAccountPayload(parsed.data);
     const creationStatusCode = resolveAccountCreationStatusCode(req.user);
     const activationStatusId = creationStatusCode
       ? await getAccountActivationStatusId(creationStatusCode)
@@ -314,7 +331,7 @@ router.post(
             body.city || null,
             body.stateRegion || null,
             body.countryId,
-            body.description || null,
+            body.companyDescription || null,
             body.addressLine || null,
             body.postalCode || null,
             activationStatusId,
@@ -352,7 +369,7 @@ router.post(
           city: body.city || null,
           state_region: body.stateRegion || null,
           country_id: body.countryId,
-          description: body.description || null,
+          description: body.companyDescription || null,
           address_line: body.addressLine || null,
           postal_code: body.postalCode || null,
           activation_status_id: activationStatusId,
@@ -395,7 +412,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   }
 
   const now = new Date();
-  const body = parsed.data;
+  const body = normalizeAccountPayload(parsed.data);
 
   const accountAccess = await requireAccessibleAccountOr404({
     user: req.user,
@@ -474,7 +491,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
         body.city || null,
         body.stateRegion || null,
         body.countryId,
-        body.description || null,
+        body.companyDescription || null,
         body.addressLine || null,
         body.postalCode || null,
         body.activationStatusId,

@@ -1007,6 +1007,350 @@ CREATE TABLE IF NOT EXISTS opportunities (
   CONSTRAINT fk_opportunities_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS account_interaction_types (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(50) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_account_interaction_types_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS account_interaction_results (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(50) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_account_interaction_results_code UNIQUE (code)
+);
+
+CREATE TABLE IF NOT EXISTS account_interactions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  interaction_type_id BIGINT UNSIGNED NOT NULL,
+  result_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  summary LONGTEXT NOT NULL,
+  next_step LONGTEXT NULL,
+  occurred_at DATETIME(3) NOT NULL,
+  follow_up_at DATETIME(3) NULL,
+  linked_opportunity_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_account_interactions_public_id UNIQUE (public_id),
+  CONSTRAINT fk_account_interactions_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_account_interactions_type FOREIGN KEY (interaction_type_id) REFERENCES account_interaction_types(id),
+  CONSTRAINT fk_account_interactions_result FOREIGN KEY (result_id) REFERENCES account_interaction_results(id),
+  CONSTRAINT fk_account_interactions_opportunity FOREIGN KEY (linked_opportunity_id) REFERENCES opportunities(id) ON DELETE SET NULL,
+  CONSTRAINT fk_account_interactions_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_account_interactions_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  INDEX idx_account_interactions_account_date (account_id, occurred_at),
+  INDEX idx_account_interactions_result (account_id, result_id, occurred_at),
+  INDEX idx_account_interactions_linked_opportunity (linked_opportunity_id)
+);
+
+CREATE TABLE IF NOT EXISTS account_interaction_contacts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  interaction_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_account_interaction_contacts UNIQUE (interaction_id, contact_id),
+  CONSTRAINT fk_account_interaction_contacts_interaction FOREIGN KEY (interaction_id) REFERENCES account_interactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_account_interaction_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+  INDEX idx_account_interaction_contacts_contact (contact_id)
+);
+
+INSERT INTO account_interaction_types (code, name, display_order, is_active, created_at, updated_at)
+VALUES
+  ('meeting', 'Reunion', 1, 1, NOW(3), NOW(3)),
+  ('call', 'Llamada', 2, 1, NOW(3), NOW(3)),
+  ('presentation', 'Presentacion', 3, 1, NOW(3), NOW(3)),
+  ('demo', 'Demo', 4, 1, NOW(3), NOW(3)),
+  ('workshop', 'Workshop', 5, 1, NOW(3), NOW(3)),
+  ('follow_up', 'Seguimiento', 6, 1, NOW(3), NOW(3)),
+  ('email', 'Correo relevante', 7, 1, NOW(3), NOW(3)),
+  ('other', 'Otro', 8, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+INSERT INTO account_interaction_results (code, name, display_order, is_active, created_at, updated_at)
+VALUES
+  ('no_defined_opportunity', 'Sin oportunidad definida', 1, 1, NOW(3), NOW(3)),
+  ('exploring', 'En exploracion', 2, 1, NOW(3), NOW(3)),
+  ('future_interest', 'Interes futuro', 3, 1, NOW(3), NOW(3)),
+  ('follow_up_required', 'Requiere seguimiento', 4, 1, NOW(3), NOW(3)),
+  ('not_interested_for_now', 'No interesado por ahora', 5, 1, NOW(3), NOW(3)),
+  ('opportunity_detected', 'Oportunidad detectada', 6, 1, NOW(3), NOW(3)),
+  ('converted_to_opportunity', 'Derivo en oportunidad creada', 7, 1, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  display_order = VALUES(display_order),
+  is_active = VALUES(is_active),
+  updated_at = VALUES(updated_at);
+
+CREATE TABLE IF NOT EXISTS interactions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  source_notes LONGTEXT NULL,
+  summary LONGTEXT NULL,
+  analysis_status VARCHAR(40) NOT NULL DEFAULT 'uploaded',
+  warnings_json LONGTEXT NULL,
+  topics_json LONGTEXT NULL,
+  actions_taken_json LONGTEXT NULL,
+  next_steps_json LONGTEXT NULL,
+  suggested_account_json LONGTEXT NULL,
+  suggested_contacts_json LONGTEXT NULL,
+  suggested_opportunities_json LONGTEXT NULL,
+  account_id BIGINT UNSIGNED NULL,
+  primary_opportunity_id BIGINT UNSIGNED NULL,
+  analyzed_at DATETIME(3) NULL,
+  resolved_at DATETIME(3) NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_interactions_public_id UNIQUE (public_id),
+  CONSTRAINT fk_interactions_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+  CONSTRAINT fk_interactions_primary_opportunity FOREIGN KEY (primary_opportunity_id) REFERENCES opportunities(id) ON DELETE SET NULL,
+  CONSTRAINT fk_interactions_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_interactions_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  INDEX idx_interactions_status_created (analysis_status, created_at),
+  INDEX idx_interactions_account_created (account_id, created_at),
+  INDEX idx_interactions_primary_opportunity (primary_opportunity_id)
+);
+
+CREATE TABLE IF NOT EXISTS interaction_contact_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  interaction_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_interaction_contact_links UNIQUE (interaction_id, contact_id),
+  CONSTRAINT fk_interaction_contact_links_interaction FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_interaction_contact_links_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+  INDEX idx_interaction_contact_links_contact (contact_id)
+);
+
+CREATE TABLE IF NOT EXISTS interaction_opportunity_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  interaction_id BIGINT UNSIGNED NOT NULL,
+  opportunity_id BIGINT UNSIGNED NOT NULL,
+  is_primary TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_interaction_opportunity_links UNIQUE (interaction_id, opportunity_id),
+  CONSTRAINT fk_interaction_opportunity_links_interaction FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_interaction_opportunity_links_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+  INDEX idx_interaction_opportunity_links_opportunity (opportunity_id),
+  INDEX idx_interaction_opportunity_links_primary (interaction_id, is_primary)
+);
+
+CREATE TABLE IF NOT EXISTS commercial_signal_rulesets (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(64) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 0,
+  fit_weight DECIMAL(5,2) NOT NULL DEFAULT 0.20,
+  signal_strength_weight DECIMAL(5,2) NOT NULL DEFAULT 0.25,
+  urgency_weight DECIMAL(5,2) NOT NULL DEFAULT 0.15,
+  engagement_weight DECIMAL(5,2) NOT NULL DEFAULT 0.15,
+  coverage_weight DECIMAL(5,2) NOT NULL DEFAULT 0.15,
+  momentum_weight DECIMAL(5,2) NOT NULL DEFAULT 0.10,
+  min_signal_score DECIMAL(5,2) NOT NULL DEFAULT 35.00,
+  min_case_score DECIMAL(5,2) NOT NULL DEFAULT 45.00,
+  suggest_convert_score DECIMAL(5,2) NOT NULL DEFAULT 60.00,
+  priority_critical_threshold DECIMAL(5,2) NOT NULL DEFAULT 85.00,
+  priority_high_threshold DECIMAL(5,2) NOT NULL DEFAULT 70.00,
+  priority_medium_threshold DECIMAL(5,2) NOT NULL DEFAULT 55.00,
+  priority_low_threshold DECIMAL(5,2) NOT NULL DEFAULT 40.00,
+  dedupe_window_days INT NOT NULL DEFAULT 21,
+  topic_similarity_threshold DECIMAL(5,2) NOT NULL DEFAULT 0.75,
+  stale_penalty_start_days INT NOT NULL DEFAULT 15,
+  stale_penalty_per_day DECIMAL(5,2) NOT NULL DEFAULT 1.50,
+  stale_penalty_cap DECIMAL(5,2) NOT NULL DEFAULT 25.00,
+  reactivation_lookback_days INT NOT NULL DEFAULT 60,
+  created_by_user_id BIGINT UNSIGNED NULL,
+  activated_by_user_id BIGINT UNSIGNED NULL,
+  activated_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_commercial_signal_rulesets_code UNIQUE (code),
+  CONSTRAINT fk_commercial_signal_rulesets_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_commercial_signal_rulesets_activated_by FOREIGN KEY (activated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS potential_opportunity_cases (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  case_type ENUM('nueva', 'reactivacion', 'expansion', 'promovible', 'riesgo_fuga') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  topic_key VARCHAR(255) NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  primary_contact_id BIGINT UNSIGNED NULL,
+  related_opportunity_id BIGINT UNSIGNED NULL,
+  converted_opportunity_id BIGINT UNSIGNED NULL,
+  owner_user_id BIGINT UNSIGNED NULL,
+  assigned_by_user_id BIGINT UNSIGNED NULL,
+  source_kind VARCHAR(40) NOT NULL DEFAULT 'interaction',
+  source_entity_id BIGINT UNSIGNED NULL,
+  commercial_hypothesis TEXT NOT NULL,
+  business_need_summary TEXT NULL,
+  next_step_suggestion TEXT NULL,
+  recommended_action ENUM('crear_oportunidad', 'agendar_reunion', 'llamar_contacto', 'enviar_material', 'investigar_cuenta', 'validar_necesidad', 'reasignar_owner', 'descartar') NOT NULL,
+  recommended_action_due_date DATE NULL,
+  fit_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  signal_strength_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  urgency_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  engagement_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  coverage_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  momentum_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  staleness_penalty DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  duplicate_penalty DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  total_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  priority_level ENUM('critical', 'high', 'medium', 'low', 'observe') NOT NULL DEFAULT 'observe',
+  top_positive_factors_json LONGTEXT NULL,
+  top_negative_factors_json LONGTEXT NULL,
+  signal_count INT NOT NULL DEFAULT 0,
+  state ENUM('new', 'in_review', 'accepted', 'converted', 'postponed', 'dismissed', 'expired') NOT NULL DEFAULT 'new',
+  state_reason VARCHAR(255) NULL,
+  dismissed_reason_code VARCHAR(64) NULL,
+  dismissed_reason_note VARCHAR(500) NULL,
+  postponed_until DATE NULL,
+  snooze_count INT NOT NULL DEFAULT 0,
+  first_detected_at DATETIME(3) NOT NULL,
+  last_detected_at DATETIME(3) NOT NULL,
+  latest_evidence_at DATETIME(3) NULL,
+  review_sla_at DATETIME(3) NULL,
+  converted_at DATETIME(3) NULL,
+  converted_by_user_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_potential_opportunity_cases_public_id UNIQUE (public_id),
+  CONSTRAINT fk_potential_opportunity_cases_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_potential_opportunity_cases_primary_contact FOREIGN KEY (primary_contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_related_opportunity FOREIGN KEY (related_opportunity_id) REFERENCES opportunities(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_converted_opportunity FOREIGN KEY (converted_opportunity_id) REFERENCES opportunities(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_assigned_by FOREIGN KEY (assigned_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_converted_by FOREIGN KEY (converted_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_potential_opportunity_cases_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_potential_opportunity_cases_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  INDEX idx_potential_opportunity_cases_owner (owner_user_id),
+  INDEX idx_potential_opportunity_cases_state (state),
+  INDEX idx_potential_opportunity_cases_priority (priority_level),
+  INDEX idx_potential_opportunity_cases_review_sla (review_sla_at)
+);
+
+CREATE TABLE IF NOT EXISTS commercial_signals (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  case_id BIGINT UNSIGNED NULL,
+  ruleset_id BIGINT UNSIGNED NOT NULL,
+  signal_type ENUM('nueva_oportunidad', 'reactivacion', 'expansion', 'interaccion_promovible', 'riesgo_fuga') NOT NULL,
+  signal_subtype VARCHAR(64) NOT NULL,
+  source_type ENUM('interaction') NOT NULL DEFAULT 'interaction',
+  source_entity_id BIGINT UNSIGNED NOT NULL,
+  interaction_id BIGINT UNSIGNED NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NULL,
+  owner_user_id BIGINT UNSIGNED NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  evidence_summary TEXT NULL,
+  topic_key VARCHAR(255) NOT NULL,
+  fit_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  signal_strength_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  urgency_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  engagement_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  coverage_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  momentum_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  staleness_penalty DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  duplicate_penalty DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  total_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  confidence_score DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+  top_positive_factors_json LONGTEXT NULL,
+  top_negative_factors_json LONGTEXT NULL,
+  status ENUM('new', 'attached', 'dismissed', 'expired') NOT NULL DEFAULT 'new',
+  detected_at DATETIME(3) NOT NULL,
+  review_required TINYINT(1) NOT NULL DEFAULT 1,
+  reviewed_by_user_id BIGINT UNSIGNED NULL,
+  reviewed_at DATETIME(3) NULL,
+  review_outcome ENUM('accepted', 'dismissed', 'postponed') NULL,
+  dismissed_reason_code VARCHAR(64) NULL,
+  dismissed_reason_note VARCHAR(500) NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_commercial_signals_public_id UNIQUE (public_id),
+  CONSTRAINT uq_commercial_signals_interaction UNIQUE (interaction_id),
+  CONSTRAINT fk_commercial_signals_case FOREIGN KEY (case_id) REFERENCES potential_opportunity_cases(id) ON DELETE SET NULL,
+  CONSTRAINT fk_commercial_signals_ruleset FOREIGN KEY (ruleset_id) REFERENCES commercial_signal_rulesets(id),
+  CONSTRAINT fk_commercial_signals_interaction FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_commercial_signals_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_commercial_signals_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+  CONSTRAINT fk_commercial_signals_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_commercial_signals_reviewed_by FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_commercial_signals_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_commercial_signals_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
+  INDEX idx_commercial_signals_case (case_id),
+  INDEX idx_commercial_signals_account_detected (account_id, detected_at)
+);
+
+CREATE TABLE IF NOT EXISTS potential_opportunity_case_transitions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  case_id BIGINT UNSIGNED NOT NULL,
+  from_state ENUM('new', 'in_review', 'accepted', 'converted', 'postponed', 'dismissed', 'expired') NULL,
+  to_state ENUM('new', 'in_review', 'accepted', 'converted', 'postponed', 'dismissed', 'expired') NOT NULL,
+  reason_code VARCHAR(64) NULL,
+  reason_note VARCHAR(500) NULL,
+  changed_by_user_id BIGINT UNSIGNED NULL,
+  changed_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT fk_potential_opportunity_case_transitions_case FOREIGN KEY (case_id) REFERENCES potential_opportunity_cases(id) ON DELETE CASCADE,
+  CONSTRAINT fk_potential_opportunity_case_transitions_changed_by FOREIGN KEY (changed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_potential_opportunity_case_transitions_case (case_id, changed_at)
+);
+
+INSERT INTO commercial_signal_rulesets (
+  code, name, is_active,
+  fit_weight, signal_strength_weight, urgency_weight,
+  engagement_weight, coverage_weight, momentum_weight,
+  min_signal_score, min_case_score, suggest_convert_score,
+  priority_critical_threshold, priority_high_threshold,
+  priority_medium_threshold, priority_low_threshold,
+  dedupe_window_days, topic_similarity_threshold,
+  stale_penalty_start_days, stale_penalty_per_day,
+  stale_penalty_cap, reactivation_lookback_days,
+  created_at, updated_at, activated_at
+)
+VALUES (
+  'default_v1', 'Scoring default v1', 1,
+  0.20, 0.25, 0.15,
+  0.15, 0.15, 0.10,
+  35.00, 45.00, 60.00,
+  85.00, 70.00,
+  55.00, 40.00,
+  21, 0.75,
+  15, 1.50,
+  25.00, 60,
+  NOW(3), NOW(3), NOW(3)
+)
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  updated_at = VALUES(updated_at);
+
 CREATE TABLE IF NOT EXISTS quotation_statuses (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(80) NOT NULL,
@@ -1753,6 +2097,165 @@ CREATE TABLE IF NOT EXISTS opportunity_stage_question_answers (
   INDEX idx_opportunity_stage_answers_question (question_id, answered_at)
 );
 
+CREATE TABLE IF NOT EXISTS opportunity_document_upload_sessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  entity_type VARCHAR(40) NOT NULL DEFAULT 'opportunity_draft',
+  entity_id BIGINT UNSIGNED NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'open',
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  expires_at DATETIME(3) NULL,
+  CONSTRAINT uq_opp_doc_sessions_public_id UNIQUE (public_id),
+  CONSTRAINT fk_opp_doc_sessions_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  INDEX idx_opp_doc_sessions_entity (entity_type, entity_id),
+  INDEX idx_opp_doc_sessions_created_by (created_by_user_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  upload_session_id BIGINT UNSIGNED NULL,
+  entity_type VARCHAR(40) NOT NULL,
+  entity_id BIGINT UNSIGNED NULL,
+  storage_provider VARCHAR(30) NOT NULL,
+  storage_bucket VARCHAR(120) NULL,
+  storage_key VARCHAR(500) NOT NULL,
+  original_file_name VARCHAR(255) NOT NULL,
+  stored_file_name VARCHAR(255) NULL,
+  mime_type VARCHAR(120) NOT NULL,
+  file_extension VARCHAR(20) NULL,
+  byte_size BIGINT UNSIGNED NOT NULL,
+  sha256 CHAR(64) NOT NULL,
+  document_kind VARCHAR(40) NULL,
+  source_label VARCHAR(120) NULL,
+  processing_status VARCHAR(30) NOT NULL DEFAULT 'uploaded',
+  processing_error TEXT NULL,
+  duration_seconds INT UNSIGNED NULL,
+  is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+  uploaded_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_documents_public_id UNIQUE (public_id),
+  CONSTRAINT fk_documents_upload_session FOREIGN KEY (upload_session_id) REFERENCES opportunity_document_upload_sessions(id) ON DELETE SET NULL,
+  CONSTRAINT fk_documents_uploaded_by FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
+  INDEX idx_documents_session (upload_session_id),
+  INDEX idx_documents_entity (entity_type, entity_id, created_at),
+  INDEX idx_documents_processing (processing_status, created_at),
+  INDEX idx_documents_sha (sha256)
+);
+
+CREATE TABLE IF NOT EXISTS document_contents (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  document_id BIGINT UNSIGNED NOT NULL,
+  extraction_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  transcription_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  detected_format VARCHAR(30) NULL,
+  detected_language VARCHAR(20) NULL,
+  page_count INT UNSIGNED NULL,
+  duration_seconds INT UNSIGNED NULL,
+  raw_text LONGTEXT NULL,
+  normalized_text LONGTEXT NULL,
+  structured_content_json JSON NULL,
+  transcript_text LONGTEXT NULL,
+  transcription_language VARCHAR(20) NULL,
+  transcription_confidence DECIMAL(5,4) NULL,
+  content_summary TEXT NULL,
+  extracted_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_document_contents_document UNIQUE (document_id),
+  CONSTRAINT fk_document_contents_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  INDEX idx_document_contents_extraction (extraction_status, extracted_at),
+  INDEX idx_document_contents_transcription (transcription_status, extracted_at)
+);
+
+CREATE TABLE IF NOT EXISTS document_analyses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  document_id BIGINT UNSIGNED NOT NULL,
+  analysis_scope VARCHAR(40) NOT NULL DEFAULT 'opportunity_draft',
+  pipeline_version VARCHAR(40) NOT NULL,
+  model_provider VARCHAR(40) NULL,
+  model_name VARCHAR(120) NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  draft_fields_json JSON NULL,
+  stage_suggestions_json JSON NULL,
+  entities_json JSON NULL,
+  warnings_json JSON NULL,
+  confidence VARCHAR(10) NULL,
+  evidence_json JSON NULL,
+  error_message TEXT NULL,
+  analyzed_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT fk_document_analyses_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  INDEX idx_document_analyses_document_scope (document_id, analysis_scope),
+  INDEX idx_document_analyses_status (status, analyzed_at)
+);
+
+CREATE TABLE IF NOT EXISTS document_match_results (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  document_analysis_id BIGINT UNSIGNED NOT NULL,
+  match_target VARCHAR(40) NOT NULL,
+  detected_label VARCHAR(255) NOT NULL,
+  normalized_label VARCHAR(255) NULL,
+  match_status VARCHAR(30) NOT NULL,
+  selected_entity_id BIGINT UNSIGNED NULL,
+  selected_entity_label VARCHAR(255) NULL,
+  candidate_entities_json JSON NULL,
+  confidence_score DECIMAL(5,4) NULL,
+  reason TEXT NULL,
+  reviewed_by_user_id BIGINT UNSIGNED NULL,
+  reviewed_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT fk_document_match_results_analysis FOREIGN KEY (document_analysis_id) REFERENCES document_analyses(id) ON DELETE CASCADE,
+  CONSTRAINT fk_document_match_results_reviewed_by FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_document_match_results_scope (document_analysis_id, match_target),
+  INDEX idx_document_match_results_status (match_status, reviewed_at)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_document_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  opportunity_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  link_type VARCHAR(40) NOT NULL DEFAULT 'source_document',
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_opportunity_document_links UNIQUE (opportunity_id, document_id, link_type),
+  CONSTRAINT fk_opportunity_document_links_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_document_links_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_document_links_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  INDEX idx_opportunity_document_links_document (document_id)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_stage_document_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  opportunity_id BIGINT UNSIGNED NOT NULL,
+  sales_stage_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  link_role VARCHAR(40) NOT NULL DEFAULT 'evidence',
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_opportunity_stage_document_links UNIQUE (opportunity_id, sales_stage_id, document_id, link_role),
+  CONSTRAINT fk_opportunity_stage_document_links_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_stage_document_links_stage FOREIGN KEY (sales_stage_id) REFERENCES opportunity_sales_stages(id),
+  CONSTRAINT fk_opportunity_stage_document_links_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_stage_document_links_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_stage_answer_document_sources (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  stage_answer_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  evidence_excerpt TEXT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_opportunity_stage_answer_document_sources UNIQUE (stage_answer_id, document_id),
+  CONSTRAINT fk_opportunity_stage_answer_document_sources_answer FOREIGN KEY (stage_answer_id) REFERENCES opportunity_stage_question_answers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_opportunity_stage_answer_document_sources_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,
@@ -1894,6 +2397,12 @@ VALUES
   ('cuentas.create', 'cuentas', 'create', 'Crear cuentas', NOW(3), NOW(3)),
   ('cuentas.request', 'cuentas', 'request', 'Solicitar creacion de cuentas', NOW(3), NOW(3)),
   ('cuentas.update', 'cuentas', 'update', 'Actualizar cuentas', NOW(3), NOW(3)),
+  ('interacciones.read', 'interacciones', 'read', 'Ver interacciones', NOW(3), NOW(3)),
+  ('interacciones.read_all', 'interacciones', 'read_all', 'Ver todas las interacciones', NOW(3), NOW(3)),
+  ('interacciones.create', 'interacciones', 'create', 'Crear interacciones', NOW(3), NOW(3)),
+  ('interacciones.update', 'interacciones', 'update', 'Actualizar interacciones', NOW(3), NOW(3)),
+  ('interacciones.analyze', 'interacciones', 'analyze', 'Analizar interacciones', NOW(3), NOW(3)),
+  ('interacciones.resolve', 'interacciones', 'resolve', 'Resolver interacciones', NOW(3), NOW(3)),
   ('contactos.read', 'contactos', 'read', 'Ver contactos', NOW(3), NOW(3)),
   ('contactos.read_all', 'contactos', 'read_all', 'Ver todos los contactos', NOW(3), NOW(3)),
   ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),
@@ -1910,6 +2419,12 @@ VALUES
   ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
   ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
   ('oportunidades.update', 'oportunidades', 'update', 'Actualizar oportunidades', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.read', 'oportunidades_potenciales', 'read', 'Ver oportunidades potenciales', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.read_all', 'oportunidades_potenciales', 'read_all', 'Ver todas las oportunidades potenciales', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.review', 'oportunidades_potenciales', 'review', 'Revisar y detectar oportunidades potenciales', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.assign', 'oportunidades_potenciales', 'assign', 'Asignar responsables en oportunidades potenciales', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.convert', 'oportunidades_potenciales', 'convert', 'Convertir oportunidades potenciales', NOW(3), NOW(3)),
+  ('oportunidades_potenciales.analytics', 'oportunidades_potenciales', 'analytics', 'Consultar analitica de oportunidades potenciales', NOW(3), NOW(3)),
   ('cotizaciones.operacion', 'cotizaciones', 'operacion', 'Operacion de cotizaciones', NOW(3), NOW(3)),
   ('cotizaciones.revision', 'cotizaciones', 'revision', 'Revision de cotizaciones', NOW(3), NOW(3)),
   ('cotizaciones.ingreso', 'cotizaciones', 'ingreso', 'Ingreso de cotizaciones', NOW(3), NOW(3)),
@@ -2307,31 +2822,31 @@ EXECUTE s_opportunities_commercial_status_not_null;
 DEALLOCATE PREPARE s_opportunities_commercial_status_not_null;
 
 INSERT INTO opportunity_stage_questions (sales_stage_id, code, prompt, response_type, display_order, is_required, is_active) VALUES
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'contacto_inicial' LIMIT 1), 'contacto_inicial_interes_cliente', '¿En qué está interesado el cliente?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_requerimiento_tecnico', '¿Cuál es el requerimiento técnico?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_motivacion_principal', '¿Cuál es la motivación principal de este requerimiento?', 'long_text', 2, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_presupuesto_cliente', '¿Sabe el presupuesto que tiene el cliente? Si el cliente no lo tiene como lo conseguirá?', 'long_text', 3, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_fecha_adquisicion', '¿Cuándo debe adquirirse la solución, porque en tal fecha y cuál es el impacto si no lo hace en la fecha indicada?', 'long_text', 4, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_decisor_proceso_compra', '¿Quién decidirá esta adquisición y como es el proceso de compra?', 'long_text', 5, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_ventajas_fortalezas', '¿Qué ventajas o fortalezas tenemos para esta oportunidad?', 'long_text', 6, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_estrategia', '¿Qué estrategia se seguirá?', 'long_text', 7, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_informacion_adicional', '¿Qué información adicional se obtuvo en las reuniones de desarrollo?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_presentacion_solucion', '¿Cómo se presentó la solución técnica?', 'long_text', 2, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_propuesta', '¿Qué se ha propuesto?', 'long_text', 3, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_puntos_tecnicos', '¿Qué puntos técnicos son los mas importantes para el proyecto?', 'long_text', 4, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_aceptacion_propuesta', '¿El cliente aceptó la propuesta técnica?', 'long_text', 5, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_observaciones_condiciones', '¿El cliente hizo alguna observación o indicó ciertas condiciones como requisito para aceptar la propuesta técnica?', 'long_text', 6, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_riesgo_tecnico', '¿Hay algún riesgo técnico?', 'long_text', 7, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_propuesta_economica', '¿La propuesta económica se acerca a lo esperado por el cliente?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_condiciones_comerciales', '¿Las condiciones comerciales coinciden con las que el cliente tiene para este proyecto?', 'long_text', 2, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_motivo', '¿Por qué el cliente solicitó una demostración?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_criterios_exito', '¿Cuáles son los criterios de éxito?', 'long_text', 2, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_siguientes_pasos', '¿Cuáles son los siguientes pasos después de cumplir los criterios de éxito?', 'long_text', 3, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_resultado', '¿Cuál fue el resultado de la demostración?', 'long_text', 4, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_precio_condiciones', '¿Cuál es precio mas bajo y las mejores condiciones para el cliente a los que podemos llegar en la negociación?', 'long_text', 1, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_cliente', '¿Cuáles son los puntos que el cliente aprecia mas?', 'long_text', 2, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_nosotros', '¿Cuáles son los puntos más importantes para nosotros?', 'long_text', 3, 1, 1),
-  ((SELECT id FROM opportunity_sales_stages WHERE code = 'waiting' LIMIT 1), 'waiting_acuerdo_o_postores', '¿Se llegó a un acuerdo, o el cliente decidirá de entre varios postores?', 'long_text', 1, 1, 1)
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'contacto_inicial' LIMIT 1), 'contacto_inicial_interes_cliente', '¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_requerimiento_tecnico', '¿Qué requerimiento técnico, funcional, operativo o de integración solicita el cliente?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_motivacion_principal', '¿Cuál es el motivo de negocio principal detrás de este requerimiento y qué problema quiere resolver o qué resultado quiere lograr el cliente?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_presupuesto_cliente', '¿Qué se sabe del presupuesto del cliente, de sus restricciones presupuestales o de cómo conseguiría el presupuesto para este proyecto?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_fecha_adquisicion', '¿Cuál es la fecha objetivo para adquirir o implementar la solución, por qué debe cumplirse esa fecha y qué impacto tendría no hacerlo a tiempo?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_decisor_proceso_compra', '¿Quiénes participan en la decisión de compra y cómo es el proceso de aprobación o adquisición para esta oportunidad?', 'long_text', 5, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_ventajas_fortalezas', '¿Qué ventajas o fortalezas tenemos para esta oportunidad en función de las necesidades y prioridades del cliente?', 'long_text', 6, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'identificacion_oportunidad' LIMIT 1), 'identificacion_estrategia', '¿Qué estrategia comercial y técnica se seguirá para avanzar esta oportunidad con base en la información disponible?', 'long_text', 7, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_informacion_adicional', '¿Qué información adicional relevante se obtuvo en las reuniones o sesiones de desarrollo sobre alcance, necesidades, restricciones o prioridades?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_presentacion_solucion', '¿Cómo se presentó o explicó la solución técnica al cliente y cómo se relacionó con su problema o necesidad?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_propuesta', '¿Qué solución, alcance, arquitectura, servicio o alternativa se ha propuesto al cliente?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_puntos_tecnicos', '¿Cuáles son los puntos técnicos más importantes para el proyecto y cuáles son críticos para el éxito de la solución?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_aceptacion_propuesta', '¿Qué nivel de aceptación, validación o conformidad ha mostrado el cliente respecto de la propuesta técnica?', 'long_text', 5, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_observaciones_condiciones', '¿Qué observaciones, dudas, restricciones o condiciones indicó el cliente como requisito para aceptar o avanzar con la propuesta técnica?', 'long_text', 6, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1), 'desarrollo_riesgo_tecnico', '¿Qué riesgos técnicos, dependencias, vacíos de información o factores de complejidad podrían afectar la solución o su implementación?', 'long_text', 7, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_propuesta_economica', '¿La propuesta económica se alinea con el presupuesto, rango esperado o expectativas del cliente para este proyecto?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'cotizacion' LIMIT 1), 'cotizacion_condiciones_comerciales', '¿Las condiciones comerciales de la propuesta coinciden con las necesidades del cliente para este proyecto?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_motivo', '¿Por qué el cliente solicitó o aceptó una demostración y qué quería validar?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_criterios_exito', '¿Cuáles son los criterios concretos de éxito o validación para considerar exitosa la demostración?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_siguientes_pasos', '¿Cuáles son los siguientes pasos esperados después de cumplir los criterios de éxito de la demostración?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'demostracion' LIMIT 1), 'demostracion_resultado', '¿Cuál fue el resultado de la demostración y cuál fue la reacción o conclusión del cliente?', 'long_text', 4, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_precio_condiciones', '¿Cuáles son el precio objetivo, los límites de negociación y las mejores condiciones que podrían aceptarse para cerrar con este cliente?', 'long_text', 1, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_cliente', '¿Cuáles son los puntos, condiciones o factores que el cliente valora más en esta negociación?', 'long_text', 2, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'negociacion' LIMIT 1), 'negociacion_puntos_nosotros', '¿Cuáles son los puntos más importantes que debemos proteger o priorizar nosotros en esta negociación?', 'long_text', 3, 1, 1),
+  ((SELECT id FROM opportunity_sales_stages WHERE code = 'waiting' LIMIT 1), 'waiting_acuerdo_o_postores', '¿Se llegó a un acuerdo o el cliente sigue evaluando la decisión entre varios postores?', 'long_text', 1, 1, 1)
 ON DUPLICATE KEY UPDATE
   sales_stage_id = VALUES(sales_stage_id),
   prompt = VALUES(prompt),
@@ -2426,4 +2941,36 @@ SELECT r.id, p.id, NOW(3)
 FROM roles r
 JOIN permissions p
 WHERE r.name = 'Administrador'
+ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
+
+INSERT INTO role_permissions (role_id, permission_id, created_at)
+SELECT r.id, p.id, NOW(3)
+FROM roles r
+JOIN permissions p ON p.code IN (
+  'oportunidades_potenciales.read',
+  'oportunidades_potenciales.convert'
+)
+WHERE LOWER(TRIM(r.name)) = 'vendedor'
+ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
+
+INSERT INTO role_permissions (role_id, permission_id, created_at)
+SELECT r.id, p.id, NOW(3)
+FROM roles r
+JOIN permissions p ON p.code IN (
+  'oportunidades_potenciales.read',
+  'oportunidades_potenciales.read_all',
+  'oportunidades_potenciales.review',
+  'oportunidades_potenciales.assign',
+  'oportunidades_potenciales.convert',
+  'oportunidades_potenciales.analytics'
+)
+WHERE LOWER(TRIM(r.name)) IN (
+  'gerente comercial',
+  'gerente de ventas',
+  'director comercial',
+  'director de ventas',
+  'lider comercial',
+  'coordinador comercial',
+  'jefe comercial'
+)
 ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
