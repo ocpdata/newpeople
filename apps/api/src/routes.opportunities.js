@@ -24,6 +24,27 @@ import {
   suggestOpportunityStageAnswers,
   validateOpportunityCurrentStageWithAi,
 } from "./opportunityStageAnswerSuggestions.js";
+import {
+  activateOpportunityWorkspacePlaybookVersion,
+  buildOpportunityWorkspace,
+  deleteOpportunityAction,
+  deleteOpportunityCriterionAssessment,
+  deleteOpportunityDeliverable,
+  deleteOpportunityStakeholder,
+  deleteOpportunityThemeEntry,
+  deleteOpportunityWeakness,
+  getOpportunityWorkspacePlaybookVersionDetail,
+  listOpportunityWorkspacePlaybooks,
+  saveOpportunityAction,
+  saveOpportunityDeliverable,
+  saveOpportunityStakeholder,
+  saveOpportunityThemeEntry,
+  saveOpportunityWeakness,
+  updateOpportunityWorkspacePlaybookCriterion,
+  updateOpportunityWorkspacePlaybookStage,
+  upsertOpportunityCriterionAssessment,
+} from "./opportunity-workspace/service.js";
+import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 
 const router = express.Router();
 
@@ -118,6 +139,116 @@ const opportunityStageAnswerDocumentLinkSchema = z.object({
   evidenceExcerpt: z.string().trim().max(5000).optional().nullable(),
 });
 
+const opportunityWorkspaceAssessmentSchema = z.object({
+  criterionCode: z.string().trim().min(1).max(120),
+  salesStageId: z.number().int().positive().optional().nullable(),
+  status: z.enum(["missing", "partial", "solid", "waived", "blocked"]),
+  score: z.number().int().min(0).max(3),
+  confidence: z.enum(["low", "medium", "high"]),
+  summary: z.string().trim().max(5000).optional().nullable(),
+});
+
+const opportunityWorkspaceWeaknessSchema = z.object({
+  id: z.number().int().positive().optional(),
+  title: z.string().trim().min(2).max(220),
+  category: z.string().trim().min(2).max(80),
+  severity: z.enum(["low", "medium", "high"]),
+  status: z.enum(["open", "mitigating", "accepted", "resolved"]),
+  salesStageId: z.number().int().positive().optional().nullable(),
+  themeCode: z.string().trim().max(80).optional().nullable(),
+  detail: z.string().trim().max(5000).optional().nullable(),
+  mitigationPlan: z.string().trim().max(5000).optional().nullable(),
+  ownerUserId: z.number().int().positive().optional().nullable(),
+  dueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .nullable(),
+  resolvedNote: z.string().trim().max(5000).optional().nullable(),
+});
+
+const opportunityWorkspaceThemeEntrySchema = z.object({
+  id: z.number().int().positive().optional(),
+  themeCode: z.string().trim().min(2).max(80),
+  claim: z.string().trim().min(2).max(5000),
+  status: z.enum(["supported", "partial", "contradicted", "missing"]),
+  confidence: z.enum(["low", "medium", "high"]),
+  sourceType: z
+    .string()
+    .trim()
+    .min(2)
+    .max(40)
+    .optional()
+    .default("manual_note"),
+  sourceRefId: z.number().int().positive().optional().nullable(),
+  evidenceExcerpt: z.string().trim().max(5000).optional().nullable(),
+});
+
+const opportunityWorkspaceStakeholderSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.string().trim().min(2).max(180),
+  roleCode: z.string().trim().min(2).max(80),
+  roleLabel: z.string().trim().max(120).optional().nullable(),
+  influenceLevel: z.enum(["low", "medium", "high", "critical"]),
+  supportLevel: z.enum([
+    "blocker",
+    "resistant",
+    "neutral",
+    "supporter",
+    "champion",
+  ]),
+  status: z.enum(["unknown", "identified", "engaged", "validated"]),
+  priorities: z.string().trim().max(5000).optional().nullable(),
+  concerns: z.string().trim().max(5000).optional().nullable(),
+  nextAction: z.string().trim().max(5000).optional().nullable(),
+  lastContactAt: z.string().trim().max(40).optional().nullable(),
+});
+
+const opportunityWorkspaceActionSchema = z.object({
+  id: z.number().int().positive().optional(),
+  title: z.string().trim().min(2).max(220),
+  actionType: z.string().trim().min(2).max(80),
+  status: z.enum(["pending", "in_progress", "blocked", "done"]),
+  priority: z.enum(["low", "medium", "high"]),
+  linkedStageId: z.number().int().positive().optional().nullable(),
+  linkedThemeCode: z.string().trim().max(80).optional().nullable(),
+  linkedWeaknessId: z.number().int().positive().optional().nullable(),
+  stakeholderId: z.number().int().positive().optional().nullable(),
+  ownerUserId: z.number().int().positive().optional().nullable(),
+  dueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .nullable(),
+  successCriteria: z.string().trim().max(5000).optional().nullable(),
+  notes: z.string().trim().max(5000).optional().nullable(),
+});
+
+const opportunityWorkspaceDeliverableSchema = z.object({
+  id: z.number().int().positive().optional(),
+  deliverableType: z.string().trim().min(2).max(80),
+  title: z.string().trim().min(2).max(220),
+  audience: z.string().trim().max(180).optional().nullable(),
+  status: z.enum(["missing", "draft", "sent", "validated"]),
+  versionLabel: z.string().trim().max(80).optional().nullable(),
+  linkedStageId: z.number().int().positive().optional().nullable(),
+  sentAt: z.string().trim().max(40).optional().nullable(),
+  outcomeSummary: z.string().trim().max(5000).optional().nullable(),
+  documentPublicId: z.string().trim().max(64).optional().nullable(),
+});
+
+const opportunityWorkspacePlaybookStageSchema = z.object({
+  objective: z.string().trim().min(2).max(5000),
+  exitCriteriaSummary: z.string().trim().min(2).max(5000),
+});
+
+const opportunityWorkspacePlaybookCriterionSchema = z.object({
+  title: z.string().trim().min(2).max(220),
+  description: z.string().trim().max(5000).optional().nullable(),
+  themeCode: z.string().trim().max(80).optional().nullable(),
+  displayOrder: z.number().int().positive().optional().default(1),
+});
+
 const opportunityCreatePermissions = [
   "oportunidades.create",
   "oportunidades.request",
@@ -168,6 +299,24 @@ function hasExplicitOpportunityPermission(user, permission) {
 
 function canChangeOpportunityActivationStatus(user) {
   return hasExplicitOpportunityPermission(user, "oportunidades.create");
+}
+
+async function logOpportunityWorkspaceMutation({
+  req,
+  opportunityId,
+  action,
+  detail,
+  after = null,
+}) {
+  await logAuditEvent({
+    req,
+    module: "opportunities.workspace",
+    action,
+    entityType: "opportunity",
+    entityId: opportunityId,
+    detail,
+    after,
+  });
 }
 
 async function getOpportunityActivationStatusId(statusCode) {
@@ -429,6 +578,169 @@ router.get(
             : "No fue posible abrir el documento",
       });
     }
+  },
+);
+
+router.get(
+  "/workspace-playbooks",
+  requireAnyPermission([
+    "oportunidades.read",
+    "oportunidades.update",
+    "configuracion.read",
+  ]),
+  async (_req, res) => {
+    const playbooks = await listOpportunityWorkspacePlaybooks();
+    return res.json({ items: playbooks });
+  },
+);
+
+router.post(
+  "/workspace-playbooks/:versionId/activate",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "versionId invalido" });
+    }
+
+    const playbook = await activateOpportunityWorkspacePlaybookVersion({
+      versionId,
+    });
+    if (!playbook) {
+      return res
+        .status(404)
+        .json({ message: "Version de playbook no encontrada" });
+    }
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_playbook_activated",
+      entityType: "opportunity_playbook_version",
+      entityId: versionId,
+      detail: `Playbook activado: ${playbook.name} ${playbook.version}`,
+      after: playbook,
+    });
+
+    return res.json({ playbook });
+  },
+);
+
+router.get(
+  "/workspace-playbooks/:versionId",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "versionId invalido" });
+    }
+
+    const playbook = await getOpportunityWorkspacePlaybookVersionDetail({
+      versionId,
+    });
+    if (!playbook) {
+      return res
+        .status(404)
+        .json({ message: "Version de playbook no encontrada" });
+    }
+
+    return res.json({ playbook });
+  },
+);
+
+router.put(
+  "/workspace-playbooks/:versionId/stages/:salesStageCode",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "versionId invalido" });
+    }
+    const parsed = opportunityWorkspacePlaybookStageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+
+    const playbook = await updateOpportunityWorkspacePlaybookStage({
+      versionId,
+      salesStageCode: String(req.params.salesStageCode || "").trim(),
+      objective: parsed.data.objective,
+      exitCriteriaSummary: parsed.data.exitCriteriaSummary,
+    });
+    if (!playbook) {
+      return res
+        .status(404)
+        .json({ message: "Etapa de playbook no encontrada" });
+    }
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_playbook_stage_updated",
+      entityType: "opportunity_playbook_version",
+      entityId: versionId,
+      detail: `Etapa editada: ${req.params.salesStageCode}`,
+      after: {
+        salesStageCode: req.params.salesStageCode,
+        objective: parsed.data.objective,
+        exitCriteriaSummary: parsed.data.exitCriteriaSummary,
+      },
+    });
+
+    return res.json({ playbook });
+  },
+);
+
+router.put(
+  "/workspace-playbooks/:versionId/stages/:salesStageCode/criteria/:criterionCode",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "versionId invalido" });
+    }
+    const parsed = opportunityWorkspacePlaybookCriterionSchema.safeParse(
+      req.body,
+    );
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+
+    const playbook = await updateOpportunityWorkspacePlaybookCriterion({
+      versionId,
+      salesStageCode: String(req.params.salesStageCode || "").trim(),
+      criterionCode: String(req.params.criterionCode || "").trim(),
+      title: parsed.data.title,
+      description: parsed.data.description,
+      themeCode: parsed.data.themeCode,
+      displayOrder: parsed.data.displayOrder,
+    });
+    if (!playbook) {
+      return res
+        .status(404)
+        .json({ message: "Criterio de playbook no encontrado" });
+    }
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_playbook_criterion_updated",
+      entityType: "opportunity_playbook_version",
+      entityId: versionId,
+      detail: `Criterio editado: ${req.params.criterionCode}`,
+      after: {
+        salesStageCode: req.params.salesStageCode,
+        criterionCode: req.params.criterionCode,
+        title: parsed.data.title,
+        themeCode: parsed.data.themeCode,
+      },
+    });
+
+    return res.json({ playbook });
   },
 );
 
@@ -742,7 +1054,10 @@ function buildOpportunityStageSummary({
 async function buildOpportunityStageView({
   opportunityState,
   selectedSalesStageId = Number(opportunityState.sales_stage_id),
+  persistRecommendedStrategy = false,
+  strategyUpdatedByUserId = null,
 }) {
+  await ensureOpportunityWorkspaceSchema();
   const selectedStage =
     await getOpportunitySalesStageById(selectedSalesStageId);
   if (!selectedStage) {
@@ -758,11 +1073,14 @@ async function buildOpportunityStageView({
     opportunityId: Number(opportunityState.id),
     salesStageId: Number(selectedStage.id),
   });
+  const documents = await listOpportunityDocuments({
+    opportunityId: Number(opportunityState.id),
+  }).catch(() => []);
   const isClosed = isClosedCommercialStatus(
     opportunityState.commercial_status_code,
   );
 
-  return {
+  const baseView = {
     opportunityId: Number(opportunityState.id),
     salesStage: {
       id: Number(selectedStage.id),
@@ -802,6 +1120,38 @@ async function buildOpportunityStageView({
     bypassInfo,
     answers,
   };
+
+  const workspace = await buildOpportunityWorkspace({
+    opportunityState,
+    stageView: baseView,
+    documents,
+    persistRecommendedStrategy,
+    strategyUpdatedByUserId,
+  });
+
+  return {
+    ...baseView,
+    workspace,
+  };
+}
+
+async function refreshOpportunityRecommendedStrategy({
+  opportunityId,
+  selectedSalesStageId,
+  userId,
+}) {
+  const opportunityState = await getOpportunityStateById(opportunityId);
+  if (!opportunityState) {
+    return null;
+  }
+
+  return buildOpportunityStageView({
+    opportunityState,
+    selectedSalesStageId:
+      selectedSalesStageId || Number(opportunityState.sales_stage_id),
+    persistRecommendedStrategy: true,
+    strategyUpdatedByUserId: userId,
+  });
 }
 
 function isClosedCommercialStatus(statusCode) {
@@ -1156,6 +1506,7 @@ router.get(
     const stageView = await buildOpportunityStageView({
       opportunityState,
       selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      persistRecommendedStrategy: true,
     });
     if (!stageView) {
       return res.status(400).json({ message: "Etapa de venta invalida" });
@@ -1197,12 +1548,640 @@ router.get(
     const stageView = await buildOpportunityStageView({
       opportunityState,
       selectedSalesStageId: salesStageId,
+      persistRecommendedStrategy: true,
     });
     if (!stageView) {
       return res.status(404).json({ message: "Etapa de venta no encontrada" });
     }
 
     return res.json(stageView);
+  },
+);
+
+router.post(
+  "/:id/workspace/assessments",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+
+    const parsed = opportunityWorkspaceAssessmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    await upsertOpportunityCriterionAssessment({
+      opportunityId: id,
+      criterionCode: parsed.data.criterionCode,
+      salesStageId: parsed.data.salesStageId,
+      status: parsed.data.status,
+      score: parsed.data.score,
+      confidence: parsed.data.confidence,
+      summary: parsed.data.summary,
+      userId: Number(req.user.id),
+    });
+
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_assessment_saved",
+      detail: `Assessment actualizado: ${parsed.data.criterionCode}`,
+      after: {
+        criterionCode: parsed.data.criterionCode,
+        status: parsed.data.status,
+        score: parsed.data.score,
+      },
+    });
+
+    const opportunityState = await getOpportunityStateById(id);
+    const stageView = await buildOpportunityStageView({
+      opportunityState,
+      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      persistRecommendedStrategy: true,
+      strategyUpdatedByUserId: Number(req.user.id),
+    });
+    return res.json({ workspace: stageView.workspace });
+  },
+);
+
+router.post(
+  "/:id/workspace/weaknesses",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityWorkspaceWeaknessSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const savedId = await saveOpportunityWeakness({
+      opportunityId: id,
+      weaknessId: parsed.data.id,
+      payload: {
+        title: parsed.data.title,
+        category: parsed.data.category,
+        severity: parsed.data.severity,
+        status: parsed.data.status,
+        sales_stage_id: parsed.data.salesStageId || null,
+        theme_code: parsed.data.themeCode || null,
+        detail: parsed.data.detail || null,
+        mitigation_plan: parsed.data.mitigationPlan || null,
+        owner_user_id: parsed.data.ownerUserId || null,
+        due_date: parsed.data.dueDate || null,
+        resolved_note: parsed.data.resolvedNote || null,
+      },
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: parsed.data.id
+        ? "workspace_weakness_updated"
+        : "workspace_weakness_created",
+      detail: `Debilidad guardada: ${parsed.data.title}`,
+      after: {
+        id: savedId,
+        title: parsed.data.title,
+        status: parsed.data.status,
+        severity: parsed.data.severity,
+      },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ id: savedId });
+  },
+);
+
+router.post(
+  "/:id/workspace/themes",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityWorkspaceThemeEntrySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const savedId = await saveOpportunityThemeEntry({
+      opportunityId: id,
+      entryId: parsed.data.id,
+      payload: {
+        theme_code: parsed.data.themeCode,
+        claim: parsed.data.claim,
+        status: parsed.data.status,
+        confidence: parsed.data.confidence,
+        source_type: parsed.data.sourceType,
+        source_ref_id: parsed.data.sourceRefId || null,
+        evidence_excerpt: parsed.data.evidenceExcerpt || null,
+      },
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: parsed.data.id
+        ? "workspace_theme_updated"
+        : "workspace_theme_created",
+      detail: `Claim tematico guardado: ${parsed.data.themeCode}`,
+      after: {
+        id: savedId,
+        themeCode: parsed.data.themeCode,
+        status: parsed.data.status,
+      },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ id: savedId });
+  },
+);
+
+router.post(
+  "/:id/workspace/stakeholders",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityWorkspaceStakeholderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const savedId = await saveOpportunityStakeholder({
+      opportunityId: id,
+      stakeholderId: parsed.data.id,
+      payload: {
+        name: parsed.data.name,
+        role_code: parsed.data.roleCode,
+        role_label: parsed.data.roleLabel || null,
+        influence_level: parsed.data.influenceLevel,
+        support_level: parsed.data.supportLevel,
+        status: parsed.data.status,
+        priorities: parsed.data.priorities || null,
+        concerns: parsed.data.concerns || null,
+        next_action: parsed.data.nextAction || null,
+        last_contact_at: parsed.data.lastContactAt || null,
+      },
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: parsed.data.id
+        ? "workspace_stakeholder_updated"
+        : "workspace_stakeholder_created",
+      detail: `Stakeholder guardado: ${parsed.data.name}`,
+      after: {
+        id: savedId,
+        name: parsed.data.name,
+        supportLevel: parsed.data.supportLevel,
+        status: parsed.data.status,
+      },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ id: savedId });
+  },
+);
+
+router.post(
+  "/:id/workspace/actions",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityWorkspaceActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const savedId = await saveOpportunityAction({
+      opportunityId: id,
+      actionId: parsed.data.id,
+      payload: {
+        title: parsed.data.title,
+        action_type: parsed.data.actionType,
+        status: parsed.data.status,
+        priority: parsed.data.priority,
+        linked_stage_id: parsed.data.linkedStageId || null,
+        linked_theme_code: parsed.data.linkedThemeCode || null,
+        linked_weakness_id: parsed.data.linkedWeaknessId || null,
+        stakeholder_id: parsed.data.stakeholderId || null,
+        owner_user_id: parsed.data.ownerUserId || null,
+        due_date: parsed.data.dueDate || null,
+        success_criteria: parsed.data.successCriteria || null,
+        notes: parsed.data.notes || null,
+      },
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: parsed.data.id
+        ? "workspace_action_updated"
+        : "workspace_action_created",
+      detail: `Accion guardada: ${parsed.data.title}`,
+      after: {
+        id: savedId,
+        title: parsed.data.title,
+        status: parsed.data.status,
+        priority: parsed.data.priority,
+      },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ id: savedId });
+  },
+);
+
+router.post(
+  "/:id/workspace/deliverables",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityWorkspaceDeliverableSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", errors: parsed.error.flatten() });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const savedId = await saveOpportunityDeliverable({
+      opportunityId: id,
+      deliverableId: parsed.data.id,
+      payload: {
+        deliverable_type: parsed.data.deliverableType,
+        title: parsed.data.title,
+        audience: parsed.data.audience || null,
+        status: parsed.data.status,
+        version_label: parsed.data.versionLabel || null,
+        linked_stage_id: parsed.data.linkedStageId || null,
+        sent_at: parsed.data.sentAt || null,
+        outcome_summary: parsed.data.outcomeSummary || null,
+        document_public_id: parsed.data.documentPublicId || null,
+      },
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: parsed.data.id
+        ? "workspace_deliverable_updated"
+        : "workspace_deliverable_created",
+      detail: `Entregable guardado: ${parsed.data.title}`,
+      after: {
+        id: savedId,
+        title: parsed.data.title,
+        status: parsed.data.status,
+        deliverableType: parsed.data.deliverableType,
+      },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ id: savedId });
+  },
+);
+
+router.delete(
+  "/:id/workspace/assessments/:criterionCode",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const criterionCode = String(req.params.criterionCode || "").trim();
+    if (!Number.isInteger(id) || id <= 0 || !criterionCode) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    await deleteOpportunityCriterionAssessment({
+      opportunityId: id,
+      criterionCode,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_assessment_deleted",
+      detail: `Assessment eliminado: ${criterionCode}`,
+      after: { criterionCode },
+    });
+    const opportunityState = await getOpportunityStateById(id);
+    const stageView = await buildOpportunityStageView({
+      opportunityState,
+      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      persistRecommendedStrategy: true,
+      strategyUpdatedByUserId: Number(req.user.id),
+    });
+    return res.json({ workspace: stageView.workspace });
+  },
+);
+
+router.delete(
+  "/:id/workspace/weaknesses/:workspaceItemId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const workspaceItemId = Number(req.params.workspaceItemId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !Number.isInteger(workspaceItemId)
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    await deleteOpportunityWeakness({
+      opportunityId: id,
+      weaknessId: workspaceItemId,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_weakness_deleted",
+      detail: `Debilidad eliminada: ${workspaceItemId}`,
+      after: { weaknessId: workspaceItemId },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ ok: true });
+  },
+);
+
+router.delete(
+  "/:id/workspace/themes/:workspaceItemId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const workspaceItemId = Number(req.params.workspaceItemId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !Number.isInteger(workspaceItemId)
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    await deleteOpportunityThemeEntry({
+      opportunityId: id,
+      entryId: workspaceItemId,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_theme_deleted",
+      detail: `Claim tematico eliminado: ${workspaceItemId}`,
+      after: { entryId: workspaceItemId },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ ok: true });
+  },
+);
+
+router.delete(
+  "/:id/workspace/stakeholders/:workspaceItemId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const workspaceItemId = Number(req.params.workspaceItemId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !Number.isInteger(workspaceItemId)
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    await deleteOpportunityStakeholder({
+      opportunityId: id,
+      stakeholderId: workspaceItemId,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_stakeholder_deleted",
+      detail: `Stakeholder eliminado: ${workspaceItemId}`,
+      after: { stakeholderId: workspaceItemId },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ ok: true });
+  },
+);
+
+router.delete(
+  "/:id/workspace/actions/:workspaceItemId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const workspaceItemId = Number(req.params.workspaceItemId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !Number.isInteger(workspaceItemId)
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    await deleteOpportunityAction({
+      opportunityId: id,
+      actionId: workspaceItemId,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_action_deleted",
+      detail: `Accion eliminada: ${workspaceItemId}`,
+      after: { actionId: workspaceItemId },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ ok: true });
+  },
+);
+
+router.delete(
+  "/:id/workspace/deliverables/:workspaceItemId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const workspaceItemId = Number(req.params.workspaceItemId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !Number.isInteger(workspaceItemId)
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    await deleteOpportunityDeliverable({
+      opportunityId: id,
+      deliverableId: workspaceItemId,
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "workspace_deliverable_deleted",
+      detail: `Entregable eliminado: ${workspaceItemId}`,
+      after: { deliverableId: workspaceItemId },
+    });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      userId: Number(req.user.id),
+    });
+    return res.json({ ok: true });
   },
 );
 
@@ -1754,6 +2733,14 @@ router.put(
       });
     }
 
+    if (hasStageChange || hasCommercialCloseChange) {
+      await refreshOpportunityRecommendedStrategy({
+        opportunityId: id,
+        selectedSalesStageId: requestedSalesStageId,
+        userId: Number(req.user.id),
+      });
+    }
+
     res.json({
       message: hasCommercialCloseChange
         ? `Oportunidad cerrada como ${requestedCommercialStatusCode}`
@@ -1858,6 +2845,12 @@ router.post(
       },
     });
 
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      userId: Number(req.user.id),
+    });
+
     return res.json({ message: "Respuestas guardadas" });
   },
 );
@@ -1948,6 +2941,12 @@ router.post(
           : "Etapa de oportunidad retrocedida",
       before: { sales_stage_id: Number(opportunityState.sales_stage_id) },
       after: { sales_stage_id: Number(targetStage.id) },
+    });
+
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      selectedSalesStageId: Number(targetStage.id),
+      userId: Number(req.user.id),
     });
 
     return res.json({
@@ -2050,6 +3049,12 @@ router.post(
         commercial_status_id: commercialStatusId,
         commercial_close_reason: closeReason || null,
       },
+    });
+
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      userId: Number(req.user.id),
     });
 
     return res.json({
@@ -2189,10 +3194,19 @@ router.post(
       },
       after: {
         sales_stage_id: Number(opportunityState.sales_stage_id),
+        validated_sales_stage_id: Number(opportunityState.sales_stage_id),
+        validated_sales_stage_code: String(opportunityState.sales_stage_code),
+        validated_sales_stage_name: String(opportunityState.sales_stage_name),
         validation_note: validationNote || null,
         validation_decision: validationResult.decision,
         validation_summary: validationResult.summary,
       },
+    });
+
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      userId: Number(req.user.id),
     });
 
     return res.json({
@@ -2276,6 +3290,12 @@ router.post(
         sales_stage_id: Number(targetStage.id),
         bypass_reason: parsed.data.reason,
       },
+    });
+
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId: id,
+      selectedSalesStageId: Number(targetStage.id),
+      userId: Number(req.user.id),
     });
 
     return res.json({

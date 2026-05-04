@@ -20,6 +20,10 @@ const AccountsPage = lazy(() => import("./AccountsPage"));
 const InteractionsPage = lazy(() => import("./InteractionsPage"));
 const ProvidersPage = lazy(() => import("./ProvidersPage"));
 const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
+const ExecutionCommercialPage = lazy(() => import("./ExecutionCommercialPage"));
+const CommercialEnablementPage = lazy(
+  () => import("./CommercialEnablementPage"),
+);
 const PotentialOpportunitiesPage = lazy(
   () => import("./PotentialOpportunitiesPage"),
 );
@@ -109,6 +113,12 @@ export default function AppShell({
   const canAccessPotentialOpportunities =
     can("oportunidades_potenciales.read") ||
     can("oportunidades_potenciales.read_all");
+  const canAccessCommercialEnablement =
+    can("enablement_comercial.read") ||
+    can("enablement_comercial.update") ||
+    can("enablement_comercial.analytics");
+  const canOpenCommercialEnablementShell =
+    canAccessCommercialEnablement || can("oportunidades.read");
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
 
@@ -190,6 +200,26 @@ export default function AppShell({
           element={
             can("oportunidades.read") ? (
               <OpportunitiesPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/execution-commercial"
+          element={
+            can("oportunidades.read") ? (
+              <ExecutionCommercialPage currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/commercial-enablement"
+          element={
+            canOpenCommercialEnablementShell ? (
+              <CommercialEnablementPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
             )
@@ -313,6 +343,27 @@ export default function AppShell({
                   Cotizaciones
                 </GuardedNavLink>
               )}
+            </SidebarNavGroup>
+          )}
+
+          {(can("oportunidades.read") || canOpenCommercialEnablementShell) && (
+            <SidebarNavGroup title="Ejecucion">
+              {can("oportunidades.read") ? (
+                <GuardedNavLink
+                  to="/execution-commercial"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Ejecucion Comercial
+                </GuardedNavLink>
+              ) : null}
+              {canOpenCommercialEnablementShell ? (
+                <GuardedNavLink
+                  to="/commercial-enablement"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Enablement Comercial
+                </GuardedNavLink>
+              ) : null}
             </SidebarNavGroup>
           )}
 

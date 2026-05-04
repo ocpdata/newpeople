@@ -99,6 +99,7 @@ function OpportunitiesPage({ currentUser }) {
     updateCommercialAnswer,
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,
+    refreshOpportunityCommercialView,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     handleStageBypass,
@@ -241,6 +242,7 @@ function OpportunitiesPage({ currentUser }) {
         analyzingCommercialSuggestions={analyzingCommercialSuggestions}
         analyzeCommercialStageAnswers={analyzeCommercialStageAnswers}
         applyCommercialAnswerSuggestion={applyCommercialAnswerSuggestion}
+        refreshOpportunityCommercialView={refreshOpportunityCommercialView}
       />
 
       <StageBypassConfirmationModal

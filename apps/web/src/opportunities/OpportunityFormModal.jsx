@@ -1,6 +1,7 @@
 import DatePicker from "react-datepicker";
 import { es } from "date-fns/locale";
 import OpportunityDocumentsPanel from "./OpportunityDocumentsPanel";
+import OpportunityWorkspacePanel from "./OpportunityWorkspacePanel";
 
 function OpportunityFormModal({
   isOpen,
@@ -43,6 +44,7 @@ function OpportunityFormModal({
   updateCommercialAnswer,
   analyzeCommercialStageAnswers,
   applyCommercialAnswerSuggestion,
+  refreshOpportunityCommercialView,
   closeStageValidationResult,
   closeOpportunityModal,
   saveOpportunity,
@@ -136,7 +138,7 @@ function OpportunityFormModal({
   return (
     <div className="modal-overlay" onClick={handleClose}>
       <div
-        className="modal-dialog modal-dialog-account"
+        className="modal-dialog modal-dialog-account opportunity-edit-modal"
         aria-busy={isDocumentUploadLocked}
         onClick={(event) => event.stopPropagation()}
       >
@@ -808,6 +810,15 @@ function OpportunityFormModal({
                     Esta etapa no tiene preguntas activas configuradas.
                   </p>
                 )}
+
+                <OpportunityWorkspacePanel
+                  opportunityId={editingOpportunityId}
+                  commercialContext={commercialContext}
+                  catalogs={catalogs}
+                  isReadOnly={isSelectedCommercialStageReadOnly}
+                  isCommercialFlowClosed={isCommercialFlowClosed}
+                  onRefresh={refreshOpportunityCommercialView}
+                />
               </section>
             )}
 

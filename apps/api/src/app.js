@@ -14,6 +14,8 @@ import interactionRoutes from "./routes.interactions.js";
 import potentialOpportunityRoutes from "./routes.potential-opportunities.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
+import executionCommercialRoutes from "./routes.execution-commercial.js";
+import commercialEnablementRoutes from "./routes.commercial-enablement.js";
 import settingsRoutes from "./routes.settings.js";
 
 export function createApp() {
@@ -35,6 +37,18 @@ export function createApp() {
   app.use("/api/providers", authRequired, loadUser, providerRoutes);
   app.use("/api/opportunities", authRequired, loadUser, opportunityRoutes);
   app.use("/api/interactions", authRequired, loadUser, interactionRoutes);
+  app.use(
+    "/api/execution-commercial",
+    authRequired,
+    loadUser,
+    executionCommercialRoutes,
+  );
+  app.use(
+    "/api/commercial-enablement",
+    authRequired,
+    loadUser,
+    commercialEnablementRoutes,
+  );
   app.use(
     "/api/potential-opportunities",
     authRequired,

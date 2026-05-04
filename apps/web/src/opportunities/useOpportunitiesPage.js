@@ -440,6 +440,70 @@ export function useOpportunitiesPage({
 
     return {
       salesStage: normalizedSalesStage,
+      workspace: data.workspace
+        ? {
+            playbook: data.workspace.playbook || null,
+            summary: data.workspace.summary || null,
+            stages: Array.isArray(data.workspace.stages)
+              ? data.workspace.stages
+              : [],
+            currentStage: data.workspace.currentStage || null,
+            scorecard: data.workspace.scorecard || null,
+            recommendedStrategy: data.workspace.recommendedStrategy
+              ? {
+                  heading: String(
+                    data.workspace.recommendedStrategy.heading || "",
+                  ),
+                  route: String(data.workspace.recommendedStrategy.route || ""),
+                  finalObjective: String(
+                    data.workspace.recommendedStrategy.finalObjective || "",
+                  ),
+                  steps: Array.isArray(data.workspace.recommendedStrategy.steps)
+                    ? data.workspace.recommendedStrategy.steps.map((step) => ({
+                        priorityLabel: String(step.priorityLabel || ""),
+                        title: String(step.title || ""),
+                        text: String(step.text || ""),
+                      }))
+                    : [],
+                }
+              : null,
+            themes: Array.isArray(data.workspace.themes)
+              ? data.workspace.themes
+              : [],
+            weaknesses: Array.isArray(data.workspace.weaknesses)
+              ? data.workspace.weaknesses
+              : [],
+            stakeholders: Array.isArray(data.workspace.stakeholders)
+              ? data.workspace.stakeholders
+              : [],
+            actions: Array.isArray(data.workspace.actions)
+              ? data.workspace.actions
+              : [],
+            deliverables: Array.isArray(data.workspace.deliverables)
+              ? data.workspace.deliverables
+              : [],
+            recommendations: data.workspace.recommendations
+              ? {
+                  actions: Array.isArray(data.workspace.recommendations.actions)
+                    ? data.workspace.recommendations.actions
+                    : [],
+                  deliverables: Array.isArray(
+                    data.workspace.recommendations.deliverables,
+                  )
+                    ? data.workspace.recommendations.deliverables
+                    : [],
+                  stakeholders: Array.isArray(
+                    data.workspace.recommendations.stakeholders,
+                  )
+                    ? data.workspace.recommendations.stakeholders
+                    : [],
+                }
+              : { actions: [], deliverables: [], stakeholders: [] },
+            history: Array.isArray(data.workspace.history)
+              ? data.workspace.history
+              : [],
+          }
+        : null,
       currentSalesStage: normalizedCurrentSalesStage,
       features: data.features
         ? {
@@ -2435,6 +2499,7 @@ export function useOpportunitiesPage({
     updateCommercialAnswer,
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,
+    refreshOpportunityCommercialView,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     handleStageBypass,

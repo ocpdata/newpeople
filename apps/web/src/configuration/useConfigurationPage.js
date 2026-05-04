@@ -159,6 +159,12 @@ export function useConfigurationPage() {
     serializeForm(EMPTY_FORM),
   );
   const [auditEntries, setAuditEntries] = useState([]);
+  const [workspacePlaybooks, setWorkspacePlaybooks] = useState([]);
+  const [workspacePlaybookDetail, setWorkspacePlaybookDetail] = useState(null);
+  const [activatingWorkspaceVersionId, setActivatingWorkspaceVersionId] =
+    useState(null);
+  const [savingWorkspacePlaybookKey, setSavingWorkspacePlaybookKey] =
+    useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -167,12 +173,19 @@ export function useConfigurationPage() {
       setLoading(true);
       setError("");
       try {
-        const [profileResponse, countriesResponse, auditResponse] =
-          await Promise.all([
-            api.get("/api/settings/company-profile"),
-            api.get("/api/catalogs/countries"),
-            api.get("/api/settings/audit?limit=25"),
-          ]);
+        const [
+          profileResponse,
+          countriesResponse,
+          auditResponse,
+          playbooksResponse,
+        ] = await Promise.all([
+          api.get("/api/settings/company-profile"),
+          api.get("/api/catalogs/countries"),
+          api.get("/api/settings/audit?limit=25"),
+          api
+            .get("/api/opportunities/workspace-playbooks")
+            .catch(() => ({ data: { items: [] } })),
+        ]);
 
         if (cancelled) return;
 
@@ -187,6 +200,24 @@ export function useConfigurationPage() {
         setAuditEntries(
           Array.isArray(auditResponse.data) ? auditResponse.data : [],
         );
+        setWorkspacePlaybooks(
+          Array.isArray(playbooksResponse.data?.items)
+            ? playbooksResponse.data.items
+            : [],
+        );
+        const activePlaybook = Array.isArray(playbooksResponse.data?.items)
+          ? playbooksResponse.data.items.find((item) => item.isActive)
+          : null;
+        if (activePlaybook?.versionId) {
+          const detailResponse = await api.get(
+            `/api/opportunities/workspace-playbooks/${activePlaybook.versionId}`,
+          );
+          if (!cancelled) {
+            setWorkspacePlaybookDetail(detailResponse.data?.playbook || null);
+          }
+        } else {
+          setWorkspacePlaybookDetail(null);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -346,6 +377,110 @@ export function useConfigurationPage() {
     }
   }
 
+  async function activateWorkspacePlaybook(versionId) {
+    setActivatingWorkspaceVersionId(versionId);
+    setError("");
+    setSuccess("");
+    try {
+      const [activateResponse, playbooksResponse, detailResponse] =
+        await Promise.all([
+          api.post(
+            `/api/opportunities/workspace-playbooks/${versionId}/activate`,
+          ),
+          api.get("/api/opportunities/workspace-playbooks"),
+          api.get(`/api/opportunities/workspace-playbooks/${versionId}`),
+        ]);
+      setWorkspacePlaybooks(
+        Array.isArray(playbooksResponse.data?.items)
+          ? playbooksResponse.data.items
+          : [],
+      );
+      setWorkspacePlaybookDetail(detailResponse.data?.playbook || null);
+      setSuccess(
+        activateResponse.data?.playbook
+          ? `Playbook activo: ${activateResponse.data.playbook.name} ${activateResponse.data.playbook.version}`
+          : "Playbook activado correctamente",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible activar la version del playbook",
+        ),
+      );
+    } finally {
+      setActivatingWorkspaceVersionId(null);
+    }
+  }
+
+  async function updateWorkspacePlaybookStage({
+    versionId,
+    salesStageCode,
+    objective,
+    exitCriteriaSummary,
+  }) {
+    setSavingWorkspacePlaybookKey(`stage:${salesStageCode}`);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        `/api/opportunities/workspace-playbooks/${versionId}/stages/${salesStageCode}`,
+        { objective, exitCriteriaSummary },
+      );
+      setWorkspacePlaybookDetail(response.data?.playbook || null);
+      setSuccess("Etapa del playbook actualizada");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar la etapa del playbook",
+        ),
+      );
+      throw err;
+    } finally {
+      setSavingWorkspacePlaybookKey("");
+    }
+  }
+
+  async function updateWorkspacePlaybookCriterion({
+    versionId,
+    salesStageCode,
+    criterionCode,
+    title,
+    description,
+    themeCode,
+    displayOrder,
+  }) {
+    setSavingWorkspacePlaybookKey(
+      `criterion:${salesStageCode}:${criterionCode}`,
+    );
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        `/api/opportunities/workspace-playbooks/${versionId}/stages/${salesStageCode}/criteria/${criterionCode}`,
+        {
+          title,
+          description,
+          themeCode,
+          displayOrder,
+        },
+      );
+      setWorkspacePlaybookDetail(response.data?.playbook || null);
+      setSuccess("Criterio del playbook actualizado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el criterio del playbook",
+        ),
+      );
+      throw err;
+    } finally {
+      setSavingWorkspacePlaybookKey("");
+    }
+  }
+
   const latestUpdateText = useMemo(() => {
     if (!companyProfile?.updatedAt) {
       return "Sin cambios registrados";
@@ -395,6 +530,10 @@ export function useConfigurationPage() {
     companyProfile,
     form,
     auditEntries,
+    workspacePlaybooks,
+    workspacePlaybookDetail,
+    activatingWorkspaceVersionId,
+    savingWorkspacePlaybookKey,
     fieldErrors: saveAttempted ? validationErrors : {},
     isDirty,
     canSave,
@@ -407,5 +546,8 @@ export function useConfigurationPage() {
     discardChanges,
     handleLogoChange,
     saveCompanyProfile,
+    activateWorkspacePlaybook,
+    updateWorkspacePlaybookStage,
+    updateWorkspacePlaybookCriterion,
   };
 }
