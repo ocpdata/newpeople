@@ -1061,6 +1061,61 @@ button:disabled {
   line-height: 1.45;
 }
 
+.accounts-module-help {
+  position: relative;
+}
+
+.accounts-module-help-trigger {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(20, 35, 64, 0.14);
+  background: #f8fafc;
+  color: #35506f;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.accounts-module-help-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.accounts-module-help[open] .accounts-module-help-trigger,
+.accounts-module-help-trigger:hover {
+  background: #eaf2ff;
+  color: #174a8b;
+}
+
+.accounts-module-help-popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 5;
+  width: min(360px, 80vw);
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(20, 35, 64, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 36px rgba(16, 24, 40, 0.12);
+  display: grid;
+  gap: 0.4rem;
+}
+
+.accounts-module-help-popover strong {
+  color: #1c2b3f;
+}
+
+.accounts-module-help-popover p {
+  margin: 0;
+  color: #4f6180;
+  line-height: 1.45;
+}
+
 .potential-opportunities-top-strip {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
@@ -1842,7 +1897,34 @@ button:disabled {
 }
 
 .account-ai-trigger {
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #c9d9ee;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #eef5ff 100%);
+  color: #1c5a92;
+  box-shadow: 0 8px 18px rgba(30, 74, 129, 0.12);
+}
+
+.account-ai-trigger svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.account-ai-trigger:hover:not(:disabled) {
+  border-color: #9fbfe3;
+  background: linear-gradient(180deg, #ffffff 0%, #e3efff 100%);
+}
+
+.account-ai-trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .account-ai-empty-state {
@@ -3071,6 +3153,14 @@ button:disabled {
 
 .account-grid-main {
   margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .account-grid-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .interaction-toolbar-row {
@@ -7221,6 +7311,78 @@ td {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.account-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.account-modal-title-row .modal-title {
+  margin: 0;
+}
+
+.account-modal-help-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.account-modal-help-trigger {
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 14px rgba(23, 74, 139, 0.08);
+}
+
+.account-modal-help-popover {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  z-index: 35;
+  display: grid;
+  gap: 0.3rem;
+  width: min(420px, calc(100vw - 4rem));
+  max-width: calc(100vw - 4rem);
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(20, 35, 64, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  box-shadow: 0 12px 28px rgba(16, 24, 40, 0.16);
+}
+
+.account-modal-help-popover::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 1.1rem;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid rgba(20, 35, 64, 0.12);
+  border-left: 1px solid rgba(20, 35, 64, 0.12);
+  background: #fbfdff;
+  transform: rotate(45deg);
+}
+
+.account-modal-help-popover strong {
+  font-size: 0.82rem;
+  color: #1c2b3f;
+}
+
+.account-modal-help-popover p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #4f6180;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .account-modal-help-popover {
+    width: min(320px, calc(100vw - 3rem));
+    max-width: calc(100vw - 3rem);
+  }
 }
 
 .opportunity-modal-subtitle {

@@ -1,3 +1,11 @@
+  const CONTACT_SUGGESTED_FIELD_LABELS = {
+    addressLine: "Direccion",
+    city: "Ciudad",
+    stateRegion: "Estado",
+    postalCode: "Codigo postal",
+    phone: "Telefono",
+  };
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
@@ -13,6 +21,7 @@ function normalizeText(value) {
 export function useAccountsCrud({ currentUser }) {
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
+  const [accountsPendingEnabled, setAccountsPendingEnabled] = useState(false);
   const [accountStatusFilter, setAccountStatusFilterState] =
     usePersistedStatusFilter("crm.accounts.statusFilter");
   const [accountQuery, setAccountQueryState] = useState("");
@@ -45,9 +54,11 @@ export function useAccountsCrud({ currentUser }) {
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
+  const canDirectCreateAccounts = explicitAccountPermissions.has("cuentas.create");
+  const canRequestAccounts = explicitAccountPermissions.has("cuentas.request");
   const canCreateOrRequestAccounts =
-    explicitAccountPermissions.has("cuentas.create");
-  const canActivateAccounts = explicitAccountPermissions.has("cuentas.create");
+    canDirectCreateAccounts || (canRequestAccounts && accountsPendingEnabled);
+  const canActivateAccounts = canDirectCreateAccounts;
 
   function findCatalogIdByName(options, expectedName) {
     const target = normalizeText(expectedName);
@@ -63,6 +74,14 @@ export function useAccountsCrud({ currentUser }) {
       catalogs.accountTypes,
       "prospecto",
     );
+    const defaultStatusCode = canDirectCreateAccounts
+      ? "activada"
+      : accountsPendingEnabled && canRequestAccounts
+        ? "pendiente_activacion"
+        : "activada";
+    const defaultActivationStatusId = catalogs.statuses.find(
+      (status) => normalizeText(status.code) === defaultStatusCode,
+    )?.id;
     const defaultOwnerUserIds = currentUser?.id ? [Number(currentUser.id)] : [];
 
     return {
@@ -78,7 +97,9 @@ export function useAccountsCrud({ currentUser }) {
       accountTypeId: defaultAccountTypeId,
       economicSectorId: "",
       countryId: defaultCountryId,
-      activationStatusId: "",
+      activationStatusId: defaultActivationStatusId
+        ? String(defaultActivationStatusId)
+        : "",
       ownerUserIds: defaultOwnerUserIds,
     };
   }
@@ -130,6 +151,7 @@ export function useAccountsCrud({ currentUser }) {
         typesRes,
         sectorsRes,
         statusesRes,
+        temporaryFeaturesRes,
       ] = await Promise.all([
         api.get("/api/accounts"),
         api.get("/api/catalogs/account-owner-users"),
@@ -137,6 +159,9 @@ export function useAccountsCrud({ currentUser }) {
         api.get("/api/catalogs/account-types"),
         api.get("/api/catalogs/economic-sectors"),
         api.get("/api/catalogs/account-activation-statuses"),
+        api
+          .get("/api/settings/temporary-features")
+          .catch(() => ({ data: { settings: null } })),
       ]);
       setAccounts(accountsRes.data);
       setUsers((usersRes.data || []).map(normalizeOwnerOption));
@@ -146,6 +171,9 @@ export function useAccountsCrud({ currentUser }) {
         sectors: sectorsRes.data,
         statuses: statusesRes.data,
       });
+      setAccountsPendingEnabled(
+        Boolean(temporaryFeaturesRes.data?.settings?.accountsPendingEnabled),
+      );
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar cuentas"));
     }
@@ -262,7 +290,8 @@ export function useAccountsCrud({ currentUser }) {
     event.preventDefault();
     setError("");
     setSuccess("");
-    if (!form.ownerUserIds.length) {
+    const accountForm = options.formOverride || form;
+    if (!accountForm.ownerUserIds.length) {
       setError("Selecciona al menos un usuario propietario");
       return;
     }
@@ -270,9 +299,10 @@ export function useAccountsCrud({ currentUser }) {
 
     try {
       const fallbackActivationStatusId =
-        Number(form.activationStatusId) || Number(catalogs.statuses?.[0]?.id);
+        Number(accountForm.activationStatusId) ||
+        Number(catalogs.statuses?.[0]?.id);
       const normalizedRegistrationCode = String(
-        form.registrationCode || "",
+        accountForm.registrationCode || "",
       ).trim();
 
       if (!Number.isFinite(fallbackActivationStatusId)) {
@@ -280,13 +310,13 @@ export function useAccountsCrud({ currentUser }) {
       }
 
       const payload = {
-        ...form,
+        ...accountForm,
         registrationCode: normalizedRegistrationCode,
-        accountTypeId: Number(form.accountTypeId),
-        economicSectorId: Number(form.economicSectorId),
-        countryId: Number(form.countryId),
+        accountTypeId: Number(accountForm.accountTypeId),
+        economicSectorId: Number(accountForm.economicSectorId),
+        countryId: Number(accountForm.countryId),
         activationStatusId: fallbackActivationStatusId,
-        ownerUserIds: form.ownerUserIds.map(Number),
+        ownerUserIds: accountForm.ownerUserIds.map(Number),
         allowDuplicateOverride: options.allowDuplicateOverride === true,
       };
 
@@ -404,7 +434,9 @@ export function useAccountsCrud({ currentUser }) {
 
   function getAccountStatusBadgeClass(account) {
     if (isAccountPending(account)) {
-      return "user-status-badge pending";
+      return accountsPendingEnabled
+        ? "user-status-badge pending"
+        : "user-status-badge inactive";
     }
     return isAccountActive(account)
       ? "user-status-badge active"
@@ -414,10 +446,12 @@ export function useAccountsCrud({ currentUser }) {
   const getAccountStatusLabel = useCallback((account) => {
     const normalizedStatus = normalizeText(account?.activation_status);
     if (normalizedStatus === "pendiente de activacion") {
-      return "Pendiente de activacion";
+      return accountsPendingEnabled
+        ? "Pendiente de activacion"
+        : "Desactivada";
     }
     return normalizedStatus === "activada" ? "Activada" : "Desactivada";
-  }, []);
+  }, [accountsPendingEnabled]);
 
   function getEditingActivationMeta() {
     const selectedStatus = catalogs.statuses.find(
@@ -433,7 +467,9 @@ export function useAccountsCrud({ currentUser }) {
     return {
       label: selectedStatus?.name || "No definido",
       badgeClass: isPending
-        ? "status-icon-badge pending"
+        ? accountsPendingEnabled
+          ? "status-icon-badge pending"
+          : "status-icon-badge inactive"
         : isActive
           ? "status-icon-badge active"
           : "status-icon-badge inactive",
@@ -551,12 +587,15 @@ export function useAccountsCrud({ currentUser }) {
     () =>
       accounts.filter((account) => {
         if (accountStatusFilter === "all") return true;
-        if (accountStatusFilter === "pending") return isAccountPending(account);
+        if (accountStatusFilter === "pending") {
+          return accountsPendingEnabled && isAccountPending(account);
+        }
         if (accountStatusFilter === "inactive")
-          return isAccountInactive(account);
+          return isAccountInactive(account) ||
+            (!accountsPendingEnabled && isAccountPending(account));
         return isAccountActive(account);
       }),
-    [accounts, accountStatusFilter],
+    [accounts, accountStatusFilter, accountsPendingEnabled],
   );
 
   const sortedAccounts = useMemo(() => {
@@ -641,7 +680,11 @@ export function useAccountsCrud({ currentUser }) {
       accounts.reduce(
         (totals, account) => {
           if (isAccountPending(account)) {
-            totals.pending += 1;
+            if (accountsPendingEnabled) {
+              totals.pending += 1;
+            } else {
+              totals.inactive += 1;
+            }
             return totals;
           }
           if (isAccountInactive(account)) {
@@ -653,7 +696,7 @@ export function useAccountsCrud({ currentUser }) {
         },
         { active: 0, pending: 0, inactive: 0 },
       ),
-    [accounts],
+    [accounts, accountsPendingEnabled],
   );
 
   const totalAccountsCount =
@@ -696,6 +739,7 @@ export function useAccountsCrud({ currentUser }) {
           typesRes,
           sectorsRes,
           statusesRes,
+          temporaryFeaturesRes,
         ] = await Promise.all([
           api.get("/api/accounts"),
           api.get("/api/catalogs/account-owner-users"),
@@ -703,6 +747,9 @@ export function useAccountsCrud({ currentUser }) {
           api.get("/api/catalogs/account-types"),
           api.get("/api/catalogs/economic-sectors"),
           api.get("/api/catalogs/account-activation-statuses"),
+          api
+            .get("/api/settings/temporary-features")
+            .catch(() => ({ data: { settings: null } })),
         ]);
 
         if (cancelled) return;
@@ -715,6 +762,9 @@ export function useAccountsCrud({ currentUser }) {
           sectors: sectorsRes.data,
           statuses: statusesRes.data,
         });
+        setAccountsPendingEnabled(
+          Boolean(temporaryFeaturesRes.data?.settings?.accountsPendingEnabled),
+        );
       } catch (err) {
         if (!cancelled) {
           setError(getApiErrorMessage(err, "No fue posible cargar cuentas"));
@@ -729,9 +779,18 @@ export function useAccountsCrud({ currentUser }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (accountsPendingEnabled || accountStatusFilter !== "pending") {
+      return;
+    }
+    setAccountStatusFilterState("all");
+  }, [accountStatusFilter, accountsPendingEnabled, setAccountStatusFilterState]);
+
   function setAccountStatusFilter(value) {
     setAccountsPage(1);
-    setAccountStatusFilterState(value);
+    setAccountStatusFilterState(
+      value === "pending" && !accountsPendingEnabled ? "all" : value,
+    );
   }
 
   function setAccountQuery(value) {
@@ -834,20 +893,21 @@ export function useAccountsCrud({ currentUser }) {
       return;
     }
 
-    if (field === "contactData") {
+    if (Object.hasOwn(CONTACT_SUGGESTED_FIELD_LABELS, field)) {
       const nextContactData = accountDraftAnalysis?.suggestedContactData;
       if (!nextContactData?.canAutoApply) return;
 
+      const nextValue = String(nextContactData[field] || "").trim();
+      if (!nextValue) return;
+
       setForm((prev) => ({
         ...prev,
-        addressLine: nextContactData.addressLine || prev.addressLine,
-        city: nextContactData.city || prev.city,
-        stateRegion: nextContactData.stateRegion || prev.stateRegion,
-        postalCode: nextContactData.postalCode || prev.postalCode,
-        phone: nextContactData.phone || prev.phone,
+        [field]: nextValue,
       }));
 
-      setSuccess("Direccion y telefono sugeridos aplicados al formulario");
+      setSuccess(
+        `${CONTACT_SUGGESTED_FIELD_LABELS[field]} sugerido aplicado al formulario`,
+      );
       return;
     }
 
@@ -893,6 +953,7 @@ export function useAccountsCrud({ currentUser }) {
     catalogs,
     error,
     success,
+    accountsPendingEnabled,
     canCreateOrRequestAccounts,
     canActivateAccounts,
     form,

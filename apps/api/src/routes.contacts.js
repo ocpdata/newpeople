@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
 
@@ -38,7 +39,7 @@ const contactStatusSchema = z.object({
   statusCode: z.enum(["activado", "desactivado", "pendiente_activacion"]),
 });
 
-const contactCreatePermissions = ["contactos.create"];
+const contactCreatePermissions = ["contactos.create", "contactos.request"];
 const contactGlobalReadPermission = "contactos.read_all";
 
 function normalizeContactText(value) {
@@ -550,6 +551,10 @@ function canChangeContactActivationStatus(user) {
   return hasExplicitContactPermission(user, "contactos.create");
 }
 
+function canRequestContacts(user) {
+  return hasExplicitContactPermission(user, "contactos.request");
+}
+
 async function getContactActivationStatusId(statusCode) {
   const rows = await query(
     "SELECT id FROM contact_activation_statuses WHERE code = ? LIMIT 1",
@@ -616,11 +621,25 @@ async function getBlockedContactStatusResponse(contactId, nextStatusCode) {
   return null;
 }
 
-function resolveContactCreationStatusCode(user) {
+async function resolveContactCreationStatusCode(user) {
   if (hasExplicitContactPermission(user, "contactos.create")) {
     return "activado";
   }
+  if (!canRequestContacts(user)) {
+    return null;
+  }
+
+  const settings = await getTemporaryFeatureSettings();
+  if (settings.contactsPendingEnabled) {
+    return "pendiente_activacion";
+  }
+
   return null;
+}
+
+async function ensurePendingContactStatusAllowed() {
+  const settings = await getTemporaryFeatureSettings();
+  return settings.contactsPendingEnabled;
 }
 
 router.get("/", requirePermission("contactos.read"), async (req, res) => {
@@ -760,14 +779,14 @@ router.post(
         .status(accountAccess.response.status)
         .json(accountAccess.response.body);
     }
-    const creationStatusCode = resolveContactCreationStatusCode(req.user);
+    const creationStatusCode = await resolveContactCreationStatusCode(req.user);
     const activationStatusId = creationStatusCode
       ? await getContactActivationStatusId(creationStatusCode)
       : null;
 
     if (!activationStatusId) {
       return res.status(403).json({
-        message: "No autorizado para crear contactos",
+        message: "No autorizado",
       });
     }
 
@@ -919,6 +938,16 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
   }
 
   if (
+    requestedStatusCode === "pendiente_activacion" &&
+    requestedStatusCode !== previousStatusCode &&
+    !(await ensurePendingContactStatusAllowed())
+  ) {
+    return res.status(400).json({
+      message: "El estado pendiente no esta habilitado para contactos",
+    });
+  }
+
+  if (
     requestedStatusCode !== previousStatusCode &&
     !canChangeContactActivationStatus(req.user)
   ) {
@@ -1020,6 +1049,15 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      !(await ensurePendingContactStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para contactos",
+      });
+    }
+
     if (!canChangeContactActivationStatus(req.user)) {
       return res.status(403).json({
         message:
@@ -1044,6 +1082,20 @@ router.patch(
     );
     if (!beforeRows.length) {
       return res.status(404).json({ message: "Contacto no encontrado" });
+    }
+
+    const previousStatusCode = await getContactActivationStatusCodeById(
+      Number(beforeRows[0].activation_status_id),
+    );
+
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      parsed.data.statusCode !== previousStatusCode &&
+      !(await ensurePendingContactStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para contactos",
+      });
     }
 
     const blockedStatusResponse = await getBlockedContactStatusResponse(

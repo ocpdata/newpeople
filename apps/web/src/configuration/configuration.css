@@ -260,6 +260,49 @@
   margin-top: 0.9rem;
 }
 
+.configuration-temporary-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.configuration-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #d5dfe6;
+  border-radius: 16px;
+  padding: 0.95rem 1rem;
+  background: #f9fbfd;
+}
+
+.configuration-toggle-copy {
+  min-width: 0;
+}
+
+.configuration-toggle-copy p {
+  margin: 0.25rem 0 0;
+  color: #607585;
+}
+
+.configuration-toggle-control {
+  flex: 0 0 auto;
+}
+
+.configuration-toggle-control input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.configuration-temporary-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
 .configuration-playbook-criterion-card {
   border-top: 1px solid #d5dfe6;
   padding-top: 0.85rem;

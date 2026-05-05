@@ -162,6 +162,8 @@ export function useOpportunitiesPage({
   setSearchParams,
 }) {
   const [opportunities, setOpportunities] = useState([]);
+  const [opportunitiesPendingEnabled, setOpportunitiesPendingEnabled] =
+    useState(false);
   const [opportunityStatusFilter, setOpportunityStatusFilterState] =
     usePersistedStatusFilter("crm.opportunities.statusFilter");
   const [opportunityQuery, setOpportunityQueryState] = useState("");
@@ -229,11 +231,16 @@ export function useOpportunitiesPage({
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
-  const canCreateOrRequestOpportunities = explicitOpportunityPermissions.has(
+  const canDirectCreateOpportunities = explicitOpportunityPermissions.has(
     "oportunidades.create",
   );
-  const canChangeOpportunityActivationStatus =
-    explicitOpportunityPermissions.has("oportunidades.create");
+  const canRequestOpportunities = explicitOpportunityPermissions.has(
+    "oportunidades.request",
+  );
+  const canCreateOrRequestOpportunities =
+    canDirectCreateOpportunities ||
+    (canRequestOpportunities && opportunitiesPendingEnabled);
+  const canChangeOpportunityActivationStatus = canDirectCreateOpportunities;
   const [catalogs, setCatalogs] = useState({
     accounts: [],
     contacts: [],
@@ -278,6 +285,7 @@ export function useOpportunitiesPage({
         stagesRes,
         statusesRes,
         commercialStatusesRes,
+        temporaryFeaturesRes,
       ] = await Promise.all([
         api.get("/api/opportunities"),
         api.get("/api/catalogs/opportunity-accounts"),
@@ -288,6 +296,9 @@ export function useOpportunitiesPage({
         api.get("/api/catalogs/opportunity-sales-stages"),
         api.get("/api/catalogs/opportunity-activation-statuses"),
         api.get("/api/catalogs/opportunity-commercial-statuses"),
+        api
+          .get("/api/settings/temporary-features")
+          .catch(() => ({ data: { settings: null } })),
       ]);
 
       setOpportunities(opportunitiesRes.data || []);
@@ -301,6 +312,11 @@ export function useOpportunitiesPage({
         statuses: statusesRes.data || [],
         commercialStatuses: commercialStatusesRes.data || [],
       });
+      setOpportunitiesPendingEnabled(
+        Boolean(
+          temporaryFeaturesRes.data?.settings?.opportunitiesPendingEnabled,
+        ),
+      );
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar oportunidades"));
     }
@@ -329,7 +345,11 @@ export function useOpportunitiesPage({
       presalesUserId: "",
       activationStatusId: findCatalogIdByCode(
         catalogs.statuses,
-        "pendiente_activacion",
+        canDirectCreateOpportunities
+          ? "activada"
+          : opportunitiesPendingEnabled && canRequestOpportunities
+            ? "pendiente_activacion"
+            : "activada",
       ),
     };
   }
@@ -677,6 +697,12 @@ export function useOpportunitiesPage({
   }
 
   function getOpportunityStatusLabel(opportunity) {
+    if (
+      !opportunitiesPendingEnabled &&
+      normalizeText(opportunity.activation_status) === "pendiente de activacion"
+    ) {
+      return "Desactivada";
+    }
     return opportunity.activation_status || "-";
   }
 
@@ -703,7 +729,9 @@ export function useOpportunitiesPage({
       return "user-status-badge active";
     }
     if (isOpportunityPending(opportunity)) {
-      return "user-status-badge pending";
+      return opportunitiesPendingEnabled
+        ? "user-status-badge pending"
+        : "user-status-badge inactive";
     }
     return "user-status-badge inactive";
   }
@@ -713,7 +741,9 @@ export function useOpportunitiesPage({
       return "status-icon-badge active";
     }
     if (normalizeText(statusValue) === "pendiente de activacion") {
-      return "status-icon-badge pending";
+      return opportunitiesPendingEnabled
+        ? "status-icon-badge pending"
+        : "status-icon-badge inactive";
     }
     return "status-icon-badge inactive";
   }
@@ -1287,6 +1317,17 @@ export function useOpportunitiesPage({
     openEditOpportunityModalRef.current = openEditOpportunityModal;
   }, [openEditOpportunityModal]);
 
+  useEffect(() => {
+    if (opportunitiesPendingEnabled || opportunityStatusFilter !== "pending") {
+      return;
+    }
+    setOpportunityStatusFilterState("all");
+  }, [
+    opportunityStatusFilter,
+    opportunitiesPendingEnabled,
+    setOpportunityStatusFilterState,
+  ]);
+
   function closeOpportunityModal() {
     if (savingOpportunity || savingCommercialAction) return;
     setShowOpportunityModal(false);
@@ -1306,14 +1347,17 @@ export function useOpportunitiesPage({
       opportunities.filter((opportunity) => {
         if (opportunityStatusFilter === "all") return true;
         if (opportunityStatusFilter === "pending") {
-          return isOpportunityPending(opportunity);
+          return opportunitiesPendingEnabled && isOpportunityPending(opportunity);
         }
         if (opportunityStatusFilter === "inactive") {
-          return isOpportunityInactive(opportunity);
+          return (
+            isOpportunityInactive(opportunity) ||
+            (!opportunitiesPendingEnabled && isOpportunityPending(opportunity))
+          );
         }
         return isOpportunityActive(opportunity);
       }),
-    [opportunities, opportunityStatusFilter],
+    [opportunities, opportunityStatusFilter, opportunitiesPendingEnabled],
   );
 
   const opportunityStatusCounts = useMemo(
@@ -1321,7 +1365,11 @@ export function useOpportunitiesPage({
       opportunities.reduce(
         (totals, opportunity) => {
           if (isOpportunityPending(opportunity)) {
-            totals.pending += 1;
+            if (opportunitiesPendingEnabled) {
+              totals.pending += 1;
+            } else {
+              totals.inactive += 1;
+            }
             return totals;
           }
           if (isOpportunityInactive(opportunity)) {
@@ -1333,7 +1381,7 @@ export function useOpportunitiesPage({
         },
         { active: 0, pending: 0, inactive: 0 },
       ),
-    [opportunities],
+    [opportunities, opportunitiesPendingEnabled],
   );
 
   const totalOpportunitiesCount =
@@ -2397,7 +2445,9 @@ export function useOpportunitiesPage({
 
   function setOpportunityStatusFilter(value) {
     setOpportunitiesPage(1);
-    setOpportunityStatusFilterState(value);
+    setOpportunityStatusFilterState(
+      value === "pending" && !opportunitiesPendingEnabled ? "all" : value,
+    );
   }
 
   function setOpportunityQuery(value) {
@@ -2448,6 +2498,7 @@ export function useOpportunitiesPage({
     deletingOpportunityDocumentId,
     error,
     success,
+    opportunitiesPendingEnabled,
     canCreateOrRequestOpportunities,
     canChangeOpportunityActivationStatus,
     catalogs,

@@ -1,5 +1,6 @@
 function OpportunitiesListSection({
   canCreateOrRequestOpportunities,
+  opportunitiesPendingEnabled,
   openCreateOpportunityModal,
   opportunityStatusFilter,
   setOpportunityStatusFilter,
@@ -87,22 +88,24 @@ function OpportunitiesListSection({
               {opportunityStatusCounts.active}
             </span>
           </button>
-          <button
-            type="button"
-            className={
-              opportunityStatusFilter === "pending"
-                ? "status-filter-pill status-filter-pill-pending is-selected"
-                : "status-filter-pill status-filter-pill-pending"
-            }
-            aria-pressed={opportunityStatusFilter === "pending"}
-            onClick={() => setOpportunityStatusFilter("pending")}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Pendientes</span>
-            <span className="status-filter-pill-count">
-              {opportunityStatusCounts.pending}
-            </span>
-          </button>
+          {opportunitiesPendingEnabled ? (
+            <button
+              type="button"
+              className={
+                opportunityStatusFilter === "pending"
+                  ? "status-filter-pill status-filter-pill-pending is-selected"
+                  : "status-filter-pill status-filter-pill-pending"
+              }
+              aria-pressed={opportunityStatusFilter === "pending"}
+              onClick={() => setOpportunityStatusFilter("pending")}
+            >
+              <span className="status-filter-pill-dot" aria-hidden="true" />
+              <span className="status-filter-pill-text">Pendientes</span>
+              <span className="status-filter-pill-count">
+                {opportunityStatusCounts.pending}
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             className={
@@ -309,23 +312,25 @@ function OpportunitiesListSection({
                         >
                           Activar
                         </button>
-                        <button
-                          type="button"
-                          disabled={
-                            !canChangeOpportunityActivationStatus ||
-                            isOpportunityPending(opportunity)
-                          }
-                          onClick={() =>
-                            runOpportunityAction(() =>
-                              updateOpportunityStatus(
-                                opportunity,
-                                "pendiente_activacion",
-                              ),
-                            )
-                          }
-                        >
-                          Marcar pendiente
-                        </button>
+                        {opportunitiesPendingEnabled ? (
+                          <button
+                            type="button"
+                            disabled={
+                              !canChangeOpportunityActivationStatus ||
+                              isOpportunityPending(opportunity)
+                            }
+                            onClick={() =>
+                              runOpportunityAction(() =>
+                                updateOpportunityStatus(
+                                  opportunity,
+                                  "pendiente_activacion",
+                                ),
+                              )
+                            }
+                          >
+                            Marcar pendiente
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           disabled={

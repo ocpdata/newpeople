@@ -18,6 +18,14 @@ const EMPTY_FORM = {
   description: "",
 };
 
+const EMPTY_TEMPORARY_FEATURE_SETTINGS = {
+  accountsPendingEnabled: false,
+  contactsPendingEnabled: false,
+  opportunitiesPendingEnabled: false,
+  updatedAt: null,
+  updatedByUserName: "",
+};
+
 const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
 
 function isValidHttpUrl(value) {
@@ -112,6 +120,28 @@ function serializeForm(form) {
   });
 }
 
+function normalizeTemporaryFeatureSettings(settings) {
+  if (!settings) {
+    return { ...EMPTY_TEMPORARY_FEATURE_SETTINGS };
+  }
+
+  return {
+    accountsPendingEnabled: Boolean(settings.accountsPendingEnabled),
+    contactsPendingEnabled: Boolean(settings.contactsPendingEnabled),
+    opportunitiesPendingEnabled: Boolean(settings.opportunitiesPendingEnabled),
+    updatedAt: settings.updatedAt || null,
+    updatedByUserName: String(settings.updatedByUserName || ""),
+  };
+}
+
+function serializeTemporaryFeatureSettings(settings) {
+  return JSON.stringify({
+    accountsPendingEnabled: Boolean(settings.accountsPendingEnabled),
+    contactsPendingEnabled: Boolean(settings.contactsPendingEnabled),
+    opportunitiesPendingEnabled: Boolean(settings.opportunitiesPendingEnabled),
+  });
+}
+
 function formatDateTime(value) {
   if (!value) return "Sin cambios registrados";
   try {
@@ -153,11 +183,18 @@ export function useConfigurationPage() {
   const [activeSection, setActiveSection] = useState("company");
   const [countries, setCountries] = useState([]);
   const [companyProfile, setCompanyProfile] = useState(null);
+  const [temporaryFeatureSettings, setTemporaryFeatureSettings] = useState(
+    EMPTY_TEMPORARY_FEATURE_SETTINGS,
+  );
   const [form, setForm] = useState(EMPTY_FORM);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const [initialSnapshot, setInitialSnapshot] = useState(
     serializeForm(EMPTY_FORM),
   );
+  const [savingTemporaryFeatures, setSavingTemporaryFeatures] =
+    useState(false);
+  const [initialTemporaryFeaturesSnapshot, setInitialTemporaryFeaturesSnapshot] =
+    useState(serializeTemporaryFeatureSettings(EMPTY_TEMPORARY_FEATURE_SETTINGS));
   const [auditEntries, setAuditEntries] = useState([]);
   const [workspacePlaybooks, setWorkspacePlaybooks] = useState([]);
   const [workspacePlaybookDetail, setWorkspacePlaybookDetail] = useState(null);
@@ -175,11 +212,15 @@ export function useConfigurationPage() {
       try {
         const [
           profileResponse,
+          temporaryFeaturesResponse,
           countriesResponse,
           auditResponse,
           playbooksResponse,
         ] = await Promise.all([
           api.get("/api/settings/company-profile"),
+          api
+            .get("/api/settings/temporary-features")
+            .catch(() => ({ data: { settings: null } })),
           api.get("/api/catalogs/countries"),
           api.get("/api/settings/audit?limit=25"),
           api
@@ -190,10 +231,17 @@ export function useConfigurationPage() {
         if (cancelled) return;
 
         const nextProfile = profileResponse.data?.profile || null;
+        const nextTemporaryFeatureSettings = normalizeTemporaryFeatureSettings(
+          temporaryFeaturesResponse.data?.settings,
+        );
         const nextForm = normalizeProfileToForm(nextProfile);
         setCompanyProfile(nextProfile);
+        setTemporaryFeatureSettings(nextTemporaryFeatureSettings);
         setForm(nextForm);
         setInitialSnapshot(serializeForm(nextForm));
+        setInitialTemporaryFeaturesSnapshot(
+          serializeTemporaryFeatureSettings(nextTemporaryFeatureSettings),
+        );
         setCountries(
           Array.isArray(countriesResponse.data) ? countriesResponse.data : [],
         );
@@ -251,12 +299,19 @@ export function useConfigurationPage() {
     () => serializeForm(form) !== initialSnapshot,
     [form, initialSnapshot],
   );
+  const temporaryFeaturesDirty = useMemo(
+    () =>
+      serializeTemporaryFeatureSettings(temporaryFeatureSettings) !==
+      initialTemporaryFeaturesSnapshot,
+    [temporaryFeatureSettings, initialTemporaryFeaturesSnapshot],
+  );
 
   const validationErrors = useMemo(() => validateCompanyProfile(form), [form]);
   const canSave = isDirty && Object.keys(validationErrors).length === 0;
+  const temporaryFeaturesCanSave = temporaryFeaturesDirty;
 
   useEffect(() => {
-    if (!isDirty) return undefined;
+    if (!isDirty && !temporaryFeaturesDirty) return undefined;
 
     function handleBeforeUnload(event) {
       event.preventDefault();
@@ -265,7 +320,7 @@ export function useConfigurationPage() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isDirty]);
+  }, [isDirty, temporaryFeaturesDirty]);
 
   function updateField(field, value) {
     setSaveAttempted(false);
@@ -374,6 +429,61 @@ export function useConfigurationPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  function updateTemporaryFeatureSetting(field, value) {
+    setTemporaryFeatureSettings((current) => ({
+      ...current,
+      [field]: Boolean(value),
+    }));
+  }
+
+  async function saveTemporaryFeatureSettings() {
+    setSavingTemporaryFeatures(true);
+    setError("");
+    setSuccess("");
+    try {
+      const payload = {
+        accountsPendingEnabled: Boolean(
+          temporaryFeatureSettings.accountsPendingEnabled,
+        ),
+        contactsPendingEnabled: Boolean(
+          temporaryFeatureSettings.contactsPendingEnabled,
+        ),
+        opportunitiesPendingEnabled: Boolean(
+          temporaryFeatureSettings.opportunitiesPendingEnabled,
+        ),
+      };
+
+      const [saveResponse, auditResponse] = await Promise.all([
+        api.put("/api/settings/temporary-features", payload),
+        api.get("/api/settings/audit?limit=25"),
+      ]);
+
+      const nextSettings = normalizeTemporaryFeatureSettings(
+        saveResponse.data?.settings,
+      );
+      setTemporaryFeatureSettings(nextSettings);
+      setInitialTemporaryFeaturesSnapshot(
+        serializeTemporaryFeatureSettings(nextSettings),
+      );
+      setAuditEntries(
+        Array.isArray(auditResponse.data) ? auditResponse.data : [],
+      );
+      setSuccess(
+        saveResponse.data?.message ||
+          "Configuracion temporal actualizada correctamente",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar la configuracion temporal",
+        ),
+      );
+    } finally {
+      setSavingTemporaryFeatures(false);
     }
   }
 
@@ -490,6 +600,15 @@ export function useConfigurationPage() {
     }`;
   }, [companyProfile]);
 
+  const latestTemporaryFeaturesUpdateText = useMemo(() => {
+    if (!temporaryFeatureSettings.updatedAt) {
+      return "Sin cambios registrados";
+    }
+    return `${formatDateTime(temporaryFeatureSettings.updatedAt)} por ${
+      temporaryFeatureSettings.updatedByUserName || "sistema"
+    }`;
+  }, [temporaryFeatureSettings]);
+
   const sectionItems = useMemo(
     () => [
       {
@@ -502,7 +621,7 @@ export function useConfigurationPage() {
         id: "global",
         title: "Parametros globales",
         description: "Ajustes funcionales comunes a toda la aplicacion",
-        dirty: false,
+        dirty: temporaryFeaturesDirty,
       },
       {
         id: "modules",
@@ -517,7 +636,7 @@ export function useConfigurationPage() {
         dirty: false,
       },
     ],
-    [isDirty],
+    [isDirty, temporaryFeaturesDirty],
   );
 
   return {
@@ -528,6 +647,7 @@ export function useConfigurationPage() {
     activeSection,
     countries,
     companyProfile,
+    temporaryFeatureSettings,
     form,
     auditEntries,
     workspacePlaybooks,
@@ -537,7 +657,11 @@ export function useConfigurationPage() {
     fieldErrors: saveAttempted ? validationErrors : {},
     isDirty,
     canSave,
+    savingTemporaryFeatures,
+    temporaryFeaturesDirty,
+    temporaryFeaturesCanSave,
     latestUpdateText,
+    latestTemporaryFeaturesUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -546,6 +670,8 @@ export function useConfigurationPage() {
     discardChanges,
     handleLogoChange,
     saveCompanyProfile,
+    updateTemporaryFeatureSetting,
+    saveTemporaryFeatureSettings,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,

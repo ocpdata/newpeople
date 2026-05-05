@@ -86,6 +86,84 @@ function ConfigurationBrandingPreview({
   );
 }
 
+function TemporaryFeaturesCard({
+  settings,
+  latestUpdateText,
+  saving,
+  canSave,
+  isDirty,
+  onToggle,
+  onSave,
+}) {
+  const items = [
+    {
+      key: "accountsPendingEnabled",
+      title: "Cuentas pendientes",
+      description:
+        "Si esta activo, request crea cuentas pendientes y create puede aprobar o crear activas.",
+    },
+    {
+      key: "contactsPendingEnabled",
+      title: "Contactos pendientes",
+      description:
+        "Define si la creacion manual con request genera contactos pendientes.",
+    },
+    {
+      key: "opportunitiesPendingEnabled",
+      title: "Oportunidades pendientes",
+      description:
+        "Habilita solicitudes manuales pendientes y su aprobacion desde listados.",
+    },
+  ];
+
+  return (
+    <section className="configuration-card">
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Temporales</h4>
+          <p>
+            Controla en que modulos existe el flujo de solicitud y aprobacion
+            manual por estado pendiente.
+          </p>
+        </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
+      </div>
+
+      <div className="configuration-temporary-grid">
+        {items.map((item) => (
+          <label key={item.key} className="configuration-toggle-row">
+            <div className="configuration-toggle-copy">
+              <strong>{item.title}</strong>
+              <p>{item.description}</p>
+            </div>
+            <span className="configuration-toggle-control">
+              <input
+                type="checkbox"
+                checked={Boolean(settings[item.key])}
+                onChange={(event) => onToggle(item.key, event.target.checked)}
+              />
+            </span>
+          </label>
+        ))}
+      </div>
+
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">Ultima actualizacion: {latestUpdateText}</span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar temporales"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ConfigurationModuleCards({ items, onOpenAudit }) {
   return (
     <div className="configuration-module-grid">
@@ -446,6 +524,7 @@ export default function ConfigurationPage() {
     activeSection,
     countries,
     companyProfile,
+    temporaryFeatureSettings,
     form,
     auditEntries,
     workspacePlaybooks,
@@ -455,7 +534,11 @@ export default function ConfigurationPage() {
     fieldErrors,
     isDirty,
     canSave,
+    savingTemporaryFeatures,
+    temporaryFeaturesDirty,
+    temporaryFeaturesCanSave,
     latestUpdateText,
+    latestTemporaryFeaturesUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -464,6 +547,8 @@ export default function ConfigurationPage() {
     discardChanges,
     handleLogoChange,
     saveCompanyProfile,
+    updateTemporaryFeatureSetting,
+    saveTemporaryFeatureSettings,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
@@ -993,6 +1078,16 @@ export default function ConfigurationPage() {
 
           {activeSection === "global" ? (
             <div className="configuration-section-stack">
+              <TemporaryFeaturesCard
+                settings={temporaryFeatureSettings}
+                latestUpdateText={latestTemporaryFeaturesUpdateText}
+                saving={savingTemporaryFeatures}
+                canSave={temporaryFeaturesCanSave}
+                isDirty={temporaryFeaturesDirty}
+                onToggle={updateTemporaryFeatureSetting}
+                onSave={saveTemporaryFeatureSettings}
+              />
+
               <WorkspacePlaybookCard
                 items={workspacePlaybooks}
                 activatingVersionId={activatingWorkspaceVersionId}

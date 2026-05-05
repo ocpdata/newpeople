@@ -9,6 +9,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Usuarios](./usuarios.md)
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
+- [Crear cuenta](./crear-cuenta.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Cotizaciones](./cotizaciones.md)

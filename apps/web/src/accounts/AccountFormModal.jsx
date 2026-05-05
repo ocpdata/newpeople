@@ -1,8 +1,148 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConfirmationModal } from "../AppModals";
 import AccountDraftAnalysisPanel from "./AccountDraftAnalysisPanel";
 import AccountInteractionModal from "./AccountInteractionModal";
 import AccountInteractionsSection from "./AccountInteractionsSection";
+
+const ACCOUNT_NAME_CONNECTORS = new Set([
+  "de",
+  "del",
+  "la",
+  "las",
+  "el",
+  "los",
+  "y",
+  "e",
+  "and",
+  "of",
+]);
+
+const ACCOUNT_NAME_SPECIAL_TOKENS = new Map([
+  ["accessq", "AccessQ"],
+  ["openai", "OpenAI"],
+  ["ebay", "eBay"],
+  ["ishop", "iShop"],
+  ["iphone", "iPhone"],
+  ["ipad", "iPad"],
+  ["imac", "iMac"],
+  ["ios", "iOS"],
+  ["youtube", "YouTube"],
+  ["linkedin", "LinkedIn"],
+  ["whatsapp", "WhatsApp"],
+  ["microsoft", "Microsoft"],
+]);
+
+const ACCOUNT_NAME_ACRONYMS = new Set([
+  "aws",
+  "bbva",
+  "b2b",
+  "crm",
+  "dhl",
+  "erp",
+  "hp",
+  "ibm",
+  "sap",
+  "sas",
+  "sia",
+  "ti",
+  "3m",
+]);
+
+function collapseAccountNameWhitespace(value) {
+  return String(value || "")
+    .replace(/^\s+/g, "")
+    .replace(/\s{2,}/g, " ");
+}
+
+function normalizeAccountNameKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function capitalizeWord(value) {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function normalizeAccountNameToken(token, index) {
+  const trimmedToken = String(token || "").trim();
+  if (!trimmedToken) return "";
+
+  const simpleKey = normalizeAccountNameKey(trimmedToken).replace(/[^a-z0-9]/g, "");
+  if (ACCOUNT_NAME_SPECIAL_TOKENS.has(simpleKey)) {
+    return ACCOUNT_NAME_SPECIAL_TOKENS.get(simpleKey);
+  }
+
+  if (ACCOUNT_NAME_ACRONYMS.has(simpleKey)) {
+    return trimmedToken.toUpperCase();
+  }
+
+  if (ACCOUNT_NAME_CONNECTORS.has(simpleKey)) {
+    return index === 0 ? capitalizeWord(trimmedToken) : simpleKey;
+  }
+
+  if (/^[A-Za-z][A-Za-z0-9]+$/.test(trimmedToken)) {
+    return capitalizeWord(trimmedToken);
+  }
+
+  return trimmedToken.replace(/[A-Za-zÀ-ÿ]+/g, (segment) => {
+    const segmentKey = normalizeAccountNameKey(segment).replace(
+      /[^a-z0-9]/g,
+      "",
+    );
+    if (ACCOUNT_NAME_SPECIAL_TOKENS.has(segmentKey)) {
+      return ACCOUNT_NAME_SPECIAL_TOKENS.get(segmentKey);
+    }
+    if (ACCOUNT_NAME_ACRONYMS.has(segmentKey)) {
+      return segment.toUpperCase();
+    }
+    return capitalizeWord(segment);
+  });
+}
+
+function buildNormalizedAccountName(value) {
+  const sanitized = collapseAccountNameWhitespace(value).trim();
+  if (!sanitized) return "";
+
+  return sanitized
+    .split(" ")
+    .filter(Boolean)
+    .map((token, index) => normalizeAccountNameToken(token, index))
+    .join(" ");
+}
+
+function isPlainUpperOrLowerCase(value) {
+  const lettersOnly = String(value || "").replace(/[^A-Za-zÀ-ÿ]/g, "");
+  if (!lettersOnly) return false;
+  return (
+    lettersOnly === lettersOnly.toLowerCase() ||
+    lettersOnly === lettersOnly.toUpperCase()
+  );
+}
+
+function getAccountNameNormalizationState(value) {
+  const rawValue = String(value || "");
+  const sanitizedValue = collapseAccountNameWhitespace(rawValue);
+  const normalizedValue = buildNormalizedAccountName(sanitizedValue);
+  const trimmedRawValue = sanitizedValue.trim();
+  const hasSpacingAdjustment = sanitizedValue !== rawValue;
+  const hasFormatSuggestion =
+    Boolean(trimmedRawValue) && normalizedValue && normalizedValue !== trimmedRawValue;
+  const shouldAutoApplyOnBlur =
+    hasFormatSuggestion && isPlainUpperOrLowerCase(trimmedRawValue);
+
+  return {
+    sanitizedValue,
+    normalizedValue,
+    hasSpacingAdjustment,
+    hasFormatSuggestion,
+    shouldAutoApplyOnBlur,
+    shouldConfirmOnSave: hasFormatSuggestion && !shouldAutoApplyOnBlur,
+  };
+}
 
 function getDuplicateSeverityLabel(severity) {
   if (severity === "high") return "Alta";
@@ -19,9 +159,9 @@ function getDuplicateDecisionTitle(decision) {
 
 function getDuplicateDecisionEyebrow(decision) {
   if (decision === "review_required") {
-    return "Revision obligatoria antes de crear";
+    return "Revisión obligatoria antes de crear";
   }
-  return "Confirmacion recomendada antes de crear";
+  return "Confirmación recomendada antes de crear";
 }
 
 function getDuplicateDecisionBadgeClass(decision) {
@@ -32,13 +172,13 @@ function getDuplicateDecisionConfirmText(decision, creatingAccount) {
   if (creatingAccount) {
     return "Creando...";
   }
-  return decision === "review_required" ? "Crear aun asi" : "Confirmar y crear";
+  return decision === "review_required" ? "Crear de todos modos" : "Confirmar y crear";
 }
 
 function getDuplicateReviewVerdictLabel(verdict) {
   if (verdict === "likely_duplicate") return "Probable duplicado";
   if (verdict === "likely_distinct") return "Probablemente distinta";
-  return "Revision no concluyente";
+  return "Revisión no concluyente";
 }
 
 function getDuplicateReviewConfidenceLabel(confidence) {
@@ -135,7 +275,7 @@ function AccountDuplicateReviewModal({
           <section className="account-ai-subsection account-duplicate-review-section">
             <div className="account-duplicate-review-section-header">
               <div>
-                <h5>Revision IA adicional</h5>
+                <h5>Revisión IA adicional</h5>
                 <p>
                   {getDuplicateReviewSourceLabel(
                     review.duplicateValidationSource,
@@ -146,7 +286,7 @@ function AccountDuplicateReviewModal({
             {review.aiReviewStatus === "loading" && (
               <div className="account-ai-banner">
                 Estamos validando con IA si el borrador parece corresponder a la
-                misma organizacion.
+                misma organización.
               </div>
             )}
             {review.aiReviewError && (
@@ -178,7 +318,7 @@ function AccountDuplicateReviewModal({
                 {aiRecommendation && aiRecommendation !== aiSummary ? (
                   <div className="account-duplicate-review-callout">
                     <span className="account-duplicate-review-summary-label">
-                      Recomendacion
+                      Recomendación
                     </span>
                     <p className="field-hint">{aiRecommendation}</p>
                   </div>
@@ -198,8 +338,8 @@ function AccountDuplicateReviewModal({
               </p>
             </div>
             <p className="account-duplicate-review-warning-note">
-              Si abres una cuenta existente desde aqui, se perdera este intento
-              de creacion y tendras que capturarlo de nuevo.
+              Si abres una cuenta existente desde aquí, se perderá este intento
+              de creación y tendrás que capturarlo de nuevo.
             </p>
           </div>
           <div className="account-ai-card-list account-duplicate-review-card-list">
@@ -227,7 +367,7 @@ function AccountDuplicateReviewModal({
                     <dd>{warning.reasonLabel || warning.matchReason}</dd>
                   </div>
                   <div>
-                    <dt>Pais</dt>
+                    <dt>País</dt>
                     <dd>{warning.country || "-"}</dd>
                   </div>
                   <div>
@@ -236,12 +376,12 @@ function AccountDuplicateReviewModal({
                   </div>
                   <div>
                     <dt>Website</dt>
-                    <dd>{warning.website || "Sin website"}</dd>
+                    <dd>{warning.website || "Sin sitio web"}</dd>
                   </div>
                 </dl>
                 <div className="account-duplicate-review-loss-note">
-                  Si abres esta cuenta existente, se perdera el intento actual
-                  de creacion.
+                  Si abres esta cuenta existente, se perderá el intento actual
+                  de creación.
                 </div>
                 <div className="account-duplicate-review-inline-actions">
                   <button
@@ -348,7 +488,42 @@ function AccountFormModal({
   formatDateTime,
 }) {
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(false);
+  const [showNameFormatConfirmation, setShowNameFormatConfirmation] =
+    useState(false);
+  const [pendingSubmitFormOverride, setPendingSubmitFormOverride] =
+    useState(null);
+  const [showCreateHelp, setShowCreateHelp] = useState(false);
+  const createHelpRef = useRef(null);
   const isDraftAnalysisLocked = analyzingAccountDraft;
+
+  function closeCreateHelp() {
+    setShowCreateHelp(false);
+  }
+
+  useEffect(() => {
+    if (editingAccountId || !showCreateHelp) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (!createHelpRef.current?.contains(event.target)) {
+        closeCreateHelp();
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        closeCreateHelp();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [editingAccountId, showCreateHelp]);
 
   if (!isOpen) return null;
 
@@ -357,7 +532,44 @@ function AccountFormModal({
   function handleClose() {
     if (isDraftAnalysisLocked) return;
     setShowCreateConfirmation(false);
+    setShowNameFormatConfirmation(false);
+    setPendingSubmitFormOverride(null);
+    closeCreateHelp();
     onClose();
+  }
+
+  function updateNameValue(nextValue) {
+    setForm({ ...form, name: nextValue });
+  }
+
+  function handleNameChange(event) {
+    updateNameValue(collapseAccountNameWhitespace(event.target.value));
+  }
+
+  function handleNameBlur() {
+    const normalizationState = getAccountNameNormalizationState(form.name);
+    if (!form.name) return;
+
+    if (normalizationState.hasSpacingAdjustment) {
+      updateNameValue(normalizationState.sanitizedValue);
+      return;
+    }
+
+    if (normalizationState.shouldAutoApplyOnBlur) {
+      updateNameValue(normalizationState.normalizedValue);
+    }
+  }
+
+  function buildNextFormForSubmit() {
+    const normalizationState = getAccountNameNormalizationState(form.name);
+    const nextName = normalizationState.normalizedValue || normalizationState.sanitizedValue;
+    return {
+      nextForm: {
+        ...form,
+        name: nextName,
+      },
+      normalizationState,
+    };
   }
 
   function handleSubmit(event) {
@@ -368,7 +580,43 @@ function AccountFormModal({
     }
 
     if (editingAccountId) {
-      void onSubmit(event);
+      const { nextForm, normalizationState } = buildNextFormForSubmit();
+      if (normalizationState.shouldConfirmOnSave) {
+        setPendingSubmitFormOverride(nextForm);
+        setShowNameFormatConfirmation(true);
+        return;
+      }
+
+      updateNameValue(nextForm.name);
+      void onSubmit(event, { formOverride: nextForm });
+      return;
+    }
+
+    const { nextForm, normalizationState } = buildNextFormForSubmit();
+    if (normalizationState.shouldConfirmOnSave) {
+      setPendingSubmitFormOverride(nextForm);
+      setShowNameFormatConfirmation(true);
+      return;
+    }
+
+    updateNameValue(nextForm.name);
+    setPendingSubmitFormOverride(nextForm);
+    setShowCreateConfirmation(true);
+  }
+
+  function handleConfirmNameFormat() {
+    const nextForm = pendingSubmitFormOverride;
+    setShowNameFormatConfirmation(false);
+
+    if (!nextForm) {
+      return;
+    }
+
+    updateNameValue(nextForm.name);
+
+    if (editingAccountId) {
+      void onSubmit({ preventDefault() {} }, { formOverride: nextForm });
+      setPendingSubmitFormOverride(null);
       return;
     }
 
@@ -376,9 +624,21 @@ function AccountFormModal({
   }
 
   function handleConfirmCreate() {
+    const nextForm = pendingSubmitFormOverride || form;
     setShowCreateConfirmation(false);
-    void onSubmit({ preventDefault() {} });
+    setPendingSubmitFormOverride(null);
+    void onSubmit(
+      { preventDefault() {} },
+      { formOverride: nextForm },
+    );
   }
+
+  function handleCancelNameFormat() {
+    setShowNameFormatConfirmation(false);
+    setPendingSubmitFormOverride(null);
+  }
+
+  const nameNormalizationState = getAccountNameNormalizationState(form.name);
 
   return (
     <div className="modal-overlay" onClick={handleClose}>
@@ -396,6 +656,16 @@ function AccountFormModal({
           confirmText={creatingAccount ? "Creando..." : "Crear cuenta"}
           overlayClassName="modal-overlay-elevated"
         />
+        <ConfirmationModal
+          isOpen={showNameFormatConfirmation}
+          title="Confirmar formato del nombre"
+          message={`El nombre se guardará como: ${pendingSubmitFormOverride?.name || form.name}`}
+          onConfirm={handleConfirmNameFormat}
+          onCancel={handleCancelNameFormat}
+          confirmText="Confirmar formato"
+          cancelText="Revisar nombre"
+          overlayClassName="modal-overlay-elevated"
+        />
         <AccountDuplicateReviewModal
           review={accountDuplicateReview}
           draftName={form.name}
@@ -406,13 +676,43 @@ function AccountFormModal({
         />
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
-            <h3 className="modal-title">
-              {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
-            </h3>
+            <div className="account-modal-help-shell" ref={createHelpRef}>
+              <div className="account-modal-title-row">
+                <h3 className="modal-title">
+                  {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
+                </h3>
+                {!editingAccountId ? (
+                  <button
+                    type="button"
+                    className="accounts-module-help-trigger account-modal-help-trigger"
+                    aria-label="Ayuda sobre el modal de crear cuenta"
+                    aria-expanded={showCreateHelp}
+                    title="Ayuda sobre el modal de crear cuenta"
+                    onClick={() => setShowCreateHelp((current) => !current)}
+                  >
+                    ?
+                  </button>
+                ) : null}
+              </div>
+              {!editingAccountId && showCreateHelp ? (
+                <div className="account-modal-help-popover" role="dialog" aria-label="Ayuda sobre crear cuenta">
+                  <strong>Para qué sirve este modal</strong>
+                  <p>
+                    Úsalo para registrar una cuenta nueva con sus datos
+                    principales, responsables y contexto comercial inicial.
+                  </p>
+                  <strong>Qué debes capturar primero</strong>
+                  <p>
+                    Completa el nombre, tipo, sector, país y propietarios para
+                    que la cuenta pueda quedar lista para seguimiento.
+                  </p>
+                </div>
+              ) : null}
+            </div>
             <p className="field-hint opportunity-modal-subtitle">
               {editingAccountId
                 ? "Actualiza los datos necesarios y guarda los cambios."
-                : "Completa primero los datos principales y despues asigna los propietarios para crear la cuenta."}
+                : "Completa primero los datos principales y después asigna los propietarios para crear la cuenta."}
             </p>
           </div>
           {editingAccountId && activationMeta && (
@@ -425,7 +725,7 @@ function AccountFormModal({
               </span>
               <span
                 className={activationMeta.badgeClass}
-                title="Estado de activacion"
+                title="Estado de activación"
               >
                 <span className="status-dot" aria-hidden="true" />
                 {activationMeta.label}
@@ -451,21 +751,19 @@ function AccountFormModal({
                   <input
                     placeholder="Ej. AccessQ S.A. de C.V."
                     value={form.name}
-                    onChange={(event) =>
-                      setForm({ ...form, name: event.target.value })
-                    }
+                    onChange={handleNameChange}
+                    onBlur={handleNameBlur}
                     required
                   />
-                </div>
-                <div className="field-group">
-                  <label>Registro</label>
-                  <input
-                    placeholder="Ej. RFC o identificador interno"
-                    value={form.registrationCode}
-                    onChange={(event) =>
-                      setForm({ ...form, registrationCode: event.target.value })
-                    }
-                  />
+                  <p className="field-hint">
+                    Se ajustarán espacios al escribir y se respetarán siglas o
+                    marcas conocidas al guardar.
+                  </p>
+                  {nameNormalizationState.hasFormatSuggestion ? (
+                    <p className="field-hint">
+                      Formato sugerido: {nameNormalizationState.normalizedValue}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="field-group">
                   <label>
@@ -487,8 +785,18 @@ function AccountFormModal({
                   </select>
                 </div>
                 <div className="field-group">
+                  <label>Registro</label>
+                  <input
+                    placeholder="Ej. RFC o identificador interno"
+                    value={form.registrationCode}
+                    onChange={(event) =>
+                      setForm({ ...form, registrationCode: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="field-group">
                   <label>
-                    Sector economico <span className="required-mark">*</span>
+                    Sector económico <span className="required-mark">*</span>
                   </label>
                   <select
                     value={form.economicSectorId}
@@ -497,7 +805,7 @@ function AccountFormModal({
                     }
                     required
                   >
-                    <option value="">Selecciona sector economico</option>
+                    <option value="">Selecciona sector económico</option>
                     {catalogs.sectors.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.name}
@@ -509,11 +817,11 @@ function AccountFormModal({
             </section>
 
             <section className="account-form-section account-modal-section account-location-section">
-              <h4>Ubicacion y contacto</h4>
+              <h4>Ubicación y contacto</h4>
               <div className="grid-form account-grid-location">
                 <div className="field-group">
                   <label>
-                    Pais <span className="required-mark">*</span>
+                    País <span className="required-mark">*</span>
                   </label>
                   <select
                     value={form.countryId}
@@ -522,7 +830,7 @@ function AccountFormModal({
                     }
                     required
                   >
-                    <option value="">Selecciona pais</option>
+                    <option value="">Selecciona país</option>
                     {catalogs.countries.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.name}
@@ -551,9 +859,9 @@ function AccountFormModal({
                   />
                 </div>
                 <div className="field-group">
-                  <label>Direccion</label>
+                  <label>Dirección</label>
                   <input
-                    placeholder="Direccion"
+                    placeholder="Dirección"
                     value={form.addressLine}
                     onChange={(event) =>
                       setForm({ ...form, addressLine: event.target.value })
@@ -561,9 +869,9 @@ function AccountFormModal({
                   />
                 </div>
                 <div className="field-group">
-                  <label>Codigo postal</label>
+                  <label>Código postal</label>
                   <input
-                    placeholder="Codigo postal"
+                    placeholder="Código postal"
                     value={form.postalCode}
                     onChange={(event) =>
                       setForm({ ...form, postalCode: event.target.value })
@@ -571,9 +879,9 @@ function AccountFormModal({
                   />
                 </div>
                 <div className="field-group">
-                  <label>Telefono</label>
+                  <label>Teléfono</label>
                   <input
-                    placeholder="Telefono"
+                    placeholder="Teléfono"
                     value={form.phone}
                     onChange={(event) =>
                       setForm({ ...form, phone: event.target.value })
@@ -581,7 +889,7 @@ function AccountFormModal({
                   />
                 </div>
                 <div className="field-group">
-                  <label>Pagina web</label>
+                  <label>Página web</label>
                   <input
                     placeholder="https://empresa.com"
                     value={form.website}
@@ -594,10 +902,10 @@ function AccountFormModal({
             </section>
 
             <section className="account-form-section account-modal-section account-description-section">
-              <h4>Descripcion de la empresa</h4>
+              <h4>Descripción de la empresa</h4>
               <div className="field-group">
                 <textarea
-                  placeholder="Describe que hace la empresa, a que se dedica y cualquier contexto publico o comercial relevante"
+                  placeholder="Describe qué hace la empresa, a qué se dedica y cualquier contexto público o comercial relevante"
                   value={form.companyDescription}
                   onChange={(event) =>
                     setForm({ ...form, companyDescription: event.target.value })
@@ -657,7 +965,7 @@ function AccountFormModal({
                 </div>
                 {form.ownerUserIds.length === 0 && (
                   <p className="field-hint owners-empty-hint">
-                    Aun no hay propietarios seleccionados.
+                    Aún no hay propietarios seleccionados.
                   </p>
                 )}
               </div>
@@ -720,7 +1028,7 @@ function AccountFormModal({
 
             {editingAccountId && (
               <section className="account-form-section account-modal-section modal-audit-strip">
-                <h4>Auditoria de la cuenta</h4>
+                <h4>Auditoría de la cuenta</h4>
                 <div className="role-audit-grid">
                   <div className="audit-item">
                     <span className="audit-label">Creado por</span>
@@ -729,7 +1037,7 @@ function AccountFormModal({
                     </span>
                   </div>
                   <div className="audit-item">
-                    <span className="audit-label">Fecha de creacion</span>
+                    <span className="audit-label">Fecha de creación</span>
                     <span className="audit-value">
                       {formatDateTime(editAccountAudit?.createdAt)}
                     </span>
@@ -741,7 +1049,7 @@ function AccountFormModal({
                     </span>
                   </div>
                   <div className="audit-item">
-                    <span className="audit-label">Fecha de modificacion</span>
+                    <span className="audit-label">Fecha de modificación</span>
                     <span className="audit-value">
                       {formatDateTime(editAccountAudit?.updatedAt)}
                     </span>
@@ -789,8 +1097,8 @@ function AccountFormModal({
               />
               <strong>Analizando borrador de cuenta</strong>
               <span>
-                Estamos revisando el borrador con IA y la ventana quedará
-                bloqueada hasta que termine o se produzca un error.
+                La IA está revisando la información capturada. Podrás seguir
+                editando la cuenta cuando termine el análisis.
               </span>
             </div>
           </div>

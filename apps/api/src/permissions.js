@@ -13,6 +13,24 @@ const CORE_PERMISSIONS = [
     action: "update",
     description: "Actualizar configuracion general",
   },
+  {
+    code: "cuentas.request",
+    module: "cuentas",
+    action: "request",
+    description: "Solicitar creacion de cuentas",
+  },
+  {
+    code: "contactos.request",
+    module: "contactos",
+    action: "request",
+    description: "Solicitar creacion de contactos",
+  },
+  {
+    code: "oportunidades.request",
+    module: "oportunidades",
+    action: "request",
+    description: "Solicitar creacion de oportunidades",
+  },
 ];
 
 export async function ensureCorePermissions() {

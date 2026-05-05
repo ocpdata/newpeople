@@ -49,6 +49,7 @@ function OpportunitiesPage({ currentUser }) {
     deletingOpportunityDocumentId,
     error,
     success,
+    opportunitiesPendingEnabled,
     canCreateOrRequestOpportunities,
     answerDocumentSelections,
     canChangeOpportunityActivationStatus,
@@ -131,6 +132,7 @@ function OpportunitiesPage({ currentUser }) {
     <section className="panel">
       <OpportunitiesListSection
         canCreateOrRequestOpportunities={canCreateOrRequestOpportunities}
+        opportunitiesPendingEnabled={opportunitiesPendingEnabled}
         openCreateOpportunityModal={openCreateOpportunityModal}
         opportunityStatusFilter={opportunityStatusFilter}
         setOpportunityStatusFilter={setOpportunityStatusFilter}

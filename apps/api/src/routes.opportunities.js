@@ -45,6 +45,7 @@ import {
   upsertOpportunityCriterionAssessment,
 } from "./opportunity-workspace/service.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
+import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
 
@@ -249,7 +250,10 @@ const opportunityWorkspacePlaybookCriterionSchema = z.object({
   displayOrder: z.number().int().positive().optional().default(1),
 });
 
-const opportunityCreatePermissions = ["oportunidades.create"];
+const opportunityCreatePermissions = [
+  "oportunidades.create",
+  "oportunidades.request",
+];
 const opportunityGlobalReadPermission = "oportunidades.read_all";
 
 function hasGlobalAccountReadScope(user) {
@@ -296,6 +300,10 @@ function hasExplicitOpportunityPermission(user, permission) {
 
 function canChangeOpportunityActivationStatus(user) {
   return hasExplicitOpportunityPermission(user, "oportunidades.create");
+}
+
+function canRequestOpportunities(user) {
+  return hasExplicitOpportunityPermission(user, "oportunidades.request");
 }
 
 async function logOpportunityWorkspaceMutation({
@@ -1311,11 +1319,25 @@ async function getAdjacentOpportunityStage({ salesStageId, direction }) {
   return { ok: true, targetStage };
 }
 
-function resolveOpportunityCreationStatusCode(user) {
+async function resolveOpportunityCreationStatusCode(user) {
   if (hasExplicitOpportunityPermission(user, "oportunidades.create")) {
     return "activada";
   }
+  if (!canRequestOpportunities(user)) {
+    return null;
+  }
+
+  const settings = await getTemporaryFeatureSettings();
+  if (settings.opportunitiesPendingEnabled) {
+    return "pendiente_activacion";
+  }
+
   return null;
+}
+
+async function ensurePendingOpportunityStatusAllowed() {
+  const settings = await getTemporaryFeatureSettings();
+  return settings.opportunitiesPendingEnabled;
 }
 
 async function validateOpportunityRelations({
@@ -2337,7 +2359,7 @@ router.post(
     }
 
     const now = new Date();
-    const creationStatusCode = resolveOpportunityCreationStatusCode(req.user);
+    const creationStatusCode = await resolveOpportunityCreationStatusCode(req.user);
     const activationStatusId = creationStatusCode
       ? await getOpportunityActivationStatusId(creationStatusCode)
       : null;
@@ -2353,7 +2375,7 @@ router.post(
     ) {
       return res.status(403).json({
         message: !activationStatusId
-          ? "No autorizado para crear o solicitar oportunidades"
+          ? "No autorizado"
           : "Configuracion incompleta del proceso comercial",
       });
     }
@@ -2483,6 +2505,16 @@ router.put(
 
     if (!requestedStatusCode) {
       return res.status(400).json({ message: "Estado de activacion invalido" });
+    }
+
+    if (
+      requestedStatusCode === "pendiente_activacion" &&
+      requestedStatusCode !== previousStatusCode &&
+      !(await ensurePendingOpportunityStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para oportunidades",
+      });
     }
 
     if (
@@ -3324,6 +3356,15 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      !(await ensurePendingOpportunityStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para oportunidades",
+      });
+    }
+
     if (!canChangeOpportunityActivationStatus(req.user)) {
       return res.status(403).json({
         message:
@@ -3348,6 +3389,20 @@ router.patch(
     );
     if (!beforeRows.length) {
       return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const previousStatusCode = await getOpportunityActivationStatusCodeById(
+      Number(beforeRows[0].activation_status_id),
+    );
+
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      parsed.data.statusCode !== previousStatusCode &&
+      !(await ensurePendingOpportunityStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para oportunidades",
+      });
     }
 
     const now = new Date();

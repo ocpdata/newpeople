@@ -13,6 +13,7 @@ import {
   getDuplicateCandidates,
 } from "./accounts/draft-analysis/core.js";
 import accountInteractionsRoutes from "./routes.account-interactions.js";
+import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
 
@@ -261,7 +262,7 @@ const accountStatusSchema = z.object({
   statusCode: z.enum(["activada", "desactivada", "pendiente_activacion"]),
 });
 
-const accountCreatePermissions = ["cuentas.create"];
+const accountCreatePermissions = ["cuentas.create", "cuentas.request"];
 const accountGlobalReadPermission = "cuentas.read_all";
 
 function hasGlobalAccountReadScope(user) {
@@ -304,6 +305,10 @@ function hasExplicitAccountPermission(user, permission) {
 
 function canActivateAccounts(user) {
   return hasExplicitAccountPermission(user, "cuentas.create");
+}
+
+function canRequestAccounts(user) {
+  return hasExplicitAccountPermission(user, "cuentas.request");
 }
 
 async function getAccountActivationStatusId(statusCode) {
@@ -372,11 +377,25 @@ async function getBlockedAccountStatusResponse(accountId, nextStatusCode) {
   return null;
 }
 
-function resolveAccountCreationStatusCode(user) {
+async function resolveAccountCreationStatusCode(user) {
   if (hasExplicitAccountPermission(user, "cuentas.create")) {
     return "activada";
   }
+  if (!canRequestAccounts(user)) {
+    return null;
+  }
+
+  const settings = await getTemporaryFeatureSettings();
+  if (settings.accountsPendingEnabled) {
+    return "pendiente_activacion";
+  }
+
   return null;
+}
+
+async function ensurePendingAccountStatusAllowed() {
+  const settings = await getTemporaryFeatureSettings();
+  return settings.accountsPendingEnabled;
 }
 
 function getOwnerDisplayExpression(userAlias = "u") {
@@ -513,14 +532,14 @@ router.post(
     const now = new Date();
     const body = normalizeAccountPayload(parsed.data);
     const allowDuplicateOverride = req.body?.allowDuplicateOverride === true;
-    const creationStatusCode = resolveAccountCreationStatusCode(req.user);
+    const creationStatusCode = await resolveAccountCreationStatusCode(req.user);
     const activationStatusId = creationStatusCode
       ? await getAccountActivationStatusId(creationStatusCode)
       : null;
 
     if (!activationStatusId) {
       return res.status(403).json({
-        message: "No autorizado para crear cuentas",
+        message: "No autorizado",
       });
     }
 
@@ -680,6 +699,16 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   }
 
   if (
+    requestedStatusCode === "pendiente_activacion" &&
+    requestedStatusCode !== previousStatusCode &&
+    !(await ensurePendingAccountStatusAllowed())
+  ) {
+    return res.status(400).json({
+      message: "El estado pendiente no esta habilitado para cuentas",
+    });
+  }
+
+  if (
     requestedStatusCode !== previousStatusCode &&
     !canActivateAccounts(req.user)
   ) {
@@ -805,6 +834,15 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      !(await ensurePendingAccountStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para cuentas",
+      });
+    }
+
     if (!canActivateAccounts(req.user)) {
       return res.status(403).json({
         message:
@@ -844,6 +882,20 @@ router.patch(
     }
 
     const previousStatusId = Number(accountRows[0].activation_status_id);
+    const previousStatusCode = await getAccountActivationStatusCodeById(
+      previousStatusId,
+    );
+
+    if (
+      parsed.data.statusCode === "pendiente_activacion" &&
+      parsed.data.statusCode !== previousStatusCode &&
+      !(await ensurePendingAccountStatusAllowed())
+    ) {
+      return res.status(400).json({
+        message: "El estado pendiente no esta habilitado para cuentas",
+      });
+    }
+
     const updateResult = await query(
       `UPDATE accounts
        SET activation_status_id = ?, updated_by = ?, updated_at = ?

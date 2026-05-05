@@ -33,6 +33,7 @@ function AccountsPage({ can, currentUser }) {
     catalogs,
     error,
     success,
+    accountsPendingEnabled,
     canCreateOrRequestAccounts,
     canActivateAccounts,
     form,
@@ -153,6 +154,7 @@ function AccountsPage({ can, currentUser }) {
       <AccountsListSection
         canCreateOrRequestAccounts={canCreateOrRequestAccounts}
         canActivateAccounts={canActivateAccounts}
+        accountsPendingEnabled={accountsPendingEnabled}
         canReadOpportunities={can("oportunidades.read")}
         canReadContacts={can("contactos.read")}
         accountStatusFilter={accountStatusFilter}
@@ -206,8 +208,8 @@ function AccountsPage({ can, currentUser }) {
         onApplySuggestedEconomicSector={() =>
           useSuggestedAccountField("economicSector")
         }
-        onApplySuggestedContactData={() =>
-          useSuggestedAccountField("contactData")
+        onApplySuggestedContactData={(fieldName) =>
+          useSuggestedAccountField(fieldName)
         }
         onApplySuggestedRegistration={() =>
           useSuggestedAccountField("registration")

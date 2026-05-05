@@ -1,6 +1,9 @@
+import { useEffect, useRef } from "react";
+
 function AccountsListSection({
   canCreateOrRequestAccounts,
   canActivateAccounts,
+  accountsPendingEnabled,
   canReadOpportunities,
   canReadContacts,
   accountStatusFilter,
@@ -32,6 +35,36 @@ function AccountsListSection({
   setAccountsPage,
   setAccountsPerPage,
 }) {
+  const helpRef = useRef(null);
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!helpRef.current?.open) {
+        return;
+      }
+
+      if (!helpRef.current.contains(event.target)) {
+        helpRef.current.removeAttribute("open");
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape" || !helpRef.current?.open) {
+        return;
+      }
+
+      helpRef.current.removeAttribute("open");
+      helpRef.current.querySelector("summary")?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   return (
     <>
       <div className="roles-page-header">
@@ -43,6 +76,28 @@ function AccountsListSection({
                 <path d="M9 6.25a1.75 1.75 0 0 1 1.75-1.75h2.5A1.75 1.75 0 0 1 15 6.25V7h3.25A2.75 2.75 0 0 1 21 9.75v7.5A2.75 2.75 0 0 1 18.25 20h-12.5A2.75 2.75 0 0 1 3 17.25v-7.5A2.75 2.75 0 0 1 5.75 7H9zm1.5.75h3v-.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25zM4.5 11.5h15v5.75c0 .69-.56 1.25-1.25 1.25H5.75c-.69 0-1.25-.56-1.25-1.25zm15-1.5h-15v-.25c0-.69.56-1.25 1.25-1.25h12.5c.69 0 1.25.56 1.25 1.25z" />
               </svg>
             </span>
+            <details className="accounts-module-help" ref={helpRef}>
+              <summary
+                className="accounts-module-help-trigger"
+                aria-label="Ayuda sobre el módulo de cuentas"
+                title="Ayuda sobre el módulo"
+              >
+                ?
+              </summary>
+              <div className="accounts-module-help-popover">
+                <strong>Para qué sirve</strong>
+                <p>
+                  Este módulo concentra el padrón de clientes y prospectos,
+                  su información comercial y el contexto necesario para dar
+                  seguimiento.
+                </p>
+                <strong>Cómo usarlo</strong>
+                <p>
+                  Úsalo para crear cuentas, revisar su estado, abrir sus
+                  contactos e identificar las oportunidades asociadas.
+                </p>
+              </div>
+            </details>
           </div>
           <p className="roles-subtitle">
             Gestiona las cuentas del sistema y sus datos de contacto
@@ -81,22 +136,24 @@ function AccountsListSection({
               {accountStatusCounts.active}
             </span>
           </button>
-          <button
-            type="button"
-            className={
-              accountStatusFilter === "pending"
-                ? "status-filter-pill status-filter-pill-pending is-selected"
-                : "status-filter-pill status-filter-pill-pending"
-            }
-            aria-pressed={accountStatusFilter === "pending"}
-            onClick={() => setAccountStatusFilter("pending")}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Pendientes</span>
-            <span className="status-filter-pill-count">
-              {accountStatusCounts.pending}
-            </span>
-          </button>
+          {accountsPendingEnabled ? (
+            <button
+              type="button"
+              className={
+                accountStatusFilter === "pending"
+                  ? "status-filter-pill status-filter-pill-pending is-selected"
+                  : "status-filter-pill status-filter-pill-pending"
+              }
+              aria-pressed={accountStatusFilter === "pending"}
+              onClick={() => setAccountStatusFilter("pending")}
+            >
+              <span className="status-filter-pill-dot" aria-hidden="true" />
+              <span className="status-filter-pill-text">Pendientes</span>
+              <span className="status-filter-pill-count">
+                {accountStatusCounts.pending}
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             className={
@@ -252,20 +309,22 @@ function AccountsListSection({
                         >
                           Activar
                         </button>
-                        <button
-                          type="button"
-                          disabled={
-                            !canActivateAccounts || isAccountPending(account)
-                          }
-                          onClick={() =>
-                            openAccountStatusConfirmation(
-                              account,
-                              "pendiente_activacion",
-                            )
-                          }
-                        >
-                          Marcar pendiente
-                        </button>
+                        {accountsPendingEnabled ? (
+                          <button
+                            type="button"
+                            disabled={
+                              !canActivateAccounts || isAccountPending(account)
+                            }
+                            onClick={() =>
+                              openAccountStatusConfirmation(
+                                account,
+                                "pendiente_activacion",
+                              )
+                            }
+                          >
+                            Marcar pendiente
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           disabled={

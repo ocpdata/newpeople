@@ -7,6 +7,8 @@ import {
   buildCompanyDocumentBranding,
   getCompanyDocumentBranding,
   getCompanyProfile,
+  getTemporaryFeatureSettings,
+  saveTemporaryFeatureSettings,
 } from "./settings.js";
 
 const router = express.Router();
@@ -78,6 +80,12 @@ const companyProfileSchema = z.object({
   description: optionalTrimmedString(2000),
 });
 
+const temporaryFeatureSettingsSchema = z.object({
+  accountsPendingEnabled: z.boolean(),
+  contactsPendingEnabled: z.boolean(),
+  opportunitiesPendingEnabled: z.boolean(),
+});
+
 function parseChangedFields(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -92,6 +100,15 @@ router.get("/company-profile", requirePermission("configuracion.read"), async (_
   const profile = await getCompanyProfile();
   res.json({ profile });
 });
+
+router.get(
+  "/temporary-features",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const settings = await getTemporaryFeatureSettings();
+    res.json({ settings });
+  },
+);
 
 router.get("/document-branding", async (_req, res) => {
   const company = await getCompanyDocumentBranding();
@@ -205,6 +222,42 @@ router.put("/company-profile", requirePermission("configuracion.update"), async 
     profile,
   });
 });
+
+router.put(
+  "/temporary-features",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = temporaryFeatureSettingsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const before = await getTemporaryFeatureSettings();
+    const settings = await saveTemporaryFeatureSettings(
+      parsed.data,
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "updated_temporary_feature_settings",
+      entityType: "temporary_feature_settings",
+      entityId: settings.id,
+      detail: "Configuracion temporal actualizada",
+      before,
+      after: settings,
+    });
+
+    res.json({
+      message: "Configuracion temporal actualizada correctamente",
+      settings,
+    });
+  },
+);
 
 router.get("/audit", requirePermission("configuracion.read"), async (req, res) => {
   const rawLimit = Number(req.query.limit);

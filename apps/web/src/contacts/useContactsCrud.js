@@ -16,6 +16,7 @@ export function useContactsCrud({
   setSearchParams,
 }) {
   const [contacts, setContacts] = useState([]);
+  const [contactsPendingEnabled, setContactsPendingEnabled] = useState(false);
   const [contactStatusFilter, setContactStatusFilterState] =
     usePersistedStatusFilter("crm.contacts.statusFilter");
   const [contactQuery, setContactQueryState] = useState("");
@@ -69,10 +70,15 @@ export function useContactsCrud({
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
+  const canDirectCreateContacts = explicitContactPermissions.has(
+    "contactos.create",
+  );
+  const canRequestContacts = explicitContactPermissions.has(
+    "contactos.request",
+  );
   const canCreateOrRequestContacts =
-    explicitContactPermissions.has("contactos.create");
-  const canChangeContactActivationStatus =
-    explicitContactPermissions.has("contactos.create");
+    canDirectCreateContacts || (canRequestContacts && contactsPendingEnabled);
+  const canChangeContactActivationStatus = canDirectCreateContacts;
 
   function findCatalogIdByCode(options, expectedCode) {
     const target = normalizeText(expectedCode);
@@ -123,7 +129,14 @@ export function useContactsCrud({
         "ninguno",
       ),
       employmentStatusId: String(catalogs.employmentStatuses?.[0]?.id || ""),
-      activationStatusId: String(catalogs.activationStatuses?.[0]?.id || ""),
+      activationStatusId: findCatalogIdByCode(
+        catalogs.activationStatuses,
+        canDirectCreateContacts
+          ? "activado"
+          : contactsPendingEnabled && canRequestContacts
+            ? "pendiente_activacion"
+            : "activado",
+      ),
       managerContactId: "",
       influencesContactId: "",
     };
@@ -139,6 +152,7 @@ export function useContactsCrud({
         relationshipRes,
         employmentRes,
         activationRes,
+        temporaryFeaturesRes,
       ] = await Promise.all([
         api.get("/api/contacts"),
         api.get("/api/catalogs/contact-accounts"),
@@ -147,6 +161,9 @@ export function useContactsCrud({
         api.get("/api/catalogs/contact-relationship-types"),
         api.get("/api/catalogs/contact-employment-statuses"),
         api.get("/api/catalogs/contact-activation-statuses"),
+        api
+          .get("/api/settings/temporary-features")
+          .catch(() => ({ data: { settings: null } })),
       ]);
 
       setContacts(contactsRes.data || []);
@@ -158,6 +175,9 @@ export function useContactsCrud({
         employmentStatuses: employmentRes.data || [],
         activationStatuses: activationRes.data || [],
       });
+      setContactsPendingEnabled(
+        Boolean(temporaryFeaturesRes.data?.settings?.contactsPendingEnabled),
+      );
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar contactos"));
     }
@@ -180,14 +200,18 @@ export function useContactsCrud({
   const getContactStatusLabel = useCallback((contact) => {
     const normalizedStatus = normalizeText(contact?.activation_status);
     if (normalizedStatus === "pendiente de activacion") {
-      return "Pendiente de activacion";
+      return contactsPendingEnabled
+        ? "Pendiente de activacion"
+        : "Desactivado";
     }
     return normalizedStatus === "activado" ? "Activado" : "Desactivado";
-  }, []);
+  }, [contactsPendingEnabled]);
 
   function getContactStatusBadgeClass(contact) {
     if (isContactPending(contact)) {
-      return "user-status-badge pending";
+      return contactsPendingEnabled
+        ? "user-status-badge pending"
+        : "user-status-badge inactive";
     }
     return isContactActive(contact)
       ? "user-status-badge active"
@@ -196,7 +220,9 @@ export function useContactsCrud({
 
   function getContactStatusIconBadgeClass(contact) {
     if (isContactPending(contact)) {
-      return "status-icon-badge pending";
+      return contactsPendingEnabled
+        ? "status-icon-badge pending"
+        : "status-icon-badge inactive";
     }
     return isContactActive(contact)
       ? "status-icon-badge active"
@@ -483,12 +509,15 @@ export function useContactsCrud({
     () =>
       contacts.filter((contact) => {
         if (contactStatusFilter === "all") return true;
-        if (contactStatusFilter === "pending") return isContactPending(contact);
+        if (contactStatusFilter === "pending") {
+          return contactsPendingEnabled && isContactPending(contact);
+        }
         if (contactStatusFilter === "inactive")
-          return isContactInactive(contact);
+          return isContactInactive(contact) ||
+            (!contactsPendingEnabled && isContactPending(contact));
         return isContactActive(contact);
       }),
-    [contacts, contactStatusFilter],
+    [contacts, contactStatusFilter, contactsPendingEnabled],
   );
 
   const contactStatusCounts = useMemo(
@@ -496,7 +525,11 @@ export function useContactsCrud({
       contacts.reduce(
         (totals, contact) => {
           if (isContactPending(contact)) {
-            totals.pending += 1;
+            if (contactsPendingEnabled) {
+              totals.pending += 1;
+            } else {
+              totals.inactive += 1;
+            }
             return totals;
           }
           if (isContactInactive(contact)) {
@@ -508,7 +541,7 @@ export function useContactsCrud({
         },
         { active: 0, pending: 0, inactive: 0 },
       ),
-    [contacts],
+    [contacts, contactsPendingEnabled],
   );
 
   const totalContactsCount =
@@ -658,6 +691,7 @@ export function useContactsCrud({
           relationshipRes,
           employmentRes,
           activationRes,
+          temporaryFeaturesRes,
         ] = await Promise.all([
           api.get("/api/contacts"),
           api.get("/api/catalogs/contact-accounts"),
@@ -666,6 +700,9 @@ export function useContactsCrud({
           api.get("/api/catalogs/contact-relationship-types"),
           api.get("/api/catalogs/contact-employment-statuses"),
           api.get("/api/catalogs/contact-activation-statuses"),
+          api
+            .get("/api/settings/temporary-features")
+            .catch(() => ({ data: { settings: null } })),
         ]);
 
         if (cancelled) return;
@@ -679,6 +716,9 @@ export function useContactsCrud({
           employmentStatuses: employmentRes.data || [],
           activationStatuses: activationRes.data || [],
         });
+        setContactsPendingEnabled(
+          Boolean(temporaryFeaturesRes.data?.settings?.contactsPendingEnabled),
+        );
       } catch (err) {
         if (!cancelled) {
           setError(getApiErrorMessage(err, "No fue posible cargar contactos"));
@@ -692,6 +732,13 @@ export function useContactsCrud({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (contactsPendingEnabled || contactStatusFilter !== "pending") {
+      return;
+    }
+    setContactStatusFilterState("all");
+  }, [contactStatusFilter, contactsPendingEnabled, setContactStatusFilterState]);
 
   useEffect(() => {
     const editId = searchParams.get("edit");
@@ -713,7 +760,9 @@ export function useContactsCrud({
 
   function setContactStatusFilter(value) {
     setContactsPage(1);
-    setContactStatusFilterState(value);
+    setContactStatusFilterState(
+      value === "pending" && !contactsPendingEnabled ? "all" : value,
+    );
   }
 
   function setContactQuery(value) {
@@ -761,6 +810,7 @@ export function useContactsCrud({
     error,
     success,
     catalogs,
+    contactsPendingEnabled,
     canCreateOrRequestContacts,
     canChangeContactActivationStatus,
     form,

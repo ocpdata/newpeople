@@ -33,6 +33,7 @@ function ContactsPage({ can, currentUser }) {
     error,
     success,
     catalogs,
+    contactsPendingEnabled,
     canCreateOrRequestContacts,
     canChangeContactActivationStatus,
     form,
@@ -142,22 +143,24 @@ function ContactsPage({ can, currentUser }) {
               {contactStatusCounts.active}
             </span>
           </button>
-          <button
-            type="button"
-            className={
-              contactStatusFilter === "pending"
-                ? "status-filter-pill status-filter-pill-pending is-selected"
-                : "status-filter-pill status-filter-pill-pending"
-            }
-            aria-pressed={contactStatusFilter === "pending"}
-            onClick={() => setContactStatusFilter("pending")}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Pendientes</span>
-            <span className="status-filter-pill-count">
-              {contactStatusCounts.pending}
-            </span>
-          </button>
+          {contactsPendingEnabled ? (
+            <button
+              type="button"
+              className={
+                contactStatusFilter === "pending"
+                  ? "status-filter-pill status-filter-pill-pending is-selected"
+                  : "status-filter-pill status-filter-pill-pending"
+              }
+              aria-pressed={contactStatusFilter === "pending"}
+              onClick={() => setContactStatusFilter("pending")}
+            >
+              <span className="status-filter-pill-dot" aria-hidden="true" />
+              <span className="status-filter-pill-text">Pendientes</span>
+              <span className="status-filter-pill-count">
+                {contactStatusCounts.pending}
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             className={
@@ -350,21 +353,23 @@ function ContactsPage({ can, currentUser }) {
                         >
                           Activar
                         </button>
-                        <button
-                          type="button"
-                          disabled={
-                            !canChangeContactActivationStatus ||
-                            isContactPending(contact)
-                          }
-                          onClick={() =>
-                            openContactStatusConfirmation(
-                              contact,
-                              "pendiente_activacion",
-                            )
-                          }
-                        >
-                          Marcar pendiente
-                        </button>
+                        {contactsPendingEnabled ? (
+                          <button
+                            type="button"
+                            disabled={
+                              !canChangeContactActivationStatus ||
+                              isContactPending(contact)
+                            }
+                            onClick={() =>
+                              openContactStatusConfirmation(
+                                contact,
+                                "pendiente_activacion",
+                              )
+                            }
+                          >
+                            Marcar pendiente
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           disabled={
