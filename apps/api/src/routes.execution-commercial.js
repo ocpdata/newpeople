@@ -22,6 +22,8 @@ const STAGE_SLA_DAYS = {
   cierre: 3,
 };
 
+const CADENCE_VISIBLE_LIMIT = 10;
+
 const NEXT_STEP_ACTION_TYPES = new Set([
   "next_step",
   "follow_up",
@@ -266,6 +268,105 @@ async function listOpenDependencies(opportunityIds) {
   );
 }
 
+function setLatestActivityTimestamp(
+  activityByOpportunity,
+  opportunityId,
+  value,
+) {
+  const parsed = value ? new Date(value) : null;
+  if (
+    !Number.isInteger(opportunityId) ||
+    opportunityId <= 0 ||
+    !parsed ||
+    Number.isNaN(parsed.getTime())
+  ) {
+    return;
+  }
+
+  const current = activityByOpportunity.get(opportunityId);
+  if (!current || parsed.getTime() > current.getTime()) {
+    activityByOpportunity.set(opportunityId, parsed);
+  }
+}
+
+async function listLastActivityByOpportunity(opportunityIds) {
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const actionTypes = Array.from(NEXT_STEP_ACTION_TYPES);
+  const actionTypePlaceholders = actionTypes.map(() => "?").join(", ");
+
+  const [actionRows, dependencyRows, answerRows, auditRows, interactionRows] =
+    await Promise.all([
+      query(
+        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+       FROM opportunity_workspace_actions
+       WHERE opportunity_id IN (${placeholders})
+         AND action_type IN (${actionTypePlaceholders})
+       GROUP BY opportunity_id`,
+        [...opportunityIds, ...actionTypes],
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+       FROM commercial_execution_dependencies
+       WHERE opportunity_id IN (${placeholders})
+       GROUP BY opportunity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, MAX(answered_at) AS last_activity_at
+       FROM opportunity_stage_question_answers
+       WHERE opportunity_id IN (${placeholders})
+       GROUP BY opportunity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT entity_id AS opportunity_id, MAX(created_at) AS last_activity_at
+       FROM audit_log
+       WHERE entity_type = 'opportunity'
+         AND entity_id IN (${placeholders})
+       GROUP BY entity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT related.opportunity_id, MAX(related.created_at) AS last_activity_at
+       FROM (
+         SELECT i.primary_opportunity_id AS opportunity_id, i.created_at
+         FROM interactions i
+         WHERE i.primary_opportunity_id IN (${placeholders})
+
+         UNION ALL
+
+         SELECT l.opportunity_id, i.created_at
+         FROM interaction_opportunity_links l
+         INNER JOIN interactions i ON i.id = l.interaction_id
+         WHERE l.opportunity_id IN (${placeholders})
+       ) related
+       GROUP BY related.opportunity_id`,
+        [...opportunityIds, ...opportunityIds],
+      ).catch(() => []),
+    ]);
+
+  const activityByOpportunity = new Map();
+  for (const row of [
+    ...actionRows,
+    ...dependencyRows,
+    ...answerRows,
+    ...auditRows,
+    ...interactionRows,
+  ]) {
+    setLatestActivityTimestamp(
+      activityByOpportunity,
+      Number(row.opportunity_id),
+      row.last_activity_at,
+    );
+  }
+
+  return activityByOpportunity;
+}
+
 function selectPrimaryNextStep(actions, currentStageId) {
   const candidates = (actions || [])
     .filter((action) =>
@@ -331,16 +432,159 @@ function mapDependencyRow(row) {
   };
 }
 
-function deriveCadenceType(opportunityItem) {
-  if (opportunityItem.daysSinceActivity >= opportunityItem.slaDays + 2) {
+function getUniqueTexts(values, limit = 4) {
+  return Array.from(
+    new Set(
+      (values || []).map((value) => String(value || "").trim()).filter(Boolean),
+    ),
+  ).slice(0, limit);
+}
+
+function determineCadenceType(opportunityItem) {
+  const openDependencies = (opportunityItem.dependencies || []).filter(
+    (dependency) =>
+      dependency.status === "open" || dependency.status === "blocked",
+  );
+  const overdueDependencies = openDependencies.filter(
+    (dependency) => dependency.isOverdue,
+  );
+  if (
+    overdueDependencies.length > 0 ||
+    opportunityItem.daysSinceActivity >= opportunityItem.slaDays + 2 ||
+    (!opportunityItem.nextStep &&
+      opportunityItem.daysSinceActivity > opportunityItem.slaDays)
+  ) {
     return "rescue_inactive";
   }
   if (
-    ["propuesta", "negociacion", "cierre"].includes(opportunityItem.stageCode)
+    ["propuesta", "negociacion", "cierre", "waiting"].includes(
+      opportunityItem.stageCode,
+    ) ||
+    opportunityItem.nextStep?.actionType === "waiting_customer"
   ) {
     return "proposal_conversion";
   }
   return "discovery_push";
+}
+
+function buildCadenceSuggestionAssessment(opportunityItem) {
+  const reasons = [];
+  const protectiveSignals = [];
+  const openDependencies = (opportunityItem.dependencies || []).filter(
+    (dependency) =>
+      dependency.status === "open" || dependency.status === "blocked",
+  );
+  const overdueDependencies = openDependencies.filter(
+    (dependency) => dependency.isOverdue,
+  );
+  const nextStep = opportunityItem.nextStep;
+
+  let score = 0;
+  if (!nextStep) {
+    score += 50;
+    reasons.push("Sin proximo paso vigente");
+  }
+  if (nextStep?.isOverdue) {
+    score += 28;
+    reasons.push("Proximo paso vencido");
+  }
+  if (opportunityItem.daysSinceActivity > opportunityItem.slaDays + 4) {
+    score += 24;
+    reasons.push(
+      `Inactividad severa: ${opportunityItem.daysSinceActivity} dias sin movimiento`,
+    );
+  } else if (opportunityItem.daysSinceActivity > opportunityItem.slaDays + 2) {
+    score += 20;
+    reasons.push(
+      `Inactividad alta: ${opportunityItem.daysSinceActivity} dias sin movimiento`,
+    );
+  } else if (opportunityItem.daysSinceActivity > opportunityItem.slaDays) {
+    score += 14;
+    reasons.push(`SLA vencido en etapa ${opportunityItem.stageName}`);
+  }
+  if (openDependencies.length > 0) {
+    score += Math.min(12, openDependencies.length * 4);
+    reasons.push(
+      `${openDependencies.length} dependencia(s) interna(s) abierta(s)`,
+    );
+  }
+  if (overdueDependencies.length > 0) {
+    score += Math.min(20, overdueDependencies.length * 10);
+    reasons.push(
+      `${overdueDependencies.length} dependencia(s) interna(s) vencida(s)`,
+    );
+  }
+  if (nextStep?.actionType === "waiting_customer") {
+    score += 10;
+    reasons.push("Respuesta del cliente pendiente de cierre");
+  }
+  if (opportunityItem.riskLevel === "high") {
+    score += 16;
+    reasons.push("Riesgo operativo alto");
+  } else if (opportunityItem.riskLevel === "medium") {
+    score += 10;
+    reasons.push("Riesgo operativo medio");
+  }
+  if (opportunityItem.criticalWeaknessCount > 0) {
+    score += Math.min(14, opportunityItem.criticalWeaknessCount * 7);
+    reasons.push(
+      `${opportunityItem.criticalWeaknessCount} debilidad(es) critica(s) abierta(s)`,
+    );
+  }
+  if (opportunityItem.decisionRiskTone === "red") {
+    score += 10;
+    reasons.push("Riesgo de decision o sponsor insuficiente");
+  }
+  if (
+    ["propuesta", "negociacion", "cierre", "waiting"].includes(
+      opportunityItem.stageCode,
+    )
+  ) {
+    score += 6;
+  }
+
+  let nextStepProtection = 0;
+  if (nextStep && !nextStep.isOverdue) {
+    nextStepProtection += 12;
+    protectiveSignals.push("Tiene siguiente paso vigente");
+    if (nextStep.dueDate) {
+      nextStepProtection += 8;
+      protectiveSignals.push("Tiene fecha de seguimiento confirmada");
+    }
+    if (nextStep.successCriteria?.trim()) {
+      nextStepProtection += 8;
+      protectiveSignals.push("Tiene criterio de exito definido");
+    }
+    if (nextStep.ownerUserId) {
+      nextStepProtection += 6;
+      protectiveSignals.push("Tiene responsable asignado");
+    }
+  }
+  if (
+    opportunityItem.daysSinceActivity <=
+    Math.max(1, Math.floor(opportunityItem.slaDays / 2))
+  ) {
+    nextStepProtection += 8;
+    protectiveSignals.push("Tiene actividad comercial reciente");
+  }
+
+  const boundedScore = Math.max(
+    0,
+    Math.min(100, score - Math.min(34, nextStepProtection)),
+  );
+  const cadenceDecision =
+    boundedScore >= 70 ? "activate" : boundedScore >= 50 ? "watch" : "none";
+
+  return {
+    frictionScore: boundedScore,
+    cadenceDecision,
+    frictionReasons: getUniqueTexts(
+      [...reasons, ...(opportunityItem.riskReasons || [])],
+      4,
+    ),
+    protectiveSignals: getUniqueTexts(protectiveSignals, 3),
+    hasGoodNextStep: nextStepProtection >= 28,
+  };
 }
 
 function buildRiskSummary({
@@ -412,7 +656,12 @@ function buildSuggestedCadence(opportunityItem, activeCadenceByOpportunity) {
     return null;
   }
 
-  const cadenceType = deriveCadenceType(opportunityItem);
+  const assessment = buildCadenceSuggestionAssessment(opportunityItem);
+  if (assessment.cadenceDecision === "none") {
+    return null;
+  }
+
+  const cadenceType = determineCadenceType(opportunityItem);
   const cadence = CADENCE_LIBRARY[cadenceType];
   if (!cadence) {
     return null;
@@ -427,6 +676,11 @@ function buildSuggestedCadence(opportunityItem, activeCadenceByOpportunity) {
     opportunityName: opportunityItem.name,
     accountName: opportunityItem.accountName,
     sellerUserName: opportunityItem.sellerUserName,
+    frictionScore: assessment.frictionScore,
+    cadenceDecision: assessment.cadenceDecision,
+    frictionReasons: assessment.frictionReasons,
+    protectiveSignals: assessment.protectiveSignals,
+    hasGoodNextStep: assessment.hasGoodNextStep,
   };
 }
 
@@ -729,11 +983,12 @@ router.get(
   async (req, res) => {
     const stagesCatalog = await listActiveSalesStages();
     const opportunityRows = await listAccessibleOpportunities(req.user);
+    const opportunityIds = opportunityRows.map((row) => Number(row.id));
     const recommendationCatalog =
       await loadCommercialEnablementRecommendationCatalog();
-    const dependencyRows = await listOpenDependencies(
-      opportunityRows.map((row) => Number(row.id)),
-    );
+    const dependencyRows = await listOpenDependencies(opportunityIds);
+    const lastActivityByOpportunity =
+      await listLastActivityByOpportunity(opportunityIds);
     const dependenciesByOpportunity = dependencyRows.reduce(
       (accumulator, row) => {
         const key = Number(row.opportunity_id);
@@ -764,9 +1019,9 @@ router.get(
         );
         const mappedNextStep = mapNextStep(nextStep);
         const lastActivityAt =
-          workspace.history?.[0]?.createdAt ||
-          row.updated_at ||
-          new Date().toISOString();
+          lastActivityByOpportunity.get(Number(row.id)) ||
+          (row.updated_at ? new Date(row.updated_at) : null) ||
+          new Date();
         const daysSinceActivity = getDiffDays(lastActivityAt);
         const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
         const dependencies =
@@ -846,7 +1101,6 @@ router.get(
       }),
     );
 
-    const opportunityIds = executionItems.map((item) => item.id);
     const activeCadenceRows = await listActiveCadences(opportunityIds);
     const opportunitiesById = new Map(
       executionItems.map((item) => [item.id, item]),
@@ -860,7 +1114,27 @@ router.get(
     const suggestedCadences = executionItems
       .map((item) => buildSuggestedCadence(item, activeCadenceByOpportunity))
       .filter(Boolean)
-      .slice(0, 10);
+      .sort((left, right) => {
+        const decisionDelta =
+          (right.cadenceDecision === "activate" ? 1 : 0) -
+          (left.cadenceDecision === "activate" ? 1 : 0);
+        if (decisionDelta !== 0) {
+          return decisionDelta;
+        }
+        if (right.frictionScore !== left.frictionScore) {
+          return right.frictionScore - left.frictionScore;
+        }
+        return String(left.opportunityName || "").localeCompare(
+          String(right.opportunityName || ""),
+          "es",
+        );
+      });
+    const activateCount = suggestedCadences.filter(
+      (item) => item.cadenceDecision === "activate",
+    ).length;
+    const watchCount = suggestedCadences.filter(
+      (item) => item.cadenceDecision === "watch",
+    ).length;
 
     const followUps = executionItems
       .filter((item) => item.nextStep)
@@ -1032,6 +1306,10 @@ router.get(
       cadences: {
         active: activeCadences,
         suggested: suggestedCadences,
+        totalSuggested: suggestedCadences.length,
+        activateCount,
+        watchCount,
+        visibleLimit: CADENCE_VISIBLE_LIMIT,
       },
       pendingInteractions,
       management: {

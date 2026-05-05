@@ -708,11 +708,7 @@ async function buildInteractionAnalysis({
 }
 
 async function createAccountFromDraft(conn, user, draft) {
-  const creationStatusCode = resolveCreationStatusCode(
-    user,
-    "cuentas.create",
-    "cuentas.request",
-  );
+  const creationStatusCode = resolveCreationStatusCode(user, "cuentas.create");
   if (!creationStatusCode) {
     throw Object.assign(new Error("No autorizado para crear cuentas"), {
       status: 403,
@@ -774,9 +770,7 @@ async function createAccountFromDraft(conn, user, draft) {
 async function createContactFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = hasPermission(user, "contactos.create")
     ? "activado"
-    : hasPermission(user, "contactos.request")
-      ? "pendiente_activacion"
-      : null;
+    : null;
   if (!creationStatusCode) {
     throw Object.assign(new Error("No autorizado para crear contactos"), {
       status: 403,
@@ -840,7 +834,6 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = resolveCreationStatusCode(
     user,
     "oportunidades.create",
-    "oportunidades.request",
   );
   if (!creationStatusCode) {
     throw Object.assign(new Error("No autorizado para crear oportunidades"), {

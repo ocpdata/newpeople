@@ -16,19 +16,12 @@ const router = express.Router({ mergeParams: true });
 const storage = createDocumentStorage();
 const accountReadPermission = "cuentas.read";
 const accountGlobalReadPermission = "cuentas.read_all";
-const accountWritePermissions = [
-  "cuentas.create",
-  "cuentas.request",
-  "cuentas.update",
-];
+const accountWritePermissions = ["cuentas.create", "cuentas.update"];
 const accountInteractionAccessPermissions = [
   accountReadPermission,
   ...accountWritePermissions,
 ];
-const opportunityCreatePermissions = [
-  "oportunidades.create",
-  "oportunidades.request",
-];
+const opportunityCreatePermissions = ["oportunidades.create"];
 
 const interactionSchema = z.object({
   interactionTypeId: z.number().int().positive(),
@@ -66,9 +59,6 @@ function hasGlobalAccountReadScope(user) {
 function resolveOpportunityCreationStatusCode(user) {
   if (user?.permissionSet?.has("oportunidades.create")) {
     return "activada";
-  }
-  if (user?.permissionSet?.has("oportunidades.request")) {
-    return "pendiente_activacion";
   }
   return null;
 }

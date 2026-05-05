@@ -110,7 +110,7 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_opps_flow`,
       permissionCodes: [
         "oportunidades.read",
-        "oportunidades.request",
+        "oportunidades.create",
         "oportunidades.update",
       ],
     });
@@ -1074,7 +1074,7 @@ describe("API integration baseline", () => {
       .post("/api/accounts")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        name: `Cuenta API Create ${TEST_PREFIX}`,
+        name: `Nebula Create ${TEST_PREFIX}`,
         accountTypeId: ctx.catalogIds.accountTypeId,
         registrationCode: `CRT-${TEST_PREFIX}`,
         phone: "5550001111",
@@ -1101,7 +1101,7 @@ describe("API integration baseline", () => {
     expect(statusCode).toBe("activada");
   });
 
-  test("cuentas.request crea pendiente y no permite activar sin cuentas.create", async () => {
+  test("cuentas.request ya no autoriza crear cuentas", async () => {
     const loginResponse = await login(
       request(app),
       `${TEST_PREFIX}.accounts.request@example.com`,
@@ -1111,7 +1111,7 @@ describe("API integration baseline", () => {
       .post("/api/accounts")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        name: `Cuenta API Request ${TEST_PREFIX}`,
+        name: `Harbor Request ${TEST_PREFIX}`,
         accountTypeId: ctx.catalogIds.accountTypeId,
         registrationCode: `RQT-${TEST_PREFIX}`,
         phone: "5550002222",
@@ -1127,31 +1127,720 @@ describe("API integration baseline", () => {
         ownerUserIds: [ctx.accountRequestUserId],
       });
 
-    expect(createResponse.status).toBe(201);
-    expect(createResponse.body.message).toBe(
-      "Solicitud de cuenta creada en estado pendiente",
-    );
-    cleanup.accountIds.push(Number(createResponse.body.id));
+    expect(createResponse.status).toBe(403);
+    expect(createResponse.body.message).toBe("No autorizado");
+  });
 
-    const statusCode = await getStatusCodeById(
-      "accounts",
-      createResponse.body.id,
-      {
-        table: "account_activation_statuses",
-        column: "activation_status_id",
-      },
+  test("cuentas.create permite multiples cuentas sin registro en el mismo pais", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
     );
-    expect(statusCode).toBe("pendiente_activacion");
 
-    const patchResponse = await request(app)
-      .patch(`/api/accounts/${createResponse.body.id}/status`)
+    const firstResponse = await request(app)
+      .post("/api/accounts")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({ statusCode: "activada" });
+      .send({
+        name: `Atlas Norte ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: "",
+        phone: "5550003333",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://blank-a.example.com",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Cuenta sin registro A",
+        addressLine: "Direccion prueba A",
+        postalCode: "01002",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
 
-    expect(patchResponse.status).toBe(403);
-    expect(patchResponse.body.message).toBe(
-      "No autorizado para cambiar el estado de activacion de cuentas",
+    expect(firstResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(firstResponse.body.id));
+
+    const secondResponse = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Laguna Verde ${TEST_PREFIX}`,
+        registrationCode: "   ",
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        phone: "5550004444",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://blank-b.example.com",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Cuenta sin registro B",
+        addressLine: "Direccion prueba B",
+        postalCode: "01003",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(secondResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(secondResponse.body.id));
+
+    const accountRows = await query(
+      `SELECT id, registration_code
+       FROM accounts
+       WHERE id IN (?, ?)
+       ORDER BY id ASC`,
+      [firstResponse.body.id, secondResponse.body.id],
     );
+
+    expect(accountRows).toHaveLength(2);
+    expect(accountRows[0]?.registration_code ?? null).toBeNull();
+    expect(accountRows[1]?.registration_code ?? null).toBeNull();
+  });
+
+  test("cuentas.create exige revision cuando detecta un duplicado fuerte", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_review`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, website = ?, country_id = ?
+       WHERE id = ?`,
+      [
+        `Cuenta Duplicada ${TEST_PREFIX}`,
+        "https://duplicate-review.example.com",
+        ctx.catalogIds.countryMxId,
+        duplicateAccountId,
+      ],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const response = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Cuenta Duplicada ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: "",
+        phone: "5550005555",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://otra.example.com",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Intento con coincidencia fuerte",
+        addressLine: "Direccion prueba review",
+        postalCode: "01004",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("ACCOUNT_DUPLICATE_REVIEW_REQUIRED");
+    expect(response.body.duplicateDecision).toBe("review_required");
+    expect(response.body.duplicateWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          accountId: duplicateAccountId,
+          severity: "high",
+          matchReason: "normalized_name_same_country",
+        }),
+      ]),
+    );
+
+    const overrideResponse = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Cuenta Duplicada ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: "",
+        phone: "5550005556",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "https://otra.example.com",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Intento forzado con coincidencia fuerte",
+        addressLine: "Direccion prueba review override",
+        postalCode: "01005",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+        allowDuplicateOverride: true,
+      });
+
+    expect(overrideResponse.status).toBe(201);
+    cleanup.accountIds.push(Number(overrideResponse.body.id));
+  });
+
+  test("cuentas.create pide confirmacion cuando detecta un duplicado probable", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_confirmation`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      [
+        `Tecnologias Unificadas ${TEST_PREFIX}`,
+        ctx.catalogIds.countryMxId,
+        duplicateAccountId,
+      ],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const response = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: `Tecnologia Unificada ${TEST_PREFIX}`,
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: "",
+        phone: "5550006666",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Intento con coincidencia probable",
+        addressLine: "Direccion prueba confirm",
+        postalCode: "01006",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED");
+    expect(response.body.duplicateDecision).toBe("confirmation_required");
+    expect(response.body.duplicateWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          accountId: duplicateAccountId,
+          severity: "medium",
+          matchReason: "similar_name_same_country",
+        }),
+      ]),
+    );
+  });
+
+  test("cuentas.create pide confirmacion para nombres casi identicos", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_near_exact`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      ["Ferromex", ctx.catalogIds.countryMxId, duplicateAccountId],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const response = await request(app)
+      .post("/api/accounts")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        name: "Ferromen",
+        accountTypeId: ctx.catalogIds.accountTypeId,
+        registrationCode: "",
+        phone: "5550006767",
+        economicSectorId: ctx.catalogIds.economicSectorId,
+        website: "",
+        city: "CDMX",
+        stateRegion: "CDMX",
+        countryId: ctx.catalogIds.countryMxId,
+        description: "Intento con nombre casi identico",
+        addressLine: "Direccion prueba near exact",
+        postalCode: "01007",
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED");
+    expect(response.body.duplicateDecision).toBe("confirmation_required");
+    expect(response.body.duplicateWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          accountId: duplicateAccountId,
+          severity: "medium",
+          matchReason: "near_exact_name_same_country",
+        }),
+      ]),
+    );
+  });
+
+  test("cuentas.create usa la revision IA para bloquear un nombre variante aunque la heuristica no lo marque", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_ai_review`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      ["Ferromex", ctx.catalogIds.countryMxId, duplicateAccountId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+
+    config.openai.apiKey = "test-key";
+    config.openai.enableWebSearch = true;
+    global.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toContain("/responses");
+      const payload = JSON.parse(init.body);
+      const rawInput = JSON.parse(payload.input[1].content);
+
+      expect(rawInput.context.duplicateWarnings).toEqual([]);
+      expect(rawInput.context.duplicateCandidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountName: "Ferromex",
+            nameSignals: expect.objectContaining({
+              normalizedName: "ferromex",
+              coreName: "ferromex",
+            }),
+          }),
+        ]),
+      );
+
+      return {
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    suggestedCompanyDescription: "",
+                    suggestedWebsite: "",
+                    websiteConfidence: "low",
+                    websiteReason: "",
+                    suggestedContactData: {
+                      addressLine: "",
+                      city: "",
+                      stateRegion: "",
+                      postalCode: "",
+                      phone: "",
+                      confidence: "low",
+                      reason: "",
+                    },
+                    suggestedRegistrationCode: "",
+                    registrationConfidence: "low",
+                    registrationReason: "",
+                    suggestedImprovements: [],
+                    nextRecommendedStep: {
+                      action: "",
+                      reason: "",
+                    },
+                    duplicateReview: {
+                      verdict: "likely_duplicate",
+                      summary:
+                        "Feromix parece ser una variante comercial del mismo nombre base Ferromex.",
+                      recommendation:
+                        "Deten la creacion y revisa primero la cuenta existente Ferromex.",
+                      confidence: "high",
+                    },
+                    confidence: "high",
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    });
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.accounts.create@example.com`,
+      );
+
+      const response = await request(app)
+        .post("/api/accounts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          name: "Feromix",
+          accountTypeId: ctx.catalogIds.accountTypeId,
+          registrationCode: "",
+          phone: "5550006868",
+          economicSectorId: ctx.catalogIds.economicSectorId,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "Intento con variante detectada por IA",
+          addressLine: "Direccion prueba ai duplicate review",
+          postalCode: "01008",
+          activationStatusId: ctx.catalogIds.accountActiveStatusId,
+          ownerUserIds: [ctx.accountCreateUserId],
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe("ACCOUNT_DUPLICATE_REVIEW_REQUIRED");
+      expect(response.body.duplicateDecision).toBe("review_required");
+      expect(response.body.duplicateValidationSource).toBe("ai");
+      expect(response.body.duplicateReview).toEqual(
+        expect.objectContaining({
+          verdict: "likely_duplicate",
+          confidence: "high",
+        }),
+      );
+      expect(response.body.duplicateWarnings).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas.create pide confirmacion manual para partial_name_match si la revision IA no esta disponible", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_partial_fallback`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      ["Hospital Angeles", ctx.catalogIds.countryMxId, duplicateAccountId],
+    );
+
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    config.openai.enableWebSearch = false;
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.accounts.create@example.com`,
+      );
+
+      const response = await request(app)
+        .post("/api/accounts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          name: "Hospital Los Angeles",
+          accountTypeId: ctx.catalogIds.accountTypeId,
+          registrationCode: "",
+          phone: "5550006969",
+          economicSectorId: ctx.catalogIds.economicSectorId,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "Intento con variante nominal y fallback IA",
+          addressLine: "Direccion prueba partial fallback",
+          postalCode: "01009",
+          activationStatusId: ctx.catalogIds.accountActiveStatusId,
+          ownerUserIds: [ctx.accountCreateUserId],
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe(
+        "ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED",
+      );
+      expect(response.body.duplicateDecision).toBe("confirmation_required");
+      expect(response.body.duplicateValidationSource).toBe("heuristic");
+      expect(response.body.duplicateWarnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountId: duplicateAccountId,
+            matchReason: "partial_name_match",
+            severity: "low",
+          }),
+        ]),
+      );
+    } finally {
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas.create envia a la IA el nombre base sin articulos para variantes en espanol", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_spanish_particles`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      ["Hospital Angeles", ctx.catalogIds.countryMxId, duplicateAccountId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+
+    config.openai.apiKey = "test-key";
+    config.openai.enableWebSearch = true;
+    global.fetch = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      const rawInput = JSON.parse(payload.input[1].content);
+
+      expect(rawInput.context.draftNameSignals).toEqual(
+        expect.objectContaining({
+          normalizedName: "hospital los angeles",
+          coreName: "hospital angeles",
+          significantTokens: ["hospital", "angeles"],
+        }),
+      );
+      expect(rawInput.context.duplicateCandidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountName: "Hospital Angeles",
+            nameSignals: expect.objectContaining({
+              normalizedName: "hospital angeles",
+              coreName: "hospital angeles",
+              significantTokens: ["hospital", "angeles"],
+            }),
+          }),
+        ]),
+      );
+
+      return {
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    suggestedCompanyDescription: "",
+                    suggestedWebsite: "",
+                    websiteConfidence: "low",
+                    websiteReason: "",
+                    suggestedContactData: {
+                      addressLine: "",
+                      city: "",
+                      stateRegion: "",
+                      postalCode: "",
+                      phone: "",
+                      confidence: "low",
+                      reason: "",
+                    },
+                    suggestedRegistrationCode: "",
+                    registrationConfidence: "low",
+                    registrationReason: "",
+                    suggestedImprovements: [],
+                    nextRecommendedStep: {
+                      action: "",
+                      reason: "",
+                    },
+                    duplicateReview: {
+                      verdict: "inconclusive",
+                      summary:
+                        "El nombre base coincide y requiere revision manual adicional.",
+                      recommendation:
+                        "Confirma si corresponde a la misma organizacion antes de crear otra cuenta.",
+                      confidence: "medium",
+                    },
+                    confidence: "medium",
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    });
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.accounts.create@example.com`,
+      );
+
+      const response = await request(app)
+        .post("/api/accounts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          name: "Hospital Los Angeles",
+          accountTypeId: ctx.catalogIds.accountTypeId,
+          registrationCode: "",
+          phone: "5550006970",
+          economicSectorId: ctx.catalogIds.economicSectorId,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description: "Intento con articulos en espanol y revision IA",
+          addressLine: "Direccion prueba spanish particles",
+          postalCode: "01010",
+          activationStatusId: ctx.catalogIds.accountActiveStatusId,
+          ownerUserIds: [ctx.accountCreateUserId],
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe(
+        "ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED",
+      );
+      expect(response.body.duplicateDecision).toBe("confirmation_required");
+      expect(response.body.duplicateValidationSource).toBe("ai");
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
+  });
+
+  test("cuentas.create no deja en clear una variante con particulas en espanol aunque la IA diga likely_distinct", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_duplicate_spanish_particles_distinct`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    await query(
+      `UPDATE accounts
+       SET name = ?, country_id = ?, website = NULL
+       WHERE id = ?`,
+      ["Medica Sur", ctx.catalogIds.countryMxId, duplicateAccountId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalEnableWebSearch = config.openai.enableWebSearch;
+    const originalFetch = global.fetch;
+
+    config.openai.apiKey = "test-key";
+    config.openai.enableWebSearch = true;
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  suggestedCompanyDescription: "",
+                  suggestedWebsite: "",
+                  websiteConfidence: "low",
+                  websiteReason: "",
+                  suggestedContactData: {
+                    addressLine: "",
+                    city: "",
+                    stateRegion: "",
+                    postalCode: "",
+                    phone: "",
+                    confidence: "low",
+                    reason: "",
+                  },
+                  suggestedRegistrationCode: "",
+                  registrationConfidence: "low",
+                  registrationReason: "",
+                  suggestedImprovements: [],
+                  nextRecommendedStep: {
+                    action: "",
+                    reason: "",
+                  },
+                  duplicateReview: {
+                    verdict: "likely_distinct",
+                    summary:
+                      "La IA no encontro evidencia suficiente para afirmar que es la misma organizacion.",
+                    recommendation:
+                      "Permite continuar si el equipo confirma que se trata de entidades distintas.",
+                    confidence: "medium",
+                  },
+                  confidence: "medium",
+                  warnings: [],
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.accounts.create@example.com`,
+      );
+
+      const response = await request(app)
+        .post("/api/accounts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          name: "Medica del Sur",
+          accountTypeId: ctx.catalogIds.accountTypeId,
+          registrationCode: "",
+          phone: "5550006971",
+          economicSectorId: ctx.catalogIds.economicSectorId,
+          website: "",
+          city: "CDMX",
+          stateRegion: "CDMX",
+          countryId: ctx.catalogIds.countryMxId,
+          description:
+            "Intento con particulas en espanol y veredicto likely_distinct de IA",
+          addressLine: "Direccion prueba medica del sur",
+          postalCode: "01011",
+          activationStatusId: ctx.catalogIds.accountActiveStatusId,
+          ownerUserIds: [ctx.accountCreateUserId],
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe(
+        "ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED",
+      );
+      expect(response.body.duplicateDecision).toBe("confirmation_required");
+      expect(response.body.duplicateValidationSource).toBe("ai");
+      expect(response.body.duplicateReview).toEqual(
+        expect.objectContaining({
+          verdict: "likely_distinct",
+        }),
+      );
+      expect(response.body.duplicateWarnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountId: duplicateAccountId,
+            matchReason: "partial_name_match",
+            severity: "low",
+          }),
+        ]),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.openai.enableWebSearch = originalEnableWebSearch;
+    }
   });
 
   test("cuentas.read lista owners_display y el detalle conserva owners", async () => {
@@ -2419,7 +3108,7 @@ describe("API integration baseline", () => {
       .post("/api/accounts")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        name: `Cuenta PUT ${TEST_PREFIX}`,
+        name: `Quartz Edit ${TEST_PREFIX}`,
         accountTypeId: ctx.catalogIds.accountTypeId,
         registrationCode: `PUT-${TEST_PREFIX}`,
         phone: "5550003333",
@@ -2435,13 +3124,15 @@ describe("API integration baseline", () => {
         ownerUserIds: [ctx.accountRequestUserId],
       });
 
+    expect(createResponse.status).toBe(201);
+
     cleanup.accountIds.push(Number(createResponse.body.id));
 
     const sameStatusPut = await request(app)
       .put(`/api/accounts/${createResponse.body.id}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        name: `Cuenta PUT ${TEST_PREFIX} editada`,
+        name: `Quartz Edit ${TEST_PREFIX} revisada`,
         accountTypeId: ctx.catalogIds.accountTypeId,
         registrationCode: `PUT-${TEST_PREFIX}`,
         phone: "5550003334",
@@ -2464,7 +3155,7 @@ describe("API integration baseline", () => {
       .put(`/api/accounts/${createResponse.body.id}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        name: `Cuenta PUT ${TEST_PREFIX} activacion`,
+        name: `Quartz Edit ${TEST_PREFIX} activacion`,
         accountTypeId: ctx.catalogIds.accountTypeId,
         registrationCode: `PUT-${TEST_PREFIX}`,
         phone: "5550003335",
@@ -3892,7 +4583,7 @@ describe("API integration baseline", () => {
     expect(interactionRow.analysis_status).toBe("resolved");
   });
 
-  test("contactos.request crea pendiente y no permite activar sin contactos.create", async () => {
+  test("contactos.request ya no autoriza crear contactos", async () => {
     const contactOwnedAccountId = await createDirectAccount({
       ownerUserId: ctx.contactRequestUserId,
       actorUserId: ctx.contactRequestUserId,
@@ -3931,31 +4622,254 @@ describe("API integration baseline", () => {
         influencesContactId: null,
       });
 
-    expect(createResponse.status).toBe(201);
-    expect(createResponse.body.message).toBe(
-      "Solicitud de contacto creada en estado pendiente",
-    );
-    cleanup.contactIds.push(Number(createResponse.body.id));
+    expect(createResponse.status).toBe(403);
+    expect(createResponse.body.message).toBe("No autorizado");
+  });
 
-    const statusCode = await getStatusCodeById(
-      "contacts",
-      createResponse.body.id,
-      {
-        table: "contact_activation_statuses",
-        column: "activation_status_id",
-      },
-    );
-    expect(statusCode).toBe("pendiente_activacion");
+  test("contactos.create exige revision cuando detecta un duplicado fuerte por email", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_duplicate_email_account`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
 
-    const patchResponse = await request(app)
-      .patch(`/api/contacts/${createResponse.body.id}/status`)
+    const duplicateContactId = await createDirectContact({
+      accountId: duplicateAccountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_duplicate_email`,
+    });
+    cleanup.contactIds.push(duplicateContactId);
+
+    await query(
+      `UPDATE contacts
+       SET first_name = ?, last_name = ?, email = ?
+       WHERE id = ?`,
+      [
+        "Julia",
+        `Lopez ${TEST_PREFIX}`,
+        `${TEST_PREFIX}.duplicate.contact@example.com`,
+        duplicateContactId,
+      ],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.create@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/contacts")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({ statusCode: "activado" });
+      .send({
+        firstName: "Julia",
+        lastName: `Lopez ${TEST_PREFIX}`,
+        accountId: duplicateAccountId,
+        positionTitle: "Analista",
+        phone: "5551010101",
+        phoneExtension: "101",
+        mobile: `551${String(Date.now()).slice(-7)}`,
+        email: `${TEST_PREFIX}.duplicate.contact@example.com`,
+        department: "Compras",
+        countryId: ctx.catalogIds.countryMxId,
+        stateRegion: "CDMX",
+        city: "Ciudad de Mexico",
+        addressLine: "Direccion prueba",
+        postalCode: "01012",
+        purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
+        relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
+        employmentStatusId: ctx.catalogIds.employmentStatusId,
+        activationStatusId: ctx.catalogIds.contactActiveStatusId,
+        managerContactId: null,
+        influencesContactId: null,
+      });
 
-    expect(patchResponse.status).toBe(403);
-    expect(patchResponse.body.message).toBe(
-      "No autorizado para cambiar el estado de activacion de contactos",
+    expect(createResponse.status).toBe(409);
+    expect(createResponse.body.code).toBe("CONTACT_DUPLICATE_REVIEW_REQUIRED");
+    expect(createResponse.body.duplicateDecision).toBe("review_required");
+    expect(createResponse.body.duplicateWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contactId: duplicateContactId,
+          matchReason: "same_email",
+          severity: "high",
+        }),
+      ]),
     );
+  });
+
+  test("contactos.create incluye revision IA para un duplicado probable", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_duplicate_ai_account`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    const duplicateContactId = await createDirectContact({
+      accountId: duplicateAccountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_duplicate_ai`,
+    });
+    cleanup.contactIds.push(duplicateContactId);
+
+    await query(
+      `UPDATE contacts
+       SET first_name = ?, last_name = ?, email = NULL, mobile = NULL
+       WHERE id = ?`,
+      ["Marina", `Lopez ${TEST_PREFIX}`, duplicateContactId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  verdict: "likely_duplicate",
+                  summary:
+                    "Los nombres y la cuenta asociada sugieren que podria ser la misma persona.",
+                  recommendation:
+                    "Revisa el contacto existente antes de crear uno nuevo.",
+                  confidence: "medium",
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.contacts.create@example.com`,
+      );
+
+      const createResponse = await request(app)
+        .post("/api/contacts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          firstName: "Marina",
+          lastName: `Lopes ${TEST_PREFIX}`,
+          accountId: duplicateAccountId,
+          positionTitle: "Compras",
+          phone: "5552020202",
+          phoneExtension: "",
+          mobile: "",
+          email: "",
+          department: "Compras",
+          countryId: ctx.catalogIds.countryMxId,
+          stateRegion: "CDMX",
+          city: "Ciudad de Mexico",
+          addressLine: "Direccion prueba ai",
+          postalCode: "01013",
+          purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
+          relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
+          employmentStatusId: ctx.catalogIds.employmentStatusId,
+          activationStatusId: ctx.catalogIds.contactActiveStatusId,
+          managerContactId: null,
+          influencesContactId: null,
+        });
+
+      expect(createResponse.status).toBe(409);
+      expect(createResponse.body.code).toBe(
+        "CONTACT_DUPLICATE_REVIEW_REQUIRED",
+      );
+      expect(createResponse.body.duplicateValidationSource).toBe("ai");
+      expect(createResponse.body.duplicateReview).toEqual(
+        expect.objectContaining({
+          verdict: "likely_duplicate",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("contactos.create pide confirmacion manual para un nombre casi identico en la misma cuenta cuando IA no esta disponible", async () => {
+    const duplicateAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_near_exact_account`,
+    });
+    cleanup.accountIds.push(duplicateAccountId);
+
+    const duplicateContactId = await createDirectContact({
+      accountId: duplicateAccountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_near_exact`,
+    });
+    cleanup.contactIds.push(duplicateContactId);
+
+    await query(
+      `UPDATE contacts
+       SET first_name = ?, last_name = ?, email = NULL, mobile = NULL
+       WHERE id = ?`,
+      ["Carla", "Castillo", duplicateContactId],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    config.openai.apiKey = "";
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.contacts.create@example.com`,
+      );
+
+      const createResponse = await request(app)
+        .post("/api/contacts")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          firstName: "Carla",
+          lastName: "Cantillo",
+          accountId: duplicateAccountId,
+          positionTitle: "Compras",
+          phone: "5552020202",
+          phoneExtension: "",
+          mobile: "",
+          email: "",
+          department: "Compras",
+          countryId: ctx.catalogIds.countryMxId,
+          stateRegion: "CDMX",
+          city: "Ciudad de Mexico",
+          addressLine: "Direccion prueba ai",
+          postalCode: "01013",
+          purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
+          relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
+          employmentStatusId: ctx.catalogIds.employmentStatusId,
+          activationStatusId: ctx.catalogIds.contactActiveStatusId,
+          managerContactId: null,
+          influencesContactId: null,
+        });
+
+      expect(createResponse.status).toBe(409);
+      expect(createResponse.body.code).toBe(
+        "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
+      );
+      expect(createResponse.body.duplicateDecision).toBe(
+        "confirmation_required",
+      );
+      expect(createResponse.body.duplicateWarnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            contactId: duplicateContactId,
+            matchReason: "near_exact_name_same_account",
+            severity: "medium",
+          }),
+        ]),
+      );
+    } finally {
+      config.openai.apiKey = originalApiKey;
+    }
   });
 
   test("contactos.read_all extiende contactos y contact-accounts a cuentas ajenas", async () => {
@@ -4952,7 +5866,7 @@ describe("API integration baseline", () => {
     ).toBe("activo");
   });
 
-  test("oportunidades.request crea pendiente y no permite activar sin oportunidades.create", async () => {
+  test("oportunidades.request ya no autoriza crear oportunidades", async () => {
     const opportunityOwnedAccountId = await createDirectAccount({
       ownerUserId: ctx.opportunityRequestUserId,
       actorUserId: ctx.opportunityRequestUserId,
@@ -4988,31 +5902,8 @@ describe("API integration baseline", () => {
         activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
       });
 
-    expect(createResponse.status).toBe(201);
-    expect(createResponse.body.message).toBe(
-      "Solicitud de oportunidad creada en estado pendiente",
-    );
-    cleanup.opportunityIds.push(Number(createResponse.body.id));
-
-    const statusCode = await getStatusCodeById(
-      "opportunities",
-      createResponse.body.id,
-      {
-        table: "opportunity_activation_statuses",
-        column: "activation_status_id",
-      },
-    );
-    expect(statusCode).toBe("pendiente_activacion");
-
-    const patchResponse = await request(app)
-      .patch(`/api/opportunities/${createResponse.body.id}/status`)
-      .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({ statusCode: "activada" });
-
-    expect(patchResponse.status).toBe(403);
-    expect(patchResponse.body.message).toBe(
-      "No autorizado para cambiar el estado de activacion de oportunidades",
-    );
+    expect(createResponse.status).toBe(403);
+    expect(createResponse.body.message).toBe("No autorizado");
   });
 
   test("oportunidades documentos soporta sesion, revision, transferencia y vinculos de etapa", async () => {
@@ -5691,7 +6582,7 @@ describe("API integration baseline", () => {
     );
     expect(snapshot.sales_stage_code).toBe("contacto_inicial");
     expect(snapshot.commercial_status_code).toBe("en_proceso");
-    expect(snapshot.activation_status_code).toBe("pendiente_activacion");
+    expect(snapshot.activation_status_code).toBe("activada");
   });
 
   test("oportunidades.commercial-context devuelve la etapa actual, estado comercial y preguntas vigentes", async () => {
@@ -6128,6 +7019,18 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}_commercial_execution_dashboard`,
     );
 
+    await query(
+      `DELETE FROM audit_log
+       WHERE entity_type = 'opportunity' AND entity_id = ?`,
+      [fixture.opportunityId],
+    );
+    await query(
+      `UPDATE opportunities
+       SET updated_at = DATE_SUB(NOW(3), INTERVAL 14 DAY)
+       WHERE id = ?`,
+      [fixture.opportunityId],
+    );
+
     const initialDashboardResponse = await request(app)
       .get("/api/execution-commercial/dashboard")
       .set("Authorization", `Bearer ${fixture.token}`);
@@ -6144,6 +7047,7 @@ describe("API integration baseline", () => {
       (item) => item.id === fixture.opportunityId,
     );
     expect(initialWorkItem).toBeTruthy();
+    expect(initialWorkItem.daysSinceActivity).toBeGreaterThanOrEqual(14);
 
     const nextStepResponse = await request(app)
       .post(
@@ -6202,6 +7106,7 @@ describe("API integration baseline", () => {
         actionType: "waiting_customer",
       }),
     );
+    expect(updatedWorkItem.daysSinceActivity).toBe(0);
     expect(updatedWorkItem.executionState).toEqual(
       expect.objectContaining({
         code: "esperando_interno",
@@ -6253,6 +7158,100 @@ describe("API integration baseline", () => {
           dependencyType: "presales_support",
         }),
       ]),
+    );
+  });
+
+  test("ejecucion comercial prioriza cadencias por score de friccion", async () => {
+    const activateFixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_execution_activate`,
+    );
+    const watchFixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_execution_watch`,
+    );
+    const healthyFixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_execution_healthy`,
+    );
+
+    await query(
+      `DELETE FROM audit_log
+       WHERE entity_type = 'opportunity' AND entity_id = ?`,
+      [activateFixture.opportunityId],
+    );
+    await query(
+      `UPDATE opportunities
+       SET updated_at = DATE_SUB(NOW(3), INTERVAL 15 DAY)
+       WHERE id = ?`,
+      [activateFixture.opportunityId],
+    );
+    await query(
+      `UPDATE opportunities
+       SET sales_stage_id = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [ctx.catalogIds.salesStageWaitingId, healthyFixture.opportunityId],
+    );
+
+    const healthyNextStepResponse = await request(app)
+      .post(
+        `/api/execution-commercial/opportunities/${healthyFixture.opportunityId}/next-step`,
+      )
+      .set("Authorization", `Bearer ${healthyFixture.token}`)
+      .send({
+        title: "Preparar revision final con compras",
+        actionType: "follow_up",
+        dueDate: "2026-08-18",
+        successCriteria:
+          "Validar terminos finales y confirmar fecha de decision.",
+      });
+
+    expect([200, 201]).toContain(healthyNextStepResponse.status);
+
+    const dashboardResponse = await request(app)
+      .get("/api/execution-commercial/dashboard")
+      .set("Authorization", `Bearer ${activateFixture.token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+    expect(dashboardResponse.body.cadences).toEqual(
+      expect.objectContaining({
+        totalSuggested: expect.any(Number),
+        activateCount: expect.any(Number),
+        watchCount: expect.any(Number),
+        visibleLimit: 10,
+      }),
+    );
+
+    const activateSuggestion = dashboardResponse.body.cadences.suggested.find(
+      (item) => item.opportunityId === activateFixture.opportunityId,
+    );
+    const watchSuggestion = dashboardResponse.body.cadences.suggested.find(
+      (item) => item.opportunityId === watchFixture.opportunityId,
+    );
+    const healthySuggestion = dashboardResponse.body.cadences.suggested.find(
+      (item) => item.opportunityId === healthyFixture.opportunityId,
+    );
+
+    expect(activateSuggestion).toEqual(
+      expect.objectContaining({
+        cadenceDecision: "activate",
+        cadenceType: "rescue_inactive",
+        frictionScore: expect.any(Number),
+      }),
+    );
+    expect(watchSuggestion).toEqual(
+      expect.objectContaining({
+        cadenceDecision: "watch",
+        cadenceType: "discovery_push",
+        frictionScore: expect.any(Number),
+      }),
+    );
+    expect(activateSuggestion.frictionScore).toBeGreaterThan(
+      watchSuggestion.frictionScore,
+    );
+    expect(healthySuggestion).toBeUndefined();
+    expect(
+      dashboardResponse.body.cadences.activateCount,
+    ).toBeGreaterThanOrEqual(1);
+    expect(dashboardResponse.body.cadences.watchCount).toBeGreaterThanOrEqual(
+      1,
     );
   });
 
@@ -8374,7 +9373,7 @@ describe("API integration baseline", () => {
     expect(snapshot.commercial_close_reason).toBe(
       "El cliente canceló el presupuesto aprobado",
     );
-    expect(snapshot.activation_status_code).toBe("pendiente_activacion");
+    expect(snapshot.activation_status_code).toBe("activada");
 
     const auditRows = await getAuditActionsForOpportunity(
       fixture.opportunityId,

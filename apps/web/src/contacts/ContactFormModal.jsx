@@ -1,3 +1,262 @@
+function getDuplicateSeverityLabel(severity) {
+  if (severity === "high") return "Alta";
+  if (severity === "medium") return "Media";
+  return "Baja";
+}
+
+function getDuplicateDecisionTitle(decision) {
+  if (decision === "review_required") {
+    return "Posible duplicado fuerte detectado";
+  }
+  return "Posible duplicado antes de crear";
+}
+
+function getDuplicateDecisionEyebrow(decision) {
+  if (decision === "review_required") {
+    return "Revision obligatoria antes de crear";
+  }
+  return "Confirmacion recomendada antes de crear";
+}
+
+function getDuplicateDecisionBadgeClass(decision) {
+  return decision === "review_required" ? "high" : "medium";
+}
+
+function getDuplicateDecisionConfirmText(decision, savingContact) {
+  if (savingContact) {
+    return "Creando...";
+  }
+  return decision === "review_required" ? "Crear aun asi" : "Confirmar y crear";
+}
+
+function getDuplicateReviewVerdictLabel(verdict) {
+  if (verdict === "likely_duplicate") return "Probable duplicado";
+  if (verdict === "likely_distinct") return "Probablemente distinto";
+  return "Revision no concluyente";
+}
+
+function getDuplicateReviewConfidenceLabel(confidence) {
+  if (confidence === "high") return "Alta";
+  if (confidence === "medium") return "Media";
+  return "Baja";
+}
+
+function getDuplicateReviewSourceLabel(source) {
+  if (source === "ai") return "Con apoyo de IA";
+  return "Con reglas internas";
+}
+
+function buildDraftContactName(form) {
+  return `${form.firstName || ""} ${form.lastName || ""}`.trim();
+}
+
+function ContactDuplicateReviewModal({
+  review,
+  draftContactName,
+  savingContact,
+  onCancel,
+  onConfirm,
+  onOpenCandidate,
+}) {
+  if (!review) return null;
+
+  const warnings = review.duplicateWarnings || [];
+  const primaryCandidate = warnings[0] || null;
+  const aiSummary = String(review.aiReview?.summary || "").trim();
+  const aiRecommendation = String(review.aiReview?.recommendation || "").trim();
+  const aiVerdictClass =
+    review.aiReview?.verdict === "likely_duplicate"
+      ? "high"
+      : review.aiReview?.verdict === "likely_distinct"
+        ? "info"
+        : "medium";
+
+  return (
+    <div
+      className="modal-overlay modal-overlay-elevated"
+      onClick={(event) => {
+        event.stopPropagation();
+        onCancel();
+      }}
+    >
+      <div
+        className="modal-dialog modal-dialog-account account-duplicate-review-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="account-duplicate-review-hero">
+          <div className="account-duplicate-review-hero-copy">
+            <span className="account-duplicate-review-eyebrow">
+              {getDuplicateDecisionEyebrow(review.duplicateDecision)}
+            </span>
+            <h3 className="modal-title">
+              {getDuplicateDecisionTitle(review.duplicateDecision)}
+            </h3>
+            <p className="modal-message">{review.message}</p>
+            <div className="account-duplicate-review-hero-tags">
+              <span className="account-duplicate-review-tag">
+                Intento actual: {draftContactName || "Sin nombre capturado"}
+              </span>
+              <span className="account-duplicate-review-tag">
+                {warnings.length}{" "}
+                {warnings.length === 1 ? "coincidencia" : "coincidencias"}
+              </span>
+            </div>
+          </div>
+          <div className="account-duplicate-review-hero-side">
+            <span
+              className={`account-ai-mini-badge ${getDuplicateDecisionBadgeClass(
+                review.duplicateDecision,
+              )}`}
+            >
+              {review.duplicateDecision === "review_required"
+                ? "Detener y revisar"
+                : "Confirmar antes de seguir"}
+            </span>
+            <p className="account-duplicate-review-side-note">
+              {primaryCandidate
+                ? `La coincidencia principal es ${primaryCandidate.contactName}.`
+                : "Revisa las coincidencias antes de continuar."}
+            </p>
+          </div>
+        </header>
+
+        {review.aiReview ? (
+          <section className="account-ai-subsection account-duplicate-review-section">
+            <div className="account-duplicate-review-section-header">
+              <div>
+                <h5>Revision IA adicional</h5>
+                <p>
+                  {getDuplicateReviewSourceLabel(
+                    review.duplicateValidationSource,
+                  )}
+                </p>
+              </div>
+            </div>
+            <article className="account-ai-card account-duplicate-review-feature-card">
+              <div className="account-ai-card-header">
+                <div>
+                  <strong>
+                    {getDuplicateReviewVerdictLabel(review.aiReview.verdict)}
+                  </strong>
+                  {aiSummary ? (
+                    <p className="account-duplicate-review-card-note">
+                      {aiSummary}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="account-ai-card-badges">
+                  <span className={`account-ai-mini-badge ${aiVerdictClass}`}>
+                    {getDuplicateReviewConfidenceLabel(
+                      review.aiReview.confidence,
+                    )}
+                  </span>
+                </div>
+              </div>
+              {aiRecommendation && aiRecommendation !== aiSummary ? (
+                <div className="account-duplicate-review-callout">
+                  <span className="account-duplicate-review-summary-label">
+                    Recomendacion
+                  </span>
+                  <p className="field-hint">{aiRecommendation}</p>
+                </div>
+              ) : null}
+            </article>
+          </section>
+        ) : null}
+
+        <section className="account-ai-subsection account-duplicate-review-section">
+          <div className="account-duplicate-review-section-header">
+            <div>
+              <h5>Coincidencias detectadas</h5>
+              <p>
+                Abre el contacto sugerido si necesitas revisar sus datos antes
+                de crear uno nuevo.
+              </p>
+            </div>
+            <p className="account-duplicate-review-warning-note">
+              Si abres un contacto existente desde aqui, se perdera este intento
+              de creacion y tendras que capturarlo de nuevo.
+            </p>
+          </div>
+          <div className="account-ai-card-list account-duplicate-review-card-list">
+            {warnings.map((warning) => (
+              <article
+                key={`${warning.contactId}-${warning.matchReason}`}
+                className="account-ai-card account-duplicate-review-candidate-card"
+              >
+                <div className="account-ai-card-header">
+                  <div>
+                    <strong>{warning.contactName}</strong>
+                    <p className="account-duplicate-review-card-note">
+                      {warning.accountName || "Sin cuenta asociada"}
+                    </p>
+                  </div>
+                  <div className="account-ai-card-badges">
+                    <span
+                      className={`account-ai-mini-badge ${warning.severity}`}
+                    >
+                      {getDuplicateSeverityLabel(warning.severity)}
+                    </span>
+                  </div>
+                </div>
+                <p>{warning.severityMessage || warning.recommendedAction}</p>
+                <dl className="account-ai-meta-grid">
+                  <div>
+                    <dt>Motivo</dt>
+                    <dd>{warning.reasonLabel || warning.matchReason}</dd>
+                  </div>
+                  <div>
+                    <dt>E-mail</dt>
+                    <dd>{warning.email || "Sin e-mail"}</dd>
+                  </div>
+                  <div>
+                    <dt>Movil</dt>
+                    <dd>{warning.mobile || "Sin movil"}</dd>
+                  </div>
+                  <div>
+                    <dt>Cargo</dt>
+                    <dd>{warning.positionTitle || "Sin cargo"}</dd>
+                  </div>
+                </dl>
+                <div className="account-duplicate-review-loss-note">
+                  Si abres este contacto existente, se perdera el intento actual
+                  de creacion.
+                </div>
+                <div className="account-duplicate-review-inline-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => onOpenCandidate(warning.contactId)}
+                  >
+                    Abrir contacto
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <div className="modal-buttons account-duplicate-review-actions">
+          <button type="button" className="btn-secondary" onClick={onCancel}>
+            Volver al formulario
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onConfirm}
+            disabled={savingContact}
+          >
+            {getDuplicateDecisionConfirmText(
+              review.duplicateDecision,
+              savingContact,
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ContactFormModal({
   isOpen,
   editingContactId,
@@ -6,9 +265,13 @@ export default function ContactFormModal({
   catalogs,
   managerOptions,
   editContactAudit,
+  contactDuplicateReview,
   savingContact,
   onClose,
   onSubmit,
+  onDismissDuplicateReview,
+  onConfirmDuplicateOverride,
+  onOpenDuplicateCandidate,
   onChange,
   onAccountChange,
   getContactStatusIconBadgeClass,
@@ -147,7 +410,8 @@ export default function ContactFormModal({
             <div className="grid-form account-grid-main">
               <div className="field-group">
                 <label>
-                  Participacion de compra <span className="required-mark">*</span>
+                  Participacion de compra{" "}
+                  <span className="required-mark">*</span>
                 </label>
                 <select
                   value={form.purchaseParticipationId}
@@ -170,7 +434,9 @@ export default function ContactFormModal({
                 </label>
                 <select
                   value={form.relationshipTypeId}
-                  onChange={(e) => onChange("relationshipTypeId", e.target.value)}
+                  onChange={(e) =>
+                    onChange("relationshipTypeId", e.target.value)
+                  }
                   required
                 >
                   <option value="">Selecciona relación</option>
@@ -187,7 +453,9 @@ export default function ContactFormModal({
                 </label>
                 <select
                   value={form.employmentStatusId}
-                  onChange={(e) => onChange("employmentStatusId", e.target.value)}
+                  onChange={(e) =>
+                    onChange("employmentStatusId", e.target.value)
+                  }
                   required
                 >
                   <option value="">Selecciona situación</option>
@@ -216,7 +484,9 @@ export default function ContactFormModal({
                 <label>Influye en</label>
                 <select
                   value={form.influencesContactId}
-                  onChange={(e) => onChange("influencesContactId", e.target.value)}
+                  onChange={(e) =>
+                    onChange("influencesContactId", e.target.value)
+                  }
                 >
                   <option value="">Ninguno</option>
                   {managerOptions.map((contact) => (
@@ -313,7 +583,11 @@ export default function ContactFormModal({
             <button type="button" className="btn-secondary" onClick={onClose}>
               Cancelar
             </button>
-            <button type="submit" className="btn-primary" disabled={savingContact}>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={savingContact}
+            >
               {savingContact
                 ? editingContactId
                   ? "Guardando..."
@@ -325,6 +599,17 @@ export default function ContactFormModal({
           </div>
         </form>
       </div>
+
+      {!editingContactId ? (
+        <ContactDuplicateReviewModal
+          review={contactDuplicateReview}
+          draftContactName={buildDraftContactName(form)}
+          savingContact={savingContact}
+          onCancel={onDismissDuplicateReview}
+          onConfirm={onConfirmDuplicateOverride}
+          onOpenCandidate={onOpenDuplicateCandidate}
+        />
+      ) : null}
     </div>
   );
 }

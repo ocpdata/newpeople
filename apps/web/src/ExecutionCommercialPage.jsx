@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 
 const TAB_OPTIONS = [
@@ -78,6 +78,12 @@ function getCadenceStatusLabel(status) {
   return status || "Sin estado";
 }
 
+function getCadenceDecisionLabel(decision) {
+  if (decision === "activate") return "Activar";
+  if (decision === "watch") return "Vigilar";
+  return "Sin decision";
+}
+
 function getReminderToneClass(tone) {
   if (tone === "high") return "is-high";
   if (tone === "medium") return "is-medium";
@@ -131,7 +137,13 @@ function normalizeDashboardResponse(data) {
       suggested: asArray(data?.cadences?.suggested).map((item) => ({
         ...item,
         steps: asArray(item?.steps),
+        frictionReasons: asArray(item?.frictionReasons),
+        protectiveSignals: asArray(item?.protectiveSignals),
       })),
+      totalSuggested: Number(data?.cadences?.totalSuggested || 0),
+      activateCount: Number(data?.cadences?.activateCount || 0),
+      watchCount: Number(data?.cadences?.watchCount || 0),
+      visibleLimit: Number(data?.cadences?.visibleLimit || 10),
     },
     management: {
       sellerStats: asArray(data?.management?.sellerStats),
@@ -202,6 +214,54 @@ function SummaryCard({ label, value, helper, tone }) {
   );
 }
 
+function CommercialExecutionHelp({ description }) {
+  const detailsRef = useRef(null);
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!detailsRef.current?.open) {
+        return;
+      }
+
+      if (!detailsRef.current.contains(event.target)) {
+        detailsRef.current.removeAttribute("open");
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape" || !detailsRef.current?.open) {
+        return;
+      }
+
+      detailsRef.current.removeAttribute("open");
+      detailsRef.current.querySelector("summary")?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  return (
+    <details className="commercial-execution-help" ref={detailsRef}>
+      <summary
+        className="commercial-execution-help-trigger"
+        aria-label="Ayuda sobre ejecucion comercial"
+        title="Ayuda sobre el modulo"
+      >
+        ?
+      </summary>
+      <div className="commercial-execution-help-popover">
+        <strong>Para que sirve</strong>
+        <p>{description}</p>
+      </div>
+    </details>
+  );
+}
+
 export default function ExecutionCommercialPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [dashboard, setDashboard] = useState(null);
@@ -215,6 +275,7 @@ export default function ExecutionCommercialPage() {
   const [savingNextStep, setSavingNextStep] = useState(false);
   const [savingDependencyKey, setSavingDependencyKey] = useState("");
   const [savingCadenceKey, setSavingCadenceKey] = useState("");
+  const [showAllCadences, setShowAllCadences] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -262,6 +323,24 @@ export default function ExecutionCommercialPage() {
     setNextStepDraft(buildNextStepDraft(selectedOpportunity));
     setDependencyDraft(buildDependencyDraft(selectedOpportunity));
   }, [selectedOpportunity]);
+
+  useEffect(() => {
+    setShowAllCadences(false);
+  }, [dashboard?.cadences?.totalSuggested]);
+
+  const suggestedCadences = dashboard?.cadences?.suggested || [];
+  const cadenceVisibleLimit = dashboard?.cadences?.visibleLimit || 10;
+  const visibleSuggestedCadences = showAllCadences
+    ? suggestedCadences
+    : suggestedCadences.slice(0, cadenceVisibleLimit);
+  const suggestedActivateCadences = visibleSuggestedCadences.filter(
+    (item) => item.cadenceDecision === "activate",
+  );
+  const suggestedWatchCadences = visibleSuggestedCadences.filter(
+    (item) => item.cadenceDecision === "watch",
+  );
+  const totalSuggestedCadences =
+    dashboard?.cadences?.totalSuggested || suggestedCadences.length;
 
   async function handleSaveNextStep(event) {
     event.preventDefault();
@@ -403,7 +482,10 @@ export default function ExecutionCommercialPage() {
             <span className="commercial-execution-kicker">
               Modulo principal
             </span>
-            <h2>Ejecucion Comercial</h2>
+            <div className="commercial-execution-title-row">
+              <h2>Ejecucion Comercial</h2>
+              <CommercialExecutionHelp description="Este modulo ordena la ejecucion diaria del equipo comercial para que cada oportunidad tenga proximo paso, seguimiento, dependencias visibles y riesgos controlados." />
+            </div>
             <p className="section-helper-text">
               La vista no recibio un tablero valido. Reintenta la carga del
               modulo.
@@ -431,7 +513,10 @@ export default function ExecutionCommercialPage() {
       <header className="commercial-execution-hero">
         <div>
           <span className="commercial-execution-kicker">Modulo principal</span>
-          <h2>Ejecucion Comercial</h2>
+          <div className="commercial-execution-title-row">
+            <h2>Ejecucion Comercial</h2>
+            <CommercialExecutionHelp description="Este modulo ayuda al vendedor a ejecutar su pipeline con una rutina clara: revisar riesgos, cumplir seguimientos, cerrar proximos pasos y coordinar dependencias sin salir de la misma vista." />
+          </div>
           <p className="section-helper-text">
             Organiza la disciplina diaria del vendedor, obliga proximo paso y
             concentra riesgos, seguimientos y cadencias en una misma vista
@@ -1149,42 +1234,158 @@ export default function ExecutionCommercialPage() {
           </section>
 
           <section className="commercial-execution-block">
-            <div className="commercial-execution-block-header">
-              <h3>Cadencias sugeridas</h3>
-              <span>
-                {dashboard?.cadences?.suggested?.length || 0} oportunidades
-              </span>
-            </div>
-            <div className="commercial-execution-list">
-              {(dashboard?.cadences?.suggested || []).map((cadence) => (
-                <article
-                  key={`${cadence.opportunityId}-${cadence.cadenceType}`}
-                  className="commercial-execution-item-card"
+            <div className="commercial-execution-block-header commercial-execution-block-header-wide">
+              <div>
+                <h3>Cadencias sugeridas</h3>
+                <span>{totalSuggestedCadences} oportunidades</span>
+              </div>
+              {totalSuggestedCadences > cadenceVisibleLimit ? (
+                <button
+                  type="button"
+                  className="secondary-button commercial-execution-inline-button"
+                  onClick={() => setShowAllCadences((current) => !current)}
                 >
-                  <div className="commercial-execution-item-topline">
-                    <strong>{cadence.title}</strong>
-                    <span>{cadence.opportunityName}</span>
-                  </div>
-                  <p>{cadence.description}</p>
-                  <div className="commercial-execution-steps-list">
-                    {cadence.steps.map((step) => (
-                      <span key={step}>{step}</span>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={
-                      savingCadenceKey ===
-                      `suggested-${cadence.opportunityId}-${cadence.cadenceType}`
-                    }
-                    onClick={() => handleActivateCadence(cadence)}
-                  >
-                    Activar cadencia
-                  </button>
-                </article>
-              ))}
+                  {showAllCadences
+                    ? `Mostrar top ${cadenceVisibleLimit}`
+                    : "Ver todas"}
+                </button>
+              ) : null}
             </div>
+            {totalSuggestedCadences ? (
+              <p className="section-helper-text commercial-execution-helper-inline">
+                {showAllCadences
+                  ? `Mostrando ${visibleSuggestedCadences.length} de ${totalSuggestedCadences} oportunidades con friccion.`
+                  : `Mostrando ${visibleSuggestedCadences.length} de ${totalSuggestedCadences} oportunidades priorizadas por score de friccion.`}
+              </p>
+            ) : null}
+
+            {suggestedActivateCadences.length ? (
+              <div className="commercial-execution-subsection">
+                <div className="commercial-execution-subsection-header">
+                  <h4>Activar cadencia</h4>
+                  <span>
+                    {showAllCadences
+                      ? dashboard?.cadences?.activateCount ||
+                        suggestedActivateCadences.length
+                      : suggestedActivateCadences.length}
+                  </span>
+                </div>
+                <div className="commercial-execution-list">
+                  {suggestedActivateCadences.map((cadence) => (
+                    <article
+                      key={`${cadence.opportunityId}-${cadence.cadenceType}`}
+                      className="commercial-execution-item-card"
+                    >
+                      <div className="commercial-execution-item-topline">
+                        <strong>{cadence.title}</strong>
+                        <div className="commercial-execution-pill-row">
+                          <span className="commercial-execution-cadence-pill is-activate">
+                            {getCadenceDecisionLabel(cadence.cadenceDecision)}
+                          </span>
+                          <span>Score {cadence.frictionScore}</span>
+                        </div>
+                      </div>
+                      <p>
+                        {cadence.opportunityName} · {cadence.accountName}
+                      </p>
+                      <p>{cadence.description}</p>
+                      {cadence.frictionReasons?.length ? (
+                        <div className="commercial-execution-tag-row">
+                          {cadence.frictionReasons.map((reason) => (
+                            <span
+                              key={reason}
+                              className="commercial-execution-tag is-alert"
+                            >
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="commercial-execution-steps-list">
+                        {cadence.steps.map((step) => (
+                          <span key={step}>{step}</span>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={
+                          savingCadenceKey ===
+                          `suggested-${cadence.opportunityId}-${cadence.cadenceType}`
+                        }
+                        onClick={() => handleActivateCadence(cadence)}
+                      >
+                        Activar cadencia
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {suggestedWatchCadences.length ? (
+              <div className="commercial-execution-subsection">
+                <div className="commercial-execution-subsection-header">
+                  <h4>Vigilar</h4>
+                  <span>
+                    {showAllCadences
+                      ? dashboard?.cadences?.watchCount ||
+                        suggestedWatchCadences.length
+                      : suggestedWatchCadences.length}
+                  </span>
+                </div>
+                <div className="commercial-execution-list">
+                  {suggestedWatchCadences.map((cadence) => (
+                    <article
+                      key={`${cadence.opportunityId}-${cadence.cadenceType}`}
+                      className="commercial-execution-item-card"
+                    >
+                      <div className="commercial-execution-item-topline">
+                        <strong>{cadence.opportunityName}</strong>
+                        <div className="commercial-execution-pill-row">
+                          <span className="commercial-execution-cadence-pill is-watch">
+                            {getCadenceDecisionLabel(cadence.cadenceDecision)}
+                          </span>
+                          <span>Score {cadence.frictionScore}</span>
+                        </div>
+                      </div>
+                      <p>{cadence.description}</p>
+                      {cadence.frictionReasons?.length ? (
+                        <div className="commercial-execution-tag-row">
+                          {cadence.frictionReasons.map((reason) => (
+                            <span
+                              key={reason}
+                              className="commercial-execution-tag is-soft-alert"
+                            >
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {cadence.protectiveSignals?.length ? (
+                        <div className="commercial-execution-tag-row">
+                          {cadence.protectiveSignals.map((signal) => (
+                            <span
+                              key={signal}
+                              className="commercial-execution-tag is-positive"
+                            >
+                              {signal}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {!visibleSuggestedCadences.length ? (
+              <div className="empty-state">
+                No hay oportunidades que requieran vigilancia o activacion de
+                cadencia.
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

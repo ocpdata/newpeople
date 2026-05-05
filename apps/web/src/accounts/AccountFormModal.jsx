@@ -4,6 +4,279 @@ import AccountDraftAnalysisPanel from "./AccountDraftAnalysisPanel";
 import AccountInteractionModal from "./AccountInteractionModal";
 import AccountInteractionsSection from "./AccountInteractionsSection";
 
+function getDuplicateSeverityLabel(severity) {
+  if (severity === "high") return "Alta";
+  if (severity === "medium") return "Media";
+  return "Baja";
+}
+
+function getDuplicateDecisionTitle(decision) {
+  if (decision === "review_required") {
+    return "Posible duplicado fuerte detectado";
+  }
+  return "Posible duplicado antes de crear";
+}
+
+function getDuplicateDecisionEyebrow(decision) {
+  if (decision === "review_required") {
+    return "Revision obligatoria antes de crear";
+  }
+  return "Confirmacion recomendada antes de crear";
+}
+
+function getDuplicateDecisionBadgeClass(decision) {
+  return decision === "review_required" ? "high" : "medium";
+}
+
+function getDuplicateDecisionConfirmText(decision, creatingAccount) {
+  if (creatingAccount) {
+    return "Creando...";
+  }
+  return decision === "review_required" ? "Crear aun asi" : "Confirmar y crear";
+}
+
+function getDuplicateReviewVerdictLabel(verdict) {
+  if (verdict === "likely_duplicate") return "Probable duplicado";
+  if (verdict === "likely_distinct") return "Probablemente distinta";
+  return "Revision no concluyente";
+}
+
+function getDuplicateReviewConfidenceLabel(confidence) {
+  if (confidence === "high") return "Alta";
+  if (confidence === "medium") return "Media";
+  return "Baja";
+}
+
+function getDuplicateReviewSourceLabel(source) {
+  if (source === "ai") return "Con apoyo de IA";
+  return "Con reglas internas";
+}
+
+function getDuplicateReviewStatus(review) {
+  if (review.aiReviewStatus === "loading") {
+    return "Analizando con IA";
+  }
+  if (review.aiReviewError) {
+    return "IA no disponible";
+  }
+  if (review.aiReview) {
+    return getDuplicateReviewVerdictLabel(review.aiReview.verdict);
+  }
+  return getDuplicateReviewSourceLabel(review.duplicateValidationSource);
+}
+
+function AccountDuplicateReviewModal({
+  review,
+  draftName,
+  creatingAccount,
+  onCancel,
+  onConfirm,
+  onOpenCandidate,
+}) {
+  if (!review) return null;
+
+  const warnings = review.duplicateWarnings || [];
+  const primaryCandidate = warnings[0] || null;
+  const aiSummary = String(review.aiReview?.summary || "").trim();
+  const aiRecommendation = String(review.aiReview?.recommendation || "").trim();
+  const aiVerdictClass =
+    review.aiReview?.verdict === "likely_duplicate"
+      ? "high"
+      : review.aiReview?.verdict === "likely_distinct"
+        ? "info"
+        : "medium";
+
+  return (
+    <div className="modal-overlay modal-overlay-elevated">
+      <div
+        className="modal-dialog modal-dialog-account account-duplicate-review-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="account-duplicate-review-hero">
+          <div className="account-duplicate-review-hero-copy">
+            <span className="account-duplicate-review-eyebrow">
+              {getDuplicateDecisionEyebrow(review.duplicateDecision)}
+            </span>
+            <h3 className="modal-title">
+              {getDuplicateDecisionTitle(review.duplicateDecision)}
+            </h3>
+            <p className="modal-message">{review.message}</p>
+            <div className="account-duplicate-review-hero-tags">
+              <span className="account-duplicate-review-tag">
+                Intento actual: {draftName || "Sin nombre capturado"}
+              </span>
+              <span className="account-duplicate-review-tag">
+                {warnings.length}{" "}
+                {warnings.length === 1 ? "coincidencia" : "coincidencias"}
+              </span>
+            </div>
+          </div>
+          <div className="account-duplicate-review-hero-side">
+            <span
+              className={`account-ai-mini-badge ${getDuplicateDecisionBadgeClass(
+                review.duplicateDecision,
+              )}`}
+            >
+              {review.duplicateDecision === "review_required"
+                ? "Detener y revisar"
+                : "Confirmar antes de seguir"}
+            </span>
+            <p className="account-duplicate-review-side-note">
+              {primaryCandidate
+                ? `La coincidencia principal es ${primaryCandidate.accountName}.`
+                : "Revisa las coincidencias antes de continuar."}
+            </p>
+          </div>
+        </header>
+
+        {review.aiReviewStatus === "loading" ||
+        review.aiReviewError ||
+        review.aiReview ? (
+          <section className="account-ai-subsection account-duplicate-review-section">
+            <div className="account-duplicate-review-section-header">
+              <div>
+                <h5>Revision IA adicional</h5>
+                <p>
+                  {getDuplicateReviewSourceLabel(
+                    review.duplicateValidationSource,
+                  )}
+                </p>
+              </div>
+            </div>
+            {review.aiReviewStatus === "loading" && (
+              <div className="account-ai-banner">
+                Estamos validando con IA si el borrador parece corresponder a la
+                misma organizacion.
+              </div>
+            )}
+            {review.aiReviewError && (
+              <div className="account-ai-banner error">
+                {review.aiReviewError}
+              </div>
+            )}
+            {review.aiReview && (
+              <article className="account-ai-card account-duplicate-review-feature-card">
+                <div className="account-ai-card-header">
+                  <div>
+                    <strong>
+                      {getDuplicateReviewVerdictLabel(review.aiReview.verdict)}
+                    </strong>
+                    {aiSummary ? (
+                      <p className="account-duplicate-review-card-note">
+                        {aiSummary}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="account-ai-card-badges">
+                    <span className={`account-ai-mini-badge ${aiVerdictClass}`}>
+                      {getDuplicateReviewConfidenceLabel(
+                        review.aiReview.confidence,
+                      )}
+                    </span>
+                  </div>
+                </div>
+                {aiRecommendation && aiRecommendation !== aiSummary ? (
+                  <div className="account-duplicate-review-callout">
+                    <span className="account-duplicate-review-summary-label">
+                      Recomendacion
+                    </span>
+                    <p className="field-hint">{aiRecommendation}</p>
+                  </div>
+                ) : null}
+              </article>
+            )}
+          </section>
+        ) : null}
+
+        <section className="account-ai-subsection account-duplicate-review-section">
+          <div className="account-duplicate-review-section-header">
+            <div>
+              <h5>Coincidencias detectadas</h5>
+              <p>
+                Abre la cuenta sugerida si necesitas validar propietarios,
+                registro o sitio web antes de crear una nueva.
+              </p>
+            </div>
+            <p className="account-duplicate-review-warning-note">
+              Si abres una cuenta existente desde aqui, se perdera este intento
+              de creacion y tendras que capturarlo de nuevo.
+            </p>
+          </div>
+          <div className="account-ai-card-list account-duplicate-review-card-list">
+            {warnings.map((warning) => (
+              <article
+                key={`${warning.accountId}-${warning.matchReason}`}
+                className="account-ai-card account-duplicate-review-candidate-card"
+              >
+                <div className="account-ai-card-header">
+                  <div>
+                    <strong>{warning.accountName}</strong>
+                  </div>
+                  <div className="account-ai-card-badges">
+                    <span
+                      className={`account-ai-mini-badge ${warning.severity}`}
+                    >
+                      {getDuplicateSeverityLabel(warning.severity)}
+                    </span>
+                  </div>
+                </div>
+                <p>{warning.severityMessage || warning.recommendedAction}</p>
+                <dl className="account-ai-meta-grid">
+                  <div>
+                    <dt>Motivo</dt>
+                    <dd>{warning.reasonLabel || warning.matchReason}</dd>
+                  </div>
+                  <div>
+                    <dt>Pais</dt>
+                    <dd>{warning.country || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Registro</dt>
+                    <dd>{warning.registrationCode || "Sin registro"}</dd>
+                  </div>
+                  <div>
+                    <dt>Website</dt>
+                    <dd>{warning.website || "Sin website"}</dd>
+                  </div>
+                </dl>
+                <div className="account-duplicate-review-loss-note">
+                  Si abres esta cuenta existente, se perdera el intento actual
+                  de creacion.
+                </div>
+                <div className="account-duplicate-review-inline-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => onOpenCandidate(warning.accountId)}
+                  >
+                    Abrir cuenta
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <div className="modal-buttons account-duplicate-review-actions">
+          <button className="btn-secondary" onClick={onCancel}>
+            Volver a editar
+          </button>
+          <button
+            className="btn-primary"
+            onClick={onConfirm}
+            disabled={review.aiReviewStatus === "loading"}
+          >
+            {getDuplicateDecisionConfirmText(
+              review.duplicateDecision,
+              creatingAccount,
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AccountFormModal({
   isOpen,
   editingAccountId,
@@ -27,7 +300,11 @@ function AccountFormModal({
   onApplySuggestedRegistration,
   accountDraftAnalysis,
   accountDraftAnalysisError,
+  accountDuplicateReview,
   analyzingAccountDraft,
+  onDismissDuplicateReview,
+  onConfirmDuplicateOverride,
+  onOpenDuplicateCandidateAccount,
   accountInteractions,
   visibleAccountInteractions,
   interactionTypes,
@@ -118,6 +395,14 @@ function AccountFormModal({
           onCancel={() => setShowCreateConfirmation(false)}
           confirmText={creatingAccount ? "Creando..." : "Crear cuenta"}
           overlayClassName="modal-overlay-elevated"
+        />
+        <AccountDuplicateReviewModal
+          review={accountDuplicateReview}
+          draftName={form.name}
+          creatingAccount={creatingAccount}
+          onCancel={onDismissDuplicateReview}
+          onConfirm={onConfirmDuplicateOverride}
+          onOpenCandidate={onOpenDuplicateCandidateAccount}
         />
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">

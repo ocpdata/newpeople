@@ -31,6 +31,7 @@ export function useAccountsCrud({ currentUser }) {
   const [accountDraftAnalysis, setAccountDraftAnalysis] = useState(null);
   const [accountDraftAnalysisError, setAccountDraftAnalysisError] =
     useState("");
+  const [accountDuplicateReview, setAccountDuplicateReview] = useState(null);
   const [catalogs, setCatalogs] = useState({
     countries: [],
     accountTypes: [],
@@ -45,8 +46,7 @@ export function useAccountsCrud({ currentUser }) {
     [currentUser],
   );
   const canCreateOrRequestAccounts =
-    explicitAccountPermissions.has("cuentas.create") ||
-    explicitAccountPermissions.has("cuentas.request");
+    explicitAccountPermissions.has("cuentas.create");
   const canActivateAccounts = explicitAccountPermissions.has("cuentas.create");
 
   function findCatalogIdByName(options, expectedName) {
@@ -163,6 +163,7 @@ export function useAccountsCrud({ currentUser }) {
     setSuccess("");
     setAccountDraftAnalysis(null);
     setAccountDraftAnalysisError("");
+    setAccountDuplicateReview(null);
     setEditingAccountId(null);
     setEditAccountAudit(null);
     setUsers((prev) => prev.filter((user) => !isInactiveOwner(user)));
@@ -174,12 +175,90 @@ export function useAccountsCrud({ currentUser }) {
     if (creatingAccount) return;
     setAccountDraftAnalysis(null);
     setAccountDraftAnalysisError("");
+    setAccountDuplicateReview(null);
     setShowCreateAccountModal(false);
     setEditingAccountId(null);
     setEditAccountAudit(null);
   }
 
-  async function saveAccount(event) {
+  function buildAccountDraftAnalysisPayload() {
+    return {
+      draft: {
+        name: form.name,
+        accountTypeId: form.accountTypeId ? Number(form.accountTypeId) : null,
+        registrationCode: form.registrationCode,
+        phone: form.phone,
+        economicSectorId: form.economicSectorId
+          ? Number(form.economicSectorId)
+          : null,
+        website: form.website,
+        city: form.city,
+        stateRegion: form.stateRegion,
+        countryId: form.countryId ? Number(form.countryId) : null,
+        companyDescription: form.companyDescription,
+        addressLine: form.addressLine,
+        postalCode: form.postalCode,
+        ownerUserIds: form.ownerUserIds.map(Number),
+      },
+      options: {
+        allowExternalFetch: true,
+        allowAiSynthesis: true,
+        allowWebSearchTool: true,
+      },
+    };
+  }
+
+  async function runDuplicateAiReview(reviewState) {
+    setAccountDuplicateReview((current) =>
+      current
+        ? {
+            ...current,
+            aiReviewStatus: "loading",
+            aiReviewError: "",
+          }
+        : current,
+    );
+
+    try {
+      const { data } = await api.post(
+        "/api/accounts/draft-analysis",
+        buildAccountDraftAnalysisPayload(),
+        { timeout: 45000 },
+      );
+
+      setAccountDraftAnalysis(data);
+      setAccountDuplicateReview((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          duplicateWarnings:
+            Array.isArray(data?.duplicateWarnings) &&
+            data.duplicateWarnings.length
+              ? data.duplicateWarnings
+              : current.duplicateWarnings,
+          aiReview: data?.duplicateReview || null,
+          aiReviewStatus: "ready",
+          aiReviewError: "",
+          aiReviewMeta: data?.meta || null,
+        };
+      });
+    } catch (err) {
+      setAccountDuplicateReview((current) =>
+        current
+          ? {
+              ...current,
+              aiReviewStatus: "error",
+              aiReviewError: getApiErrorMessage(
+                err,
+                "No fue posible completar la revision IA del posible duplicado",
+              ),
+            }
+          : current,
+      );
+    }
+  }
+
+  async function saveAccount(event, options = {}) {
     event.preventDefault();
     setError("");
     setSuccess("");
@@ -188,6 +267,7 @@ export function useAccountsCrud({ currentUser }) {
       return;
     }
     setCreatingAccount(true);
+
     try {
       const fallbackActivationStatusId =
         Number(form.activationStatusId) || Number(catalogs.statuses?.[0]?.id);
@@ -207,6 +287,7 @@ export function useAccountsCrud({ currentUser }) {
         countryId: Number(form.countryId),
         activationStatusId: fallbackActivationStatusId,
         ownerUserIds: form.ownerUserIds.map(Number),
+        allowDuplicateOverride: options.allowDuplicateOverride === true,
       };
 
       const { data } = editingAccountId
@@ -216,6 +297,7 @@ export function useAccountsCrud({ currentUser }) {
       setForm(buildDefaultAccountForm());
       setAccountDraftAnalysis(null);
       setAccountDraftAnalysisError("");
+      setAccountDuplicateReview(null);
       setEditingAccountId(null);
       setShowCreateAccountModal(false);
       await load();
@@ -226,6 +308,42 @@ export function useAccountsCrud({ currentUser }) {
             : "Cuenta creada correctamente"),
       );
     } catch (err) {
+      const duplicatePayload = err?.response?.data;
+      if (
+        !editingAccountId &&
+        err?.response?.status === 409 &&
+        [
+          "ACCOUNT_DUPLICATE_REVIEW_REQUIRED",
+          "ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED",
+        ].includes(duplicatePayload?.code)
+      ) {
+        const reviewState = {
+          code: duplicatePayload.code,
+          message: duplicatePayload.message,
+          duplicateDecision: duplicatePayload.duplicateDecision,
+          duplicateWarnings: Array.isArray(duplicatePayload.duplicateWarnings)
+            ? duplicatePayload.duplicateWarnings
+            : [],
+          aiReview: duplicatePayload.duplicateReview || null,
+          aiReviewStatus: duplicatePayload.duplicateReview
+            ? "ready"
+            : duplicatePayload.duplicateDecision === "confirmation_required"
+              ? "loading"
+              : "idle",
+          aiReviewError: "",
+          aiReviewMeta: null,
+        };
+        setAccountDuplicateReview(reviewState);
+
+        if (
+          duplicatePayload.duplicateDecision === "confirmation_required" &&
+          !duplicatePayload.duplicateReview
+        ) {
+          void runDuplicateAiReview(reviewState);
+        }
+        return;
+      }
+
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
       if (fieldErrors && typeof fieldErrors === "object") {
         const firstError = Object.entries(fieldErrors).find(
@@ -394,6 +512,7 @@ export function useAccountsCrud({ currentUser }) {
     setSuccess("");
     setAccountDraftAnalysis(null);
     setAccountDraftAnalysisError("");
+    setAccountDuplicateReview(null);
     try {
       const { data } = await api.get(`/api/accounts/${accountId}`);
       setUsers((prev) => mergeOwnerOptions(prev, data.owners || []));
@@ -646,34 +765,13 @@ export function useAccountsCrud({ currentUser }) {
     setAnalyzingAccountDraft(true);
 
     try {
-      const payload = {
-        draft: {
-          name: form.name,
-          accountTypeId: form.accountTypeId ? Number(form.accountTypeId) : null,
-          registrationCode: form.registrationCode,
-          phone: form.phone,
-          economicSectorId: form.economicSectorId
-            ? Number(form.economicSectorId)
-            : null,
-          website: form.website,
-          city: form.city,
-          stateRegion: form.stateRegion,
-          countryId: form.countryId ? Number(form.countryId) : null,
-          companyDescription: form.companyDescription,
-          addressLine: form.addressLine,
-          postalCode: form.postalCode,
-          ownerUserIds: form.ownerUserIds.map(Number),
+      const { data } = await api.post(
+        "/api/accounts/draft-analysis",
+        buildAccountDraftAnalysisPayload(),
+        {
+          timeout: 45000,
         },
-        options: {
-          allowExternalFetch: true,
-          allowAiSynthesis: true,
-          allowWebSearchTool: true,
-        },
-      };
-
-      const { data } = await api.post("/api/accounts/draft-analysis", payload, {
-        timeout: 45000,
-      });
+      );
       setAccountDraftAnalysis(data);
       setSuccess("Analisis de cuenta generado");
     } catch (err) {
@@ -688,6 +786,26 @@ export function useAccountsCrud({ currentUser }) {
       setAnalyzingAccountDraft(false);
     }
   }
+
+  function dismissAccountDuplicateReview() {
+    setAccountDuplicateReview(null);
+  }
+
+  async function confirmAccountDuplicateOverride() {
+    return saveAccount(
+      { preventDefault() {} },
+      { allowDuplicateOverride: true },
+    );
+  }
+
+  async function openDuplicateCandidateAccount(accountId) {
+    setAccountDuplicateReview(null);
+    await openEditAccountModal(accountId);
+  }
+
+  useEffect(() => {
+    setAccountDuplicateReview(null);
+  }, [form.name, form.registrationCode, form.website, form.countryId]);
 
   function useSuggestedCompanyDescription() {
     const nextDescription =
@@ -771,6 +889,7 @@ export function useAccountsCrud({ currentUser }) {
     analyzingAccountDraft,
     accountDraftAnalysis,
     accountDraftAnalysisError,
+    accountDuplicateReview,
     catalogs,
     error,
     success,
@@ -806,6 +925,9 @@ export function useAccountsCrud({ currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
+    dismissAccountDuplicateReview,
+    confirmAccountDuplicateOverride,
+    openDuplicateCandidateAccount,
     useSuggestedCompanyDescription,
     useSuggestedAccountField,
   };

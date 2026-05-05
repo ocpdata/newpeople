@@ -229,11 +229,13 @@ function AccountDraftAnalysisPanel({
                         {renderFindingSeverityLabel(warning.severity)}
                       </span>
                     </div>
-                    <p>{warning.recommendedAction}</p>
+                    <p>
+                      {warning.severityMessage || warning.recommendedAction}
+                    </p>
                     <dl className="account-ai-meta-grid">
                       <div>
                         <dt>Motivo</dt>
-                        <dd>{warning.matchReason}</dd>
+                        <dd>{warning.reasonLabel || warning.matchReason}</dd>
                       </div>
                       <div>
                         <dt>Pais</dt>

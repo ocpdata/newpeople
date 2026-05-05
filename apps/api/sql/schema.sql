@@ -471,7 +471,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
   account_type_id BIGINT UNSIGNED NOT NULL,
-  registration_code VARCHAR(80) NOT NULL,
+  registration_code VARCHAR(80) NULL,
   phone VARCHAR(40) NULL,
   economic_sector_id BIGINT UNSIGNED NOT NULL,
   website VARCHAR(300) NULL,
@@ -494,6 +494,22 @@ CREATE TABLE IF NOT EXISTS accounts (
   CONSTRAINT fk_accounts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_accounts_country_registration UNIQUE (country_id, registration_code)
 );
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'SELECT 1',
+    'ALTER TABLE accounts MODIFY COLUMN registration_code VARCHAR(80) NULL'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'accounts'
+    AND COLUMN_NAME = 'registration_code'
+    AND IS_NULLABLE = 'NO'
+);
+PREPARE s_accounts_col_1 FROM @stmt;
+EXECUTE s_accounts_col_1;
+DEALLOCATE PREPARE s_accounts_col_1;
 
 CREATE TABLE IF NOT EXISTS account_owners (
   account_id BIGINT UNSIGNED NOT NULL,

@@ -1,6 +1,7 @@
 import {
   buildDataQualityFindings,
   buildDescriptionsFromExternalContext,
+  buildDuplicateReview,
   buildDuplicateWarnings,
   buildEvidence,
   buildNextRecommendedStep,
@@ -59,6 +60,39 @@ function canUseStructuredResearch(options) {
   );
 }
 
+function canUseStructuredDuplicateReview() {
+  return Boolean(config.openai.apiKey && config.openai.enableWebSearch);
+}
+
+function buildDuplicateReviewCurrentValues({ draft, duplicateReview }) {
+  return {
+    suggestedCompanyDescription: String(draft.companyDescription || "").trim(),
+    suggestedWebsite: String(draft.website || "").trim(),
+    websiteConfidence: draft.website ? "high" : "low",
+    websiteReason: "",
+    suggestedContactData: {
+      addressLine: String(draft.addressLine || "").trim(),
+      city: String(draft.city || "").trim(),
+      stateRegion: String(draft.stateRegion || "").trim(),
+      postalCode: String(draft.postalCode || "").trim(),
+      phone: String(draft.phone || "").trim(),
+      confidence: "low",
+      reason: "",
+    },
+    suggestedRegistrationCode: String(draft.registrationCode || "").trim(),
+    registrationConfidence: draft.registrationCode ? "high" : "low",
+    registrationReason: "",
+    suggestedImprovements: [],
+    nextRecommendedStep: {
+      action: "",
+      reason: "",
+    },
+    duplicateReview,
+    confidence: duplicateReview.confidence || "medium",
+    warnings: [],
+  };
+}
+
 function buildInitialAnalysisState({
   draft,
   duplicateWarnings,
@@ -95,6 +129,7 @@ function buildInitialAnalysisState({
       duplicateWarnings,
       dataQualityFindings,
     }),
+    duplicateReview: buildDuplicateReview({ duplicateWarnings }),
     nextRecommendedStep: buildNextRecommendedStep({
       draft,
       duplicateWarnings,
@@ -303,6 +338,12 @@ function buildStructuredCurrentValues(state) {
     nextRecommendedStep: state.nextRecommendedStep || {
       action: "",
       reason: "",
+    },
+    duplicateReview: state.duplicateReview || {
+      verdict: "inconclusive",
+      summary: "",
+      recommendation: "",
+      confidence: "low",
     },
     confidence: state.confidence || "medium",
     warnings: state.warnings || [],
@@ -544,6 +585,15 @@ async function runStructuredExtractionStage({
       state.nextRecommendedStep = structuredResult.nextRecommendedStep;
     }
 
+    if (structuredResult.duplicateReview?.verdict) {
+      state.duplicateReview = {
+        verdict: structuredResult.duplicateReview.verdict,
+        summary: structuredResult.duplicateReview.summary || "",
+        recommendation: structuredResult.duplicateReview.recommendation || "",
+        confidence: structuredResult.duplicateReview.confidence || "medium",
+      };
+    }
+
     if (Array.isArray(structuredResult.warnings)) {
       state.warnings.push(...structuredResult.warnings.filter(Boolean));
     }
@@ -606,6 +656,7 @@ function buildPipelineResponse({
     }),
     registrationAssistance: state.registrationAssistance,
     suggestedImprovements: state.suggestedImprovements,
+    duplicateReview: state.duplicateReview,
     nextRecommendedStep: state.nextRecommendedStep,
     evidence: buildEvidence({
       draft,
@@ -717,4 +768,78 @@ export async function runAccountDraftAnalysisPipeline({
     executionPlan,
     metrics,
   });
+}
+
+export async function runAccountDuplicateReviewPipeline({ draft, user }) {
+  const normalizedDraft = normalizeAccountDraft(draft);
+  const catalogContext = await getCatalogContext(normalizedDraft);
+  const candidates = await getDuplicateCandidates({
+    draft: normalizedDraft,
+    user,
+  });
+  const duplicateWarnings = buildDuplicateWarnings({
+    draft: normalizedDraft,
+    candidates,
+  });
+  const fallbackDuplicateReview = buildDuplicateReview({ duplicateWarnings });
+
+  if (!canUseStructuredDuplicateReview()) {
+    return {
+      duplicateWarnings,
+      duplicateReview: fallbackDuplicateReview,
+      meta: {
+        usedAiGeneration: false,
+        provider: "heuristic",
+      },
+    };
+  }
+
+  try {
+    const structuredResult = await runStructuredAccountDraftAnalysis({
+      draft: normalizedDraft,
+      catalogContext,
+      duplicateWarnings,
+      duplicateCandidates: candidates,
+      preferredWebsite: String(normalizedDraft.website || "").trim(),
+      externalContext: null,
+      currentValues: buildDuplicateReviewCurrentValues({
+        draft: normalizedDraft,
+        duplicateReview: fallbackDuplicateReview,
+      }),
+    });
+
+    if (structuredResult?.duplicateReview?.verdict) {
+      return {
+        duplicateWarnings,
+        duplicateReview: {
+          verdict: structuredResult.duplicateReview.verdict,
+          summary: structuredResult.duplicateReview.summary || "",
+          recommendation: structuredResult.duplicateReview.recommendation || "",
+          confidence: structuredResult.duplicateReview.confidence || "medium",
+        },
+        meta: {
+          usedAiGeneration: true,
+          provider: "structured_web_research",
+        },
+      };
+    }
+  } catch {
+    return {
+      duplicateWarnings,
+      duplicateReview: fallbackDuplicateReview,
+      meta: {
+        usedAiGeneration: false,
+        provider: "heuristic",
+      },
+    };
+  }
+
+  return {
+    duplicateWarnings,
+    duplicateReview: fallbackDuplicateReview,
+    meta: {
+      usedAiGeneration: false,
+      provider: "heuristic",
+    },
+  };
 }

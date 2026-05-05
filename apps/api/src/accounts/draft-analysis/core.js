@@ -15,6 +15,39 @@ function normalizeText(value) {
     .trim();
 }
 
+const SPANISH_NAME_STOPWORDS = new Set([
+  "a",
+  "al",
+  "de",
+  "del",
+  "e",
+  "el",
+  "la",
+  "las",
+  "los",
+  "y",
+]);
+
+function buildCoreName(value) {
+  return normalizeText(value)
+    .split(" ")
+    .filter((token) => token && !SPANISH_NAME_STOPWORDS.has(token))
+    .join(" ");
+}
+
+function hasSameCoreName(left, right) {
+  const leftCoreName = buildCoreName(left);
+  const rightCoreName = buildCoreName(right);
+
+  if (!leftCoreName || !rightCoreName) return false;
+
+  return (
+    leftCoreName === rightCoreName ||
+    leftCoreName.includes(rightCoreName) ||
+    rightCoreName.includes(leftCoreName)
+  );
+}
+
 function normalizeDomain(value) {
   const rawValue = String(value || "").trim();
   if (!rawValue) return "";
@@ -66,6 +99,54 @@ function calculateNameSimilarity(left, right) {
   });
 
   return (2 * overlap) / (leftPairs.size + rightPairs.size || 1);
+}
+
+function hasSingleEditDistance(left, right) {
+  const leftNormalized = normalizeText(left).replace(/\s/g, "");
+  const rightNormalized = normalizeText(right).replace(/\s/g, "");
+
+  if (!leftNormalized || !rightNormalized) return false;
+  if (leftNormalized === rightNormalized) return false;
+  if (leftNormalized.length < 6 || rightNormalized.length < 6) return false;
+
+  const lengthDelta = Math.abs(leftNormalized.length - rightNormalized.length);
+  if (lengthDelta > 1) return false;
+
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+
+  while (
+    leftIndex < leftNormalized.length &&
+    rightIndex < rightNormalized.length
+  ) {
+    if (leftNormalized[leftIndex] === rightNormalized[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    edits += 1;
+    if (edits > 1) return false;
+
+    if (leftNormalized.length === rightNormalized.length) {
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (leftNormalized.length > rightNormalized.length) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  if (
+    leftIndex < leftNormalized.length ||
+    rightIndex < rightNormalized.length
+  ) {
+    edits += 1;
+  }
+
+  return edits === 1;
 }
 
 function trimSentence(value) {
@@ -509,6 +590,58 @@ export function hasLocationGaps(contactData) {
     contactData?.stateRegion &&
     contactData?.postalCode
   );
+}
+
+export function buildDuplicateReview({ duplicateWarnings }) {
+  if (!Array.isArray(duplicateWarnings) || duplicateWarnings.length === 0) {
+    return {
+      verdict: "likely_distinct",
+      summary:
+        "No se detectaron coincidencias relevantes con cuentas existentes en la revision automatica.",
+      recommendation:
+        "Puedes continuar con la creacion, manteniendo la validacion normal de datos.",
+      confidence: "high",
+    };
+  }
+
+  const highestSeverityWarning = duplicateWarnings.find(
+    (warning) => warning.severity === "high",
+  );
+
+  if (highestSeverityWarning) {
+    return {
+      verdict: "likely_duplicate",
+      summary:
+        "La cuenta nueva coincide de forma fuerte con un registro existente por nombre, registro o website.",
+      recommendation:
+        "No conviene crear una cuenta nueva hasta revisar primero la cuenta existente y confirmar si es el mismo cliente.",
+      confidence: "high",
+    };
+  }
+
+  const mediumSeverityWarning = duplicateWarnings.find(
+    (warning) => warning.severity === "medium",
+  );
+
+  if (mediumSeverityWarning) {
+    return {
+      verdict: "inconclusive",
+      summary:
+        "La coincidencia es relevante pero todavia no alcanza evidencia suficiente para afirmar que sea la misma organizacion.",
+      recommendation:
+        "Revisa nombre comercial, website, pais y registro antes de confirmar la creacion.",
+      confidence: "medium",
+    };
+  }
+
+  return {
+    verdict: "likely_distinct",
+    summary:
+      "Las coincidencias detectadas son debiles y no sugieren por si solas un duplicado claro.",
+    recommendation:
+      "Puedes continuar, pero conviene validar rapidamente los datos principales antes de guardar.",
+    confidence: "medium",
+  };
 }
 
 function scoreContactData(contactData) {
@@ -1403,6 +1536,38 @@ export async function getDuplicateCandidates({ draft, user }) {
   );
 }
 
+function getDuplicateReasonLabel(matchReason) {
+  if (matchReason === "country_registration") {
+    return "Mismo registro en el pais seleccionado";
+  }
+  if (matchReason === "website_domain") {
+    return "Mismo dominio web";
+  }
+  if (matchReason === "normalized_name_same_country") {
+    return "Mismo nombre comercial en el pais seleccionado";
+  }
+  if (matchReason === "near_exact_name_same_country") {
+    return "Nombre casi identico en el pais seleccionado";
+  }
+  if (matchReason === "similar_name_same_country") {
+    return "Nombre muy parecido en el pais seleccionado";
+  }
+  if (matchReason === "partial_name_match") {
+    return "Nombre parcialmente coincidente";
+  }
+  return "Coincidencia detectada con una cuenta existente";
+}
+
+function getDuplicateSeverityMessage(severity) {
+  if (severity === "high") {
+    return "Coincidencia fuerte. Conviene detener la creacion y revisar si la cuenta ya existe.";
+  }
+  if (severity === "medium") {
+    return "Coincidencia probable. Confirma que no se trate de la misma organizacion antes de continuar.";
+  }
+  return "Coincidencia baja. Revisa rapidamente antes de seguir.";
+}
+
 export function buildDuplicateWarnings({ draft, candidates }) {
   const draftName = normalizeText(draft.name);
   const draftRegistration = normalizeText(draft.registrationCode);
@@ -1439,10 +1604,18 @@ export function buildDuplicateWarnings({ draft, candidates }) {
       severity = "high";
       matchReason = "normalized_name_same_country";
       sortRank = 320;
+    } else if (hasSingleEditDistance(draftName, candidateName)) {
+      severity = "medium";
+      matchReason = "near_exact_name_same_country";
+      sortRank = 300;
     } else if (similarity >= 0.88) {
       severity = "medium";
       matchReason = "similar_name_same_country";
       sortRank = 220 + Math.round(similarity * 10);
+    } else if (hasSameCoreName(draftName, candidateName)) {
+      severity = "low";
+      matchReason = "partial_name_match";
+      sortRank = 140;
     } else if (similarity >= 0.8) {
       severity = "low";
       matchReason = "partial_name_match";
@@ -1454,15 +1627,19 @@ export function buildDuplicateWarnings({ draft, candidates }) {
     warnings.push({
       severity,
       matchReason,
+      reasonLabel: getDuplicateReasonLabel(matchReason),
       accountId: Number(candidate.id),
       accountName: candidate.name,
       registrationCode: candidate.registration_code || "",
       country: candidate.country_name,
       website: candidate.website || "",
+      severityMessage: getDuplicateSeverityMessage(severity),
       recommendedAction:
         severity === "high"
-          ? "Revisar esta coincidencia antes de guardar para evitar duplicar la cuenta."
-          : "Verificar si corresponde a la misma organizacion antes de continuar.",
+          ? "Deten la creacion y valida primero si esta cuenta ya existe."
+          : severity === "medium"
+            ? "Valida si corresponde a la misma organizacion antes de crear una cuenta nueva."
+            : "Haz una verificacion rapida antes de continuar.",
       _sortRank: sortRank,
     });
   });

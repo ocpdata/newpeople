@@ -229,9 +229,9 @@ export function useOpportunitiesPage({
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
-  const canCreateOrRequestOpportunities =
-    explicitOpportunityPermissions.has("oportunidades.create") ||
-    explicitOpportunityPermissions.has("oportunidades.request");
+  const canCreateOrRequestOpportunities = explicitOpportunityPermissions.has(
+    "oportunidades.create",
+  );
   const canChangeOpportunityActivationStatus =
     explicitOpportunityPermissions.has("oportunidades.create");
   const [catalogs, setCatalogs] = useState({

@@ -1,5 +1,6 @@
 import express from "express";
 import { z } from "zod";
+import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
@@ -37,8 +38,449 @@ const contactStatusSchema = z.object({
   statusCode: z.enum(["activado", "desactivado", "pendiente_activacion"]),
 });
 
-const contactCreatePermissions = ["contactos.create", "contactos.request"];
+const contactCreatePermissions = ["contactos.create"];
 const contactGlobalReadPermission = "contactos.read_all";
+
+function normalizeContactText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeContactEmail(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeContactPhone(value) {
+  return String(value || "")
+    .replace(/\D/g, "")
+    .trim();
+}
+
+function buildContactFullName(contact) {
+  return String(
+    `${contact?.firstName || contact?.first_name || ""} ${
+      contact?.lastName || contact?.last_name || ""
+    }`,
+  ).trim();
+}
+
+function buildContactBigrams(value) {
+  const normalized = normalizeContactText(value).replace(/\s/g, "");
+  if (normalized.length < 2) {
+    return new Set(normalized ? [normalized] : []);
+  }
+
+  const pairs = new Set();
+  for (let index = 0; index < normalized.length - 1; index += 1) {
+    pairs.add(normalized.slice(index, index + 2));
+  }
+  return pairs;
+}
+
+function calculateContactNameSimilarity(left, right) {
+  const leftNormalized = normalizeContactText(left);
+  const rightNormalized = normalizeContactText(right);
+  if (!leftNormalized || !rightNormalized) return 0;
+  if (leftNormalized === rightNormalized) return 1;
+  if (
+    leftNormalized.length >= 6 &&
+    rightNormalized.length >= 6 &&
+    (leftNormalized.includes(rightNormalized) ||
+      rightNormalized.includes(leftNormalized))
+  ) {
+    return 0.93;
+  }
+
+  const leftPairs = buildContactBigrams(leftNormalized);
+  const rightPairs = buildContactBigrams(rightNormalized);
+  let overlap = 0;
+
+  leftPairs.forEach((pair) => {
+    if (rightPairs.has(pair)) overlap += 1;
+  });
+
+  return (2 * overlap) / (leftPairs.size + rightPairs.size || 1);
+}
+
+function hasSingleEditDistance(left, right) {
+  const leftNormalized = normalizeContactText(left).replace(/\s/g, "");
+  const rightNormalized = normalizeContactText(right).replace(/\s/g, "");
+
+  if (!leftNormalized || !rightNormalized) return false;
+  if (leftNormalized === rightNormalized) return false;
+  if (leftNormalized.length < 6 || rightNormalized.length < 6) return false;
+
+  const lengthDelta = Math.abs(leftNormalized.length - rightNormalized.length);
+  if (lengthDelta > 1) return false;
+
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+
+  while (
+    leftIndex < leftNormalized.length &&
+    rightIndex < rightNormalized.length
+  ) {
+    if (leftNormalized[leftIndex] === rightNormalized[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    edits += 1;
+    if (edits > 1) return false;
+
+    if (leftNormalized.length === rightNormalized.length) {
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (leftNormalized.length > rightNormalized.length) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  if (
+    leftIndex < leftNormalized.length ||
+    rightIndex < rightNormalized.length
+  ) {
+    edits += 1;
+  }
+
+  return edits === 1;
+}
+
+function getContactDuplicateReasonLabel(matchReason) {
+  if (matchReason === "same_email") {
+    return "Mismo e-mail";
+  }
+  if (matchReason === "same_name_same_account") {
+    return "Mismo nombre en la misma cuenta";
+  }
+  if (matchReason === "same_mobile_same_account") {
+    return "Mismo movil en la misma cuenta";
+  }
+  if (matchReason === "near_exact_name_same_account") {
+    return "Nombre casi identico en la misma cuenta";
+  }
+  if (matchReason === "similar_name_same_account") {
+    return "Nombre muy parecido en la misma cuenta";
+  }
+  if (matchReason === "possible_name_match_same_account") {
+    return "Nombre parcialmente coincidente en la misma cuenta";
+  }
+  return "Coincidencia detectada con un contacto existente";
+}
+
+function getContactDuplicateSeverityMessage(severity) {
+  if (severity === "high") {
+    return "Coincidencia fuerte. Conviene revisar si el contacto ya existe antes de crear otro registro.";
+  }
+  if (severity === "medium") {
+    return "Coincidencia probable. Verifica si corresponde a la misma persona antes de continuar.";
+  }
+  return "Coincidencia baja. Haz una verificacion rapida antes de seguir.";
+}
+
+async function getContactDuplicateCandidates({ draft }) {
+  const normalizedEmail = normalizeContactEmail(draft.email);
+  const rows = await query(
+    `SELECT c.id, c.first_name, c.last_name, c.account_id, a.name AS account_name,
+            c.position_title, c.email, c.mobile, c.department
+     FROM contacts c
+     INNER JOIN accounts a ON a.id = c.account_id
+     WHERE c.account_id = ?
+        OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
+     ORDER BY c.id DESC
+     LIMIT 25`,
+    [Number(draft.accountId), normalizedEmail, normalizedEmail],
+  );
+
+  return rows;
+}
+
+function buildContactDuplicateWarnings({ draft, candidates }) {
+  const draftFullName = buildContactFullName(draft);
+  const draftEmail = normalizeContactEmail(draft.email);
+  const draftMobile = normalizeContactPhone(draft.mobile);
+  const warnings = [];
+
+  candidates.forEach((candidate) => {
+    const candidateFullName = buildContactFullName(candidate);
+    const candidateEmail = normalizeContactEmail(candidate.email);
+    const candidateMobile = normalizeContactPhone(candidate.mobile);
+    const sameAccount =
+      Number(candidate.account_id) === Number(draft.accountId);
+    const similarity = calculateContactNameSimilarity(
+      draftFullName,
+      candidateFullName,
+    );
+    const isNearExactNameMatch = hasSingleEditDistance(
+      draftFullName,
+      candidateFullName,
+    );
+
+    let severity = null;
+    let matchReason = "";
+    let sortRank = 0;
+
+    if (draftEmail && candidateEmail && draftEmail === candidateEmail) {
+      severity = "high";
+      matchReason = "same_email";
+      sortRank = 400;
+    } else if (
+      sameAccount &&
+      draftFullName &&
+      normalizeContactText(draftFullName) ===
+        normalizeContactText(candidateFullName)
+    ) {
+      severity = "high";
+      matchReason = "same_name_same_account";
+      sortRank = 360;
+    } else if (
+      sameAccount &&
+      draftMobile &&
+      candidateMobile &&
+      draftMobile === candidateMobile
+    ) {
+      severity = "medium";
+      matchReason = "same_mobile_same_account";
+      sortRank = 260;
+    } else if (sameAccount && isNearExactNameMatch) {
+      severity = "medium";
+      matchReason = "near_exact_name_same_account";
+      sortRank = 300;
+    } else if (sameAccount && similarity >= 0.88) {
+      severity = "medium";
+      matchReason = "similar_name_same_account";
+      sortRank = 200 + Math.round(similarity * 10);
+    } else if (sameAccount && similarity >= 0.74) {
+      severity = "low";
+      matchReason = "possible_name_match_same_account";
+      sortRank = 140 + Math.round(similarity * 10);
+    }
+
+    if (!severity) return;
+
+    warnings.push({
+      severity,
+      matchReason,
+      reasonLabel: getContactDuplicateReasonLabel(matchReason),
+      contactId: Number(candidate.id),
+      contactName: candidateFullName,
+      accountId: Number(candidate.account_id),
+      accountName: candidate.account_name || "",
+      email: candidate.email || "",
+      mobile: candidate.mobile || "",
+      positionTitle: candidate.position_title || "",
+      department: candidate.department || "",
+      severityMessage: getContactDuplicateSeverityMessage(severity),
+      recommendedAction:
+        severity === "high"
+          ? "Deten la creacion y valida primero si el contacto ya existe."
+          : "Verifica rapidamente si corresponde a la misma persona.",
+      sortRank,
+    });
+  });
+
+  return warnings.sort((left, right) => right.sortRank - left.sortRank);
+}
+
+function extractJsonObject(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function getOpenAiOutputText(responseData) {
+  const output = Array.isArray(responseData?.output) ? responseData.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (part?.type === "output_text" && part?.text) {
+        return String(part.text);
+      }
+    }
+  }
+  return "";
+}
+
+async function analyzeContactDuplicateReview({ draft, duplicateWarnings }) {
+  if (!config.openai.apiKey || !duplicateWarnings.length) {
+    return { duplicateReview: null, usedAiGeneration: false };
+  }
+
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Evalua posibles duplicados de contactos CRM y responde solo con JSON valido. Usa un criterio prudente: likely_duplicate, likely_distinct o inconclusive. Considera nombre completo, cuenta, email, movil, cargo y departamento. Para nombres personales, presta especial atencion a variantes casi identicas, errores tipograficos y apellidos con un solo cambio de letra como Castillo/Cantillo dentro de la misma cuenta. Si no hay evidencia suficiente para descartar que sea la misma persona, responde inconclusive.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          draft: {
+            fullName: buildContactFullName(draft),
+            accountId: Number(draft.accountId),
+            email: draft.email || "",
+            mobile: draft.mobile || "",
+            positionTitle: draft.positionTitle || "",
+            department: draft.department || "",
+          },
+          duplicateWarnings: duplicateWarnings.map((warning) => ({
+            contactId: warning.contactId,
+            contactName: warning.contactName,
+            accountId: warning.accountId,
+            accountName: warning.accountName,
+            email: warning.email,
+            mobile: warning.mobile,
+            positionTitle: warning.positionTitle,
+            department: warning.department,
+            reasonLabel: warning.reasonLabel,
+            severity: warning.severity,
+          })),
+          expectedShape: {
+            verdict: "likely_duplicate|likely_distinct|inconclusive",
+            summary: "string",
+            recommendation: "string",
+            confidence: "high|medium|low",
+          },
+        }),
+      },
+    ],
+  };
+
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.openai.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const responseData = await response.json();
+  const parsed = extractJsonObject(getOpenAiOutputText(responseData));
+  if (!parsed) {
+    throw new Error("OpenAI request failed: invalid JSON response");
+  }
+
+  return {
+    duplicateReview: {
+      verdict: String(parsed.verdict || "inconclusive"),
+      summary: String(parsed.summary || "").trim(),
+      recommendation: String(parsed.recommendation || "").trim(),
+      confidence: String(parsed.confidence || "low"),
+    },
+    usedAiGeneration: true,
+  };
+}
+
+function getContactDuplicateDecision({ duplicateWarnings, duplicateReview }) {
+  const hasSuspiciousWarning = duplicateWarnings.some((warning) =>
+    [
+      "same_mobile_same_account",
+      "near_exact_name_same_account",
+      "similar_name_same_account",
+      "possible_name_match_same_account",
+    ].includes(warning.matchReason),
+  );
+
+  if (duplicateWarnings.some((warning) => warning.severity === "high")) {
+    return "review_required";
+  }
+  if (duplicateReview?.verdict === "likely_duplicate") {
+    return "review_required";
+  }
+  if (duplicateReview?.verdict === "inconclusive") {
+    return "confirmation_required";
+  }
+  if (hasSuspiciousWarning) {
+    return duplicateReview?.verdict === "likely_distinct"
+      ? "clear"
+      : "confirmation_required";
+  }
+  return "clear";
+}
+
+async function validateContactDuplicates({ draft }) {
+  const duplicateCandidates = await getContactDuplicateCandidates({ draft });
+  const duplicateWarnings = buildContactDuplicateWarnings({
+    draft,
+    candidates: duplicateCandidates,
+  });
+
+  let duplicateReview = null;
+  let duplicateValidationSource = "heuristic";
+
+  try {
+    const aiReview = await analyzeContactDuplicateReview({
+      draft,
+      duplicateWarnings,
+    });
+    duplicateReview = aiReview.duplicateReview;
+    if (aiReview.usedAiGeneration) {
+      duplicateValidationSource = "ai";
+    }
+  } catch {
+    duplicateReview = null;
+  }
+
+  return {
+    duplicateWarnings,
+    duplicateReview,
+    duplicateValidationSource,
+    duplicateDecision: getContactDuplicateDecision({
+      duplicateWarnings,
+      duplicateReview,
+    }),
+  };
+}
+
+function buildContactDuplicateResponse(validation) {
+  const isReviewRequired = validation.duplicateDecision === "review_required";
+  return {
+    code: isReviewRequired
+      ? "CONTACT_DUPLICATE_REVIEW_REQUIRED"
+      : "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
+    message: isReviewRequired
+      ? "Detectamos una coincidencia fuerte con contactos existentes. Revisa si ya existe antes de crear uno nuevo."
+      : "Detectamos una coincidencia probable con contactos existentes. Verifica si corresponde a la misma persona antes de continuar.",
+    duplicateDecision: validation.duplicateDecision,
+    duplicateWarnings: validation.duplicateWarnings,
+    duplicateReview: validation.duplicateReview,
+    duplicateValidationSource: validation.duplicateValidationSource,
+  };
+}
 
 function hasGlobalAccountReadScope(user) {
   return user?.permissionSet?.has(contactGlobalReadPermission);
@@ -178,9 +620,6 @@ function resolveContactCreationStatusCode(user) {
   if (hasExplicitContactPermission(user, "contactos.create")) {
     return "activado";
   }
-  if (hasExplicitContactPermission(user, "contactos.request")) {
-    return "pendiente_activacion";
-  }
   return null;
 }
 
@@ -311,6 +750,7 @@ router.post(
 
     const body = parsed.data;
     const now = new Date();
+    const allowDuplicateOverride = req.body?.allowDuplicateOverride === true;
     const accountAccess = await requireAccessibleAccountForContact({
       user: req.user,
       accountId: body.accountId,
@@ -327,8 +767,21 @@ router.post(
 
     if (!activationStatusId) {
       return res.status(403).json({
-        message: "No autorizado para crear o solicitar contactos",
+        message: "No autorizado para crear contactos",
       });
+    }
+
+    const duplicateValidation = await validateContactDuplicates({
+      draft: body,
+    });
+
+    if (
+      !allowDuplicateOverride &&
+      duplicateValidation.duplicateDecision !== "clear"
+    ) {
+      return res
+        .status(409)
+        .json(buildContactDuplicateResponse(duplicateValidation));
     }
 
     try {
@@ -386,6 +839,11 @@ router.post(
           email: body.email || null,
           mobile: body.mobile || null,
           activation_status_id: activationStatusId,
+          duplicate_override: allowDuplicateOverride,
+          duplicate_decision:
+            duplicateValidation.duplicateDecision === "clear"
+              ? null
+              : duplicateValidation.duplicateDecision,
         },
       });
 

@@ -26,6 +26,7 @@ export function useContactsCrud({
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContactId, setEditingContactId] = useState(null);
   const [editContactAudit, setEditContactAudit] = useState(null);
+  const [contactDuplicateReview, setContactDuplicateReview] = useState(null);
   const [openContactMenuId, setOpenContactMenuId] = useState(null);
   const [confirmContactStatusAction, setConfirmContactStatusAction] =
     useState(null);
@@ -69,8 +70,7 @@ export function useContactsCrud({
     [currentUser],
   );
   const canCreateOrRequestContacts =
-    explicitContactPermissions.has("contactos.create") ||
-    explicitContactPermissions.has("contactos.request");
+    explicitContactPermissions.has("contactos.create");
   const canChangeContactActivationStatus =
     explicitContactPermissions.has("contactos.create");
 
@@ -227,6 +227,7 @@ export function useContactsCrud({
   function openCreateContactModal() {
     setError("");
     setSuccess("");
+    setContactDuplicateReview(null);
     setEditingContactId(null);
     setEditContactAudit(null);
     setForm(buildDefaultContactForm());
@@ -236,6 +237,7 @@ export function useContactsCrud({
   const openEditContactModal = useCallback(async (contactId) => {
     setError("");
     setSuccess("");
+    setContactDuplicateReview(null);
     try {
       const { data } = await api.get(`/api/contacts/${contactId}`);
       setForm({
@@ -282,6 +284,7 @@ export function useContactsCrud({
     setShowContactModal(false);
     setEditingContactId(null);
     setEditContactAudit(null);
+    setContactDuplicateReview(null);
   }
 
   function toggleContactMenu(contactId) {
@@ -363,39 +366,44 @@ export function useContactsCrud({
     };
   }
 
-  async function saveContact(event) {
+  function buildContactPayload(options = {}) {
+    return {
+      firstName: form.firstName,
+      lastName: form.lastName,
+      accountId: Number(form.accountId),
+      positionTitle: form.positionTitle || undefined,
+      phone: form.phone || undefined,
+      phoneExtension: form.phoneExtension || undefined,
+      mobile: form.mobile || undefined,
+      email: form.email || undefined,
+      department: form.department || undefined,
+      countryId: form.countryId ? Number(form.countryId) : null,
+      stateRegion: form.stateRegion || undefined,
+      city: form.city || undefined,
+      addressLine: form.addressLine || undefined,
+      postalCode: form.postalCode || undefined,
+      purchaseParticipationId: Number(form.purchaseParticipationId),
+      relationshipTypeId: Number(form.relationshipTypeId),
+      employmentStatusId: Number(form.employmentStatusId),
+      activationStatusId: Number(form.activationStatusId),
+      managerContactId: form.managerContactId
+        ? Number(form.managerContactId)
+        : null,
+      influencesContactId: form.influencesContactId
+        ? Number(form.influencesContactId)
+        : null,
+      allowDuplicateOverride: options.allowDuplicateOverride === true,
+    };
+  }
+
+  async function saveContact(event, options = {}) {
     event.preventDefault();
     setError("");
     setSuccess("");
     setSavingContact(true);
 
     try {
-      const payload = {
-        firstName: form.firstName,
-        lastName: form.lastName,
-        accountId: Number(form.accountId),
-        positionTitle: form.positionTitle || undefined,
-        phone: form.phone || undefined,
-        phoneExtension: form.phoneExtension || undefined,
-        mobile: form.mobile || undefined,
-        email: form.email || undefined,
-        department: form.department || undefined,
-        countryId: form.countryId ? Number(form.countryId) : null,
-        stateRegion: form.stateRegion || undefined,
-        city: form.city || undefined,
-        addressLine: form.addressLine || undefined,
-        postalCode: form.postalCode || undefined,
-        purchaseParticipationId: Number(form.purchaseParticipationId),
-        relationshipTypeId: Number(form.relationshipTypeId),
-        employmentStatusId: Number(form.employmentStatusId),
-        activationStatusId: Number(form.activationStatusId),
-        managerContactId: form.managerContactId
-          ? Number(form.managerContactId)
-          : null,
-        influencesContactId: form.influencesContactId
-          ? Number(form.influencesContactId)
-          : null,
-      };
+      const payload = buildContactPayload(options);
 
       const { data } = editingContactId
         ? await api.put(`/api/contacts/${editingContactId}`, payload)
@@ -407,11 +415,36 @@ export function useContactsCrud({
             ? "Contacto actualizado correctamente"
             : "Contacto creado correctamente"),
       );
+      setContactDuplicateReview(null);
       setShowContactModal(false);
       setEditingContactId(null);
       setEditContactAudit(null);
       await load();
     } catch (err) {
+      const duplicatePayload = err?.response?.data;
+      if (
+        !editingContactId &&
+        err?.response?.status === 409 &&
+        [
+          "CONTACT_DUPLICATE_REVIEW_REQUIRED",
+          "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
+        ].includes(duplicatePayload?.code)
+      ) {
+        setContactDuplicateReview({
+          code: duplicatePayload.code,
+          message: duplicatePayload.message,
+          duplicateDecision: duplicatePayload.duplicateDecision,
+          duplicateWarnings: Array.isArray(duplicatePayload.duplicateWarnings)
+            ? duplicatePayload.duplicateWarnings
+            : [],
+          aiReview: duplicatePayload.duplicateReview || null,
+          duplicateValidationSource:
+            duplicatePayload.duplicateValidationSource || "heuristic",
+        });
+        setSavingContact(false);
+        return;
+      }
+
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
       if (fieldErrors && typeof fieldErrors === "object") {
         const firstError = Object.entries(fieldErrors).find(
@@ -428,6 +461,22 @@ export function useContactsCrud({
     } finally {
       setSavingContact(false);
     }
+  }
+
+  function dismissContactDuplicateReview() {
+    setContactDuplicateReview(null);
+  }
+
+  async function confirmContactDuplicateOverride() {
+    return saveContact(
+      { preventDefault() {} },
+      { allowDuplicateOverride: true },
+    );
+  }
+
+  async function openDuplicateCandidateContact(contactId) {
+    setContactDuplicateReview(null);
+    await openEditContactModal(contactId);
   }
 
   const filteredContacts = useMemo(
@@ -585,6 +634,18 @@ export function useContactsCrud({
   }, [openEditContactModal]);
 
   useEffect(() => {
+    setContactDuplicateReview(null);
+  }, [
+    form.firstName,
+    form.lastName,
+    form.accountId,
+    form.email,
+    form.mobile,
+    form.positionTitle,
+    form.department,
+  ]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function initializeContacts() {
@@ -693,6 +754,7 @@ export function useContactsCrud({
     showContactModal,
     editingContactId,
     editContactAudit,
+    contactDuplicateReview,
     openContactMenuId,
     confirmContactStatusAction,
     savingContact,
@@ -728,6 +790,9 @@ export function useContactsCrud({
     confirmSelectedContactStatusChange,
     getContactStatusConfirmationMeta,
     saveContact,
+    dismissContactDuplicateReview,
+    confirmContactDuplicateOverride,
+    openDuplicateCandidateContact,
     toggleContactSort,
     getContactSortArrow,
   };

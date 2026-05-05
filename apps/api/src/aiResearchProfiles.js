@@ -73,6 +73,21 @@ export const ACCOUNT_DRAFT_ANALYSIS_SCHEMA_FIELDS = [
       { key: "reason", type: "string" },
     ],
   },
+  {
+    key: "duplicateReview",
+    type: "object",
+    fields: [
+      {
+        key: "verdict",
+        type: "enum",
+        enum: ["likely_duplicate", "inconclusive", "likely_distinct"],
+        example: "likely_duplicate|inconclusive|likely_distinct",
+      },
+      { key: "summary", type: "string" },
+      { key: "recommendation", type: "string" },
+      { key: "confidence", ...AI_CONFIDENCE_FIELD },
+    ],
+  },
   { key: "confidence", ...AI_CONFIDENCE_FIELD },
   {
     key: "warnings",

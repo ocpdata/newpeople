@@ -6,10 +6,42 @@ import { logAuditEvent } from "./audit.js";
 import {
   accountDraftAnalysisRequestSchema,
   analyzeAccountDraft,
+  analyzeAccountDuplicateReview,
 } from "./accounts/draft-analysis/index.js";
+import {
+  buildDuplicateWarnings,
+  getDuplicateCandidates,
+} from "./accounts/draft-analysis/core.js";
 import accountInteractionsRoutes from "./routes.account-interactions.js";
 
 const router = express.Router();
+
+let ensureAccountsSchemaPromise = null;
+
+async function ensureAccountsSchema() {
+  if (!ensureAccountsSchemaPromise) {
+    ensureAccountsSchemaPromise = (async () => {
+      await query(
+        `ALTER TABLE accounts
+         MODIFY COLUMN registration_code VARCHAR(80) NULL`,
+      ).catch(() => null);
+    })().catch((error) => {
+      ensureAccountsSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  return ensureAccountsSchemaPromise;
+}
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureAccountsSchema();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.use("/:accountId/interactions", accountInteractionsRoutes);
 
@@ -38,9 +70,190 @@ const accountSchema = z.object({
 function normalizeAccountPayload(body) {
   return {
     ...body,
+    registrationCode: String(body.registrationCode || "").trim() || null,
     companyDescription: String(
       body.companyDescription || body.description || "",
     ).trim(),
+  };
+}
+
+function isAccountCountryRegistrationConflict(error) {
+  return String(error?.message || "").includes(
+    "accounts.uq_accounts_country_registration",
+  );
+}
+
+const SPANISH_NAME_STOPWORDS = new Set([
+  "a",
+  "al",
+  "de",
+  "del",
+  "e",
+  "el",
+  "la",
+  "las",
+  "los",
+  "y",
+]);
+
+function normalizeDuplicateDecisionText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildCoreAccountName(value) {
+  return normalizeDuplicateDecisionText(value)
+    .split(" ")
+    .filter((token) => token && !SPANISH_NAME_STOPWORDS.has(token))
+    .join(" ");
+}
+
+function hasSuspiciousPartialNameMatch({ draftName, duplicateWarnings }) {
+  const draftCoreName = buildCoreAccountName(draftName);
+  if (!draftCoreName) return false;
+
+  return duplicateWarnings.some((warning) => {
+    if (warning.matchReason !== "partial_name_match") return false;
+
+    const candidateCoreName = buildCoreAccountName(warning.accountName);
+    if (!candidateCoreName) return false;
+
+    return (
+      draftCoreName === candidateCoreName ||
+      draftCoreName.includes(candidateCoreName) ||
+      candidateCoreName.includes(draftCoreName)
+    );
+  });
+}
+
+function getAccountDuplicateDecision(duplicateWarnings) {
+  if (duplicateWarnings.some((warning) => warning.severity === "high")) {
+    return "review_required";
+  }
+  if (duplicateWarnings.some((warning) => warning.severity === "medium")) {
+    return "confirmation_required";
+  }
+  return "clear";
+}
+
+function getAccountDuplicateDecisionFromReview({
+  draftName,
+  duplicateWarnings,
+  duplicateReview,
+  duplicateValidationSource,
+}) {
+  const suspiciousPartialNameMatch = hasSuspiciousPartialNameMatch({
+    draftName,
+    duplicateWarnings,
+  });
+  const deterministicStrongDuplicate = duplicateWarnings.some((warning) =>
+    [
+      "country_registration",
+      "website_domain",
+      "normalized_name_same_country",
+    ].includes(warning.matchReason),
+  );
+
+  if (deterministicStrongDuplicate) {
+    return "review_required";
+  }
+
+  if (duplicateReview?.verdict === "likely_duplicate") {
+    return "review_required";
+  }
+  if (duplicateReview?.verdict === "inconclusive") {
+    return "confirmation_required";
+  }
+  if (suspiciousPartialNameMatch) {
+    return "confirmation_required";
+  }
+  if (duplicateReview?.verdict === "likely_distinct") {
+    return "clear";
+  }
+
+  return getAccountDuplicateDecision(duplicateWarnings);
+}
+
+function getAccountDuplicateReasonLabel(matchReason) {
+  if (matchReason === "country_registration") {
+    return "Mismo registro en el pais seleccionado";
+  }
+  if (matchReason === "website_domain") {
+    return "Mismo dominio web";
+  }
+  if (matchReason === "normalized_name_same_country") {
+    return "Mismo nombre comercial en el pais seleccionado";
+  }
+  if (matchReason === "near_exact_name_same_country") {
+    return "Nombre casi identico en el pais seleccionado";
+  }
+  if (matchReason === "similar_name_same_country") {
+    return "Nombre muy parecido en el pais seleccionado";
+  }
+  if (matchReason === "partial_name_match") {
+    return "Nombre parcialmente coincidente";
+  }
+  return "Coincidencia detectada con una cuenta existente";
+}
+
+function getAccountDuplicateSeverityMessage(severity) {
+  if (severity === "high") {
+    return "Coincidencia fuerte. Conviene detener la creacion y revisar si la cuenta ya existe.";
+  }
+  if (severity === "medium") {
+    return "Coincidencia probable. Confirma que no se trate de la misma organizacion antes de continuar.";
+  }
+  return "Coincidencia baja. Revisa rapidamente antes de seguir.";
+}
+
+async function validateAccountDuplicates({ draft, user }) {
+  const analysis = await analyzeAccountDuplicateReview({ draft, user });
+  const duplicateWarnings = Array.isArray(analysis?.duplicateWarnings)
+    ? analysis.duplicateWarnings.map((warning) => ({
+        ...warning,
+        reasonLabel:
+          warning.reasonLabel ||
+          getAccountDuplicateReasonLabel(warning.matchReason),
+        severityMessage:
+          warning.severityMessage ||
+          getAccountDuplicateSeverityMessage(warning.severity),
+      }))
+    : [];
+  return {
+    duplicateWarnings,
+    duplicateReview: analysis?.duplicateReview || null,
+    duplicateValidationSource: analysis?.meta?.usedAiGeneration
+      ? "ai"
+      : "heuristic",
+    duplicateDecision: getAccountDuplicateDecisionFromReview({
+      draftName: draft.name,
+      duplicateWarnings,
+      duplicateReview: analysis?.duplicateReview,
+      duplicateValidationSource: analysis?.meta?.usedAiGeneration
+        ? "ai"
+        : "heuristic",
+    }),
+  };
+}
+
+function buildAccountDuplicateResponse(validation) {
+  const isReviewRequired = validation.duplicateDecision === "review_required";
+  return {
+    code: isReviewRequired
+      ? "ACCOUNT_DUPLICATE_REVIEW_REQUIRED"
+      : "ACCOUNT_DUPLICATE_CONFIRMATION_REQUIRED",
+    message: isReviewRequired
+      ? "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado."
+      : "Detectamos una coincidencia probable con cuentas existentes. Verifica si corresponde a la misma organizacion antes de continuar.",
+    duplicateDecision: validation.duplicateDecision,
+    duplicateWarnings: validation.duplicateWarnings,
+    duplicateReview: validation.duplicateReview,
+    duplicateValidationSource: validation.duplicateValidationSource,
   };
 }
 
@@ -48,7 +261,7 @@ const accountStatusSchema = z.object({
   statusCode: z.enum(["activada", "desactivada", "pendiente_activacion"]),
 });
 
-const accountCreatePermissions = ["cuentas.create", "cuentas.request"];
+const accountCreatePermissions = ["cuentas.create"];
 const accountGlobalReadPermission = "cuentas.read_all";
 
 function hasGlobalAccountReadScope(user) {
@@ -162,9 +375,6 @@ async function getBlockedAccountStatusResponse(accountId, nextStatusCode) {
 function resolveAccountCreationStatusCode(user) {
   if (hasExplicitAccountPermission(user, "cuentas.create")) {
     return "activada";
-  }
-  if (hasExplicitAccountPermission(user, "cuentas.request")) {
-    return "pendiente_activacion";
   }
   return null;
 }
@@ -302,6 +512,7 @@ router.post(
 
     const now = new Date();
     const body = normalizeAccountPayload(parsed.data);
+    const allowDuplicateOverride = req.body?.allowDuplicateOverride === true;
     const creationStatusCode = resolveAccountCreationStatusCode(req.user);
     const activationStatusId = creationStatusCode
       ? await getAccountActivationStatusId(creationStatusCode)
@@ -309,8 +520,22 @@ router.post(
 
     if (!activationStatusId) {
       return res.status(403).json({
-        message: "No autorizado para crear o solicitar cuentas",
+        message: "No autorizado para crear cuentas",
       });
+    }
+
+    const duplicateValidation = await validateAccountDuplicates({
+      draft: body,
+      user: req.user,
+    });
+
+    if (
+      !allowDuplicateOverride &&
+      duplicateValidation.duplicateDecision !== "clear"
+    ) {
+      return res
+        .status(409)
+        .json(buildAccountDuplicateResponse(duplicateValidation));
     }
 
     try {
@@ -374,6 +599,16 @@ router.post(
           postal_code: body.postalCode || null,
           activation_status_id: activationStatusId,
           owner_user_ids: body.ownerUserIds.map(Number),
+          duplicate_override: allowDuplicateOverride,
+          duplicate_decision:
+            duplicateValidation.duplicateDecision === "clear"
+              ? null
+              : duplicateValidation.duplicateDecision,
+          duplicate_warning_ids: allowDuplicateOverride
+            ? duplicateValidation.duplicateWarnings.map((warning) =>
+                Number(warning.accountId),
+              )
+            : [],
         },
       });
 
@@ -385,11 +620,7 @@ router.post(
             : "Solicitud de cuenta creada en estado pendiente",
       });
     } catch (error) {
-      if (
-        String(error.message || "").includes(
-          "accounts.uq_accounts_country_registration",
-        )
-      ) {
+      if (isAccountCountryRegistrationConflict(error)) {
         return res.status(409).json({
           message:
             "Ya existe una cuenta con ese registro en el pais seleccionado.",
@@ -474,41 +705,53 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
     [id],
   );
 
-  await withTransaction(async (conn) => {
-    await conn.query(
-      `UPDATE accounts
-       SET name = ?, account_type_id = ?, registration_code = ?, phone = ?, economic_sector_id = ?,
-           website = ?, city = ?, state_region = ?, country_id = ?, description = ?, address_line = ?,
-           postal_code = ?, activation_status_id = ?, updated_by = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        body.name,
-        body.accountTypeId,
-        body.registrationCode,
-        body.phone || null,
-        body.economicSectorId,
-        body.website || null,
-        body.city || null,
-        body.stateRegion || null,
-        body.countryId,
-        body.companyDescription || null,
-        body.addressLine || null,
-        body.postalCode || null,
-        body.activationStatusId,
-        req.user.id,
-        now,
-        id,
-      ],
-    );
-
-    await conn.query("DELETE FROM account_owners WHERE account_id = ?", [id]);
-    for (const ownerUserId of body.ownerUserIds) {
+  try {
+    await withTransaction(async (conn) => {
       await conn.query(
-        "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
-        [id, ownerUserId, now, req.user.id],
+        `UPDATE accounts
+         SET name = ?, account_type_id = ?, registration_code = ?, phone = ?, economic_sector_id = ?,
+             website = ?, city = ?, state_region = ?, country_id = ?, description = ?, address_line = ?,
+             postal_code = ?, activation_status_id = ?, updated_by = ?, updated_at = ?
+         WHERE id = ?`,
+        [
+          body.name,
+          body.accountTypeId,
+          body.registrationCode,
+          body.phone || null,
+          body.economicSectorId,
+          body.website || null,
+          body.city || null,
+          body.stateRegion || null,
+          body.countryId,
+          body.companyDescription || null,
+          body.addressLine || null,
+          body.postalCode || null,
+          body.activationStatusId,
+          req.user.id,
+          now,
+          id,
+        ],
       );
+
+      await conn.query("DELETE FROM account_owners WHERE account_id = ?", [id]);
+      for (const ownerUserId of body.ownerUserIds) {
+        await conn.query(
+          "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
+          [id, ownerUserId, now, req.user.id],
+        );
+      }
+    });
+  } catch (error) {
+    if (isAccountCountryRegistrationConflict(error)) {
+      return res.status(409).json({
+        message:
+          "Ya existe una cuenta con ese registro en el pais seleccionado.",
+      });
     }
-  });
+    return res
+      .status(500)
+      .json({ message: "No fue posible actualizar la cuenta" });
+  }
 
   const afterRows = await query(
     `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,

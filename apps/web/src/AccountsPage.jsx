@@ -29,6 +29,7 @@ function AccountsPage({ can, currentUser }) {
     analyzingAccountDraft,
     accountDraftAnalysis,
     accountDraftAnalysisError,
+    accountDuplicateReview,
     catalogs,
     error,
     success,
@@ -64,6 +65,9 @@ function AccountsPage({ can, currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
+    dismissAccountDuplicateReview,
+    confirmAccountDuplicateOverride,
+    openDuplicateCandidateAccount,
     useSuggestedCompanyDescription,
     useSuggestedAccountField,
   } = useAccountsCrud({ currentUser });
@@ -210,7 +214,11 @@ function AccountsPage({ can, currentUser }) {
         }
         accountDraftAnalysis={accountDraftAnalysis}
         accountDraftAnalysisError={accountDraftAnalysisError}
+        accountDuplicateReview={accountDuplicateReview}
         analyzingAccountDraft={analyzingAccountDraft}
+        onDismissDuplicateReview={dismissAccountDuplicateReview}
+        onConfirmDuplicateOverride={confirmAccountDuplicateOverride}
+        onOpenDuplicateCandidateAccount={openDuplicateCandidateAccount}
         accountInteractions={accountInteractions}
         visibleAccountInteractions={visibleAccountInteractions}
         interactionTypes={interactionTypes}

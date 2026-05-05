@@ -249,10 +249,7 @@ const opportunityWorkspacePlaybookCriterionSchema = z.object({
   displayOrder: z.number().int().positive().optional().default(1),
 });
 
-const opportunityCreatePermissions = [
-  "oportunidades.create",
-  "oportunidades.request",
-];
+const opportunityCreatePermissions = ["oportunidades.create"];
 const opportunityGlobalReadPermission = "oportunidades.read_all";
 
 function hasGlobalAccountReadScope(user) {
@@ -1317,9 +1314,6 @@ async function getAdjacentOpportunityStage({ salesStageId, direction }) {
 function resolveOpportunityCreationStatusCode(user) {
   if (hasExplicitOpportunityPermission(user, "oportunidades.create")) {
     return "activada";
-  }
-  if (hasExplicitOpportunityPermission(user, "oportunidades.request")) {
-    return "pendiente_activacion";
   }
   return null;
 }

@@ -19,6 +19,7 @@ function ContactsPage({ can, currentUser }) {
     showContactModal,
     editingContactId,
     editContactAudit,
+    contactDuplicateReview,
     editContactOpportunities,
     loadingContactOpportunities,
     contactOppSectionStatusFilter,
@@ -68,6 +69,9 @@ function ContactsPage({ can, currentUser }) {
     confirmSelectedContactStatusChange,
     getContactStatusConfirmationMeta,
     saveContact,
+    dismissContactDuplicateReview,
+    confirmContactDuplicateOverride,
+    openDuplicateCandidateContact,
   } = useContactsPage({ currentUser, searchParams, setSearchParams });
 
   function handleOpportunitySelect(opportunityId) {
@@ -182,7 +186,9 @@ function ContactsPage({ can, currentUser }) {
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Todas</span>
-            <span className="status-filter-pill-count">{totalContactsCount}</span>
+            <span className="status-filter-pill-count">
+              {totalContactsCount}
+            </span>
           </button>
         </div>
         <input
@@ -202,9 +208,13 @@ function ContactsPage({ can, currentUser }) {
         catalogs={catalogs}
         managerOptions={managerOptions}
         editContactAudit={editContactAudit}
+        contactDuplicateReview={contactDuplicateReview}
         savingContact={savingContact}
         onClose={closeContactModal}
         onSubmit={saveContact}
+        onDismissDuplicateReview={dismissContactDuplicateReview}
+        onConfirmDuplicateOverride={confirmContactDuplicateOverride}
+        onOpenDuplicateCandidate={openDuplicateCandidateContact}
         onChange={updateContactFormField}
         onAccountChange={handleContactAccountChange}
         getContactStatusIconBadgeClass={getContactStatusIconBadgeClass}
@@ -321,7 +331,9 @@ function ContactsPage({ can, currentUser }) {
                         <button
                           type="button"
                           onClick={() =>
-                            runContactAction(() => openEditContactModal(contact.id))
+                            runContactAction(() =>
+                              openEditContactModal(contact.id),
+                            )
                           }
                         >
                           Editar
@@ -360,7 +372,10 @@ function ContactsPage({ can, currentUser }) {
                             isContactInactive(contact)
                           }
                           onClick={() =>
-                            openContactStatusConfirmation(contact, "desactivado")
+                            openContactStatusConfirmation(
+                              contact,
+                              "desactivado",
+                            )
                           }
                         >
                           Desactivar
@@ -369,7 +384,9 @@ function ContactsPage({ can, currentUser }) {
                           <button
                             type="button"
                             onClick={() =>
-                              runContactAction(() => openContactOppsModal(contact))
+                              runContactAction(() =>
+                                openContactOppsModal(contact),
+                              )
                             }
                           >
                             Oportunidades
@@ -396,8 +413,8 @@ function ContactsPage({ can, currentUser }) {
           <div className="users-pagination-left">
             <span className="users-pagination-info">
               {(contactsPage - 1) * contactsPerPage + 1}–
-              {Math.min(contactsPage * contactsPerPage, visibleContacts.length)} de{" "}
-              {visibleContacts.length}
+              {Math.min(contactsPage * contactsPerPage, visibleContacts.length)}{" "}
+              de {visibleContacts.length}
             </span>
           </div>
           <div className="users-pagination-center">

@@ -281,12 +281,7 @@ async function ensureQuotationWarrantyCatalog() {
 
 router.get(
   "/account-interaction-types",
-  requireAnyPermission([
-    "cuentas.read",
-    "cuentas.create",
-    "cuentas.request",
-    "cuentas.update",
-  ]),
+  requireAnyPermission(["cuentas.read", "cuentas.create", "cuentas.update"]),
   async (_req, res) => {
     await ensureAccountInteractionsSchema();
     const rows = await query(
@@ -308,12 +303,7 @@ router.get(
 
 router.get(
   "/account-interaction-results",
-  requireAnyPermission([
-    "cuentas.read",
-    "cuentas.create",
-    "cuentas.request",
-    "cuentas.update",
-  ]),
+  requireAnyPermission(["cuentas.read", "cuentas.create", "cuentas.update"]),
   async (_req, res) => {
     await ensureAccountInteractionsSchema();
     const rows = await query(
