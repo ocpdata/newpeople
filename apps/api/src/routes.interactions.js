@@ -178,6 +178,18 @@ function buildSuggestedInteractionTitleFromFiles(files) {
   return rawName.charAt(0).toUpperCase() + rawName.slice(1);
 }
 
+function buildSuggestedInteractionTitleFromSourceNotes(sourceNotes) {
+  const text = String(sourceNotes || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "Nueva interaccion";
+
+  const suggested = text.slice(0, 80).trim();
+  if (suggested.length <= 2) return "Interaccion cargada";
+  return suggested.charAt(0).toUpperCase() + suggested.slice(1);
+}
+
 function applyOwnedAccountScope({ user, accountExpression, params }) {
   if (hasGlobalReadScope(user)) return "";
   params.push(Number(user.id));
@@ -1040,16 +1052,18 @@ router.post(
     try {
       const { fields, files } = await parseMultipartFiles(req);
       parsedFiles = files;
-      if (!files.length) {
+      const sourceNotes = getFormField(fields, "sourceNotes");
+      if (!files.length && !sourceNotes.trim()) {
         return res
           .status(400)
-          .json({ message: "Debes subir al menos un archivo" });
+          .json({ message: "Debes subir al menos un archivo o pegar texto" });
       }
 
       const title =
         getFormField(fields, "title") ||
-        buildSuggestedInteractionTitleFromFiles(files);
-      const sourceNotes = getFormField(fields, "sourceNotes");
+        (files.length
+          ? buildSuggestedInteractionTitleFromFiles(files)
+          : buildSuggestedInteractionTitleFromSourceNotes(sourceNotes));
       const extractedDocuments = await extractFiles(files);
       const analysis = await buildInteractionAnalysis({
         user: req.user,

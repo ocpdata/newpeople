@@ -12,6 +12,121 @@ function normalizeText(value) {
     .trim();
 }
 
+const OPPORTUNITY_NAME_CONNECTORS = new Set([
+  "a",
+  "al",
+  "con",
+  "de",
+  "del",
+  "en",
+  "para",
+  "por",
+  "y",
+  "e",
+]);
+
+const OPPORTUNITY_NAME_ACRONYMS = new Set([
+  "aws",
+  "b2b",
+  "b2c",
+  "bi",
+  "crm",
+  "erp",
+  "gps",
+  "hp",
+  "ia",
+  "iot",
+  "it",
+  "m365",
+  "qa",
+  "rfp",
+  "sap",
+  "sdr",
+  "ti",
+  "ui",
+  "ux",
+  "vpn",
+  "wifi",
+]);
+
+const OPPORTUNITY_NAME_SPECIAL_TOKENS = new Map([
+  ["accessq", "AccessQ"],
+  ["linkedin", "LinkedIn"],
+  ["microsoft", "Microsoft"],
+  ["openai", "OpenAI"],
+  ["powerbi", "Power BI"],
+  ["whatsapp", "WhatsApp"],
+]);
+
+function collapseOpportunityNameWhitespace(value) {
+  return String(value || "")
+    .replace(/^\s+/g, "")
+    .replace(/\s{2,}/g, " ");
+}
+
+function capitalizeOpportunityWord(value) {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function normalizeOpportunityNameKey(value) {
+  return normalizeText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeOpportunityNameSegment(segment) {
+  const segmentKey = normalizeOpportunityNameKey(segment);
+  if (OPPORTUNITY_NAME_SPECIAL_TOKENS.has(segmentKey)) {
+    return OPPORTUNITY_NAME_SPECIAL_TOKENS.get(segmentKey);
+  }
+
+  if (OPPORTUNITY_NAME_ACRONYMS.has(segmentKey)) {
+    return segment.toUpperCase();
+  }
+
+  return segment.replace(/[A-Za-zÀ-ÿ]+/g, (word) =>
+    capitalizeOpportunityWord(word),
+  );
+}
+
+function normalizeOpportunityNameToken(token, index) {
+  const trimmedToken = String(token || "").trim();
+  if (!trimmedToken) return "";
+
+  const tokenKey = normalizeOpportunityNameKey(trimmedToken);
+  if (OPPORTUNITY_NAME_SPECIAL_TOKENS.has(tokenKey)) {
+    return OPPORTUNITY_NAME_SPECIAL_TOKENS.get(tokenKey);
+  }
+
+  if (OPPORTUNITY_NAME_ACRONYMS.has(tokenKey)) {
+    return trimmedToken.toUpperCase();
+  }
+
+  if (OPPORTUNITY_NAME_CONNECTORS.has(tokenKey)) {
+    return index === 0 ? capitalizeOpportunityWord(trimmedToken) : tokenKey;
+  }
+
+  return trimmedToken
+    .split(/([\-/'’])/)
+    .map((segment) => {
+      if (/^[\-/'’]$/.test(segment)) {
+        return segment;
+      }
+      return normalizeOpportunityNameSegment(segment);
+    })
+    .join("");
+}
+
+function normalizeOpportunityNameValue(value) {
+  const sanitizedValue = collapseOpportunityNameWhitespace(value).trim();
+  if (!sanitizedValue) return "";
+
+  return sanitizedValue
+    .split(" ")
+    .filter(Boolean)
+    .map((token, index) => normalizeOpportunityNameToken(token, index))
+    .join(" ");
+}
+
 function buildDocumentReviewOverrides(review) {
   const suggestedFields = review?.suggestedFields || {};
   const suggestedNameOptions = Array.isArray(
@@ -96,6 +211,24 @@ function mergeDocumentReviewAppliedState(
       ...Object.fromEntries(matchKeysToApply.map((key) => [key, true])),
     },
   };
+}
+
+function shouldApplyDocumentField(selectedFieldKeys, selectedMatchKeys, key) {
+  if (Array.isArray(selectedFieldKeys)) {
+    return selectedFieldKeys.includes(key);
+  }
+  return !Array.isArray(selectedMatchKeys);
+}
+
+function shouldApplyDocumentMatch(
+  selectedFieldKeys,
+  selectedMatchKeys,
+  key,
+) {
+  if (Array.isArray(selectedMatchKeys)) {
+    return selectedMatchKeys.includes(key);
+  }
+  return !Array.isArray(selectedFieldKeys);
 }
 
 function getDocumentSessionCreationErrorMessage(error) {
@@ -241,6 +374,20 @@ export function useOpportunitiesPage({
     canDirectCreateOpportunities ||
     (canRequestOpportunities && opportunitiesPendingEnabled);
   const canChangeOpportunityActivationStatus = canDirectCreateOpportunities;
+
+  function getDefaultSellerUserId() {
+    const currentUserIsSeller = (currentUser?.roles || []).some(
+      (role) => normalizeText(role.name) === "vendedor",
+    );
+    const currentUserIsAvailableSeller = catalogs.sellerUsers.some(
+      (user) => Number(user.id) === Number(currentUser?.id),
+    );
+
+    return currentUserIsSeller && currentUserIsAvailableSeller
+      ? String(currentUser.id)
+      : "";
+  }
+
   const [catalogs, setCatalogs] = useState({
     accounts: [],
     contacts: [],
@@ -323,15 +470,7 @@ export function useOpportunitiesPage({
   }
 
   function buildDefaultOpportunityForm() {
-    const defaultSellerUserId =
-      (currentUser?.roles || []).some(
-        (role) => normalizeText(role.name) === "vendedor",
-      ) &&
-      catalogs.sellerUsers.some(
-        (user) => Number(user.id) === Number(currentUser?.id),
-      )
-        ? String(currentUser.id)
-        : "";
+    const defaultSellerUserId = getDefaultSellerUserId();
 
     return {
       name: "",
@@ -352,6 +491,17 @@ export function useOpportunitiesPage({
             : "activada",
       ),
     };
+  }
+
+  function normalizeOpportunityNameField(value) {
+    const normalizedValue = normalizeOpportunityNameValue(value);
+    setForm((prev) => {
+      if (prev.name === normalizedValue) {
+        return prev;
+      }
+
+      return { ...prev, name: normalizedValue };
+    });
   }
 
   function buildDefaultCommercialContext() {
@@ -959,7 +1109,7 @@ export function useOpportunitiesPage({
 
   async function uploadOpportunityDocuments(nextFiles) {
     const files = Array.from(nextFiles || []);
-    if (!files.length) return;
+    if (!files.length) return false;
 
     setError("");
     setSuccess("");
@@ -981,7 +1131,7 @@ export function useOpportunitiesPage({
         setSuccess("Documentos vinculados a la oportunidad correctamente");
       } else {
         const session = await ensureOpportunityDocumentSession();
-        if (!session?.publicId) return;
+        if (!session?.publicId) return false;
         const { data } = await api.post(
           `/api/opportunities/document-upload-sessions/${session.publicId}/files`,
           formData,
@@ -992,8 +1142,10 @@ export function useOpportunitiesPage({
         hydrateDocumentSessionState(data);
         setSuccess("Archivos cargados y analizados correctamente");
       }
+      return true;
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible cargar los documentos"));
+      return false;
     } finally {
       setUploadingOpportunityDocuments(false);
     }
@@ -1032,15 +1184,21 @@ export function useOpportunitiesPage({
       setForm((prev) => ({
         ...prev,
         name:
-          (!Array.isArray(selectedFieldKeys) ||
-            selectedFieldKeys.includes("name")) &&
+          shouldApplyDocumentField(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "name",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "name")
             ? data.appliedDraft.name || ""
             : prev.name,
         amountUsd:
-          (!Array.isArray(selectedFieldKeys) ||
-            selectedFieldKeys.includes("amountUsd")) &&
+          shouldApplyDocumentField(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "amountUsd",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "amountUsd") &&
           data.appliedDraft.amountUsd !== null &&
@@ -1048,8 +1206,11 @@ export function useOpportunitiesPage({
             ? formatOpportunityAmountInput(String(data.appliedDraft.amountUsd))
             : prev.amountUsd,
         accountId:
-          (!Array.isArray(selectedMatchKeys) ||
-            selectedMatchKeys.includes("accountId")) &&
+          shouldApplyDocumentMatch(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "accountId",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "accountId")
             ? data.appliedDraft.accountId
@@ -1057,8 +1218,11 @@ export function useOpportunitiesPage({
               : ""
             : prev.accountId,
         contactId:
-          (!Array.isArray(selectedMatchKeys) ||
-            selectedMatchKeys.includes("contactId")) &&
+          shouldApplyDocumentMatch(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "contactId",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "contactId")
             ? data.appliedDraft.contactId
@@ -1066,15 +1230,21 @@ export function useOpportunitiesPage({
               : ""
             : prev.contactId,
         closeDate:
-          (!Array.isArray(selectedFieldKeys) ||
-            selectedFieldKeys.includes("closeDate")) &&
+          shouldApplyDocumentField(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "closeDate",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "closeDate")
             ? data.appliedDraft.closeDate || ""
             : prev.closeDate,
         businessLineId:
-          (!Array.isArray(selectedMatchKeys) ||
-            selectedMatchKeys.includes("businessLineId")) &&
+          shouldApplyDocumentMatch(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "businessLineId",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "businessLineId")
             ? data.appliedDraft.businessLineId
@@ -1082,8 +1252,11 @@ export function useOpportunitiesPage({
               : ""
             : prev.businessLineId,
         sellerUserId:
-          (!Array.isArray(selectedMatchKeys) ||
-            selectedMatchKeys.includes("sellerUserId")) &&
+          shouldApplyDocumentMatch(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "sellerUserId",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "sellerUserId")
             ? data.appliedDraft.sellerUserId
@@ -1091,8 +1264,11 @@ export function useOpportunitiesPage({
               : ""
             : prev.sellerUserId,
         presalesUserId:
-          (!Array.isArray(selectedMatchKeys) ||
-            selectedMatchKeys.includes("presalesUserId")) &&
+          shouldApplyDocumentMatch(
+            selectedFieldKeys,
+            selectedMatchKeys,
+            "presalesUserId",
+          ) &&
           data?.appliedDraft &&
           Object.hasOwn(data.appliedDraft, "presalesUserId")
             ? data.appliedDraft.presalesUserId
@@ -2205,6 +2381,13 @@ export function useOpportunitiesPage({
 
     setSavingOpportunity(true);
     try {
+      const normalizedOpportunityName = normalizeOpportunityNameValue(form.name);
+      setForm((prev) =>
+        prev.name === normalizedOpportunityName
+          ? prev
+          : { ...prev, name: normalizedOpportunityName },
+      );
+
       if (
         editingOpportunityId &&
         commercialContext?.isSelectedStageCurrent &&
@@ -2223,7 +2406,7 @@ export function useOpportunitiesPage({
       }
 
       const payload = {
-        name: form.name,
+        name: normalizedOpportunityName,
         amountUsd: parseOpportunityAmountInput(form.amountUsd),
         accountId: Number(form.accountId),
         closeDate: form.closeDate,
@@ -2443,6 +2626,30 @@ export function useOpportunitiesPage({
     };
   }, [searchParams, setSearchParams]);
 
+  useEffect(() => {
+    if (!showOpportunityModal || editingOpportunityId) {
+      return;
+    }
+
+    const defaultSellerUserId = getDefaultSellerUserId();
+    if (!defaultSellerUserId) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (prev.sellerUserId) {
+        return prev;
+      }
+
+      return { ...prev, sellerUserId: defaultSellerUserId };
+    });
+  }, [
+    showOpportunityModal,
+    editingOpportunityId,
+    catalogs.sellerUsers,
+    currentUser,
+  ]);
+
   function setOpportunityStatusFilter(value) {
     setOpportunitiesPage(1);
     setOpportunityStatusFilterState(
@@ -2541,6 +2748,7 @@ export function useOpportunitiesPage({
     getCommercialStatusIconBadgeClass,
     openCreateOpportunityModal,
     openEditOpportunityModal,
+    normalizeOpportunityNameField,
     closeOpportunityModal,
     closeStageValidationResult,
     toggleOpportunitySort,

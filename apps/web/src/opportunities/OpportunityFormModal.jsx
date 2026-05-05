@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import DatePicker from "react-datepicker";
 import { es } from "date-fns/locale";
 import OpportunityDocumentsPanel from "./OpportunityDocumentsPanel";
@@ -14,6 +15,7 @@ function OpportunityFormModal({
   getCommercialStatusIconBadgeClass,
   form,
   setForm,
+  normalizeOpportunityNameField,
   parseDateFilterValue,
   formatDateFilterValue,
   catalogs,
@@ -68,6 +70,38 @@ function OpportunityFormModal({
   setDocumentReviewMatchSelection,
   formatDateTime,
 }) {
+  const [showCreateHelp, setShowCreateHelp] = useState(false);
+  const createHelpRef = useRef(null);
+
+  useEffect(() => {
+    setShowCreateHelp(false);
+  }, [editingOpportunityId, isOpen]);
+
+  useEffect(() => {
+    if (editingOpportunityId || !showCreateHelp) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (!createHelpRef.current?.contains(event.target)) {
+        setShowCreateHelp(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setShowCreateHelp(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [editingOpportunityId, showCreateHelp]);
+
   if (!isOpen) return null;
 
   const isDocumentUploadLocked =
@@ -124,9 +158,21 @@ function OpportunityFormModal({
     commercialContext?.features?.documentAnswerSuggestionsEnabled !== false;
   const stageAnswerSuggestions =
     commercialAnswerSuggestionsByStageId?.[selectedCommercialStageId] || {};
+  const isModalLocked = isDocumentUploadLocked || savingOpportunity;
+
+  const progressOverlayTitle = isDocumentUploadLocked
+    ? "Estamos preparando un borrador mas completo"
+    : editingOpportunityId
+      ? "Estamos guardando los cambios"
+      : "Estamos registrando la oportunidad";
+  const progressOverlayMessage = isDocumentUploadLocked
+    ? "Estamos cargando y analizando la evidencia para enriquecer la oportunidad con mejores sugerencias antes de continuar."
+    : editingOpportunityId
+      ? "Estamos actualizando la oportunidad para dejar registrados los cambios y mantener el seguimiento comercial al dia."
+      : "Estamos registrando la oportunidad con su contexto comercial para dejarla lista y continuar con el seguimiento.";
 
   function handleClose() {
-    if (isDocumentUploadLocked) return;
+    if (isModalLocked) return;
     closeOpportunityModal();
   }
 
@@ -139,16 +185,51 @@ function OpportunityFormModal({
     <div className="modal-overlay" onClick={handleClose}>
       <div
         className="modal-dialog modal-dialog-account opportunity-edit-modal"
-        aria-busy={isDocumentUploadLocked}
+        aria-busy={isModalLocked}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
-            <h3 className="modal-title">
-              {editingOpportunityId
-                ? "Editar oportunidad"
-                : "Crear oportunidad"}
-            </h3>
+            <div className="account-modal-help-shell" ref={createHelpRef}>
+              <div className="account-modal-title-row">
+                <h3 className="modal-title">
+                  {editingOpportunityId
+                    ? "Editar oportunidad"
+                    : "Crear oportunidad"}
+                </h3>
+                {!editingOpportunityId ? (
+                  <button
+                    type="button"
+                    className="accounts-module-help-trigger account-modal-help-trigger"
+                    aria-label="Ayuda sobre el modal de crear oportunidad"
+                    aria-expanded={showCreateHelp}
+                    title="Ayuda sobre el modal de crear oportunidad"
+                    onClick={() => setShowCreateHelp((current) => !current)}
+                  >
+                    ?
+                  </button>
+                ) : null}
+              </div>
+              {!editingOpportunityId && showCreateHelp ? (
+                <div
+                  className="account-modal-help-popover"
+                  role="dialog"
+                  aria-label="Ayuda sobre crear oportunidad"
+                >
+                  <strong>Para qué sirve este modal</strong>
+                  <p>
+                    Úsalo para registrar una oportunidad comercial nueva con su
+                    contexto base, evidencia documental y responsables.
+                  </p>
+                  <strong>Qué conviene definir primero</strong>
+                  <p>
+                    Empieza por la cuenta, el contacto, la línea de negocio y
+                    los documentos de referencia para que el borrador sugiera
+                    mejor nombre, monto y datos relacionados.
+                  </p>
+                </div>
+              ) : null}
+            </div>
             <p className="field-hint opportunity-modal-subtitle">
               {editingOpportunityId
                 ? "Actualiza la oportunidad y guarda los cambios."
@@ -194,44 +275,12 @@ function OpportunityFormModal({
 
         <fieldset
           className="interaction-detail-lock-shell"
-          disabled={isDocumentUploadLocked}
+          disabled={isModalLocked}
         >
           <form
             className="account-create-form in-modal"
             onSubmit={saveOpportunity}
           >
-            <OpportunityDocumentsPanel
-              editingOpportunityId={editingOpportunityId}
-              documentUploadSession={documentUploadSession}
-              documents={opportunityDocuments}
-              documentReview={documentReview}
-              documentReviewOverrides={documentReviewOverrides}
-              documentReviewApplied={documentReviewApplied}
-              loadingDocumentSession={loadingDocumentSession}
-              loadingOpportunityDocuments={loadingOpportunityDocuments}
-              uploadingOpportunityDocuments={uploadingOpportunityDocuments}
-              applyingDocumentSuggestions={applyingDocumentSuggestions}
-              deletingOpportunityDocumentId={deletingOpportunityDocumentId}
-              onUploadFiles={uploadOpportunityDocuments}
-              onApplySuggestions={applyOpportunityDocumentSuggestions}
-              onApplyFieldSuggestion={(field, successMessage) =>
-                applyOpportunityDocumentSuggestions({
-                  selectedFieldKeys: [field],
-                  successMessage,
-                })
-              }
-              onApplyMatchSuggestion={(field, successMessage) =>
-                applyOpportunityDocumentSuggestions({
-                  selectedMatchKeys: [field],
-                  successMessage,
-                })
-              }
-              onDeleteDocument={deleteDraftOpportunityDocument}
-              onDownloadDocument={downloadOpportunityDocument}
-              onChangeFieldOverride={setDocumentReviewFieldOverride}
-              onChangeMatchSelection={setDocumentReviewMatchSelection}
-            />
-
             <section className="account-form-section opportunity-main-data-section">
               <h4>Datos principales</h4>
               <div className="grid-form account-grid-main">
@@ -244,6 +293,9 @@ function OpportunityFormModal({
                     value={form.name}
                     onChange={(event) =>
                       setForm((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                    onBlur={(event) =>
+                      normalizeOpportunityNameField(event.target.value)
                     }
                     required
                   />
@@ -426,6 +478,38 @@ function OpportunityFormModal({
                 </div>
               </div>
             </section>
+
+            <OpportunityDocumentsPanel
+              editingOpportunityId={editingOpportunityId}
+              documentUploadSession={documentUploadSession}
+              documents={opportunityDocuments}
+              documentReview={documentReview}
+              documentReviewOverrides={documentReviewOverrides}
+              documentReviewApplied={documentReviewApplied}
+              loadingDocumentSession={loadingDocumentSession}
+              loadingOpportunityDocuments={loadingOpportunityDocuments}
+              uploadingOpportunityDocuments={uploadingOpportunityDocuments}
+              applyingDocumentSuggestions={applyingDocumentSuggestions}
+              deletingOpportunityDocumentId={deletingOpportunityDocumentId}
+              onUploadFiles={uploadOpportunityDocuments}
+              onApplySuggestions={applyOpportunityDocumentSuggestions}
+              onApplyFieldSuggestion={(field, successMessage) =>
+                applyOpportunityDocumentSuggestions({
+                  selectedFieldKeys: [field],
+                  successMessage,
+                })
+              }
+              onApplyMatchSuggestion={(field, successMessage) =>
+                applyOpportunityDocumentSuggestions({
+                  selectedMatchKeys: [field],
+                  successMessage,
+                })
+              }
+              onDeleteDocument={deleteDraftOpportunityDocument}
+              onDownloadDocument={downloadOpportunityDocument}
+              onChangeFieldOverride={setDocumentReviewFieldOverride}
+              onChangeMatchSelection={setDocumentReviewMatchSelection}
+            />
 
             {editingOpportunityId && commercialContext && (
               <section className="account-form-section opportunity-commercial-section">
@@ -880,7 +964,7 @@ function OpportunityFormModal({
           </form>
         </fieldset>
 
-        {isDocumentUploadLocked ? (
+        {isModalLocked ? (
           <div
             className="interaction-progress-overlay"
             role="status"
@@ -891,11 +975,8 @@ function OpportunityFormModal({
                 className="interaction-progress-spinner"
                 aria-hidden="true"
               />
-              <strong>Subiendo y analizando archivos</strong>
-              <span>
-                La ventana permanecerá bloqueada hasta que termine la carga o se
-                produzca un error.
-              </span>
+              <strong>{progressOverlayTitle}</strong>
+              <span>{progressOverlayMessage}</span>
             </div>
           </div>
         ) : null}

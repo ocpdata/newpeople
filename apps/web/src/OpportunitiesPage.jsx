@@ -91,6 +91,7 @@ function OpportunitiesPage({ currentUser }) {
     getCommercialStatusIconBadgeClass,
     openCreateOpportunityModal,
     openEditOpportunityModal,
+    normalizeOpportunityNameField,
     closeOpportunityModal,
     closeStageValidationResult,
     toggleOpportunitySort,
@@ -180,6 +181,7 @@ function OpportunitiesPage({ currentUser }) {
         getCommercialStatusIconBadgeClass={getCommercialStatusIconBadgeClass}
         form={form}
         setForm={setForm}
+        normalizeOpportunityNameField={normalizeOpportunityNameField}
         parseDateFilterValue={parseDateFilterValue}
         formatDateFilterValue={formatDateFilterValue}
         catalogs={catalogs}

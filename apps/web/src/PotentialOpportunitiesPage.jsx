@@ -128,7 +128,6 @@ function buildDefaultConvertDraft(detail) {
 const STATE_FILTER_OPTIONS = [
   { value: "all", label: "General" },
   { value: "new", label: "Nuevas" },
-  { value: "in_review", label: "Revisión gerencial" },
   { value: "accepted", label: "Aceptadas" },
   { value: "postponed", label: "Pospuestas" },
   { value: "converted", label: "Convertidas" },
@@ -422,19 +421,19 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
 
   async function handlePostpone() {
     const postponedUntil = window.prompt(
-      "Posponer hasta (YYYY-MM-DD)",
+      "Retomar después (YYYY-MM-DD)",
       new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     );
     if (!postponedUntil) return;
     const reasonCode = window.prompt(
-      "Motivo de posposición",
+      "Motivo para retomarlo después",
       "esperando_timing_cliente",
     );
     if (!reasonCode) return;
     await runCaseAction(
       "postpone",
       { postponedUntil, reasonCode, reasonNote: "Pospuesto desde bandeja" },
-      "Caso pospuesto",
+      "Caso marcado para retomar después",
     );
   }
 
@@ -945,46 +944,16 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
               </div>
 
               <div className="potential-opportunity-actions">
-                {canReview && detail.state === "new" ? (
-                  <div className="potential-opportunity-actions-help">
-                    <strong>Enviar a revisión gerencial</strong> cambia el
-                    estado del caso de nueva a revisión gerencial. Indica que el
-                    caso ya entró a evaluación de gerencia comercial.
-                  </div>
-                ) : null}
                 <div className="potential-opportunity-actions-toolbar">
-                  {canReview && detail.state === "new" ? (
-                    <PotentialOpportunityActionIconButton
-                      label="Enviar a revisión gerencial"
-                      onClick={() =>
-                        runCaseAction(
-                          "start-review",
-                          {},
-                          "Caso movido a Revisión gerencial",
-                        )
-                      }
-                      disabled={Boolean(actionLoading)}
-                      tone="review"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        focusable="false"
-                        aria-hidden="true"
-                      >
-                        <path d="M12 3l7 4v5c0 5-3.2 7.8-7 9-3.8-1.2-7-4-7-9V7z" />
-                        <path d="M9.5 12.5l1.8 1.8 3.2-3.3" />
-                      </svg>
-                    </PotentialOpportunityActionIconButton>
-                  ) : null}
                   {canReview &&
                   ["new", "in_review", "postponed"].includes(detail.state) ? (
                     <PotentialOpportunityActionIconButton
-                      label="Aceptar caso"
+                      label="Aprobar para seguimiento"
                       onClick={() =>
                         runCaseAction(
                           "accept",
                           {},
-                          "Caso aceptado para trabajo comercial",
+                          "Caso aprobado para seguimiento comercial",
                         )
                       }
                       disabled={Boolean(actionLoading)}
@@ -1004,7 +973,7 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
                     detail.state,
                   ) ? (
                     <PotentialOpportunityActionIconButton
-                      label="Posponer"
+                      label="Retomar después"
                       onClick={handlePostpone}
                       disabled={Boolean(actionLoading)}
                       tone="warning"
@@ -1043,7 +1012,7 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
                 {canAssign && detail.state !== "accepted" ? (
                   <div className="potential-opportunity-actions-help">
                     <strong>Asignación bloqueada</strong> solo se habilita
-                    cuando el caso ya fue aprobado por gerencia.
+                    cuando el caso ya fue aprobado para seguimiento.
                   </div>
                 ) : null}
                 {canAssign && detail.state === "accepted" ? (

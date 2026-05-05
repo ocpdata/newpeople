@@ -1,8 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
+
+function buildPastedTextFileName(label) {
+  const normalizedLabel = String(label || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${normalizedLabel || "texto-referencia"}-${timestamp}.txt`;
+}
+
+function buildPastedTextFile({ fileName, text }) {
+  return new File([String(text || "")], fileName, {
+    type: "text/plain",
+    lastModified: Date.now(),
+  });
+}
 
 function formatDateTime(value) {
   if (!value) return "Sin fecha";
@@ -408,12 +428,57 @@ function CreateInteractionModal({
   creating,
   files,
   setFiles,
+  pastedTextName,
+  setPastedTextName,
+  pastedText,
+  setPastedText,
 }) {
+  const createHelpRef = useRef(null);
+  const [showCreateHelp, setShowCreateHelp] = useState(false);
+
+  useEffect(() => {
+    if (!showCreateHelp) return undefined;
+
+    function handlePointerDown(event) {
+      if (!createHelpRef.current?.contains(event.target)) {
+        setShowCreateHelp(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setShowCreateHelp(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showCreateHelp]);
+
   if (!isOpen) return null;
 
   const handleFileChange = (event) => {
     const nextFiles = Array.from(event.target.files || []);
     setFiles(nextFiles);
+  };
+
+  const handleAddPastedText = () => {
+    const trimmedText = String(pastedText || "").trim();
+    if (!trimmedText) return;
+
+    setFiles((currentFiles) => [
+      ...currentFiles,
+      buildPastedTextFile({
+        fileName: buildPastedTextFileName(pastedTextName),
+        text: trimmedText,
+      }),
+    ]);
+    setPastedTextName("");
+    setPastedText("");
   };
 
   return (
@@ -428,39 +493,212 @@ function CreateInteractionModal({
         aria-busy={creating}
       >
         <div className="modal-header">
-          <h3 className="modal-title">Crear Interacción</h3>
+          <div className="interaction-create-header">
+            <div className="interaction-create-heading">
+              <span className="interaction-create-kicker">
+                Nueva interacción
+              </span>
+              <div className="account-modal-help-shell" ref={createHelpRef}>
+                <div className="account-modal-title-row">
+                  <h3 className="modal-title">Crear interacción</h3>
+                  <button
+                    type="button"
+                    className="accounts-module-help-trigger account-modal-help-trigger"
+                    aria-label="Ayuda sobre el modal de crear interacción"
+                    aria-expanded={showCreateHelp}
+                    title="Ayuda sobre el modal de crear interacción"
+                    onClick={() => setShowCreateHelp((current) => !current)}
+                  >
+                    ?
+                  </button>
+                </div>
+                {showCreateHelp ? (
+                  <div
+                    className="account-modal-help-popover"
+                    role="dialog"
+                    aria-label="Ayuda sobre crear interacción"
+                  >
+                    <strong>Para qué sirve este modal</strong>
+                    <p>
+                      Úsalo para reunir evidencia comercial inicial y crear una
+                      interacción analizable a partir de archivos o texto.
+                    </p>
+                    <strong>Cómo conviene usarlo</strong>
+                    <p>
+                      Sube documentos, agrega texto adicional si hace falta y
+                      luego crea la interacción para que el sistema sugiera
+                      cuenta, contactos y oportunidades relacionadas.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div className="interaction-create-header-meta">
+              <span className="interaction-documents-count-badge">
+                {files.length} {files.length === 1 ? "archivo" : "archivos"}
+              </span>
+              <span className="interaction-documents-count-badge">
+                {pastedText.trim() ? "Texto cargado" : "Sin texto"}
+              </span>
+              <span className="interaction-create-format-pill">
+                PDF, Office, EML, imágenes y audio
+              </span>
+            </div>
+          </div>
         </div>
         <fieldset className="interaction-detail-lock-shell" disabled={creating}>
           <form
-            className="account-create-form"
+            className="account-create-form interaction-create-form"
             onSubmit={(event) => {
               event.preventDefault();
               onSubmit();
             }}
           >
-            <section className="account-form-section account-modal-section">
-              <div className="field-group">
-                <label>Archivos</label>
-                <input
-                  type="file"
-                  multiple
-                  accept={INTERACTION_FILE_ACCEPT}
-                  onChange={handleFileChange}
-                  required
-                />
-                {files.length ? (
-                  <div className="interaction-upload-list">
-                    {files.map((file) => (
-                      <span
-                        key={`${file.name}-${file.size}`}
-                        className="account-interaction-contact-chip"
-                      >
+            <section className="account-form-section account-modal-section interaction-create-dropzone-section">
+              <div className="interaction-create-grid">
+                <label className="interaction-create-dropzone">
+                  <input
+                    type="file"
+                    multiple
+                    accept={INTERACTION_FILE_ACCEPT}
+                    onChange={handleFileChange}
+                  />
+                  <span
+                    className="interaction-create-dropzone-icon"
+                    aria-hidden="true"
+                  >
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75" />
+                      <path d="M5.75 15.5a.75.75 0 0 1 .75.75v1.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25v-1.25a.75.75 0 0 1 1.5 0v1.25A2.75 2.75 0 0 1 16.25 20h-8.5A2.75 2.75 0 0 1 5 17.25v-1.25a.75.75 0 0 1 .75-.75" />
+                    </svg>
+                  </span>
+                  <strong>Selecciona uno o varios archivos</strong>
+                  <span className="interaction-create-dropzone-copy">
+                    Adjunta correos, cotizaciones, minutas, audios o archivos
+                    de soporte. Si prefieres, también puedes crear la
+                    interacción solo con texto pegado.
+                  </span>
+                  <span className="interaction-create-dropzone-action">
+                    Elegir archivos
+                  </span>
+                  <span className="interaction-create-dropzone-footnote">
+                    Formatos soportados: PDF, DOCX, XLSX, XLS, CSV, TXT, EML,
+                    PNG, JPG, JPEG, MP3, WAV y M4A.
+                  </span>
+                </label>
+
+                <div className="interaction-create-guidance">
+                  <div className="interaction-create-guidance-card">
+                    <strong>1. Carga evidencia</strong>
+                    <p>
+                      Reúne los archivos que explican el contexto comercial del
+                      caso.
+                    </p>
+                  </div>
+                  <div className="interaction-create-guidance-card">
+                    <strong>2. Análisis inicial</strong>
+                    <p>
+                      El sistema extrae contenido y detecta cuenta, contactos y
+                      oportunidades sugeridas.
+                    </p>
+                  </div>
+                  <div className="interaction-create-guidance-card">
+                    <strong>3. Resolución</strong>
+                    <p>
+                      Luego podrás revisar sugerencias y confirmar los vínculos
+                      correctos en el CRM.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="account-form-section account-modal-section interaction-create-text-section">
+              <div className="interaction-create-text-card">
+                <div className="interaction-create-text-card-head">
+                  <div className="interaction-create-text-card-copy">
+                    <span className="interaction-create-kicker">
+                      Texto de referencia
+                    </span>
+                    <strong>Agrega mas fuentes de texto al analisis</strong>
+                    <p className="section-helper-text interaction-create-text-card-hint">
+                      Convierte correos, minutas o notas en archivos `.txt`
+                      para analizarlos junto con el resto de la evidencia.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="interaction-create-text-controls">
+                  <div className="field-group interaction-create-text-name-field">
+                    <label>Nombre del archivo de texto</label>
+                    <input
+                      type="text"
+                      value={pastedTextName}
+                      onChange={(event) => setPastedTextName(event.target.value)}
+                      placeholder="Ej. correo-cliente, minuta-reunion, contexto-inicial"
+                    />
+                  </div>
+                  <div className="interaction-create-text-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary interaction-create-add-text-button"
+                      onClick={handleAddPastedText}
+                      disabled={creating || !String(pastedText || "").trim()}
+                    >
+                      Agregar texto al analisis
+                    </button>
+                  </div>
+                </div>
+
+                <div className="interaction-create-text-grid">
+                  <div className="field-group interaction-create-text-body-field">
+                    <label>Pegar texto</label>
+                    <textarea
+                      className="interaction-create-textarea"
+                      value={pastedText}
+                      onChange={(event) => setPastedText(event.target.value)}
+                      placeholder="Pega aquí el contenido que quieres añadir al análisis de la interacción."
+                    />
+                  </div>
+                </div>
+
+                <span className="field-hint interaction-create-text-footnote">
+                  Se agregará como un archivo `.txt` al análisis.
+                </span>
+              </div>
+            </section>
+
+            <section className="account-form-section account-modal-section interaction-create-files-section">
+              <div className="interaction-create-files-header">
+                <h4>Archivos seleccionados</h4>
+                <p className="section-helper-text">
+                  Revisa aquí la evidencia que se usará para crear la
+                  interacción.
+                </p>
+              </div>
+
+              {files.length ? (
+                <div className="interaction-create-files-list">
+                  {files.map((file) => (
+                    <div
+                      key={`${file.name}-${file.size}`}
+                      className="interaction-create-file-card"
+                    >
+                      <span className="interaction-create-file-name">
                         {file.name}
                       </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+                      <span className="interaction-create-file-meta">
+                        {Math.max(1, Math.round(file.size / 1024))} KB
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="interaction-create-empty-state">
+                  Aún no has seleccionado archivos. Empieza cargando la
+                  evidencia del caso.
+                </div>
+              )}
             </section>
             <div className="modal-buttons">
               <button
@@ -474,7 +712,7 @@ function CreateInteractionModal({
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={creating || !files.length}
+                disabled={creating || (!files.length && !pastedText.trim())}
               >
                 {creating ? "Analizando..." : "Crear interacción"}
               </button>
@@ -1646,6 +1884,7 @@ function ResolveInteractionConfirmationModal({
 }
 
 function InteractionsPage({ can, currentUser }) {
+  const helpRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -1658,6 +1897,8 @@ function InteractionsPage({ can, currentUser }) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createFiles, setCreateFiles] = useState([]);
+  const [createPastedTextName, setCreatePastedTextName] = useState("");
+  const [createPastedText, setCreatePastedText] = useState("");
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detail, setDetail] = useState(null);
   const [editForm, setEditForm] = useState(null);
@@ -1736,9 +1977,39 @@ function InteractionsPage({ can, currentUser }) {
     return () => window.clearTimeout(timer);
   }, [error, success]);
 
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!helpRef.current?.open) {
+        return;
+      }
+
+      if (!helpRef.current.contains(event.target)) {
+        helpRef.current.removeAttribute("open");
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape" || !helpRef.current?.open) {
+        return;
+      }
+
+      helpRef.current.removeAttribute("open");
+      helpRef.current.querySelector("summary")?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   function resetCreateForm() {
     setShowCreateModal(false);
     setCreateFiles([]);
+    setCreatePastedTextName("");
+    setCreatePastedText("");
   }
 
   async function openDetail(itemId) {
@@ -1768,12 +2039,22 @@ function InteractionsPage({ can, currentUser }) {
   }
 
   async function handleCreate() {
-    if (!createFiles.length) return;
+    const trimmedPastedText = createPastedText.trim();
+    if (!createFiles.length && !trimmedPastedText) return;
     setCreating(true);
     setError("");
     try {
       const formData = new FormData();
-      createFiles.forEach((file) => formData.append("files", file));
+      const filesToUpload = [...createFiles];
+      if (trimmedPastedText) {
+        filesToUpload.push(
+          buildPastedTextFile({
+            fileName: buildPastedTextFileName(createPastedTextName),
+            text: trimmedPastedText,
+          }),
+        );
+      }
+      filesToUpload.forEach((file) => formData.append("files", file));
       const { data } = await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -2031,6 +2312,10 @@ function InteractionsPage({ can, currentUser }) {
         creating={creating}
         files={createFiles}
         setFiles={setCreateFiles}
+        pastedTextName={createPastedTextName}
+        setPastedTextName={setCreatePastedTextName}
+        pastedText={createPastedText}
+        setPastedText={setCreatePastedText}
       />
 
       <InteractionDetailModal
@@ -2084,6 +2369,29 @@ function InteractionsPage({ can, currentUser }) {
                 <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5zm2.5-1a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-13a1 1 0 0 0-1-1zm2.25 3h6.5a.75.75 0 1 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5m0 4h6.5a.75.75 0 1 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5m0 4h4.5a.75.75 0 1 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5" />
               </svg>
             </span>
+            <details className="accounts-module-help" ref={helpRef}>
+              <summary
+                className="accounts-module-help-trigger"
+                aria-label="Ayuda sobre el módulo de interacciones"
+                title="Ayuda sobre el módulo"
+              >
+                ?
+              </summary>
+              <div className="accounts-module-help-popover">
+                <strong>Para qué sirve</strong>
+                <p>
+                  Este módulo centraliza documentos, notas e interacciones
+                  comerciales para extraer contexto y relacionarlo con cuentas,
+                  contactos y oportunidades.
+                </p>
+                <strong>Cómo usarlo</strong>
+                <p>
+                  Úsalo para cargar evidencia, analizarla, revisar sugerencias
+                  del sistema y resolver cada caso enlazando o creando los
+                  registros comerciales correctos.
+                </p>
+              </div>
+            </details>
           </div>
           <p className="roles-subtitle">
             Centraliza evidencia documental, extrae contexto comercial y

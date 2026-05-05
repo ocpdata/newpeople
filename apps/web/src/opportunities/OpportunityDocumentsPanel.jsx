@@ -1,6 +1,26 @@
 import { useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 
+function buildPastedTextFileName(label) {
+  const normalizedLabel = String(label || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${normalizedLabel || "texto-pegado"}-${timestamp}.txt`;
+}
+
+function buildPastedTextFile({ fileName, text }) {
+  return new File([String(text || "")], fileName, {
+    type: "text/plain",
+    lastModified: Date.now(),
+  });
+}
+
 function renderDocumentStatus(document) {
   if (document.processingStatus === "review_ready") {
     return "Analizado";
@@ -141,6 +161,8 @@ function OpportunityDocumentsPanel({
   onApplyMatchSuggestion,
 }) {
   const [previewDocument, setPreviewDocument] = useState(null);
+  const [pastedTextName, setPastedTextName] = useState("");
+  const [pastedTextValue, setPastedTextValue] = useState("");
 
   async function openDocumentPreview(document) {
     setPreviewDocument({
@@ -178,6 +200,21 @@ function OpportunityDocumentsPanel({
           ),
         };
       });
+    }
+  }
+
+  async function handleUploadPastedText() {
+    const trimmedText = String(pastedTextValue || "").trim();
+    if (!trimmedText) return;
+
+    const file = buildPastedTextFile({
+      fileName: buildPastedTextFileName(pastedTextName),
+      text: trimmedText,
+    });
+    const uploaded = await onUploadFiles([file]);
+    if (uploaded) {
+      setPastedTextName("");
+      setPastedTextValue("");
     }
   }
 
@@ -324,157 +361,250 @@ function OpportunityDocumentsPanel({
           documentCount ? " has-documents" : " is-empty"
         }`}
       >
-        <div className="opportunity-documents-toolbar-copy">
-          <strong>
-            {documentCount
-              ? "Repositorio listo para enriquecer el borrador"
-              : "Sube la evidencia comercial para arrancar el borrador"}
-          </strong>
-          <p className="field-hint opportunity-documents-toolbar-hint">
-            {documentCount
-              ? "Cada archivo analizado puede sugerir nombre, monto, etapa, cuenta y contactos antes de guardar la oportunidad."
-              : "Arrastra o selecciona archivos para extraer contexto, detectar coincidencias internas y construir una primera propuesta automaticamente."}
-          </p>
-          <div className="opportunity-documents-toolbar-badges">
-            <span className="opportunity-documents-toolbar-badge">
-              {documentCount} documento{documentCount === 1 ? "" : "s"}
+        <div className="opportunity-documents-toolbar-head">
+          <div className="opportunity-documents-toolbar-copy">
+            <span className="opportunity-documents-toolbar-eyebrow">
+              Analisis documental asistido
             </span>
-            <span className="opportunity-documents-toolbar-badge">
-              {reviewReadyCount} analizado{reviewReadyCount === 1 ? "" : "s"}
-            </span>
-            <span className="opportunity-documents-toolbar-badge">
-              {processingCount} en analisis
+            <strong>
+              {documentCount
+                ? "Repositorio listo para enriquecer el borrador"
+                : "Sube la evidencia comercial para arrancar el borrador"}
+            </strong>
+            <p className="field-hint opportunity-documents-toolbar-hint">
+              {documentCount
+                ? "Cada archivo analizado puede sugerir nombre, monto, etapa, cuenta y contactos antes de guardar la oportunidad."
+                : "Carga evidencia comercial para extraer contexto, detectar coincidencias internas y construir una primera propuesta automaticamente."}
+            </p>
+          </div>
+
+          <div className="opportunity-documents-toolbar-actions">
+            {!documentCount || !isCreateMode ? (
+              <label className="btn-secondary opportunity-documents-upload-button">
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+                  onChange={(event) => {
+                    const nextFiles = event.target.files;
+                    if (nextFiles?.length) {
+                      onUploadFiles(nextFiles);
+                    }
+                    event.target.value = "";
+                  }}
+                  disabled={
+                    loadingDocumentSession ||
+                    loadingOpportunityDocuments ||
+                    uploadingOpportunityDocuments
+                  }
+                />
+                <span
+                  className="opportunity-documents-upload-button-icon"
+                  aria-hidden="true"
+                >
+                  {uploadingOpportunityDocuments ? "…" : "+"}
+                </span>
+                <span className="opportunity-documents-upload-button-text">
+                  {uploadingOpportunityDocuments
+                    ? "Subiendo..."
+                    : isCreateMode
+                      ? "Cargar y analizar archivos"
+                      : "Agregar documentos"}
+                </span>
+              </label>
+            ) : isCreateMode ? (
+              <label className="btn-secondary opportunity-documents-upload-button">
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+                  onChange={(event) => {
+                    const nextFiles = event.target.files;
+                    if (nextFiles?.length) {
+                      onUploadFiles(nextFiles);
+                    }
+                    event.target.value = "";
+                  }}
+                  disabled={
+                    loadingDocumentSession ||
+                    loadingOpportunityDocuments ||
+                    uploadingOpportunityDocuments
+                  }
+                />
+                <span
+                  className="opportunity-documents-upload-button-icon"
+                  aria-hidden="true"
+                >
+                  {uploadingOpportunityDocuments ? "…" : "+"}
+                </span>
+                <span className="opportunity-documents-upload-button-text">
+                  {uploadingOpportunityDocuments
+                    ? "Subiendo..."
+                    : "Subir y analizar mas archivos"}
+                </span>
+              </label>
+            ) : null}
+            <span className="field-hint opportunity-documents-toolbar-formats">
+              Formatos: PDF, DOCX, XLSX, CSV, TXT, EML, imagen y audio.
             </span>
           </div>
         </div>
 
-        <div className="opportunity-documents-toolbar-actions">
-          {!documentCount || !isCreateMode ? (
-            <label className="btn-secondary opportunity-documents-upload-button">
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
-                onChange={(event) => {
-                  const nextFiles = event.target.files;
-                  if (nextFiles?.length) {
-                    onUploadFiles(nextFiles);
-                  }
-                  event.target.value = "";
-                }}
-                disabled={
-                  loadingDocumentSession ||
-                  loadingOpportunityDocuments ||
-                  uploadingOpportunityDocuments
-                }
-              />
-              <span
-                className="opportunity-documents-upload-button-icon"
-                aria-hidden="true"
-              >
-                {uploadingOpportunityDocuments ? "…" : "+"}
+        <div className="opportunity-documents-toolbar-body">
+          <div className="opportunity-documents-toolbar-overview">
+            <div className="opportunity-documents-toolbar-badges">
+              <span className="opportunity-documents-toolbar-badge">
+                <strong>{documentCount}</strong>
+                <span>documento{documentCount === 1 ? "" : "s"}</span>
               </span>
-              <span className="opportunity-documents-upload-button-text">
-                {uploadingOpportunityDocuments
-                  ? "Subiendo..."
-                  : isCreateMode
-                    ? "Cargar y analizar archivos"
-                    : "Agregar documentos"}
+              <span className="opportunity-documents-toolbar-badge">
+                <strong>{reviewReadyCount}</strong>
+                <span>analizado{reviewReadyCount === 1 ? "" : "s"}</span>
               </span>
-            </label>
-          ) : isCreateMode ? (
-            <label className="btn-secondary opportunity-documents-upload-button">
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
-                onChange={(event) => {
-                  const nextFiles = event.target.files;
-                  if (nextFiles?.length) {
-                    onUploadFiles(nextFiles);
-                  }
-                  event.target.value = "";
-                }}
-                disabled={
-                  loadingDocumentSession ||
-                  loadingOpportunityDocuments ||
-                  uploadingOpportunityDocuments
-                }
-              />
-              <span
-                className="opportunity-documents-upload-button-icon"
-                aria-hidden="true"
-              >
-                {uploadingOpportunityDocuments ? "…" : "+"}
+              <span className="opportunity-documents-toolbar-badge">
+                <strong>{processingCount}</strong>
+                <span>en analisis</span>
               </span>
-              <span className="opportunity-documents-upload-button-text">
-                {uploadingOpportunityDocuments
-                  ? "Subiendo..."
-                  : "Subir y analizar mas archivos"}
-              </span>
-            </label>
-          ) : null}
-          <span className="field-hint opportunity-documents-toolbar-formats">
-            Formatos: PDF, DOCX, XLSX, CSV, TXT, imagen y audio.
-          </span>
-        </div>
-        {documents.length ? (
-          <div className="opportunity-documents-toolbar-list">
-            <div className="opportunity-documents-list">
-              {documents.map((document) => (
-                <article
-                  key={document.publicId}
-                  className={`opportunity-documents-card${
-                    isCreateMode ? " opportunity-documents-card-compact" : ""
-                  }`}
-                >
-                  <div className="opportunity-documents-card-header">
-                    <div className="opportunity-documents-card-summary">
-                      <strong
-                        className="opportunity-documents-card-title"
-                        title={document.originalFileName}
-                      >
-                        {document.originalFileName}
-                      </strong>
-                      {isCreateMode ? (
-                        <span className="field-hint opportunity-documents-card-meta">
-                          {renderDocumentStatus(document)}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="opportunity-documents-card-actions">
-                      <button
-                        type="button"
-                        className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button"
-                        onClick={() => openDocumentPreview(document)}
-                        aria-label={`Ver contenido de ${document.originalFileName}`}
-                        title={`Ver contenido de ${document.originalFileName}`}
-                      >
-                        i
-                      </button>
-                      {isCreateMode ? (
-                        <button
-                          type="button"
-                          className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button danger"
-                          onClick={() => onDeleteDocument(document.publicId)}
-                          disabled={
-                            deletingOpportunityDocumentId === document.publicId
-                          }
-                          aria-label={`Quitar ${document.originalFileName}`}
-                          title={`Quitar ${document.originalFileName}`}
-                        >
-                          {deletingOpportunityDocumentId === document.publicId
-                            ? "…"
-                            : "×"}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </article>
-              ))}
             </div>
+            <div className="opportunity-documents-toolbar-summary-card">
+              <strong>Que puedes hacer aqui</strong>
+              <ul className="opportunity-documents-toolbar-summary-list">
+                <li>Adjuntar correos, propuestas, minutas y cotizaciones.</li>
+                <li>
+                  Pegar texto libre como evidencia adicional
+                  {isCreateMode ? " del borrador." : " de la oportunidad."}
+                </li>
+                <li>
+                  {isCreateMode
+                    ? "Aplicar solo las sugerencias utiles antes de guardar."
+                    : "Centralizar evidencia adicional para el seguimiento comercial."}
+                </li>
+              </ul>
+            </div>
+
+            {documents.length ? (
+              <div className="opportunity-documents-toolbar-list">
+                <div className="opportunity-documents-list">
+                  {documents.map((document) => (
+                    <article
+                      key={document.publicId}
+                      className={`opportunity-documents-card${
+                        isCreateMode
+                          ? " opportunity-documents-card-compact"
+                          : ""
+                      }`}
+                    >
+                      <div className="opportunity-documents-card-header">
+                        <div className="opportunity-documents-card-summary">
+                          <strong
+                            className="opportunity-documents-card-title"
+                            title={document.originalFileName}
+                          >
+                            {document.originalFileName}
+                          </strong>
+                          {isCreateMode ? (
+                            <span className="field-hint opportunity-documents-card-meta">
+                              {renderDocumentStatus(document)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="opportunity-documents-card-actions">
+                          <button
+                            type="button"
+                            className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button"
+                            onClick={() => openDocumentPreview(document)}
+                            aria-label={`Ver contenido de ${document.originalFileName}`}
+                            title={`Ver contenido de ${document.originalFileName}`}
+                          >
+                            i
+                          </button>
+                          {isCreateMode ? (
+                            <button
+                              type="button"
+                              className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button danger"
+                              onClick={() => onDeleteDocument(document.publicId)}
+                              disabled={
+                                deletingOpportunityDocumentId ===
+                                document.publicId
+                              }
+                              aria-label={`Quitar ${document.originalFileName}`}
+                              title={`Quitar ${document.originalFileName}`}
+                            >
+                              {deletingOpportunityDocumentId ===
+                              document.publicId
+                                ? "…"
+                                : "×"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+
+          <div className="opportunity-documents-paste-card">
+              <div className="opportunity-documents-paste-card-head">
+                <strong>Analizar texto pegado</strong>
+                <p className="field-hint opportunity-documents-paste-hint">
+                  Convierte notas, correos o briefs en un documento `.txt`
+                  dentro del mismo repositorio
+                  {isCreateMode ? " del borrador." : " documental de la oportunidad."}
+                </p>
+              </div>
+              <div className="field-group opportunity-documents-paste-name-group">
+                <label htmlFor="opportunity-pasted-text-name">
+                  Nombre del texto
+                </label>
+                <input
+                  id="opportunity-pasted-text-name"
+                  type="text"
+                  value={pastedTextName}
+                  onChange={(event) => setPastedTextName(event.target.value)}
+                  placeholder="Ej. resumen de llamada o correo pegado"
+                  maxLength={80}
+                  disabled={
+                    loadingDocumentSession ||
+                    loadingOpportunityDocuments ||
+                    uploadingOpportunityDocuments
+                  }
+                />
+              </div>
+              <div className="field-group opportunity-documents-paste-text-group">
+                <label htmlFor="opportunity-pasted-text-body">
+                  Pegar texto para analizar
+                </label>
+                <textarea
+                  id="opportunity-pasted-text-body"
+                  value={pastedTextValue}
+                  onChange={(event) => setPastedTextValue(event.target.value)}
+                  placeholder="Pega aqui el correo, minuta, brief o contexto comercial que quieras analizar como un documento mas."
+                  disabled={
+                    loadingDocumentSession ||
+                    loadingOpportunityDocuments ||
+                    uploadingOpportunityDocuments
+                  }
+                />
+              </div>
+              <button
+                type="button"
+                className="btn-secondary opportunity-documents-paste-submit"
+                onClick={handleUploadPastedText}
+                disabled={
+                  loadingDocumentSession ||
+                  loadingOpportunityDocuments ||
+                  uploadingOpportunityDocuments ||
+                  !String(pastedTextValue || "").trim()
+                }
+              >
+                {uploadingOpportunityDocuments
+                  ? "Agregando texto..."
+                  : "Agregar texto al analisis"}
+              </button>
+            </div>
+        </div>
       </div>
 
       {loadingDocumentSession ? (
