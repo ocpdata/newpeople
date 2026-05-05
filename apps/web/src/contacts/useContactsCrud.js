@@ -10,6 +10,121 @@ function normalizeText(value) {
     .trim();
 }
 
+const CONTACT_PRESENTATION_FIELDS = new Set([
+  "firstName",
+  "lastName",
+  "positionTitle",
+  "department",
+]);
+
+const CONTACT_TEXT_CONNECTORS = new Set([
+  "de",
+  "del",
+  "la",
+  "las",
+  "los",
+  "el",
+  "y",
+  "e",
+  "da",
+  "das",
+  "do",
+  "dos",
+  "van",
+  "von",
+]);
+
+const CONTACT_TEXT_ACRONYMS = new Set([
+  "b2b",
+  "b2c",
+  "bi",
+  "ceo",
+  "cfo",
+  "coo",
+  "crm",
+  "cto",
+  "erp",
+  "hr",
+  "it",
+  "qa",
+  "rrhh",
+  "sap",
+  "ti",
+  "ui",
+  "ux",
+  "vp",
+]);
+
+function collapseContactWhitespace(value) {
+  return String(value || "")
+    .replace(/^\s+/g, "")
+    .replace(/\s{2,}/g, " ");
+}
+
+function capitalizeContactWord(value) {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function normalizePresentationKey(value) {
+  return normalizeText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeContactSegment(segment) {
+  const segmentKey = normalizePresentationKey(segment);
+  if (CONTACT_TEXT_ACRONYMS.has(segmentKey)) {
+    return segment.toUpperCase();
+  }
+
+  return segment.replace(/[A-Za-zÀ-ÿ]+/g, (word) => capitalizeContactWord(word));
+}
+
+function normalizeContactToken(token, index) {
+  const trimmedToken = String(token || "").trim();
+  if (!trimmedToken) return "";
+
+  const tokenKey = normalizePresentationKey(trimmedToken);
+  if (CONTACT_TEXT_CONNECTORS.has(tokenKey)) {
+    return index === 0 ? capitalizeContactWord(trimmedToken) : tokenKey;
+  }
+
+  return trimmedToken
+    .split(/([\-/'’])/)
+    .map((segment) => {
+      if (/^[\-/'’]$/.test(segment)) {
+        return segment;
+      }
+      return normalizeContactSegment(segment);
+    })
+    .join("");
+}
+
+function normalizeContactPresentationValue(value) {
+  const sanitizedValue = collapseContactWhitespace(value).trim();
+  if (!sanitizedValue) return "";
+
+  return sanitizedValue
+    .split(" ")
+    .filter(Boolean)
+    .map((token, index) => normalizeContactToken(token, index))
+    .join(" ");
+}
+
+function normalizeContactPresentationField(field, value) {
+  if (!CONTACT_PRESENTATION_FIELDS.has(field)) {
+    return value;
+  }
+
+  return normalizeContactPresentationValue(value);
+}
+
+function normalizeContactPresentationForm(sourceForm) {
+  return Object.entries(sourceForm).reduce((result, [field, value]) => {
+    result[field] = normalizeContactPresentationField(field, value);
+    return result;
+  }, {});
+}
+
 export function useContactsCrud({
   currentUser,
   searchParams,
@@ -240,6 +355,17 @@ export function useContactsCrud({
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function normalizeContactFormField(field, value) {
+    const normalizedValue = normalizeContactPresentationField(field, value);
+    setForm((prev) => {
+      if (prev[field] === normalizedValue) {
+        return prev;
+      }
+
+      return { ...prev, [field]: normalizedValue };
+    });
+  }
+
   function handleContactAccountChange(accountId) {
     const nextAccountId = String(accountId || "");
     setForm((prev) => ({
@@ -392,44 +518,51 @@ export function useContactsCrud({
     };
   }
 
-  function buildContactPayload(options = {}) {
+  function buildContactPayload(sourceForm = form) {
     return {
-      firstName: form.firstName,
-      lastName: form.lastName,
-      accountId: Number(form.accountId),
-      positionTitle: form.positionTitle || undefined,
-      phone: form.phone || undefined,
-      phoneExtension: form.phoneExtension || undefined,
-      mobile: form.mobile || undefined,
-      email: form.email || undefined,
-      department: form.department || undefined,
-      countryId: form.countryId ? Number(form.countryId) : null,
-      stateRegion: form.stateRegion || undefined,
-      city: form.city || undefined,
-      addressLine: form.addressLine || undefined,
-      postalCode: form.postalCode || undefined,
-      purchaseParticipationId: Number(form.purchaseParticipationId),
-      relationshipTypeId: Number(form.relationshipTypeId),
-      employmentStatusId: Number(form.employmentStatusId),
-      activationStatusId: Number(form.activationStatusId),
-      managerContactId: form.managerContactId
-        ? Number(form.managerContactId)
+      firstName: sourceForm.firstName,
+      lastName: sourceForm.lastName,
+      accountId: Number(sourceForm.accountId),
+      positionTitle: sourceForm.positionTitle || undefined,
+      phone: sourceForm.phone || undefined,
+      phoneExtension: sourceForm.phoneExtension || undefined,
+      mobile: sourceForm.mobile || undefined,
+      email: sourceForm.email || undefined,
+      department: sourceForm.department || undefined,
+      countryId: sourceForm.countryId ? Number(sourceForm.countryId) : null,
+      stateRegion: sourceForm.stateRegion || undefined,
+      city: sourceForm.city || undefined,
+      addressLine: sourceForm.addressLine || undefined,
+      postalCode: sourceForm.postalCode || undefined,
+      purchaseParticipationId: Number(sourceForm.purchaseParticipationId),
+      relationshipTypeId: Number(sourceForm.relationshipTypeId),
+      employmentStatusId: Number(sourceForm.employmentStatusId),
+      activationStatusId: Number(sourceForm.activationStatusId),
+      managerContactId: sourceForm.managerContactId
+        ? Number(sourceForm.managerContactId)
         : null,
-      influencesContactId: form.influencesContactId
-        ? Number(form.influencesContactId)
+      influencesContactId: sourceForm.influencesContactId
+        ? Number(sourceForm.influencesContactId)
         : null,
-      allowDuplicateOverride: options.allowDuplicateOverride === true,
     };
   }
 
-  async function saveContact(event, options = {}) {
+  async function saveContact(event) {
     event.preventDefault();
     setError("");
     setSuccess("");
     setSavingContact(true);
 
     try {
-      const payload = buildContactPayload(options);
+      const normalizedForm = normalizeContactPresentationForm(form);
+      setForm((prev) => {
+        const didChange = Array.from(CONTACT_PRESENTATION_FIELDS).some(
+          (field) => prev[field] !== normalizedForm[field],
+        );
+        return didChange ? { ...prev, ...normalizedForm } : prev;
+      });
+
+      const payload = buildContactPayload(normalizedForm);
 
       const { data } = editingContactId
         ? await api.put(`/api/contacts/${editingContactId}`, payload)
@@ -451,10 +584,7 @@ export function useContactsCrud({
       if (
         !editingContactId &&
         err?.response?.status === 409 &&
-        [
-          "CONTACT_DUPLICATE_REVIEW_REQUIRED",
-          "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
-        ].includes(duplicatePayload?.code)
+        duplicatePayload?.code === "CONTACT_DUPLICATE_BLOCKED"
       ) {
         setContactDuplicateReview({
           code: duplicatePayload.code,
@@ -491,13 +621,6 @@ export function useContactsCrud({
 
   function dismissContactDuplicateReview() {
     setContactDuplicateReview(null);
-  }
-
-  async function confirmContactDuplicateOverride() {
-    return saveContact(
-      { preventDefault() {} },
-      { allowDuplicateOverride: true },
-    );
   }
 
   async function openDuplicateCandidateContact(contactId) {
@@ -829,6 +952,7 @@ export function useContactsCrud({
     getContactStatusIconBadgeClass,
     formatDateTime,
     updateContactFormField,
+    normalizeContactFormField,
     handleContactAccountChange,
     openCreateContactModal,
     openEditContactModal,
@@ -841,7 +965,6 @@ export function useContactsCrud({
     getContactStatusConfirmationMeta,
     saveContact,
     dismissContactDuplicateReview,
-    confirmContactDuplicateOverride,
     openDuplicateCandidateContact,
     toggleContactSort,
     getContactSortArrow,

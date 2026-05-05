@@ -182,12 +182,12 @@ function getContactDuplicateReasonLabel(matchReason) {
 
 function getContactDuplicateSeverityMessage(severity) {
   if (severity === "high") {
-    return "Coincidencia fuerte. Conviene revisar si el contacto ya existe antes de crear otro registro.";
+    return "Coincidencia fuerte. El sistema bloqueara la creacion para evitar un duplicado.";
   }
   if (severity === "medium") {
-    return "Coincidencia probable. Verifica si corresponde a la misma persona antes de continuar.";
+    return "Coincidencia probable. El sistema no creara el contacto mientras exista duda razonable.";
   }
-  return "Coincidencia baja. Haz una verificacion rapida antes de seguir.";
+  return "Coincidencia detectada. El sistema requiere una diferencia mas clara para crear un contacto nuevo.";
 }
 
 async function getContactDuplicateCandidates({ draft }) {
@@ -251,9 +251,9 @@ function buildContactDuplicateWarnings({ draft, candidates }) {
       candidateMobile &&
       draftMobile === candidateMobile
     ) {
-      severity = "medium";
+      severity = "high";
       matchReason = "same_mobile_same_account";
-      sortRank = 260;
+      sortRank = 340;
     } else if (sameAccount && isNearExactNameMatch) {
       severity = "medium";
       matchReason = "near_exact_name_same_account";
@@ -407,30 +407,19 @@ async function analyzeContactDuplicateReview({ draft, duplicateWarnings }) {
 }
 
 function getContactDuplicateDecision({ duplicateWarnings, duplicateReview }) {
-  const hasSuspiciousWarning = duplicateWarnings.some((warning) =>
-    [
-      "same_mobile_same_account",
-      "near_exact_name_same_account",
-      "similar_name_same_account",
-      "possible_name_match_same_account",
-    ].includes(warning.matchReason),
-  );
+  if (!duplicateWarnings.length) {
+    return "clear";
+  }
 
   if (duplicateWarnings.some((warning) => warning.severity === "high")) {
-    return "review_required";
+    return "blocked";
   }
-  if (duplicateReview?.verdict === "likely_duplicate") {
-    return "review_required";
+
+  if (duplicateReview?.verdict === "likely_distinct") {
+    return "clear";
   }
-  if (duplicateReview?.verdict === "inconclusive") {
-    return "confirmation_required";
-  }
-  if (hasSuspiciousWarning) {
-    return duplicateReview?.verdict === "likely_distinct"
-      ? "clear"
-      : "confirmation_required";
-  }
-  return "clear";
+
+  return "blocked";
 }
 
 async function validateContactDuplicates({ draft }) {
@@ -468,14 +457,10 @@ async function validateContactDuplicates({ draft }) {
 }
 
 function buildContactDuplicateResponse(validation) {
-  const isReviewRequired = validation.duplicateDecision === "review_required";
   return {
-    code: isReviewRequired
-      ? "CONTACT_DUPLICATE_REVIEW_REQUIRED"
-      : "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
-    message: isReviewRequired
-      ? "Detectamos una coincidencia fuerte con contactos existentes. Revisa si ya existe antes de crear uno nuevo."
-      : "Detectamos una coincidencia probable con contactos existentes. Verifica si corresponde a la misma persona antes de continuar.",
+    code: "CONTACT_DUPLICATE_BLOCKED",
+    message:
+      "No se creo el contacto porque detectamos una coincidencia con contactos existentes y el sistema esta configurado para evitar duplicados automaticamente.",
     duplicateDecision: validation.duplicateDecision,
     duplicateWarnings: validation.duplicateWarnings,
     duplicateReview: validation.duplicateReview,
@@ -769,7 +754,6 @@ router.post(
 
     const body = parsed.data;
     const now = new Date();
-    const allowDuplicateOverride = req.body?.allowDuplicateOverride === true;
     const accountAccess = await requireAccessibleAccountForContact({
       user: req.user,
       accountId: body.accountId,
@@ -794,10 +778,7 @@ router.post(
       draft: body,
     });
 
-    if (
-      !allowDuplicateOverride &&
-      duplicateValidation.duplicateDecision !== "clear"
-    ) {
+    if (duplicateValidation.duplicateDecision !== "clear") {
       return res
         .status(409)
         .json(buildContactDuplicateResponse(duplicateValidation));
@@ -858,7 +839,6 @@ router.post(
           email: body.email || null,
           mobile: body.mobile || null,
           activation_status_id: activationStatusId,
-          duplicate_override: allowDuplicateOverride,
           duplicate_decision:
             duplicateValidation.duplicateDecision === "clear"
               ? null

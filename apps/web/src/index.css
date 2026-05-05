@@ -2829,14 +2829,14 @@ button:disabled {
 
 .account-interactions-section {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .account-interactions-header-row {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
 }
 
 .account-interactions-header-row h4 {
@@ -2847,17 +2847,58 @@ button:disabled {
   margin: 4px 0 0;
 }
 
+.account-interactions-create-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #c9d9ee;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #eef5ff 100%);
+  color: #1c5a92;
+  box-shadow: 0 8px 18px rgba(30, 74, 129, 0.12);
+}
+
+.account-interactions-create-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.account-interactions-create-button:hover:not(:disabled) {
+  border-color: #9fbfe3;
+  background: linear-gradient(180deg, #ffffff 0%, #e3efff 100%);
+}
+
+.account-interactions-create-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .account-interactions-filters {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(180px, 0.7fr));
-  gap: 10px;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.account-interactions-filters input,
+.account-interactions-filters select {
+  min-height: 32px;
+  height: 32px;
+  font-size: 11px;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
 .account-interactions-inline-error,
 .account-interactions-inline-success {
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 11px;
 }
 
 .account-interactions-inline-error {
@@ -2874,7 +2915,7 @@ button:disabled {
 
 .account-interactions-timeline {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .account-interaction-card {
@@ -4636,6 +4677,14 @@ td {
   white-space: nowrap;
 }
 
+.accounts-row-clickable {
+  cursor: pointer;
+}
+
+.accounts-row-clickable:hover td {
+  background: #f6faff;
+}
+
 .error {
   color: #b43333;
 }
@@ -5975,6 +6024,46 @@ td {
 .modal-dialog-account {
   max-width: 920px;
   width: min(96vw, 920px);
+}
+
+.modal-dialog-busy {
+  overflow: hidden;
+}
+
+.modal-dialog-blocking-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(244, 247, 251, 0.78);
+  backdrop-filter: blur(2px);
+  cursor: wait;
+}
+
+.modal-dialog-blocking-card {
+  display: grid;
+  gap: 6px;
+  min-width: min(320px, 100%);
+  max-width: 360px;
+  padding: 18px 20px;
+  border: 1px solid #d7e3f2;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 45px rgba(30, 64, 111, 0.18);
+  text-align: center;
+}
+
+.modal-dialog-blocking-card strong {
+  color: #17385d;
+  font-size: 16px;
+}
+
+.modal-dialog-blocking-card span {
+  color: #5d738d;
+  font-size: 14px;
 }
 
 .opportunity-edit-modal {

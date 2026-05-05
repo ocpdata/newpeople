@@ -39,7 +39,9 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
   auditoria en edicion y acciones por fila;
   paginacion con selector 10 / 50 / 100 registros por pagina.
 - Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
-  edicion, filtro de desactivados;
+  edicion, filtro de desactivados, ayuda contextual en encabezado,
+  apertura de edicion por clic en fila, bloqueo visual durante guardado y
+  prevencion automatica de duplicados;
   paginacion con selector 10 / 50 / 100 registros por pagina.
 - Proveedores: modulo documentado con reglas de proveedor, listas de precios,
   moneda y tipo unico por lista, y composicion/reactivacion automatica de

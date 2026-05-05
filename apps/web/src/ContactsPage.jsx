@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ConfirmationModal } from "./AppModals";
 import ContactFormModal from "./contacts/ContactFormModal";
@@ -7,6 +8,7 @@ import { useContactsPage } from "./contacts/useContactsPage";
 function ContactsPage({ can, currentUser }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const helpRef = useRef(null);
   const {
     contactStatusFilter,
     setContactStatusFilter,
@@ -57,6 +59,7 @@ function ContactsPage({ can, currentUser }) {
     getContactSortArrow,
     formatDateTime,
     updateContactFormField,
+    normalizeContactFormField,
     handleContactAccountChange,
     openCreateContactModal,
     openEditContactModal,
@@ -71,7 +74,6 @@ function ContactsPage({ can, currentUser }) {
     getContactStatusConfirmationMeta,
     saveContact,
     dismissContactDuplicateReview,
-    confirmContactDuplicateOverride,
     openDuplicateCandidateContact,
   } = useContactsPage({ currentUser, searchParams, setSearchParams });
 
@@ -79,6 +81,34 @@ function ContactsPage({ can, currentUser }) {
     closeContactOppsModal();
     navigate(`/opportunities?edit=${opportunityId}`);
   }
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!helpRef.current?.open) {
+        return;
+      }
+
+      if (!helpRef.current.contains(event.target)) {
+        helpRef.current.removeAttribute("open");
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape" || !helpRef.current?.open) {
+        return;
+      }
+
+      helpRef.current.removeAttribute("open");
+      helpRef.current.querySelector("summary")?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   return (
     <section className="panel">
@@ -105,6 +135,28 @@ function ContactsPage({ can, currentUser }) {
                 <path d="M12 8.25a2.25 2.25 0 1 0 2.25 2.25A2.25 2.25 0 0 0 12 8.25m0 6c-1.94 0-3.75.97-3.75 2.1a.65.65 0 0 0 .65.65h6.2a.65.65 0 0 0 .65-.65c0-1.13-1.81-2.1-3.75-2.1" />
               </svg>
             </span>
+            <details className="accounts-module-help" ref={helpRef}>
+              <summary
+                className="accounts-module-help-trigger"
+                aria-label="Ayuda sobre el módulo de contactos"
+                title="Ayuda sobre el módulo"
+              >
+                ?
+              </summary>
+              <div className="accounts-module-help-popover">
+                <strong>Para qué sirve</strong>
+                <p>
+                  Este módulo organiza a las personas de contacto asociadas a
+                  las cuentas y concentra sus datos de comunicación y relación.
+                </p>
+                <strong>Cómo usarlo</strong>
+                <p>
+                  Úsalo para registrar contactos, relacionarlos con su cuenta,
+                  revisar su estado y consultar las oportunidades en las que
+                  participan.
+                </p>
+              </div>
+            </details>
           </div>
           <p className="roles-subtitle">
             Gestiona los contactos del sistema y sus datos de comunicación
@@ -216,9 +268,9 @@ function ContactsPage({ can, currentUser }) {
         onClose={closeContactModal}
         onSubmit={saveContact}
         onDismissDuplicateReview={dismissContactDuplicateReview}
-        onConfirmDuplicateOverride={confirmContactDuplicateOverride}
         onOpenDuplicateCandidate={openDuplicateCandidateContact}
         onChange={updateContactFormField}
+        onNormalizeField={normalizeContactFormField}
         onAccountChange={handleContactAccountChange}
         getContactStatusIconBadgeClass={getContactStatusIconBadgeClass}
         getContactStatusLabel={getContactStatusLabel}
@@ -307,7 +359,11 @@ function ContactsPage({ can, currentUser }) {
         <tbody>
           {visibleContacts.length > 0 ? (
             pagedContacts.map((contact) => (
-              <tr key={contact.id}>
+              <tr
+                key={contact.id}
+                className="accounts-row-clickable"
+                onClick={() => openEditContactModal(contact.id)}
+              >
                 <td>{contact.id}</td>
                 <td>{contact.full_name}</td>
                 <td>{contact.account_name}</td>
@@ -319,12 +375,18 @@ function ContactsPage({ can, currentUser }) {
                     {getContactStatusLabel(contact)}
                   </span>
                 </td>
-                <td className="accounts-actions-cell">
+                <td
+                  className="accounts-actions-cell"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   <div className="user-kebab-wrap contacts-kebab-wrap">
                     <button
                       type="button"
                       className="kebab-btn"
-                      onClick={() => toggleContactMenu(contact.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleContactMenu(contact.id);
+                      }}
                       aria-label="Abrir acciones"
                     >
                       ⋮
@@ -333,11 +395,12 @@ function ContactsPage({ can, currentUser }) {
                       <div className="user-kebab-menu">
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={(event) => {
+                            event.stopPropagation();
                             runContactAction(() =>
                               openEditContactModal(contact.id),
-                            )
-                          }
+                            );
+                          }}
                         >
                           Editar
                         </button>
@@ -347,9 +410,10 @@ function ContactsPage({ can, currentUser }) {
                             !canChangeContactActivationStatus ||
                             isContactActive(contact)
                           }
-                          onClick={() =>
-                            openContactStatusConfirmation(contact, "activado")
-                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openContactStatusConfirmation(contact, "activado");
+                          }}
                         >
                           Activar
                         </button>
@@ -360,12 +424,13 @@ function ContactsPage({ can, currentUser }) {
                               !canChangeContactActivationStatus ||
                               isContactPending(contact)
                             }
-                            onClick={() =>
+                            onClick={(event) => {
+                              event.stopPropagation();
                               openContactStatusConfirmation(
                                 contact,
                                 "pendiente_activacion",
-                              )
-                            }
+                              );
+                            }}
                           >
                             Marcar pendiente
                           </button>
@@ -376,23 +441,25 @@ function ContactsPage({ can, currentUser }) {
                             !canChangeContactActivationStatus ||
                             isContactInactive(contact)
                           }
-                          onClick={() =>
+                          onClick={(event) => {
+                            event.stopPropagation();
                             openContactStatusConfirmation(
                               contact,
                               "desactivado",
-                            )
-                          }
+                            );
+                          }}
                         >
                           Desactivar
                         </button>
                         {can("oportunidades.read") && (
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={(event) => {
+                              event.stopPropagation();
                               runContactAction(() =>
                                 openContactOppsModal(contact),
-                              )
-                            }
+                              );
+                            }}
                           >
                             Oportunidades
                           </button>

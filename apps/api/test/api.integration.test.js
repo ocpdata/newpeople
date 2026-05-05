@@ -4685,8 +4685,8 @@ describe("API integration baseline", () => {
       });
 
     expect(createResponse.status).toBe(409);
-    expect(createResponse.body.code).toBe("CONTACT_DUPLICATE_REVIEW_REQUIRED");
-    expect(createResponse.body.duplicateDecision).toBe("review_required");
+    expect(createResponse.body.code).toBe("CONTACT_DUPLICATE_BLOCKED");
+    expect(createResponse.body.duplicateDecision).toBe("blocked");
     expect(createResponse.body.duplicateWarnings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4779,9 +4779,8 @@ describe("API integration baseline", () => {
         });
 
       expect(createResponse.status).toBe(409);
-      expect(createResponse.body.code).toBe(
-        "CONTACT_DUPLICATE_REVIEW_REQUIRED",
-      );
+      expect(createResponse.body.code).toBe("CONTACT_DUPLICATE_BLOCKED");
+      expect(createResponse.body.duplicateDecision).toBe("blocked");
       expect(createResponse.body.duplicateValidationSource).toBe("ai");
       expect(createResponse.body.duplicateReview).toEqual(
         expect.objectContaining({
@@ -4794,7 +4793,7 @@ describe("API integration baseline", () => {
     }
   });
 
-  test("contactos.create pide confirmacion manual para un nombre casi identico en la misma cuenta cuando IA no esta disponible", async () => {
+  test("contactos.create bloquea automaticamente un nombre casi identico en la misma cuenta cuando IA no esta disponible", async () => {
     const duplicateAccountId = await createDirectAccount({
       ownerUserId: ctx.contactCreateUserId,
       actorUserId: ctx.contactCreateUserId,
@@ -4852,12 +4851,8 @@ describe("API integration baseline", () => {
         });
 
       expect(createResponse.status).toBe(409);
-      expect(createResponse.body.code).toBe(
-        "CONTACT_DUPLICATE_CONFIRMATION_REQUIRED",
-      );
-      expect(createResponse.body.duplicateDecision).toBe(
-        "confirmation_required",
-      );
+      expect(createResponse.body.code).toBe("CONTACT_DUPLICATE_BLOCKED");
+      expect(createResponse.body.duplicateDecision).toBe("blocked");
       expect(createResponse.body.duplicateWarnings).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

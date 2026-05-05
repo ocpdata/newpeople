@@ -266,7 +266,11 @@ function AccountsListSection({
         <tbody>
           {visibleAccounts.length > 0 ? (
             pagedAccounts.map((account) => (
-              <tr key={account.id}>
+              <tr
+                key={account.id}
+                className="accounts-row-clickable"
+                onClick={() => openEditAccountModal(account.id)}
+              >
                 <td>{account.id}</td>
                 <td>{account.name}</td>
                 <td>{account.account_type}</td>
@@ -278,12 +282,18 @@ function AccountsListSection({
                     {getAccountStatusLabel(account)}
                   </span>
                 </td>
-                <td className="accounts-actions-cell">
+                <td
+                  className="accounts-actions-cell"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   <div className="user-kebab-wrap accounts-kebab-wrap">
                     <button
                       type="button"
                       className="kebab-btn"
-                      onClick={() => toggleAccountMenu(account.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleAccountMenu(account.id);
+                      }}
                       aria-label="Abrir acciones"
                     >
                       ⋮
@@ -292,9 +302,10 @@ function AccountsListSection({
                       <div className="user-kebab-menu">
                         <button
                           type="button"
-                          onClick={() =>
-                            runAccountAction(() => openEditAccountModal(account.id))
-                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            runAccountAction(() => openEditAccountModal(account.id));
+                          }}
                         >
                           Editar
                         </button>
@@ -303,9 +314,10 @@ function AccountsListSection({
                           disabled={
                             !canActivateAccounts || isAccountActive(account)
                           }
-                          onClick={() =>
-                            openAccountStatusConfirmation(account, "activada")
-                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openAccountStatusConfirmation(account, "activada");
+                          }}
                         >
                           Activar
                         </button>
@@ -315,12 +327,13 @@ function AccountsListSection({
                             disabled={
                               !canActivateAccounts || isAccountPending(account)
                             }
-                            onClick={() =>
+                            onClick={(event) => {
+                              event.stopPropagation();
                               openAccountStatusConfirmation(
                                 account,
                                 "pendiente_activacion",
-                              )
-                            }
+                              );
+                            }}
                           >
                             Marcar pendiente
                           </button>
@@ -330,18 +343,20 @@ function AccountsListSection({
                           disabled={
                             !canActivateAccounts || isAccountInactive(account)
                           }
-                          onClick={() =>
-                            openAccountStatusConfirmation(account, "desactivada")
-                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openAccountStatusConfirmation(account, "desactivada");
+                          }}
                         >
                           Desactivar
                         </button>
                         {canReadOpportunities && (
                           <button
                             type="button"
-                            onClick={() =>
-                              runAccountAction(() => openAccountOppsModal(account))
-                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runAccountAction(() => openAccountOppsModal(account));
+                            }}
                           >
                             Oportunidades
                           </button>
@@ -349,9 +364,10 @@ function AccountsListSection({
                         {canReadContacts && (
                           <button
                             type="button"
-                            onClick={() =>
-                              runAccountAction(() => openAccountContactsModal(account))
-                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runAccountAction(() => openAccountContactsModal(account));
+                            }}
                           >
                             Contactos
                           </button>

@@ -5,34 +5,27 @@ function getDuplicateSeverityLabel(severity) {
 }
 
 function getDuplicateDecisionTitle(decision) {
-  if (decision === "review_required") {
-    return "Posible duplicado fuerte detectado";
+  if (decision === "blocked") {
+    return "Creación bloqueada por posible duplicado";
   }
-  return "Posible duplicado antes de crear";
+  return "Posible duplicado detectado";
 }
 
 function getDuplicateDecisionEyebrow(decision) {
-  if (decision === "review_required") {
-    return "Revision obligatoria antes de crear";
+  if (decision === "blocked") {
+    return "Bloqueo automático anti-duplicados";
   }
-  return "Confirmacion recomendada antes de crear";
+  return "Coincidencia detectada antes de crear";
 }
 
 function getDuplicateDecisionBadgeClass(decision) {
-  return decision === "review_required" ? "high" : "medium";
-}
-
-function getDuplicateDecisionConfirmText(decision, savingContact) {
-  if (savingContact) {
-    return "Creando...";
-  }
-  return decision === "review_required" ? "Crear aun asi" : "Confirmar y crear";
+  return decision === "blocked" ? "high" : "medium";
 }
 
 function getDuplicateReviewVerdictLabel(verdict) {
   if (verdict === "likely_duplicate") return "Probable duplicado";
   if (verdict === "likely_distinct") return "Probablemente distinto";
-  return "Revision no concluyente";
+  return "Revisión no concluyente";
 }
 
 function getDuplicateReviewConfidenceLabel(confidence) {
@@ -53,9 +46,7 @@ function buildDraftContactName(form) {
 function ContactDuplicateReviewModal({
   review,
   draftContactName,
-  savingContact,
   onCancel,
-  onConfirm,
   onOpenCandidate,
 }) {
   if (!review) return null;
@@ -108,9 +99,7 @@ function ContactDuplicateReviewModal({
                 review.duplicateDecision,
               )}`}
             >
-              {review.duplicateDecision === "review_required"
-                ? "Detener y revisar"
-                : "Confirmar antes de seguir"}
+              Bloqueado
             </span>
             <p className="account-duplicate-review-side-note">
               {primaryCandidate
@@ -124,7 +113,7 @@ function ContactDuplicateReviewModal({
           <section className="account-ai-subsection account-duplicate-review-section">
             <div className="account-duplicate-review-section-header">
               <div>
-                <h5>Revision IA adicional</h5>
+                <h5>Revisión IA adicional</h5>
                 <p>
                   {getDuplicateReviewSourceLabel(
                     review.duplicateValidationSource,
@@ -155,7 +144,7 @@ function ContactDuplicateReviewModal({
               {aiRecommendation && aiRecommendation !== aiSummary ? (
                 <div className="account-duplicate-review-callout">
                   <span className="account-duplicate-review-summary-label">
-                    Recomendacion
+                    Recomendación
                   </span>
                   <p className="field-hint">{aiRecommendation}</p>
                 </div>
@@ -174,8 +163,8 @@ function ContactDuplicateReviewModal({
               </p>
             </div>
             <p className="account-duplicate-review-warning-note">
-              Si abres un contacto existente desde aqui, se perdera este intento
-              de creacion y tendras que capturarlo de nuevo.
+              Si abres un contacto existente desde aquí, se perderá este intento
+              de creación y tendrás que capturarlo de nuevo.
             </p>
           </div>
           <div className="account-ai-card-list account-duplicate-review-card-list">
@@ -210,8 +199,8 @@ function ContactDuplicateReviewModal({
                     <dd>{warning.email || "Sin e-mail"}</dd>
                   </div>
                   <div>
-                    <dt>Movil</dt>
-                    <dd>{warning.mobile || "Sin movil"}</dd>
+                    <dt>Móvil</dt>
+                    <dd>{warning.mobile || "Sin móvil"}</dd>
                   </div>
                   <div>
                     <dt>Cargo</dt>
@@ -219,8 +208,8 @@ function ContactDuplicateReviewModal({
                   </div>
                 </dl>
                 <div className="account-duplicate-review-loss-note">
-                  Si abres este contacto existente, se perdera el intento actual
-                  de creacion.
+                  Si abres este contacto existente, se perderá el intento actual
+                  de creación.
                 </div>
                 <div className="account-duplicate-review-inline-actions">
                   <button
@@ -239,17 +228,6 @@ function ContactDuplicateReviewModal({
         <div className="modal-buttons account-duplicate-review-actions">
           <button type="button" className="btn-secondary" onClick={onCancel}>
             Volver al formulario
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={onConfirm}
-            disabled={savingContact}
-          >
-            {getDuplicateDecisionConfirmText(
-              review.duplicateDecision,
-              savingContact,
-            )}
           </button>
         </div>
       </div>
@@ -270,9 +248,9 @@ export default function ContactFormModal({
   onClose,
   onSubmit,
   onDismissDuplicateReview,
-  onConfirmDuplicateOverride,
   onOpenDuplicateCandidate,
   onChange,
+  onNormalizeField,
   onAccountChange,
   getContactStatusIconBadgeClass,
   getContactStatusLabel,
@@ -282,12 +260,35 @@ export default function ContactFormModal({
     return null;
   }
 
+  function handleModalClose() {
+    if (savingContact) {
+      return;
+    }
+
+    onClose();
+  }
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleModalClose}>
       <div
-        className="modal-dialog modal-dialog-account"
+        className={`modal-dialog modal-dialog-account${savingContact ? " modal-dialog-busy" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
+        {savingContact ? (
+          <div className="modal-dialog-blocking-overlay" aria-live="polite">
+            <div className="modal-dialog-blocking-card">
+              <strong>
+                {editingContactId
+                  ? "Estamos actualizando el contacto"
+                  : "Estamos creando el contacto"}
+              </strong>
+              <span>
+                Esto puede tomar unos segundos. No cierres esta ventana mientras
+                completamos el registro.
+              </span>
+            </div>
+          </div>
+        ) : null}
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
             <h3 className="modal-title">
@@ -309,7 +310,7 @@ export default function ContactFormModal({
               </span>
               <span
                 className={getContactStatusIconBadgeClass(currentContact)}
-                title="Estado de activacion"
+                title="Estado de activación"
               >
                 <span className="status-dot" aria-hidden="true" />
                 {getContactStatusLabel(currentContact)}
@@ -329,6 +330,7 @@ export default function ContactFormModal({
                 <input
                   value={form.firstName}
                   onChange={(e) => onChange("firstName", e.target.value)}
+                  onBlur={(e) => onNormalizeField("firstName", e.target.value)}
                   required
                 />
               </div>
@@ -339,6 +341,7 @@ export default function ContactFormModal({
                 <input
                   value={form.lastName}
                   onChange={(e) => onChange("lastName", e.target.value)}
+                  onBlur={(e) => onNormalizeField("lastName", e.target.value)}
                   required
                 />
               </div>
@@ -364,6 +367,9 @@ export default function ContactFormModal({
                 <input
                   value={form.positionTitle}
                   onChange={(e) => onChange("positionTitle", e.target.value)}
+                  onBlur={(e) =>
+                    onNormalizeField("positionTitle", e.target.value)
+                  }
                 />
               </div>
               <div className="field-group">
@@ -382,14 +388,14 @@ export default function ContactFormModal({
                 />
               </div>
               <div className="field-group">
-                <label>Telefono fijo</label>
+                <label>Teléfono fijo</label>
                 <input
                   value={form.phone}
                   onChange={(e) => onChange("phone", e.target.value)}
                 />
               </div>
               <div className="field-group">
-                <label>Extension</label>
+                <label>Extensión</label>
                 <input
                   value={form.phoneExtension}
                   onChange={(e) => onChange("phoneExtension", e.target.value)}
@@ -400,17 +406,18 @@ export default function ContactFormModal({
                 <input
                   value={form.department}
                   onChange={(e) => onChange("department", e.target.value)}
+                  onBlur={(e) => onNormalizeField("department", e.target.value)}
                 />
               </div>
             </div>
           </section>
 
           <section className="account-form-section contact-modal-section contact-commercial-section">
-            <h4>Relacion comercial</h4>
+            <h4>Relación comercial</h4>
             <div className="grid-form account-grid-main">
               <div className="field-group">
                 <label>
-                  Participacion de compra{" "}
+                  Participación de compra{" "}
                   <span className="required-mark">*</span>
                 </label>
                 <select
@@ -430,7 +437,7 @@ export default function ContactFormModal({
               </div>
               <div className="field-group">
                 <label>
-                  Relacion con nosotros <span className="required-mark">*</span>
+                  Relación con nosotros <span className="required-mark">*</span>
                 </label>
                 <select
                   value={form.relationshipTypeId}
@@ -449,7 +456,7 @@ export default function ContactFormModal({
               </div>
               <div className="field-group">
                 <label>
-                  Situacion en empresa <span className="required-mark">*</span>
+                  Situación en empresa <span className="required-mark">*</span>
                 </label>
                 <select
                   value={form.employmentStatusId}
@@ -500,10 +507,10 @@ export default function ContactFormModal({
           </section>
 
           <section className="account-form-section contact-modal-section contact-location-section">
-            <h4>Ubicacion (si difiere de la cuenta)</h4>
+            <h4>Ubicación (si difiere de la cuenta)</h4>
             <div className="grid-form account-grid-location">
               <div className="field-group">
-                <label>Pais</label>
+                <label>País</label>
                 <select
                   value={form.countryId}
                   onChange={(e) => onChange("countryId", e.target.value)}
@@ -531,14 +538,14 @@ export default function ContactFormModal({
                 />
               </div>
               <div className="field-group">
-                <label>Direccion</label>
+                <label>Dirección</label>
                 <input
                   value={form.addressLine}
                   onChange={(e) => onChange("addressLine", e.target.value)}
                 />
               </div>
               <div className="field-group">
-                <label>Codigo postal</label>
+                <label>Código postal</label>
                 <input
                   value={form.postalCode}
                   onChange={(e) => onChange("postalCode", e.target.value)}
@@ -549,7 +556,7 @@ export default function ContactFormModal({
 
           {editingContactId && editContactAudit ? (
             <section className="account-form-section contact-modal-section modal-audit-strip">
-              <h4>Auditoria del contacto</h4>
+              <h4>Auditoría del contacto</h4>
               <div className="role-audit-grid">
                 <div className="audit-item">
                   <span className="audit-label">Creado por</span>
@@ -558,7 +565,7 @@ export default function ContactFormModal({
                   </span>
                 </div>
                 <div className="audit-item">
-                  <span className="audit-label">Fecha de creacion</span>
+                  <span className="audit-label">Fecha de creación</span>
                   <span className="audit-value">
                     {formatDateTime(editContactAudit.createdAt)}
                   </span>
@@ -570,7 +577,7 @@ export default function ContactFormModal({
                   </span>
                 </div>
                 <div className="audit-item">
-                  <span className="audit-label">Fecha de modificacion</span>
+                  <span className="audit-label">Fecha de modificación</span>
                   <span className="audit-value">
                     {formatDateTime(editContactAudit.updatedAt)}
                   </span>
@@ -580,7 +587,12 @@ export default function ContactFormModal({
           ) : null}
 
           <div className="modal-buttons" style={{ marginTop: 16 }}>
-            <button type="button" className="btn-secondary" onClick={onClose}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleModalClose}
+              disabled={savingContact}
+            >
               Cancelar
             </button>
             <button
@@ -604,9 +616,7 @@ export default function ContactFormModal({
         <ContactDuplicateReviewModal
           review={contactDuplicateReview}
           draftContactName={buildDraftContactName(form)}
-          savingContact={savingContact}
           onCancel={onDismissDuplicateReview}
-          onConfirm={onConfirmDuplicateOverride}
           onOpenCandidate={onOpenDuplicateCandidate}
         />
       ) : null}
