@@ -1506,6 +1506,7 @@ export function useOpportunitiesPage({
 
   function closeOpportunityModal() {
     if (savingOpportunity || savingCommercialAction) return;
+    setError("");
     setShowOpportunityModal(false);
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);

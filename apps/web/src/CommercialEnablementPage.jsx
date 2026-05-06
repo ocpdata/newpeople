@@ -153,7 +153,7 @@ export default function CommercialEnablementPage({ currentUser }) {
 
     const [enablementResult, executionResult] = await Promise.allSettled([
       api.get("/api/commercial-enablement/dashboard"),
-      api.get("/api/execution-commercial/dashboard"),
+      api.get("/api/commercial-development/dashboard"),
     ]);
 
     if (enablementResult.status !== "fulfilled") {

@@ -973,6 +973,448 @@ button:disabled {
   line-height: 1.45;
 }
 
+.commercial-development-page {
+  display: grid;
+  gap: 1.2rem;
+  background:
+    radial-gradient(circle at top left, rgba(220, 233, 216, 0.75), transparent 28%),
+    radial-gradient(circle at top right, rgba(255, 236, 209, 0.72), transparent 30%),
+    linear-gradient(180deg, #fffdf8 0%, #f6f6ef 100%);
+}
+
+.commercial-development-hero,
+.commercial-development-inline-row,
+.commercial-development-toolbar,
+.commercial-development-title-row,
+.commercial-development-opportunity-meta,
+.commercial-development-score-row,
+.commercial-development-stage-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.commercial-development-hero {
+  align-items: flex-start;
+}
+
+.commercial-development-kicker {
+  display: inline-flex;
+  padding: 0.3rem 0.72rem;
+  border-radius: 999px;
+  background: #e8f1df;
+  color: #385a2d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commercial-development-title-row h2 {
+  margin: 0.2rem 0 0;
+}
+
+.commercial-development-toolbar {
+  align-items: end;
+}
+
+.commercial-development-toolbar label,
+.commercial-development-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: #57685b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.commercial-development-toolbar select,
+.commercial-development-form input,
+.commercial-development-form textarea,
+.commercial-development-form select {
+  width: 100%;
+}
+
+.commercial-development-metrics-grid,
+.commercial-development-stage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.85rem;
+}
+
+.commercial-development-metric,
+.commercial-development-panel,
+.commercial-development-stage-card,
+.commercial-development-priority-card,
+.commercial-development-note,
+.commercial-development-mini-panel,
+.commercial-development-spotlight {
+  border: 1px solid rgba(58, 73, 49, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 34px rgba(44, 56, 35, 0.08);
+}
+
+.commercial-development-metric {
+  padding: 1rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.commercial-development-metric span {
+  color: #6f7260;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commercial-development-metric strong {
+  color: #223120;
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.commercial-development-metric p {
+  margin: 0;
+  color: #616754;
+  line-height: 1.4;
+}
+
+.commercial-development-metric.is-good {
+  background: linear-gradient(180deg, #f1fbef 0%, #ffffff 100%);
+}
+
+.commercial-development-metric.is-warn,
+.commercial-development-note.is-action {
+  background: linear-gradient(180deg, #fff8eb 0%, #ffffff 100%);
+}
+
+.commercial-development-metric.is-danger {
+  background: linear-gradient(180deg, #fff0ed 0%, #ffffff 100%);
+}
+
+.commercial-development-metric.is-soft {
+  background: linear-gradient(180deg, #f7f8f2 0%, #ffffff 100%);
+}
+
+.commercial-development-top-grid,
+.commercial-development-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
+  gap: 1rem;
+}
+
+.commercial-development-side-stack,
+.commercial-development-list,
+.commercial-development-form,
+.commercial-development-subgrid,
+.commercial-development-hero-copy,
+.commercial-development-panel,
+.commercial-development-spotlight,
+.commercial-development-mini-panel,
+.commercial-development-stage-card,
+.commercial-development-note {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.commercial-development-spotlight,
+.commercial-development-panel,
+.commercial-development-mini-panel {
+  padding: 1rem;
+}
+
+.commercial-development-section-header h3,
+.commercial-development-form h4,
+.commercial-development-mini-panel h4 {
+  margin: 0;
+}
+
+.commercial-development-section-header p,
+.commercial-development-note p {
+  margin: 0;
+  color: #5e6557;
+  line-height: 1.45;
+}
+
+.commercial-development-section-header span,
+.commercial-development-note span,
+.commercial-development-stage-card span,
+.commercial-development-opportunity-meta span,
+.commercial-development-score-row span {
+  color: #6a7164;
+  font-size: 12px;
+}
+
+.commercial-development-snapshot-table-wrap {
+  overflow-x: auto;
+}
+
+.commercial-development-gap-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.commercial-development-gap-summary-item {
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: #f6f6ef;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.commercial-development-gap-summary-item.is-danger {
+  background: linear-gradient(180deg, #fff0ed 0%, #ffffff 100%);
+}
+
+.commercial-development-gap-summary-item.is-soft {
+  background: linear-gradient(180deg, #f7f8f2 0%, #ffffff 100%);
+}
+
+.commercial-development-gap-summary-item span,
+.commercial-development-gap-coverage-grid span {
+  color: #6f7260;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commercial-development-gap-summary-item strong,
+.commercial-development-gap-coverage-grid strong {
+  color: #223120;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.commercial-development-gap-readout {
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: #f4f7ee;
+  color: #50614a;
+  line-height: 1.5;
+}
+
+.commercial-development-gap-coverage-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.commercial-development-gap-coverage-card {
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.commercial-development-gap-coverage-card strong {
+  color: #223120;
+}
+
+.commercial-development-gap-coverage-card p {
+  margin: 0;
+  color: #56614f;
+  line-height: 1.45;
+}
+
+.commercial-development-gap-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.commercial-development-gap-coverage-grid > div,
+.commercial-development-gap-coverage-meta {
+  padding: 0.85rem;
+  border-radius: 14px;
+  background: #f8f8f2;
+}
+
+.commercial-development-gap-coverage-meta {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.commercial-development-gap-coverage-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.commercial-development-snapshot-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.commercial-development-snapshot-table th,
+.commercial-development-snapshot-table td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid #ece8dc;
+  text-align: left;
+  font-size: 13px;
+}
+
+.commercial-development-snapshot-table th {
+  color: #6a6d60;
+}
+
+.commercial-development-pill,
+.commercial-development-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.62rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.commercial-development-pill.is-high,
+.commercial-development-tag {
+  background: #fff0ed;
+  color: #a64224;
+}
+
+.commercial-development-pill.is-medium {
+  background: #fff7df;
+  color: #9a6400;
+}
+
+.commercial-development-pill.is-low {
+  background: #eef7e7;
+  color: #3c6a31;
+}
+
+.commercial-development-priority-card.is-selected {
+  border-color: rgba(68, 99, 44, 0.32);
+}
+
+.commercial-development-priority-button {
+  width: 100%;
+  padding: 1rem;
+  border: 0;
+  background: transparent;
+  display: grid;
+  gap: 0.65rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.commercial-development-priority-button p,
+.commercial-development-stage-card p {
+  margin: 0;
+  color: #4e5447;
+  line-height: 1.45;
+}
+
+.commercial-development-detail-panel {
+  align-content: start;
+}
+
+.commercial-development-opportunity-summary,
+.commercial-development-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.commercial-development-opportunity-summary > div {
+  padding: 0.85rem;
+  border-radius: 16px;
+  background: #f6f6ef;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.commercial-development-opportunity-summary span {
+  color: #6f7260;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.commercial-development-opportunity-summary strong {
+  color: #24301f;
+}
+
+.commercial-development-subgrid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.commercial-development-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.commercial-development-help {
+  position: relative;
+}
+
+.commercial-development-help-trigger {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(42, 58, 32, 0.14);
+  background: #fbfcf7;
+  color: #466031;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.commercial-development-help-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.commercial-development-help-popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 5;
+  width: min(360px, 80vw);
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(42, 58, 32, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 36px rgba(41, 51, 32, 0.12);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.commercial-development-help-popover p {
+  margin: 0;
+  color: #54604a;
+  line-height: 1.45;
+}
+
+@media (max-width: 980px) {
+  .commercial-development-top-grid,
+  .commercial-development-main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .commercial-development-hero {
+    flex-direction: column;
+  }
+
+  .commercial-development-metrics-grid,
+  .commercial-development-stage-grid,
+  .commercial-development-opportunity-summary,
+  .commercial-development-form-grid,
+  .commercial-development-subgrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .potential-opportunities-page {
   display: grid;
   gap: 1.5rem;
@@ -7851,6 +8293,17 @@ td {
   line-height: 1.35;
 }
 
+.opportunity-modal-error {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #f3c2c2;
+  background: #fff4f4;
+  color: #a12626;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .record-id-badge {
   display: inline-flex;
   align-items: center;
@@ -8566,7 +9019,6 @@ td {
   .commercial-enable-board-grid {
     grid-template-columns: 1fr;
   }
-  .opportunity-documents-toolbar-head,
 }
 
 .opportunity-documents-suggestion-item--wide {

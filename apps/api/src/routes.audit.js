@@ -2,6 +2,7 @@ import express from "express";
 import { z } from "zod";
 import { query } from "./db.js";
 import { requirePermission } from "./auth.js";
+import { parseAuditChangedFields } from "./audit.js";
 
 const router = express.Router();
 
@@ -126,10 +127,7 @@ router.get("/", requirePermission("audit.read"), async (req, res) => {
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
     items: rows.map((row) => ({
       ...row,
-      changed_fields:
-        typeof row.changed_fields === "string"
-          ? JSON.parse(row.changed_fields)
-          : row.changed_fields || null,
+      changed_fields: parseAuditChangedFields(row.changed_fields),
     })),
   });
 });

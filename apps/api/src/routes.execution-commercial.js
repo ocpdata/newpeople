@@ -10,6 +10,7 @@ import {
   buildOpportunityWorkspace,
   saveOpportunityAction,
 } from "./opportunity-workspace/service.js";
+import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 
 const router = express.Router();
 
@@ -23,6 +24,8 @@ const STAGE_SLA_DAYS = {
 };
 
 const CADENCE_VISIBLE_LIMIT = 10;
+const DEVELOPMENT_PRIORITY_LIMIT = 12;
+const DEVELOPMENT_ACTION_LIMIT = 10;
 
 const NEXT_STEP_ACTION_TYPES = new Set([
   "next_step",
@@ -75,12 +78,628 @@ const CADENCE_LIBRARY = {
 
 router.use(async (_req, _res, next) => {
   try {
-    await ensureCommercialExecutionSchema();
+    await Promise.all([
+      ensureCommercialExecutionSchema(),
+      ensureCommercialPlanningSchema(),
+    ]);
     next();
   } catch (error) {
     next(error);
   }
 });
+
+function getQuarterLabel(year, quarter) {
+  return `T${quarter} ${year}`;
+}
+
+function roundAmount(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function resolveQuarterSelection(input) {
+  const now = new Date();
+  const fallbackQuarter = Math.floor(now.getMonth() / 3) + 1;
+  const year = Number(input?.year);
+  const quarter = Number(input?.quarter);
+  return {
+    year: Number.isInteger(year) && year >= 2020 && year <= 2100
+      ? year
+      : now.getFullYear(),
+    quarter: Number.isInteger(quarter) && quarter >= 1 && quarter <= 4
+      ? quarter
+      : fallbackQuarter,
+  };
+}
+
+function getQuarterDateRange(year, quarter) {
+  const start = new Date(Date.UTC(year, (quarter - 1) * 3, 1));
+  const end = new Date(Date.UTC(year, quarter * 3, 0));
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+}
+
+function isDateWithinQuarter(value, year, quarter) {
+  const isoDate = toIsoDate(value);
+  if (!isoDate) return false;
+  const { startDate, endDate } = getQuarterDateRange(year, quarter);
+  return isoDate >= startDate && isoDate <= endDate;
+}
+
+function getStageConfidence(stageCode, stageOrder = 0, maxStageOrder = 6) {
+  const mapped = {
+    contacto_inicial: 0.12,
+    identificacion_oportunidad: 0.18,
+    descubrimiento: 0.28,
+    validacion_valor: 0.45,
+    propuesta: 0.68,
+    negociacion: 0.84,
+    cierre: 0.94,
+    waiting: 0.4,
+  }[stageCode];
+
+  if (mapped) {
+    return mapped;
+  }
+
+  if (!maxStageOrder) {
+    return 0.35;
+  }
+
+  return clampNumber(Number(stageOrder || 0) / Number(maxStageOrder || 1), 0.1, 0.95);
+}
+
+function isCommittedStage(stageCode) {
+  return stageCode === "negociacion" || stageCode === "waiting";
+}
+
+async function listDevelopmentPeriods() {
+  const rows = await query(
+    `SELECT p.id, p.plan_year, p.plan_quarter, p.status,
+            EXISTS(
+              SELECT 1
+              FROM commercial_planning_versions v
+              WHERE v.period_id = p.id AND v.status = 'active'
+            ) AS has_active_version
+     FROM commercial_planning_periods p
+     ORDER BY p.plan_year DESC, p.plan_quarter DESC, p.id DESC
+     LIMIT 8`,
+    [],
+  ).catch(() => []);
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    year: Number(row.plan_year),
+    quarter: Number(row.plan_quarter),
+    label: getQuarterLabel(row.plan_year, row.plan_quarter),
+    status: row.status,
+    hasActiveVersion: Boolean(row.has_active_version),
+  }));
+}
+
+async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
+  const periodRows = await query(
+    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status, p.notes,
+            v.id AS version_id, v.version_number, v.status AS version_status, v.label AS version_label
+     FROM commercial_planning_periods p
+     LEFT JOIN commercial_planning_versions v ON v.id = (
+       SELECT v2.id
+       FROM commercial_planning_versions v2
+       WHERE v2.period_id = p.id
+       ORDER BY CASE v2.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+                v2.version_number DESC,
+                v2.id DESC
+       LIMIT 1
+     )
+     WHERE p.plan_year = ? AND p.plan_quarter = ?
+     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+              p.id DESC
+     LIMIT 1`,
+    [year, quarter],
+  ).catch(() => []);
+
+  const periodRow = periodRows[0] || null;
+  const hasGlobalScope = hasGlobalOpportunityScope(user);
+  const targetParams = [];
+  let targetScopeWhere = "";
+  if (periodRow?.version_id) {
+    targetParams.push(Number(periodRow.version_id));
+    if (!hasGlobalScope) {
+      targetScopeWhere = "AND t.seller_user_id = ?";
+      targetParams.push(Number(user.id) || 0);
+    }
+  }
+
+  const targetRows = periodRow?.version_id
+    ? await query(
+        `SELECT t.seller_user_id, t.sales_quota_amount, t.currency_code,
+                t.expected_margin_percent, t.expected_contribution_amount,
+                t.status, u.full_name AS seller_user_name
+         FROM commercial_planning_targets t
+         INNER JOIN users u ON u.id = t.seller_user_id
+         WHERE t.version_id = ?
+           AND t.status <> 'void'
+           ${targetScopeWhere}
+         ORDER BY u.full_name ASC`,
+        targetParams,
+      ).catch(() => [])
+    : [];
+
+  const { startDate, endDate } = getQuarterDateRange(year, quarter);
+  const wonParams = [];
+  const ownershipJoin = buildOwnershipJoin(user, wonParams);
+  if (!hasGlobalScope) {
+    wonParams.push(Number(user.id));
+  }
+  const wonRows = await query(
+    `SELECT o.seller_user_id,
+            COALESCE(SUM(o.amount_usd), 0) AS won_amount,
+            COUNT(*) AS won_count
+     FROM opportunities o
+     ${ownershipJoin}
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     WHERE ocs.code = 'ganada'
+       AND o.close_date BETWEEN ? AND ?
+       ${hasGlobalScope ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ?)"}
+     GROUP BY o.seller_user_id`,
+    hasGlobalScope
+      ? [...wonParams, startDate, endDate]
+      : [...wonParams, startDate, endDate, Number(user.id)],
+  ).catch(() => []);
+
+  const wonBySellerId = wonRows.reduce((accumulator, row) => {
+    accumulator.set(
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+      {
+        wonAmount: roundAmount(row.won_amount),
+        wonCount: Number(row.won_count || 0),
+      },
+    );
+    return accumulator;
+  }, new Map());
+
+  const stageOrderValues = openItems.map((item) => Number(item.stageId || 0));
+  const maxStageOrder = stageOrderValues.length
+    ? Math.max(...stageOrderValues)
+    : 6;
+  const openItemsInQuarter = openItems.filter((item) =>
+    isDateWithinQuarter(item.closeDate, year, quarter),
+  );
+  const openBySellerId = openItemsInQuarter.reduce((accumulator, item) => {
+    const key = item.sellerUserId || null;
+    const current = accumulator.get(key) || {
+      openAmount: 0,
+      committedOpenAmount: 0,
+      weightedOpenAmount: 0,
+      openCount: 0,
+    };
+    const stageConfidence = getStageConfidence(
+      item.stageCode,
+      item.stageId,
+      maxStageOrder,
+    );
+    current.openAmount += Number(item.amountUsd || 0);
+    if (isCommittedStage(item.stageCode)) {
+      current.committedOpenAmount += Number(item.amountUsd || 0);
+    }
+    current.weightedOpenAmount += Number(item.amountUsd || 0) * stageConfidence;
+    current.openCount += 1;
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  const targetSnapshots = targetRows.map((row) => {
+    const sellerUserId = Number(row.seller_user_id);
+    const won = wonBySellerId.get(sellerUserId) || { wonAmount: 0, wonCount: 0 };
+    const open = openBySellerId.get(sellerUserId) || {
+      openAmount: 0,
+      committedOpenAmount: 0,
+      weightedOpenAmount: 0,
+      openCount: 0,
+    };
+    const quotaAmount = roundAmount(row.sales_quota_amount);
+    const projectedAmount = roundAmount(won.wonAmount + open.weightedOpenAmount);
+    return {
+      sellerUserId,
+      sellerUserName: row.seller_user_name,
+      quotaAmount,
+      currencyCode: row.currency_code || periodRow?.base_currency_code || "USD",
+      expectedMarginPercent: Number(row.expected_margin_percent || 0),
+      expectedContributionAmount: roundAmount(row.expected_contribution_amount),
+      wonAmount: won.wonAmount,
+      wonCount: won.wonCount,
+      openAmount: roundAmount(open.openAmount),
+      committedOpenAmount: roundAmount(open.committedOpenAmount),
+      openCount: open.openCount,
+      weightedOpenAmount: roundAmount(open.weightedOpenAmount),
+      gapAmount: roundAmount(Math.max(quotaAmount - won.wonAmount, 0)),
+      projectedGapAmount: roundAmount(Math.max(quotaAmount - projectedAmount, 0)),
+      attainmentPercent: quotaAmount
+        ? roundAmount((won.wonAmount / quotaAmount) * 100)
+        : null,
+      projectionPercent: quotaAmount
+        ? roundAmount((projectedAmount / quotaAmount) * 100)
+        : null,
+    };
+  });
+
+  const assignedAmount = roundAmount(
+    targetSnapshots.reduce((total, item) => total + Number(item.quotaAmount || 0), 0),
+  );
+  const actualAmount = roundAmount(
+    targetSnapshots.reduce((total, item) => total + Number(item.wonAmount || 0), 0),
+  );
+  const openAmount = roundAmount(
+    targetSnapshots.reduce((total, item) => total + Number(item.openAmount || 0), 0),
+  );
+  const committedOpenAmount = roundAmount(
+    targetSnapshots.reduce(
+      (total, item) => total + Number(item.committedOpenAmount || 0),
+      0,
+    ),
+  );
+  const weightedOpenAmount = roundAmount(
+    targetSnapshots.reduce(
+      (total, item) => total + Number(item.weightedOpenAmount || 0),
+      0,
+    ),
+  );
+  const projectedAmount = roundAmount(actualAmount + weightedOpenAmount);
+  const gapAmount = roundAmount(Math.max(assignedAmount - actualAmount, 0));
+  const projectedGapAmount = roundAmount(
+    Math.max(assignedAmount - projectedAmount, 0),
+  );
+
+  return {
+    period: {
+      id: periodRow ? Number(periodRow.id) : null,
+      year,
+      quarter,
+      label: getQuarterLabel(year, quarter),
+      baseCurrencyCode: periodRow?.base_currency_code || targetSnapshots[0]?.currencyCode || "USD",
+      status: periodRow?.status || "unplanned",
+      hasPlan: Boolean(periodRow),
+      hasPublishedVersion: periodRow?.version_status === "active",
+      versionId: periodRow?.version_id ? Number(periodRow.version_id) : null,
+      versionNumber: periodRow?.version_number ? Number(periodRow.version_number) : null,
+      versionLabel: periodRow?.version_label || null,
+      notes: periodRow?.notes || "",
+      startDate,
+      endDate,
+    },
+    quota: {
+      assignedAmount,
+      actualAmount,
+      openAmount,
+      committedOpenAmount,
+      weightedOpenAmount,
+      projectedAmount,
+      gapAmount,
+      projectedGapAmount,
+      attainmentPercent: assignedAmount
+        ? roundAmount((actualAmount / assignedAmount) * 100)
+        : null,
+      projectionPercent: assignedAmount
+        ? roundAmount((projectedAmount / assignedAmount) * 100)
+        : null,
+      targetCount: targetSnapshots.length,
+    },
+    sellerSnapshots: targetSnapshots,
+  };
+}
+
+function buildPipelineByStage(items, quotaGapAmount = 0) {
+  const maxStageOrder = items.length
+    ? Math.max(...items.map((item) => Number(item.stageId || 0)))
+    : 6;
+  return Array.from(
+    items.reduce((accumulator, item) => {
+      const key = String(item.stageCode || item.stageId || "unknown");
+      const current = accumulator.get(key) || {
+        stageCode: item.stageCode,
+        stageName: item.stageName,
+        opportunityCount: 0,
+        openAmount: 0,
+        weightedAmount: 0,
+        riskyCount: 0,
+        overdueCount: 0,
+        withoutNextStepCount: 0,
+        quotaCoverageShare: 0,
+      };
+      const stageConfidence = getStageConfidence(
+        item.stageCode,
+        item.stageId,
+        maxStageOrder,
+      );
+      current.opportunityCount += 1;
+      current.openAmount += Number(item.amountUsd || 0);
+      current.weightedAmount += Number(item.amountUsd || 0) * stageConfidence;
+      if (item.riskLevel !== "low") current.riskyCount += 1;
+      if (item.nextStep?.isOverdue) current.overdueCount += 1;
+      if (!item.nextStep) current.withoutNextStepCount += 1;
+      accumulator.set(key, current);
+      return accumulator;
+    }, new Map()),
+    ([, item]) => ({
+      ...item,
+      openAmount: roundAmount(item.openAmount),
+      weightedAmount: roundAmount(item.weightedAmount),
+      quotaCoverageShare: quotaGapAmount
+        ? roundAmount((item.weightedAmount / quotaGapAmount) * 100)
+        : null,
+    }),
+  ).sort((left, right) => right.weightedAmount - left.weightedAmount);
+}
+
+function buildDevelopmentRecommendation(item) {
+  if (!item.nextStep) {
+    return "Define un siguiente paso con fecha y responsable para recuperar conducción.";
+  }
+  if (item.nextStep?.isOverdue) {
+    return "Cierra o renegocia hoy el compromiso vencido para no seguir degradando la oportunidad.";
+  }
+  if (item.executionState?.code === "esperando_interno") {
+    return "Destraba la dependencia interna antes de pedir otra reunión al cliente.";
+  }
+  if (item.executionState?.code === "esperando_cliente") {
+    return "Empuja confirmación del cliente con resumen ejecutivo y fecha cerrada de decisión.";
+  }
+  if (item.riskLevel === "high") {
+    return item.riskReasons?.[0] || "Atiende la principal señal de riesgo antes del siguiente hito comercial.";
+  }
+  return getRecommendedNextMove(item.recommendedNextMove);
+}
+
+function getRecommendedNextMove(value) {
+  if (!value) return "Concreta el siguiente movimiento comercial con evidencia y fecha.";
+  if (typeof value === "string") return value;
+  return value.title || value.text || "Concreta el siguiente movimiento comercial con evidencia y fecha.";
+}
+
+function buildPriorityItems(items, planningSnapshot) {
+  const maxAmount = items.length
+    ? Math.max(...items.map((item) => Number(item.amountUsd || 0)), 1)
+    : 1;
+  const maxStageOrder = items.length
+    ? Math.max(...items.map((item) => Number(item.stageId || 0)), 6)
+    : 6;
+  const quotaGapAmount = Number(planningSnapshot?.quota?.gapAmount || 0);
+
+  return items
+    .map((item) => {
+      const amountRatio = Number(item.amountUsd || 0) / maxAmount;
+      const stageConfidence = getStageConfidence(
+        item.stageCode,
+        item.stageId,
+        maxStageOrder,
+      );
+      const impactScore = Math.round(
+        amountRatio * 45 +
+          Math.min(quotaGapAmount > 0 ? Number(item.amountUsd || 0) / quotaGapAmount : 0.45, 1) * 35 +
+          stageConfidence * 20,
+      );
+
+      let riskScore = item.riskLevel === "high" ? 70 : item.riskLevel === "medium" ? 45 : 15;
+      riskScore += Math.min((item.riskReasons || []).length * 6, 18);
+      riskScore += item.nextStep?.isOverdue ? 12 : 0;
+      riskScore += item.executionState?.code === "bloqueada" ? 10 : 0;
+      riskScore += item.executionState?.code === "esperando_interno" ? 8 : 0;
+      riskScore = clampNumber(riskScore, 0, 100);
+
+      const closeDate = item.closeDate ? new Date(item.closeDate) : null;
+      const daysToClose = closeDate && !Number.isNaN(closeDate.getTime())
+        ? Math.ceil((closeDate.getTime() - Date.now()) / 86400000)
+        : null;
+      let urgencyScore = 25;
+      if (daysToClose !== null) {
+        if (daysToClose <= 7) urgencyScore += 35;
+        else if (daysToClose <= 21) urgencyScore += 24;
+        else if (daysToClose <= 45) urgencyScore += 14;
+      }
+      if (item.nextStep?.isOverdue) urgencyScore += 20;
+      if (!item.nextStep) urgencyScore += 12;
+      if (item.daysSinceActivity > item.slaDays) urgencyScore += 10;
+      urgencyScore = clampNumber(urgencyScore, 0, 100);
+
+      const priorityScore = Math.round(
+        impactScore * 0.45 + riskScore * 0.3 + urgencyScore * 0.25,
+      );
+      const gapCoverageShare = quotaGapAmount
+        ? roundAmount((Number(item.amountUsd || 0) / quotaGapAmount) * 100)
+        : null;
+
+      return {
+        ...item,
+        impactScore,
+        riskScore,
+        urgencyScore,
+        priorityScore,
+        stageConfidence: roundAmount(stageConfidence * 100),
+        gapCoverageShare,
+        primaryRecommendation: buildDevelopmentRecommendation(item),
+      };
+    })
+    .sort((left, right) => {
+      if (right.priorityScore !== left.priorityScore) {
+        return right.priorityScore - left.priorityScore;
+      }
+      return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+    });
+}
+
+function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities, quarterPipeline }) {
+  const recommendations = [];
+  const quota = planningSnapshot.quota || {};
+
+  if (!planningSnapshot.period?.hasPlan) {
+    recommendations.push({
+      type: "planning_gap",
+      title: `No existe cuota publicada para ${planningSnapshot.period?.label}`,
+      detail: "Publica una versión activa en Planeación Comercial para medir avance real contra meta.",
+      tone: "medium",
+    });
+  } else if (Number(quota.gapAmount || 0) > 0) {
+    const committedOpenAmount = Number(quota.committedOpenAmount || 0);
+    const weightedOpenAmount = Number(quota.weightedOpenAmount || 0);
+    recommendations.push({
+      type: "quota_gap",
+      title: `Faltan ${quota.gapAmount || 0} para cubrir la cuota del trimestre`,
+      detail:
+        committedOpenAmount >= Number(quota.gapAmount || 0)
+          ? "El pipeline comprometido ya cubre la brecha actual, pero depende de ejecutar bien las oportunidades del tramo final."
+          : committedOpenAmount + weightedOpenAmount >= Number(quota.gapAmount || 0)
+            ? "Lo comprometido no alcanza; necesitas convertir también oportunidades en maduración para cubrir la brecha."
+            : "Ni el pipeline comprometido ni el ponderado actuales alcanzan la brecha; hace falta abrir o acelerar cobertura.",
+      tone:
+        committedOpenAmount >= Number(quota.gapAmount || 0)
+          ? "medium"
+          : committedOpenAmount + weightedOpenAmount >= Number(quota.gapAmount || 0)
+            ? "medium"
+            : "high",
+    });
+  } else {
+    recommendations.push({
+      type: "quota_on_track",
+      title: "La cuota del trimestre ya está cubierta en real",
+      detail: "Protege los cierres ganados y reorienta foco a expansión o margen.",
+      tone: "low",
+    });
+  }
+
+  if (summary.withoutNextStep > 0) {
+    recommendations.push({
+      type: "next_step",
+      title: `${summary.withoutNextStep} oportunidad(es) siguen sin siguiente paso`,
+      detail: "La prioridad operativa más barata es cerrar conducción visible en oportunidades con monto relevante.",
+      tone: "high",
+    });
+  }
+
+  if (summary.waitingOnInternal > 0 || summary.blockedOpportunities > 0) {
+    recommendations.push({
+      type: "internal_blockers",
+      title: "Hay avance detenido por bloqueos internos",
+      detail: `Tienes ${summary.waitingOnInternal || 0} esperando interno y ${summary.blockedOpportunities || 0} bloqueadas. Destrabar interno probablemente mueve más cuota que abrir más pipeline.`,
+      tone: "medium",
+    });
+  }
+
+  const topPriority = priorities[0];
+  if (topPriority) {
+    recommendations.push({
+      type: "focus_opportunity",
+      title: `Empieza por ${topPriority.name}`,
+      detail: topPriority.primaryRecommendation,
+      tone: topPriority.riskLevel === "high" ? "high" : "medium",
+      opportunityId: topPriority.id,
+    });
+  }
+
+  const strongestStage = quarterPipeline[0];
+  if (strongestStage && strongestStage.opportunityCount > 0) {
+    recommendations.push({
+      type: "stage_focus",
+      title: `La mayor cobertura del trimestre está en ${strongestStage.stageName}`,
+      detail: `Esta etapa concentra ${strongestStage.weightedAmount} ponderados. Vale la pena limpiar vacíos y acelerar decisión aquí antes de abrir más frentes.`,
+      tone: "low",
+    });
+  }
+
+  return recommendations.slice(0, 5);
+}
+
+function buildActionsToday({ priorities, activeCadences, pendingInteractions }) {
+  const actionItems = [];
+
+  priorities.forEach((item) => {
+    if (!item.nextStep) {
+      actionItems.push({
+        kind: "next_step",
+        priorityScore: item.priorityScore + 8,
+        opportunityId: item.id,
+        opportunityName: item.name,
+        accountName: item.accountName,
+        title: "Definir siguiente paso",
+        detail: item.primaryRecommendation,
+        dueDate: null,
+      });
+    } else if (item.nextStep.isOverdue) {
+      actionItems.push({
+        kind: "follow_up_overdue",
+        priorityScore: item.priorityScore + 12,
+        opportunityId: item.id,
+        opportunityName: item.name,
+        accountName: item.accountName,
+        title: item.nextStep.title || "Cerrar seguimiento vencido",
+        detail: "El compromiso ya venció y debe renegociarse o completarse hoy.",
+        dueDate: item.nextStep.dueDate || null,
+      });
+    }
+
+    const overdueDependency = (item.dependencies || []).find(
+      (dependency) => dependency.isOverdue,
+    );
+    if (overdueDependency) {
+      actionItems.push({
+        kind: "dependency",
+        priorityScore: item.priorityScore + 10,
+        opportunityId: item.id,
+        opportunityName: item.name,
+        accountName: item.accountName,
+        title: overdueDependency.title,
+        detail: `Resolver ${overdueDependency.dependencyLabel} para liberar avance comercial.`,
+        dueDate: overdueDependency.dueDate || null,
+      });
+    }
+  });
+
+  activeCadences.forEach((cadence) => {
+    const nextRunAt = cadence.nextRunAt ? new Date(cadence.nextRunAt) : null;
+    if (!nextRunAt || nextRunAt.getTime() <= Date.now()) {
+      actionItems.push({
+        kind: "cadence",
+        priorityScore: 70,
+        opportunityId: cadence.opportunityId,
+        opportunityName: cadence.opportunityName,
+        accountName: cadence.accountName,
+        title: cadence.title,
+        detail: cadence.currentStepLabel || "Cadencia lista para ejecutarse",
+        dueDate: cadence.nextRunAt || null,
+      });
+    }
+  });
+
+  pendingInteractions.slice(0, 4).forEach((item) => {
+    actionItems.push({
+      kind: "interaction",
+      priorityScore: 55,
+      opportunityId: item.primaryOpportunityId,
+      opportunityName: item.primaryOpportunityName || "Sin oportunidad principal",
+      accountName: item.accountName,
+      title: item.title,
+      detail: "Resolver interacción pendiente que puede destrabar evidencia o avance.",
+      dueDate: item.createdAt || null,
+    });
+  });
+
+  return actionItems
+    .sort((left, right) => right.priorityScore - left.priorityScore)
+    .slice(0, DEVELOPMENT_ACTION_LIMIT);
+}
 
 function hasGlobalOpportunityScope(user) {
   const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
@@ -981,6 +1600,8 @@ router.get(
   "/dashboard",
   requirePermission("oportunidades.read"),
   async (req, res) => {
+    const quarterSelection = resolveQuarterSelection(req.query || {});
+    const developmentPeriods = await listDevelopmentPeriods();
     const stagesCatalog = await listActiveSalesStages();
     const opportunityRows = await listAccessibleOpportunities(req.user);
     const opportunityIds = opportunityRows.map((row) => Number(row.id));
@@ -1171,6 +1792,13 @@ router.get(
       }),
     );
 
+    const planningSnapshot = await loadPlanningSnapshot({
+      user: req.user,
+      year: quarterSelection.year,
+      quarter: quarterSelection.quarter,
+      openItems: executionItems,
+    });
+
     const sellerStats = Array.from(
       executionItems
         .reduce((accumulator, item) => {
@@ -1271,35 +1899,60 @@ router.get(
         .values(),
     ).sort((left, right) => right.overdueCount - left.overdueCount);
 
+    const summary = {
+      openOpportunities: executionItems.length,
+      riskyOpportunities: executionItems.filter(
+        (item) => item.riskLevel !== "low",
+      ).length,
+      overdueFollowUps: executionItems.filter(
+        (item) =>
+          item.nextStep?.dueDate && getDiffDays(item.nextStep.dueDate) > 0,
+      ).length,
+      withoutNextStep: executionItems.filter((item) => !item.nextStep).length,
+      staleOpportunities: executionItems.filter((item) => item.slaBreached)
+        .length,
+      waitingOnClient: executionItems.filter(
+        (item) => item.executionState.code === "esperando_cliente",
+      ).length,
+      waitingOnInternal: executionItems.filter(
+        (item) => item.executionState.code === "esperando_interno",
+      ).length,
+      blockedOpportunities: executionItems.filter(
+        (item) => item.executionState.code === "bloqueada",
+      ).length,
+      activeCadences: activeCadences.length,
+      openDependencies: dependencyRows.length,
+      overdueDependencies: dependencyRows.filter(
+        (row) => row.due_date && getDiffDays(row.due_date) > 0,
+      ).length,
+      pendingInteractions: pendingInteractions.length,
+    };
+
+    const priorityItems = buildPriorityItems(executionItems, planningSnapshot);
+    const quarterPipeline = buildPipelineByStage(
+      executionItems.filter((item) =>
+        isDateWithinQuarter(
+          item.closeDate,
+          planningSnapshot.period.year,
+          planningSnapshot.period.quarter,
+        ),
+      ),
+      planningSnapshot.quota.gapAmount,
+    );
+    const developmentRecommendations = buildDevelopmentRecommendations({
+      summary,
+      planningSnapshot,
+      priorities: priorityItems,
+      quarterPipeline,
+    });
+    const actionsToday = buildActionsToday({
+      priorities: priorityItems,
+      activeCadences,
+      pendingInteractions,
+    });
+
     res.json({
-      summary: {
-        openOpportunities: executionItems.length,
-        riskyOpportunities: executionItems.filter(
-          (item) => item.riskLevel !== "low",
-        ).length,
-        overdueFollowUps: executionItems.filter(
-          (item) =>
-            item.nextStep?.dueDate && getDiffDays(item.nextStep.dueDate) > 0,
-        ).length,
-        withoutNextStep: executionItems.filter((item) => !item.nextStep).length,
-        staleOpportunities: executionItems.filter((item) => item.slaBreached)
-          .length,
-        waitingOnClient: executionItems.filter(
-          (item) => item.executionState.code === "esperando_cliente",
-        ).length,
-        waitingOnInternal: executionItems.filter(
-          (item) => item.executionState.code === "esperando_interno",
-        ).length,
-        blockedOpportunities: executionItems.filter(
-          (item) => item.executionState.code === "bloqueada",
-        ).length,
-        activeCadences: activeCadences.length,
-        openDependencies: dependencyRows.length,
-        overdueDependencies: dependencyRows.filter(
-          (row) => row.due_date && getDiffDays(row.due_date) > 0,
-        ).length,
-        pendingInteractions: pendingInteractions.length,
-      },
+      summary,
       workboard: executionItems,
       followUps,
       risks: highRisks,
@@ -1317,6 +1970,16 @@ router.get(
         stageStats,
         executionStateStats,
         dependencyStats,
+      },
+      development: {
+        period: planningSnapshot.period,
+        periods: developmentPeriods,
+        quota: planningSnapshot.quota,
+        sellerSnapshots: planningSnapshot.sellerSnapshots,
+        pipelineByStage: quarterPipeline,
+        priorities: priorityItems.slice(0, DEVELOPMENT_PRIORITY_LIMIT),
+        recommendations: developmentRecommendations,
+        actionsToday,
       },
     });
   },

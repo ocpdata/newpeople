@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { requirePermission } from "./auth.js";
-import { logAuditEvent } from "./audit.js";
+import { logAuditEvent, parseAuditChangedFields } from "./audit.js";
 import { query, withTransaction } from "./db.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 
@@ -952,7 +952,7 @@ router.get(
         entityType: row.entity_type,
         entityId: row.entity_id === null ? null : Number(row.entity_id),
         detail: row.detail || "",
-        changedFields: row.changed_fields ? JSON.parse(row.changed_fields) : {},
+        changedFields: parseAuditChangedFields(row.changed_fields),
         performedByUserId:
           row.performed_by_user_id === null
             ? null

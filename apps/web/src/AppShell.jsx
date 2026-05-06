@@ -20,7 +20,9 @@ const AccountsPage = lazy(() => import("./AccountsPage"));
 const InteractionsPage = lazy(() => import("./InteractionsPage"));
 const ProvidersPage = lazy(() => import("./ProvidersPage"));
 const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
-const ExecutionCommercialPage = lazy(() => import("./ExecutionCommercialPage"));
+const CommercialDevelopmentPage = lazy(
+  () => import("./CommercialDevelopmentPage"),
+);
 const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
   () => import("./CommercialEnablementPage"),
@@ -208,15 +210,16 @@ export default function AppShell({
           }
         />
         <Route
-          path="/execution-commercial"
+          path="/commercial-development"
           element={
             can("oportunidades.read") ? (
-              <ExecutionCommercialPage currentUser={currentUser} />
+              <CommercialDevelopmentPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
             )
           }
         />
+        <Route path="/execution-commercial" element={<Navigate to="/commercial-development" replace />} />
         <Route
           path="/commercial-planning"
           element={
@@ -359,21 +362,21 @@ export default function AppShell({
           )}
 
           {(can("oportunidades.read") || canOpenCommercialEnablementShell) && (
-            <SidebarNavGroup title="Ejecucion">
+            <SidebarNavGroup title="Desarrollo">
               {canAccessCommercialPlanning ? (
                 <GuardedNavLink
                   to="/commercial-planning"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Planeacion Comercial
+                  Planeación Comercial
                 </GuardedNavLink>
               ) : null}
               {can("oportunidades.read") ? (
                 <GuardedNavLink
-                  to="/execution-commercial"
+                  to="/commercial-development"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Ejecucion Comercial
+                  Desarrollo Comercial
                 </GuardedNavLink>
               ) : null}
               {canOpenCommercialEnablementShell ? (

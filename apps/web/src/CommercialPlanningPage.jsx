@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import "./commercial-planning.css";
 
 const TAB_OPTIONS = [
   { id: "summary", label: "Resumen" },
+  { id: "periods", label: "Períodos" },
   { id: "targets", label: "Metas trimestrales" },
-  { id: "periods", label: "Periodos" },
-  { id: "audit", label: "Auditoria" },
+  { id: "audit", label: "Auditoría" },
 ];
 
 function formatCurrency(value, currencyCode = "USD") {
@@ -20,6 +20,25 @@ function formatCurrency(value, currencyCode = "USD") {
 function formatPercent(value) {
   if (value === null || value === undefined || value === "") return "Sin dato";
   return `${Number(value).toFixed(2)}%`;
+}
+
+function normalizeDecimalInput(value) {
+  return String(value || "").replace(/,/g, "").trim();
+}
+
+function formatGroupedDecimalInput(value) {
+  const normalized = normalizeDecimalInput(value);
+  if (!normalized) return "";
+
+  const isNegative = normalized.startsWith("-");
+  const unsigned = isNegative ? normalized.slice(1) : normalized;
+  const [integerPartRaw, decimalPart] = unsigned.split(".");
+  const integerPart = integerPartRaw.replace(/\D/g, "") || "0";
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  return `${isNegative ? "-" : ""}${groupedInteger}${
+    decimalPart !== undefined ? `.${decimalPart}` : ""
+  }`;
 }
 
 function formatDateTime(value) {
@@ -47,6 +66,26 @@ function getVersionStatusLabel(status) {
   if (status === "active") return "Vigente";
   if (status === "archived") return "Archivada";
   return status || "Sin estado";
+}
+
+function withCurrentCatalogOption(options, currentValue, valueKey = "code") {
+  if (!currentValue) return options;
+  if (
+    options.some(
+      (option) => String(option?.[valueKey] || "") === String(currentValue),
+    )
+  ) {
+    return options;
+  }
+
+  return [
+    {
+      id: `legacy-${valueKey}-${currentValue}`,
+      [valueKey]: currentValue,
+      name: currentValue,
+    },
+    ...options,
+  ];
 }
 
 function mergeTargetDrafts(versionDetail) {
@@ -106,7 +145,7 @@ function buildTargetPayload(targetDrafts) {
       continue;
     }
 
-    const salesQuotaAmount = Number(draft.salesQuotaAmount);
+    const salesQuotaAmount = Number(normalizeDecimalInput(draft.salesQuotaAmount));
     const expectedMarginPercent = Number(draft.expectedMarginPercent);
     if (!(salesQuotaAmount > 0)) {
       errors.push(
@@ -136,22 +175,14 @@ function buildTargetPayload(targetDrafts) {
   return { targets, errors };
 }
 
-function SummaryCard({ label, value, helper, tone = "" }) {
-  return (
-    <article className={`commercial-planning-summary-card ${tone}`.trim()}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{helper}</p>
-    </article>
-  );
-}
-
 export default function CommercialPlanningPage({ can }) {
   const [activeTab, setActiveTab] = useState("summary");
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [periods, setPeriods] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
   const [selectedPeriodId, setSelectedPeriodId] = useState(null);
   const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [periodDetail, setPeriodDetail] = useState(null);
@@ -164,6 +195,7 @@ export default function CommercialPlanningPage({ can }) {
   const [closingPeriod, setClosingPeriod] = useState(false);
   const [creatingPeriod, setCreatingPeriod] = useState(false);
   const [publishJustification, setPublishJustification] = useState("");
+  const helpPopoverRef = useRef(null);
   const [periodForm, setPeriodForm] = useState(() => {
     const now = new Date();
     const quarter = Math.floor(now.getMonth() / 3) + 1;
@@ -244,11 +276,35 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar la planeacion comercial",
+          "No fue posible cargar la planeación comercial",
         ),
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadCurrencies() {
+    try {
+      const response = await api.get("/api/catalogs/currencies");
+      const nextCurrencies = response.data || [];
+      setCurrencies(nextCurrencies);
+      if (nextCurrencies.length) {
+        setPeriodForm((current) => {
+          const currentCode = String(current.baseCurrencyCode || "").trim();
+          const hasCurrentCode = nextCurrencies.some(
+            (option) => String(option.code || "") === currentCode,
+          );
+          return {
+            ...current,
+            baseCurrencyCode: hasCurrentCode
+              ? currentCode
+              : String(nextCurrencies[0].code || "USD"),
+          };
+        });
+      }
+    } catch (_requestError) {
+      setCurrencies([]);
     }
   }
 
@@ -270,7 +326,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar la version seleccionada",
+          "No fue posible cargar la versión seleccionada",
         ),
       );
     }
@@ -290,7 +346,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar la auditoria de planeacion comercial",
+          "No fue posible cargar la auditoría de planeación comercial",
         ),
       );
     }
@@ -298,6 +354,7 @@ export default function CommercialPlanningPage({ can }) {
 
   useEffect(() => {
     loadPeriods();
+    loadCurrencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -314,6 +371,30 @@ export default function CommercialPlanningPage({ can }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, periodDetail?.period?.id]);
+
+  useEffect(() => {
+    if (!isHelpOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (!helpPopoverRef.current?.contains(event.target)) {
+        setIsHelpOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsHelpOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isHelpOpen]);
 
   function updateTargetDraft(sellerUserId, field, value) {
     setTargetDrafts((current) =>
@@ -347,7 +428,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible crear el periodo de planeacion",
+          "No fue posible crear el período de planeación",
         ),
       );
     } finally {
@@ -403,7 +484,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible crear una nueva version",
+          "No fue posible crear una nueva versión",
         ),
       );
     } finally {
@@ -431,7 +512,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible publicar la version seleccionada",
+          "No fue posible publicar la versión seleccionada",
         ),
       );
     } finally {
@@ -455,7 +536,7 @@ export default function CommercialPlanningPage({ can }) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cerrar el periodo seleccionado",
+          "No fue posible cerrar el período seleccionado",
         ),
       );
     } finally {
@@ -466,7 +547,7 @@ export default function CommercialPlanningPage({ can }) {
   if (loading) {
     return (
       <section className="panel centered">
-        Cargando planeacion comercial...
+        Cargando planeación comercial...
       </section>
     );
   }
@@ -475,47 +556,168 @@ export default function CommercialPlanningPage({ can }) {
   const hasVersions = (periodDetail?.versions || []).length > 0;
   const summary = versionDetail?.version || null;
   const validation = versionDetail?.validation || { errors: [], warnings: [] };
+  const eligibleSellerCount = versionDetail?.eligibleSellers?.length || 0;
   const filledTargetsCount = targetDrafts.filter(
     (item) =>
       String(item.salesQuotaAmount).trim() &&
       String(item.expectedMarginPercent).trim(),
   ).length;
+  const pendingTargetsCount = Math.max(eligibleSellerCount - filledTargetsCount, 0);
+  const activeYear = periodDetail?.period?.year || null;
+  const yearlyPeriods = activeYear
+    ? periods
+        .filter((period) => period.year === activeYear)
+        .sort((left, right) => left.quarter - right.quarter)
+    : [];
+  const yearlyQuotaTotal = yearlyPeriods.reduce(
+    (total, period) => total + Number(period.totalQuotaAmount || 0),
+    0,
+  );
+  const yearlyContributionTotal = yearlyPeriods.reduce(
+    (total, period) => total + Number(period.totalContributionAmount || 0),
+    0,
+  );
+  const yearlyMarginAverage = yearlyQuotaTotal
+    ? (yearlyContributionTotal / yearlyQuotaTotal) * 100
+    : null;
 
   return (
     <section className="panel commercial-planning-page">
       <header className="commercial-planning-header">
-        <div>
-          <div className="module-title-with-icon">
-            <h2>Planeacion Comercial</h2>
-            <span
-              className="module-title-icon commercial-planning-title-icon"
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 24 24" focusable="false">
-                <path d="M4 19h16" />
-                <path d="M7 16V9" />
-                <path d="M12 16V5" />
-                <path d="M17 16v-4" />
-              </svg>
-            </span>
+        <div className="commercial-planning-header-copy">
+          <div className="commercial-planning-title-row">
+            <div className="module-title-with-icon">
+              <h2>Planeación Comercial</h2>
+              <span
+                className="module-title-icon commercial-planning-title-icon"
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 19h16" />
+                  <path d="M7 16V9" />
+                  <path d="M12 16V5" />
+                  <path d="M17 16v-4" />
+                </svg>
+              </span>
+            </div>
+            <div className="commercial-planning-help" ref={helpPopoverRef}>
+              <button
+                type="button"
+                className="commercial-planning-help-trigger"
+                aria-label="Información sobre el módulo de planeación comercial"
+                aria-expanded={isHelpOpen}
+                onClick={() => setIsHelpOpen((current) => !current)}
+              >
+                ?
+              </button>
+              {isHelpOpen ? (
+                <div className="commercial-planning-help-popover" role="dialog" aria-label="Ayuda de planeación comercial">
+                  <strong>Para qué sirve este módulo</strong>
+                  <p>
+                    Centraliza la planeación trimestral por vendedor para definir
+                    cuota, margen esperado y contribución antes de publicar una
+                    versión oficial.
+                  </p>
+                  <strong>Cómo usarlo</strong>
+                  <ol className="commercial-planning-help-list">
+                    <li>Selecciona o crea el período del trimestre.</li>
+                    <li>Genera una versión en borrador.</li>
+                    <li>Captura o ajusta metas por vendedor.</li>
+                    <li>Revisa validaciones y publica cuando la versión quede lista.</li>
+                  </ol>
+                </div>
+              ) : null}
+            </div>
           </div>
-          <p className="roles-subtitle">
+          <p className="roles-subtitle commercial-planning-subtitle">
             Define metas trimestrales de cuota de venta, margen esperado y
-            contribucion esperada por vendedor.
+            contribución esperada por vendedor.
           </p>
-          {periodDetail?.period ? (
-            <p className="field-hint">
-              Periodo activo en pantalla: {periodDetail.period.label} ·{" "}
-              {getPeriodStatusLabel(periodDetail.period.status)}
-            </p>
-          ) : null}
         </div>
 
-        <div className="commercial-planning-header-actions">
+      </header>
+
+      {error ? <div className="form-error">{error}</div> : null}
+      {success ? <div className="form-success">{success}</div> : null}
+
+      <div className="commercial-planning-context-bar">
+        <div className="commercial-planning-context-copy">
+          <div className="commercial-planning-toolbar-title">Vista activa</div>
+          <div className="commercial-planning-context-controls">
+            <label>
+              Período
+              <select
+                value={selectedPeriodId || ""}
+                onChange={async (event) => {
+                  const nextPeriodId = Number(event.target.value) || null;
+                  setError("");
+                  try {
+                    await selectPeriod(nextPeriodId);
+                  } catch (requestError) {
+                    setError(
+                      getApiErrorMessage(
+                        requestError,
+                        "No fue posible cargar el período seleccionado",
+                      ),
+                    );
+                  }
+                }}
+                disabled={!hasPeriods}
+              >
+                {!hasPeriods ? (
+                  <option value="">No hay períodos creados</option>
+                ) : null}
+                {periods.map((period) => (
+                  <option key={period.id} value={period.id}>
+                    {period.label} · {getPeriodStatusLabel(period.status)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Versión
+              <select
+                value={selectedVersionId || ""}
+                onChange={async (event) => {
+                  const nextVersionId = Number(event.target.value) || null;
+                  setSelectedVersionId(nextVersionId);
+                  setError("");
+                  try {
+                    await loadVersion(nextVersionId);
+                  } catch (requestError) {
+                    setError(
+                      getApiErrorMessage(
+                        requestError,
+                        "No fue posible cargar la versión seleccionada",
+                      ),
+                    );
+                  }
+                }}
+                disabled={!hasVersions}
+              >
+                {!hasVersions ? (
+                  <option value="">
+                    {hasPeriods
+                      ? "Sin versiones disponibles"
+                      : "Selecciona o crea un período primero"}
+                  </option>
+                ) : null}
+                {(periodDetail?.versions || []).map((version) => (
+                  <option key={version.id} value={version.id}>
+                    {`Versión ${version.versionNumber}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="commercial-planning-toolbar-actions">
           {canCreate ? (
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary commercial-planning-action-button is-compact"
               onClick={handleCreateVersion}
               disabled={
                 !periodDetail?.period ||
@@ -523,13 +725,18 @@ export default function CommercialPlanningPage({ can }) {
                 periodDetail?.period?.status === "closed"
               }
             >
-              {creatingVersion ? "Creando version..." : "Nueva version"}
+              <span className="commercial-planning-action-button-label">
+                {creatingVersion ? "Creando versión..." : "Nueva versión"}
+              </span>
+              <span className="commercial-planning-action-button-hint">
+                Nuevo borrador
+              </span>
             </button>
           ) : null}
           {canPublish ? (
             <button
               type="button"
-              className="btn-primary"
+              className="btn-primary commercial-planning-action-button is-primary is-compact"
               onClick={handlePublishVersion}
               disabled={
                 !versionDetail?.version ||
@@ -537,13 +744,18 @@ export default function CommercialPlanningPage({ can }) {
                 versionDetail?.version?.status !== "draft"
               }
             >
-              {publishing ? "Publicando..." : "Publicar version"}
+              <span className="commercial-planning-action-button-label">
+                {publishing ? "Publicando..." : "Publicar versión"}
+              </span>
+              <span className="commercial-planning-action-button-hint">
+                Hacer oficial
+              </span>
             </button>
           ) : null}
           {canClose ? (
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary commercial-planning-action-button is-compact"
               onClick={handleClosePeriod}
               disabled={
                 !periodDetail?.period ||
@@ -551,105 +763,24 @@ export default function CommercialPlanningPage({ can }) {
                 periodDetail?.period?.status === "closed"
               }
             >
-              {closingPeriod ? "Cerrando..." : "Cerrar trimestre"}
+              <span className="commercial-planning-action-button-label">
+                {closingPeriod ? "Bloqueando..." : "Bloquear periodo"}
+              </span>
+              <span className="commercial-planning-action-button-hint">
+                Evita cambios adicionales
+              </span>
             </button>
           ) : null}
         </div>
-      </header>
-
-      {error ? <div className="form-error">{error}</div> : null}
-      {success ? <div className="form-success">{success}</div> : null}
-
-      <div className="commercial-planning-context-bar">
-        <label>
-          Periodo
-          <select
-            value={selectedPeriodId || ""}
-            onChange={async (event) => {
-              const nextPeriodId = Number(event.target.value) || null;
-              setError("");
-              try {
-                await selectPeriod(nextPeriodId);
-              } catch (requestError) {
-                setError(
-                  getApiErrorMessage(
-                    requestError,
-                    "No fue posible cargar el periodo seleccionado",
-                  ),
-                );
-              }
-            }}
-            disabled={!hasPeriods}
-          >
-            {!hasPeriods ? (
-              <option value="">No hay periodos creados</option>
-            ) : null}
-            {periods.map((period) => (
-              <option key={period.id} value={period.id}>
-                {period.label} · {getPeriodStatusLabel(period.status)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Version
-          <select
-            value={selectedVersionId || ""}
-            onChange={async (event) => {
-              const nextVersionId = Number(event.target.value) || null;
-              setSelectedVersionId(nextVersionId);
-              setError("");
-              try {
-                await loadVersion(nextVersionId);
-              } catch (requestError) {
-                setError(
-                  getApiErrorMessage(
-                    requestError,
-                    "No fue posible cargar la version seleccionada",
-                  ),
-                );
-              }
-            }}
-            disabled={!hasVersions}
-          >
-            {!hasVersions ? (
-              <option value="">
-                {hasPeriods
-                  ? "Sin versiones disponibles"
-                  : "Selecciona o crea un periodo primero"}
-              </option>
-            ) : null}
-            {(periodDetail?.versions || []).map((version) => (
-              <option key={version.id} value={version.id}>
-                {version.label} · {getVersionStatusLabel(version.status)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {summary ? (
-          <div className="commercial-planning-context-pills">
-            <span className="commercial-planning-status-pill">
-              {getVersionStatusLabel(summary.status)}
-            </span>
-            <span className="commercial-planning-status-pill">
-              {summary.baseCurrencyCode}
-            </span>
-            <span className="commercial-planning-status-pill">
-              {summary.targetCount} metas
-            </span>
-          </div>
-        ) : null}
       </div>
 
       {!hasPeriods ? (
         <section className="commercial-planning-empty-state">
           <div>
-            <h3>Aun no hay periodos de planeacion</h3>
+            <h3>Aún no hay períodos de planeación</h3>
             <p>
-              Los select de Periodo y Version estan vacios porque todavia no
-              existe ningun trimestre creado en este modulo.
+              Los selectores de Período y Versión están vacíos porque todavía no
+              existe ningún trimestre creado en este módulo.
             </p>
           </div>
           {canCreate ? (
@@ -658,11 +789,11 @@ export default function CommercialPlanningPage({ can }) {
               className="btn-primary"
               onClick={() => setActiveTab("periods")}
             >
-              Crear primer periodo
+              Crear primer período
             </button>
           ) : (
             <p className="field-hint">
-              Necesitas permiso de creacion para dar de alta el primer periodo.
+              Necesitas permiso de creación para dar de alta el primer período.
             </p>
           )}
         </section>
@@ -671,7 +802,7 @@ export default function CommercialPlanningPage({ can }) {
       <div
         className="commercial-planning-tabs"
         role="tablist"
-        aria-label="Vistas de planeacion comercial"
+        aria-label="Vistas de planeación comercial"
       >
         {TAB_OPTIONS.map((tab) => (
           <button
@@ -687,63 +818,201 @@ export default function CommercialPlanningPage({ can }) {
 
       {activeTab === "summary" ? (
         <div className="commercial-planning-section-stack">
-          <div className="commercial-planning-summary-grid">
-            <SummaryCard
-              label="Vendedores con meta"
-              value={filledTargetsCount}
-              helper="Metas completas capturadas en la version seleccionada"
-            />
-            <SummaryCard
-              label="Vendedores sin meta"
-              value={Math.max(
-                (versionDetail?.eligibleSellers?.length || 0) -
-                  filledTargetsCount,
-                0,
-              )}
-              helper="Vendedores activos que aun no tienen meta publicada"
-              tone="is-warn"
-            />
-            <SummaryCard
-              label="Cuota total"
-              value={formatCurrency(
-                summary?.totalQuotaAmount || 0,
-                summary?.baseCurrencyCode || "USD",
-              )}
-              helper="Monto total planeado para el trimestre"
-            />
-            <SummaryCard
-              label="Contribucion esperada"
-              value={formatCurrency(
-                summary?.totalContributionAmount || 0,
-                summary?.baseCurrencyCode || "USD",
-              )}
-              helper="Contribucion calculada con base en cuota y margen esperado"
-            />
-            <SummaryCard
-              label="Margen esperado promedio"
-              value={formatPercent(summary?.expectedMarginAveragePercent || 0)}
-              helper="Promedio de margen esperado de la version seleccionada"
-            />
-            <SummaryCard
-              label="Ultima publicacion"
-              value={formatDateTime(summary?.publishedAt)}
-              helper="Fecha en que se volvio oficial esta version"
-            />
+          <div className="commercial-planning-overview-grid">
+            <section className="commercial-planning-hero-card">
+              <div className="commercial-planning-hero-topline">
+                <div className="commercial-planning-hero-title-group">
+                  <span className="commercial-planning-eyebrow">
+                    Versión seleccionada
+                  </span>
+                  <h3>{summary?.label || "Selecciona una versión"}</h3>
+                </div>
+                <div className="commercial-planning-context-pills">
+                  <span className="commercial-planning-status-pill">
+                    {summary ? getVersionStatusLabel(summary.status) : "Sin versión"}
+                  </span>
+                  {summary?.baseCurrencyCode ? (
+                    <span className="commercial-planning-status-pill">
+                      {summary.baseCurrencyCode}
+                    </span>
+                  ) : null}
+                  <span
+                    className={`commercial-planning-status-pill commercial-planning-target-pill ${pendingTargetsCount ? "is-warn" : ""}`.trim()}
+                    data-tooltip={
+                      pendingTargetsCount
+                        ? `${pendingTargetsCount} vendedores activos aún no tienen meta completa en esta versión.`
+                        : "Todos los vendedores activos ya tienen meta completa en esta versión."
+                    }
+                  >
+                    Metas {filledTargetsCount}/{eligibleSellerCount || 0}
+                  </span>
+                </div>
+              </div>
+              <div className="commercial-planning-hero-metrics">
+                <div>
+                  <span>Cuota total</span>
+                  <strong>
+                    {formatCurrency(
+                      summary?.totalQuotaAmount || 0,
+                      summary?.baseCurrencyCode || "USD",
+                    )}
+                  </strong>
+                </div>
+                <div>
+                  <span>Margen esperado promedio</span>
+                  <strong>
+                    {formatPercent(summary?.expectedMarginAveragePercent || 0)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Contribucion esperada</span>
+                  <strong>
+                    {formatCurrency(
+                      summary?.totalContributionAmount || 0,
+                      summary?.baseCurrencyCode || "USD",
+                    )}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="commercial-planning-seller-summary">
+                <div className="commercial-planning-seller-summary-header">
+                  <h4>Detalle por vendedor</h4>
+                  <p>Cuota, margen esperado y contribución estimada de la versión seleccionada.</p>
+                </div>
+
+                <div className="commercial-planning-seller-summary-table-wrap">
+                  <table className="commercial-planning-seller-summary-table">
+                    <thead>
+                      <tr>
+                        <th>Vendedor</th>
+                        <th>Cuota</th>
+                        <th>Margen</th>
+                        <th>Contribucion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {targetDrafts.map((item) => {
+                        const contribution =
+                          Number(item.salesQuotaAmount || 0) *
+                          (Number(item.expectedMarginPercent || 0) / 100);
+
+                        return (
+                          <tr key={`summary-${item.sellerUserId}`}>
+                            <td>
+                              <strong>{item.sellerUserName}</strong>
+                            </td>
+                            <td>
+                              {formatCurrency(
+                                item.salesQuotaAmount || 0,
+                                item.currencyCode || summary?.baseCurrencyCode || "USD",
+                              )}
+                            </td>
+                            <td>{formatPercent(item.expectedMarginPercent || 0)}</td>
+                            <td>
+                              {formatCurrency(
+                                contribution,
+                                item.currencyCode || summary?.baseCurrencyCode || "USD",
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
           </div>
+
+          {yearlyPeriods.length ? (
+            <section className="commercial-planning-card">
+              <div className="commercial-planning-card-header">
+                <div>
+                  <h3>Resumen anual {activeYear}</h3>
+                  <p>
+                    Totales por trimestre del año activo y consolidado anual.
+                  </p>
+                </div>
+              </div>
+
+              <div className="commercial-planning-seller-summary-table-wrap">
+                <table className="commercial-planning-seller-summary-table commercial-planning-year-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Periodo</th>
+                      <th>Estado</th>
+                      <th>Cuota total</th>
+                      <th>Margen</th>
+                      <th>Contribucion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearlyPeriods.map((period) => (
+                      <tr key={`year-summary-${period.id}`}>
+                        <td>
+                          <strong>{period.label}</strong>
+                        </td>
+                        <td>{getPeriodStatusLabel(period.status)}</td>
+                        <td>
+                          {formatCurrency(
+                            period.totalQuotaAmount,
+                            period.baseCurrencyCode || summary?.baseCurrencyCode || "USD",
+                          )}
+                        </td>
+                        <td>{formatPercent(period.expectedMarginAveragePercent)}</td>
+                        <td>
+                          {formatCurrency(
+                            period.totalContributionAmount,
+                            period.baseCurrencyCode || summary?.baseCurrencyCode || "USD",
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="commercial-planning-year-summary-total-row">
+                      <td>
+                        <strong>Total anual {activeYear}</strong>
+                      </td>
+                      <td>{yearlyPeriods.length} trimestres</td>
+                      <td>
+                        <strong>
+                          {formatCurrency(
+                            yearlyQuotaTotal,
+                            summary?.baseCurrencyCode || yearlyPeriods[0]?.baseCurrencyCode || "USD",
+                          )}
+                        </strong>
+                      </td>
+                      <td>
+                        <strong>{formatPercent(yearlyMarginAverage)}</strong>
+                      </td>
+                      <td>
+                        <strong>
+                          {formatCurrency(
+                            yearlyContributionTotal,
+                            summary?.baseCurrencyCode || yearlyPeriods[0]?.baseCurrencyCode || "USD",
+                          )}
+                        </strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
 
           <section className="commercial-planning-card">
             <div className="commercial-planning-card-header">
               <div>
-                <h3>Estado de validacion</h3>
+                <h3>Revisión antes de publicar</h3>
                 <p>
-                  La publicacion exige errores duros en cero. Las advertencias
-                  pueden publicarse solo con justificacion y permiso especial.
+                  La publicación exige errores duros en cero. Las advertencias
+                  pueden publicarse solo con justificación y permiso especial.
                 </p>
               </div>
             </div>
 
             <div className="commercial-planning-validation-grid">
-              <div>
+              <div className="commercial-planning-validation-panel">
                 <strong>Errores duros</strong>
                 {(validation.errors || []).length ? (
                   <ul className="commercial-planning-list">
@@ -753,11 +1022,11 @@ export default function CommercialPlanningPage({ can }) {
                   </ul>
                 ) : (
                   <p className="field-hint">
-                    Sin errores duros en la version seleccionada.
+                    Sin errores duros en la versión seleccionada.
                   </p>
                 )}
               </div>
-              <div>
+              <div className="commercial-planning-validation-panel">
                 <strong>Advertencias justificables</strong>
                 {(validation.warnings || []).length ? (
                   <ul className="commercial-planning-list">
@@ -774,7 +1043,7 @@ export default function CommercialPlanningPage({ can }) {
             {canPublish && versionDetail?.version?.status === "draft" ? (
               <div className="commercial-planning-justification-box">
                 <label>
-                  Justificacion de publicacion
+                  Justificación de publicación
                   <textarea
                     rows="3"
                     value={publishJustification}
@@ -784,7 +1053,7 @@ export default function CommercialPlanningPage({ can }) {
                     placeholder={
                       canOverrideValidation
                         ? "Solo es obligatoria si publicas con advertencias justificables."
-                        : "No tienes permiso para publicar con advertencias; corrige la version antes de publicarla."
+                        : "No tienes permiso para publicar con advertencias; corrige la versión antes de publicarla."
                     }
                   />
                 </label>
@@ -800,7 +1069,7 @@ export default function CommercialPlanningPage({ can }) {
             <div>
               <h3>Metas trimestrales por vendedor</h3>
               <p>
-                La tabla trabaja sobre la version seleccionada. Deja vacio a un
+                La tabla trabaja sobre la versión seleccionada. Deja vacío a un
                 vendedor si quieres que quede como advertencia justificable al
                 publicar.
               </p>
@@ -829,15 +1098,15 @@ export default function CommercialPlanningPage({ can }) {
                   <th>Cuota de venta</th>
                   <th>Moneda</th>
                   <th>Margen esperado %</th>
-                  <th>Contribucion esperada</th>
+                  <th>Contribución esperada</th>
                   <th>Observaciones</th>
-                  <th>Ultima actualizacion</th>
+                  <th>Última actualización</th>
                 </tr>
               </thead>
               <tbody>
                 {targetDrafts.map((item) => {
                   const contribution =
-                    Number(item.salesQuotaAmount || 0) *
+                    Number(normalizeDecimalInput(item.salesQuotaAmount) || 0) *
                     (Number(item.expectedMarginPercent || 0) / 100);
                   return (
                     <tr key={item.sellerUserId}>
@@ -847,15 +1116,14 @@ export default function CommercialPlanningPage({ can }) {
                       </td>
                       <td>
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.salesQuotaAmount}
+                          type="text"
+                          inputMode="decimal"
+                          value={formatGroupedDecimalInput(item.salesQuotaAmount)}
                           onChange={(event) =>
                             updateTargetDraft(
                               item.sellerUserId,
                               "salesQuotaAmount",
-                              event.target.value,
+                              normalizeDecimalInput(event.target.value),
                             )
                           }
                           disabled={
@@ -947,27 +1215,27 @@ export default function CommercialPlanningPage({ can }) {
 
       {activeTab === "periods" ? (
         <div className="commercial-planning-periods-grid">
-          <section className="commercial-planning-card">
+          <section className="commercial-planning-card commercial-planning-periods-card">
             <div className="commercial-planning-card-header">
               <div>
-                <h3>Periodos existentes</h3>
+                <h3>Períodos existentes</h3>
                 <p>
-                  Administra los trimestres y sus versiones sin depender de
-                  otros modulos.
+                  Consulta el historial trimestral y abre cualquier período para
+                  revisar sus versiones y totales.
                 </p>
               </div>
             </div>
 
             <div className="commercial-planning-table-wrap">
-              <table className="commercial-planning-table">
+              <table className="commercial-planning-table commercial-planning-periods-table">
                 <thead>
                   <tr>
                     <th>Periodo</th>
                     <th>Estado</th>
                     <th>Versiones</th>
-                    <th>Version vigente</th>
+                    <th>Versión vigente</th>
                     <th>Cuota total</th>
-                    <th>Contribucion</th>
+                    <th>Contribución</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -985,7 +1253,7 @@ export default function CommercialPlanningPage({ can }) {
                           setError(
                             getApiErrorMessage(
                               requestError,
-                              "No fue posible cargar el periodo seleccionado",
+                              "No fue posible cargar el período seleccionado",
                             ),
                           );
                         }
@@ -996,8 +1264,8 @@ export default function CommercialPlanningPage({ can }) {
                       <td>{period.versionCount}</td>
                       <td>
                         {period.activeVersionNumber
-                          ? `Version ${period.activeVersionNumber}`
-                          : "Sin version vigente"}
+                          ? `Versión ${period.activeVersionNumber}`
+                          : "Sin versión vigente"}
                       </td>
                       <td>
                         {formatCurrency(
@@ -1016,7 +1284,7 @@ export default function CommercialPlanningPage({ can }) {
                   {!periods.length ? (
                     <tr>
                       <td colSpan="6" className="centered">
-                        No hay periodos creados todavia.
+                        No hay períodos creados todavía.
                       </td>
                     </tr>
                   ) : null}
@@ -1026,65 +1294,85 @@ export default function CommercialPlanningPage({ can }) {
           </section>
 
           {canCreate ? (
-            <section className="commercial-planning-card">
+            <section className="commercial-planning-card commercial-planning-period-create-card">
               <div className="commercial-planning-card-header">
                 <div>
-                  <h3>Crear periodo trimestral</h3>
-                  <p>El alta crea el periodo y su Version 1 en borrador.</p>
+                  <h3>Crear período trimestral</h3>
+                  <p>
+                    Da de alta un nuevo trimestre y genera su Versión 1 en
+                    borrador para iniciar la planeación.
+                  </p>
                 </div>
               </div>
 
+              <div className="commercial-planning-create-period-note">
+                El nuevo período quedará listo para capturar metas apenas se cree.
+              </div>
+
               <form
-                className="commercial-planning-form-grid"
+                className="commercial-planning-form-grid commercial-planning-period-form"
                 onSubmit={handleCreatePeriod}
               >
-                <label>
-                  Ano
-                  <input
-                    type="number"
-                    value={periodForm.year}
-                    onChange={(event) =>
-                      setPeriodForm((current) => ({
-                        ...current,
-                        year: event.target.value,
-                      }))
-                    }
-                    min="2020"
-                    max="2100"
-                  />
-                </label>
-                <label>
-                  Trimestre
-                  <select
-                    value={periodForm.quarter}
-                    onChange={(event) =>
-                      setPeriodForm((current) => ({
-                        ...current,
-                        quarter: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="1">T1</option>
-                    <option value="2">T2</option>
-                    <option value="3">T3</option>
-                    <option value="4">T4</option>
-                  </select>
-                </label>
-                <label>
-                  Moneda base
-                  <input
-                    type="text"
-                    value={periodForm.baseCurrencyCode}
-                    onChange={(event) =>
-                      setPeriodForm((current) => ({
-                        ...current,
-                        baseCurrencyCode: event.target.value.toUpperCase(),
-                      }))
-                    }
-                    maxLength={10}
-                  />
-                </label>
-                <label className="is-wide">
+                <div className="commercial-planning-period-form-top">
+                  <label className="commercial-planning-period-field commercial-planning-period-field-year">
+                    <span className="commercial-planning-period-field-label">Año</span>
+                    <input
+                      type="number"
+                      value={periodForm.year}
+                      onChange={(event) =>
+                        setPeriodForm((current) => ({
+                          ...current,
+                          year: event.target.value,
+                        }))
+                      }
+                      min="2020"
+                      max="2100"
+                    />
+                  </label>
+                  <label className="commercial-planning-period-field commercial-planning-period-field-quarter">
+                    <span className="commercial-planning-period-field-label">Trimestre</span>
+                    <select
+                      value={periodForm.quarter}
+                      onChange={(event) =>
+                        setPeriodForm((current) => ({
+                          ...current,
+                          quarter: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="1">T1</option>
+                      <option value="2">T2</option>
+                      <option value="3">T3</option>
+                      <option value="4">T4</option>
+                    </select>
+                  </label>
+                  <label className="commercial-planning-period-field commercial-planning-period-field-currency">
+                    <span className="commercial-planning-period-field-label">Moneda</span>
+                    <select
+                      value={periodForm.baseCurrencyCode}
+                      onChange={(event) =>
+                        setPeriodForm((current) => ({
+                          ...current,
+                          baseCurrencyCode: event.target.value,
+                        }))
+                      }
+                    >
+                      {withCurrentCatalogOption(
+                        currencies,
+                        periodForm.baseCurrencyCode,
+                      ).map((currency) => (
+                        <option
+                          key={currency.id || currency.code}
+                          value={currency.code}
+                        >
+                          {currency.code}
+                          {currency.name ? ` - ${currency.name}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="commercial-planning-period-field is-wide">
                   Nota inicial
                   <textarea
                     rows="4"
@@ -1095,16 +1383,16 @@ export default function CommercialPlanningPage({ can }) {
                         notes: event.target.value,
                       }))
                     }
-                    placeholder="Observacion general del trimestre"
+                    placeholder="Observación general del trimestre"
                   />
                 </label>
                 <div className="commercial-planning-form-actions">
                   <button
                     type="submit"
-                    className="btn-primary"
+                    className="btn-primary commercial-planning-create-period-button"
                     disabled={creatingPeriod}
                   >
-                    {creatingPeriod ? "Creando periodo..." : "Crear periodo"}
+                    {creatingPeriod ? "Creando período..." : "Crear período"}
                   </button>
                 </div>
               </form>
@@ -1117,17 +1405,17 @@ export default function CommercialPlanningPage({ can }) {
         <section className="commercial-planning-card">
           <div className="commercial-planning-card-header">
             <div>
-              <h3>Auditoria del modulo</h3>
+              <h3>Auditoría del módulo</h3>
               <p>
-                Historial del dominio aislado de Planeacion Comercial para el
-                periodo seleccionado.
+                Historial del dominio aislado de Planeación Comercial para el
+                período seleccionado.
               </p>
             </div>
           </div>
 
           {!canReadAudit ? (
             <div className="field-hint">
-              No tienes permiso para consultar la auditoria del modulo.
+              No tienes permiso para consultar la auditoría del módulo.
             </div>
           ) : (
             <div className="commercial-planning-table-wrap">
@@ -1136,7 +1424,7 @@ export default function CommercialPlanningPage({ can }) {
                   <tr>
                     <th>Fecha</th>
                     <th>Actor</th>
-                    <th>Accion</th>
+                    <th>Acción</th>
                     <th>Detalle</th>
                   </tr>
                 </thead>
@@ -1159,7 +1447,7 @@ export default function CommercialPlanningPage({ can }) {
                   {!auditEntries.length ? (
                     <tr>
                       <td colSpan="4" className="centered">
-                        No hay eventos de auditoria para el periodo
+                        No hay eventos de auditoría para el período
                         seleccionado.
                       </td>
                     </tr>

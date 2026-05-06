@@ -176,6 +176,10 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_users_crud`,
       permissionCodes: ["usuarios.create", "usuarios.update"],
     });
+    ctx.auditReaderRoleId = await createRole({
+      name: `${TEST_PREFIX}_audit_reader`,
+      permissionCodes: ["audit.read"],
+    });
     ctx.commercialPlanningManagerRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_planning_manager`,
       permissionCodes: [
@@ -212,6 +216,7 @@ describe("API integration baseline", () => {
       ctx.dynamicPermissionRoleId,
       ctx.interactionsManagerRoleId,
       ctx.userCrudRoleId,
+      ctx.auditReaderRoleId,
       ctx.commercialPlanningManagerRoleId,
     );
 
@@ -440,6 +445,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.users.crud@example.com`,
       roleIds: [ctx.userCrudRoleId],
     });
+    ctx.auditReaderUserId = await createUser({
+      fullName: "API Audit Reader",
+      email: `${TEST_PREFIX}.audit.reader@example.com`,
+      roleIds: [ctx.auditReaderRoleId],
+    });
     ctx.commercialPlanningManagerUserId = await createUser({
       fullName: "API Commercial Planning Manager",
       email: `${TEST_PREFIX}.commercial.planning@example.com`,
@@ -475,6 +485,7 @@ describe("API integration baseline", () => {
       ctx.dynamicPermissionUserId,
       ctx.interactionsManagerUserId,
       ctx.userCrudUserId,
+      ctx.auditReaderUserId,
       ctx.commercialPlanningManagerUserId,
       ctx.sellerAltUserId,
     );
@@ -7227,6 +7238,265 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("desarrollo comercial expone cuota, pipeline y prioridades del trimestre", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_dashboard`,
+    );
+
+    const actorUserId = ctx.opportunityFlowUserId;
+    const now = new Date();
+
+    await query(
+      `INSERT INTO commercial_planning_periods
+         (plan_year, plan_quarter, base_currency_code, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, ?, 'USD', 'active', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        2026,
+        4,
+        'Plan API desarrollo comercial',
+        actorUserId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+    const [periodRow] = await query(
+      `SELECT id
+       FROM commercial_planning_periods
+       WHERE plan_year = 2026 AND plan_quarter = 4
+       ORDER BY id DESC
+       LIMIT 1`,
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_versions
+         (period_id, version_number, label, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, 1, 'T4 2026 v1', 'active', NULL, ?, ?, ?, ?, ?, ?)`,
+      [periodRow.id, actorUserId, actorUserId, now, actorUserId, now, now],
+    );
+    const [versionRow] = await query(
+      `SELECT id
+       FROM commercial_planning_versions
+       WHERE period_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [periodRow.id],
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_targets
+         (version_id, seller_user_id, sales_quota_amount, currency_code,
+          expected_margin_percent, expected_contribution_amount, notes, status,
+          created_by_user_id, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'USD', ?, ?, NULL, 'complete', ?, ?, ?, ?)`,
+      [
+        versionRow.id,
+        actorUserId,
+        100000,
+        24,
+        24000,
+        actorUserId,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+
+    const dashboardResponse = await request(app)
+      .get('/api/commercial-development/dashboard?year=2026&quarter=4')
+      .set('Authorization', `Bearer ${fixture.token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+    expect(dashboardResponse.body.development).toEqual(
+      expect.objectContaining({
+        period: expect.objectContaining({
+          year: 2026,
+          quarter: 4,
+          label: 'T4 2026',
+          hasPlan: true,
+        }),
+        quota: expect.objectContaining({
+          assignedAmount: 100000,
+          committedOpenAmount: expect.any(Number),
+          actualAmount: expect.any(Number),
+          weightedOpenAmount: expect.any(Number),
+          projectedAmount: expect.any(Number),
+        }),
+        pipelineByStage: expect.arrayContaining([
+          expect.objectContaining({
+            stageName: expect.any(String),
+            opportunityCount: expect.any(Number),
+            weightedAmount: expect.any(Number),
+          }),
+        ]),
+        priorities: expect.arrayContaining([
+          expect.objectContaining({
+            id: fixture.opportunityId,
+            priorityScore: expect.any(Number),
+            impactScore: expect.any(Number),
+            primaryRecommendation: expect.any(String),
+          }),
+        ]),
+        recommendations: expect.arrayContaining([
+          expect.objectContaining({
+            type: expect.any(String),
+            title: expect.any(String),
+          }),
+        ]),
+      }),
+    );
+    expect(dashboardResponse.body.development.actionsToday).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          opportunityId: fixture.opportunityId,
+          title: expect.any(String),
+        }),
+      ]),
+    );
+  });
+
+  test("desarrollo comercial limita la cuota trimestral al vendedor autenticado sin alcance global", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_scope`,
+    );
+
+    const actorUserId = ctx.opportunityFlowUserId;
+    const now = new Date();
+
+    await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad cruzada ${TEST_PREFIX}_commercial_development_scope`,
+        27500,
+        fixture.accountId,
+        "2026-12-20",
+        fixture.contactId,
+        ctx.catalogIds.salesStageWaitingId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerAltUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+      ],
+    );
+
+    const [crossOpportunityRow] = await query(
+      `SELECT id
+       FROM opportunities
+       WHERE account_id = ?
+         AND seller_user_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [fixture.accountId, ctx.sellerAltUserId],
+    );
+    cleanup.opportunityIds.push(Number(crossOpportunityRow.id));
+
+    await query(
+      `INSERT INTO commercial_planning_periods
+         (plan_year, plan_quarter, base_currency_code, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, ?, 'USD', 'active', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        2026,
+        3,
+        'Plan API desarrollo comercial con multiples vendedores visibles',
+        actorUserId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+    const [periodRow] = await query(
+      `SELECT id
+       FROM commercial_planning_periods
+       WHERE plan_year = 2026 AND plan_quarter = 3
+       ORDER BY id DESC
+       LIMIT 1`,
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_versions
+         (period_id, version_number, label, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, 1, 'T3 2026 v1', 'active', NULL, ?, ?, ?, ?, ?, ?)`,
+      [periodRow.id, actorUserId, actorUserId, now, actorUserId, now, now],
+    );
+    const [versionRow] = await query(
+      `SELECT id
+       FROM commercial_planning_versions
+       WHERE period_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [periodRow.id],
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_targets
+         (version_id, seller_user_id, sales_quota_amount, currency_code,
+          expected_margin_percent, expected_contribution_amount, notes, status,
+          created_by_user_id, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'USD', ?, ?, NULL, 'complete', ?, ?, ?, ?),
+              (?, ?, ?, 'USD', ?, ?, NULL, 'complete', ?, ?, ?, ?)`,
+      [
+        versionRow.id,
+        actorUserId,
+        100000,
+        24,
+        24000,
+        actorUserId,
+        actorUserId,
+        now,
+        now,
+        versionRow.id,
+        ctx.sellerAltUserId,
+        80000,
+        18,
+        14400,
+        actorUserId,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+
+    const dashboardResponse = await request(app)
+      .get('/api/commercial-development/dashboard?year=2026&quarter=3')
+      .set('Authorization', `Bearer ${fixture.token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+    expect(dashboardResponse.body.development.quota).toEqual(
+      expect.objectContaining({
+        assignedAmount: 100000,
+        committedOpenAmount: expect.any(Number),
+        targetCount: 1,
+      }),
+    );
+    expect(dashboardResponse.body.development.sellerSnapshots).toEqual([
+      expect.objectContaining({
+        sellerUserId: actorUserId,
+        quotaAmount: 100000,
+      }),
+    ]);
+  });
+
   test("ejecucion comercial prioriza cadencias por score de friccion", async () => {
     const activateFixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_execution_activate`,
@@ -11280,6 +11550,120 @@ describe("API integration baseline", () => {
         (item) => item.salesQuotaAmount,
       ),
     ).toEqual(expect.arrayContaining([100000, 80000]));
+  });
+
+  test("planeacion comercial expone auditoria aunque changed_fields llegue como objeto", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.planning@example.com`,
+    );
+    expect(loginResponse.status).toBe(200);
+
+    const token = loginResponse.body.token;
+    const year = 2028;
+    const quarter = 2;
+
+    const createPeriodResponse = await request(app)
+      .post("/api/commercial-planning/periods")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        year,
+        quarter,
+        baseCurrencyCode: "USD",
+        notes: "Planeacion de regresion para auditoria",
+      });
+
+    expect(createPeriodResponse.status).toBe(201);
+    const versionId = Number(createPeriodResponse.body.createdVersionId);
+
+    const saveTargetsResponse = await request(app)
+      .put(`/api/commercial-planning/versions/${versionId}/targets`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        targets: [
+          {
+            sellerUserId: ctx.sellerUserId,
+            salesQuotaAmount: 90000,
+            currencyCode: "USD",
+            expectedMarginPercent: 21,
+            notes: "Meta principal de regresion",
+          },
+          {
+            sellerUserId: ctx.sellerAltUserId,
+            salesQuotaAmount: 70000,
+            currencyCode: "USD",
+            expectedMarginPercent: 19,
+            notes: "Meta secundaria de regresion",
+          },
+        ],
+      });
+
+    expect(saveTargetsResponse.status).toBe(200);
+
+    const publishResponse = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/publish`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(publishResponse.status).toBe(200);
+
+    const commercialPlanningAuditResponse = await request(app)
+      .get("/api/commercial-planning/audit")
+      .query({ year, quarter })
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(commercialPlanningAuditResponse.status).toBe(200);
+    expect(commercialPlanningAuditResponse.body.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "created_period" }),
+        expect.objectContaining({ action: "updated_targets" }),
+        expect.objectContaining({ action: "published_version" }),
+      ]),
+    );
+
+    const createdPeriodAuditEntry =
+      commercialPlanningAuditResponse.body.entries.find(
+        (entry) => entry.action === "created_period",
+      );
+    expect(createdPeriodAuditEntry.changedFields).toEqual(
+      expect.objectContaining({
+        year: expect.objectContaining({ after: year, before: null }),
+        quarter: expect.objectContaining({ after: quarter, before: null }),
+      }),
+    );
+
+    const targetAuditEntry = commercialPlanningAuditResponse.body.entries.find(
+      (entry) => entry.action === "updated_targets",
+    );
+    expect(targetAuditEntry.changedFields.targets).toEqual(
+      expect.objectContaining({
+        before: [],
+        after: expect.any(Array),
+      }),
+    );
+
+    const globalAuditLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.audit.reader@example.com`,
+    );
+    expect(globalAuditLoginResponse.status).toBe(200);
+
+    const globalAuditResponse = await request(app)
+      .get("/api/audit")
+      .query({ module: "planeacion_comercial", q: `T${quarter} ${year}` })
+      .set("Authorization", `Bearer ${globalAuditLoginResponse.body.token}`);
+
+    expect(globalAuditResponse.status).toBe(200);
+    expect(globalAuditResponse.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "published_version",
+          changed_fields: expect.objectContaining({
+            status: expect.objectContaining({ after: "active", before: "draft" }),
+          }),
+        }),
+      ]),
+    );
   });
 
   test("planeacion comercial exige justificacion cuando una version se publica con advertencias", async () => {

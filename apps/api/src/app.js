@@ -45,6 +45,12 @@ export function createApp() {
     executionCommercialRoutes,
   );
   app.use(
+    "/api/commercial-development",
+    authRequired,
+    loadUser,
+    executionCommercialRoutes,
+  );
+  app.use(
     "/api/commercial-enablement",
     authRequired,
     loadUser,

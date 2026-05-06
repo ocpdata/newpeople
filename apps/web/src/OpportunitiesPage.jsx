@@ -172,6 +172,7 @@ function OpportunitiesPage({ currentUser }) {
 
       <OpportunityFormModal
         isOpen={showOpportunityModal}
+        error={showOpportunityModal ? error : ""}
         editingOpportunityId={editingOpportunityId}
         editOpportunityAudit={editOpportunityAudit}
         currentCommercialStage={currentCommercialStage}
@@ -276,7 +277,9 @@ function OpportunitiesPage({ currentUser }) {
         onClose={closeCommercialStatusReasonModal}
       />
 
-      {error && <div className="toast toast-error">{error}</div>}
+      {!showOpportunityModal && error ? (
+        <div className="toast toast-error">{error}</div>
+      ) : null}
       {success && <div className="toast toast-success">{success}</div>}
     </section>
   );

@@ -6,6 +6,7 @@ import OpportunityWorkspacePanel from "./OpportunityWorkspacePanel";
 
 function OpportunityFormModal({
   isOpen,
+  error,
   editingOpportunityId,
   editOpportunityAudit,
   currentCommercialStage,
@@ -272,6 +273,12 @@ function OpportunityFormModal({
             </div>
           ) : null}
         </div>
+
+        {error ? (
+          <div className="opportunity-modal-error" role="alert">
+            {error}
+          </div>
+        ) : null}
 
         <fieldset
           className="interaction-detail-lock-shell"
