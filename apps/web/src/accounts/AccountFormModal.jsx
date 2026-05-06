@@ -71,7 +71,10 @@ function normalizeAccountNameToken(token, index) {
   const trimmedToken = String(token || "").trim();
   if (!trimmedToken) return "";
 
-  const simpleKey = normalizeAccountNameKey(trimmedToken).replace(/[^a-z0-9]/g, "");
+  const simpleKey = normalizeAccountNameKey(trimmedToken).replace(
+    /[^a-z0-9]/g,
+    "",
+  );
   if (ACCOUNT_NAME_SPECIAL_TOKENS.has(simpleKey)) {
     return ACCOUNT_NAME_SPECIAL_TOKENS.get(simpleKey);
   }
@@ -130,7 +133,9 @@ function getAccountNameNormalizationState(value) {
   const trimmedRawValue = sanitizedValue.trim();
   const hasSpacingAdjustment = sanitizedValue !== rawValue;
   const hasFormatSuggestion =
-    Boolean(trimmedRawValue) && normalizedValue && normalizedValue !== trimmedRawValue;
+    Boolean(trimmedRawValue) &&
+    normalizedValue &&
+    normalizedValue !== trimmedRawValue;
   const shouldAutoApplyOnBlur =
     hasFormatSuggestion && isPlainUpperOrLowerCase(trimmedRawValue);
 
@@ -172,7 +177,9 @@ function getDuplicateDecisionConfirmText(decision, creatingAccount) {
   if (creatingAccount) {
     return "Creando...";
   }
-  return decision === "review_required" ? "Crear de todos modos" : "Confirmar y crear";
+  return decision === "review_required"
+    ? "Crear de todos modos"
+    : "Confirmar y crear";
 }
 
 function getDuplicateReviewVerdictLabel(verdict) {
@@ -492,9 +499,12 @@ function AccountFormModal({
     useState(false);
   const [pendingSubmitFormOverride, setPendingSubmitFormOverride] =
     useState(null);
+  const [waitingCreateResponse, setWaitingCreateResponse] = useState(false);
   const [showCreateHelp, setShowCreateHelp] = useState(false);
   const createHelpRef = useRef(null);
   const isDraftAnalysisLocked = analyzingAccountDraft;
+  const isCreateSubmissionLocked = waitingCreateResponse || creatingAccount;
+  const isModalLocked = isDraftAnalysisLocked || isCreateSubmissionLocked;
 
   function closeCreateHelp() {
     setShowCreateHelp(false);
@@ -525,15 +535,24 @@ function AccountFormModal({
     };
   }, [editingAccountId, showCreateHelp]);
 
+  useEffect(() => {
+    if (!waitingCreateResponse || creatingAccount) {
+      return;
+    }
+
+    setWaitingCreateResponse(false);
+  }, [waitingCreateResponse, creatingAccount]);
+
   if (!isOpen) return null;
 
   const activationMeta = editingAccountId ? getEditingActivationMeta() : null;
 
   function handleClose() {
-    if (isDraftAnalysisLocked) return;
+    if (isModalLocked) return;
     setShowCreateConfirmation(false);
     setShowNameFormatConfirmation(false);
     setPendingSubmitFormOverride(null);
+    setWaitingCreateResponse(false);
     closeCreateHelp();
     onClose();
   }
@@ -562,7 +581,8 @@ function AccountFormModal({
 
   function buildNextFormForSubmit() {
     const normalizationState = getAccountNameNormalizationState(form.name);
-    const nextName = normalizationState.normalizedValue || normalizationState.sanitizedValue;
+    const nextName =
+      normalizationState.normalizedValue || normalizationState.sanitizedValue;
     return {
       nextForm: {
         ...form,
@@ -626,11 +646,8 @@ function AccountFormModal({
   function handleConfirmCreate() {
     const nextForm = pendingSubmitFormOverride || form;
     setShowCreateConfirmation(false);
-    setPendingSubmitFormOverride(null);
-    void onSubmit(
-      { preventDefault() {} },
-      { formOverride: nextForm },
-    );
+    setWaitingCreateResponse(true);
+    void onSubmit({ preventDefault() {} }, { formOverride: nextForm });
   }
 
   function handleCancelNameFormat() {
@@ -644,7 +661,7 @@ function AccountFormModal({
     <div className="modal-overlay" onClick={handleClose}>
       <div
         className="modal-dialog modal-dialog-account"
-        aria-busy={isDraftAnalysisLocked}
+        aria-busy={isModalLocked}
         onClick={(event) => event.stopPropagation()}
       >
         <ConfirmationModal
@@ -652,7 +669,10 @@ function AccountFormModal({
           title="Confirmar creación de cuenta"
           message="Se creará la cuenta con la información capturada en el formulario. ¿Deseas continuar?"
           onConfirm={handleConfirmCreate}
-          onCancel={() => setShowCreateConfirmation(false)}
+          onCancel={() => {
+            if (isCreateSubmissionLocked) return;
+            setShowCreateConfirmation(false);
+          }}
           confirmText={creatingAccount ? "Creando..." : "Crear cuenta"}
           overlayClassName="modal-overlay-elevated"
         />
@@ -695,7 +715,11 @@ function AccountFormModal({
                 ) : null}
               </div>
               {!editingAccountId && showCreateHelp ? (
-                <div className="account-modal-help-popover" role="dialog" aria-label="Ayuda sobre crear cuenta">
+                <div
+                  className="account-modal-help-popover"
+                  role="dialog"
+                  aria-label="Ayuda sobre crear cuenta"
+                >
                   <strong>Para qué sirve este modal</strong>
                   <p>
                     Úsalo para registrar una cuenta nueva con sus datos
@@ -735,7 +759,7 @@ function AccountFormModal({
         </div>
         <fieldset
           className="interaction-detail-lock-shell"
-          disabled={isDraftAnalysisLocked}
+          disabled={isModalLocked}
         >
           <form
             className="account-create-form in-modal"

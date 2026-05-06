@@ -169,6 +169,8 @@ export function ConfirmationModal({
   confirmText = "Aceptar",
   cancelText = "Cancelar",
   isDangerous = false,
+  confirmDisabled = false,
+  cancelDisabled = false,
   overlayClassName = "",
   dialogClassName = "",
 }) {
@@ -180,12 +182,17 @@ export function ConfirmationModal({
         <h3 className="modal-title">{title}</h3>
         <p className="modal-message">{message}</p>
         <div className="modal-buttons">
-          <button className="btn-secondary" onClick={onCancel}>
+          <button
+            className="btn-secondary"
+            onClick={onCancel}
+            disabled={cancelDisabled}
+          >
             {cancelText}
           </button>
           <button
             className={isDangerous ? "btn-danger" : "btn-primary"}
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
             {confirmText}
           </button>

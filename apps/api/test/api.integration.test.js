@@ -2,6 +2,8 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
+import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
+import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
@@ -44,6 +46,8 @@ describe("API integration baseline", () => {
   const ctx = {};
 
   beforeAll(async () => {
+    await ensureCommercialPlanningPermissions();
+    await ensureCommercialPlanningSchema();
     await ensureCommercialExecutionSchema();
     await ensurePotentialOpportunityPermissions();
     await ensurePotentialOpportunitySchema();
@@ -172,6 +176,18 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_users_crud`,
       permissionCodes: ["usuarios.create", "usuarios.update"],
     });
+    ctx.commercialPlanningManagerRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_planning_manager`,
+      permissionCodes: [
+        "planeacion_comercial.read",
+        "planeacion_comercial.create",
+        "planeacion_comercial.update",
+        "planeacion_comercial.publish",
+        "planeacion_comercial.close",
+        "planeacion_comercial.audit.read",
+        "planeacion_comercial.override_validation",
+      ],
+    });
 
     cleanup.roleIds.push(
       ctx.accountCreateRoleId,
@@ -196,6 +212,7 @@ describe("API integration baseline", () => {
       ctx.dynamicPermissionRoleId,
       ctx.interactionsManagerRoleId,
       ctx.userCrudRoleId,
+      ctx.commercialPlanningManagerRoleId,
     );
 
     ctx.catalogIds = {
@@ -423,6 +440,16 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.users.crud@example.com`,
       roleIds: [ctx.userCrudRoleId],
     });
+    ctx.commercialPlanningManagerUserId = await createUser({
+      fullName: "API Commercial Planning Manager",
+      email: `${TEST_PREFIX}.commercial.planning@example.com`,
+      roleIds: [ctx.commercialPlanningManagerRoleId],
+    });
+    ctx.sellerAltUserId = await createUser({
+      fullName: "API Seller Alt Planning",
+      email: `${TEST_PREFIX}.seller.alt.planning@example.com`,
+      roleIds: [ctx.sellerRoleId],
+    });
 
     cleanup.userIds.push(
       ctx.accountCreateUserId,
@@ -448,6 +475,8 @@ describe("API integration baseline", () => {
       ctx.dynamicPermissionUserId,
       ctx.interactionsManagerUserId,
       ctx.userCrudUserId,
+      ctx.commercialPlanningManagerUserId,
+      ctx.sellerAltUserId,
     );
 
     const fixtureSuffix = `${TEST_PREFIX}_fixture`;
@@ -3771,7 +3800,12 @@ describe("API integration baseline", () => {
     expect(detailResponse.body.documents).toHaveLength(0);
   });
 
-  test("oportunidades potenciales detecta desde interacciones analizadas y permite convertir el caso", async () => {
+  test("oportunidades potenciales exige vendedor asignado antes de convertir el caso", async () => {
+    const sellerRole = await ensureNamedRole("Vendedor");
+    if (sellerRole.created) {
+      cleanup.roleIds.push(sellerRole.roleId);
+    }
+
     const roleId = await createRole({
       name: `${TEST_PREFIX}_potential_opportunities`,
       permissionCodes: [
@@ -3788,7 +3822,7 @@ describe("API integration baseline", () => {
     const userId = await createUser({
       fullName: "Potential Opps User",
       email,
-      roleIds: [roleId],
+      roleIds: [roleId, sellerRole.roleId],
     });
     cleanup.userIds.push(userId);
 
@@ -3911,6 +3945,37 @@ describe("API integration baseline", () => {
       },
     ]);
 
+    const blockedConvertResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/convert`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: `Renovacion plataforma ${TEST_PREFIX}`,
+        amountUsd: 25000,
+        closeDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10),
+        primaryContactId: contactId,
+        ownerUserId: userId,
+        businessLineId: ctx.catalogIds.businessLineId,
+      });
+
+    expect(blockedConvertResponse.status).toBe(409);
+    expect(blockedConvertResponse.body.message).toContain(
+      "sin un vendedor asignado",
+    );
+
+    const acceptResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/accept`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+    expect(acceptResponse.status).toBe(200);
+
+    const assignResponse = await request(app)
+      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ownerUserId: userId });
+    expect(assignResponse.status).toBe(200);
+
     const convertResponse = await request(app)
       .post(`/api/potential-opportunities/${createdCase.publicId}/convert`)
       .set("Authorization", `Bearer ${token}`)
@@ -3933,6 +3998,11 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${token}`);
     expect(convertedDetailResponse.status).toBe(200);
     expect(convertedDetailResponse.body.state).toBe("converted");
+    expect(convertedDetailResponse.body.owner).toEqual({
+      id: userId,
+      fullName: "Potential Opps User",
+      isSeller: true,
+    });
     expect(convertedDetailResponse.body.convertedOpportunity.id).toBe(
       Number(convertResponse.body.opportunityId),
     );
@@ -4166,6 +4236,7 @@ describe("API integration baseline", () => {
     expect(detailResponse.body.owner).toEqual({
       id: sellerOwnerUserId,
       fullName: "Potential Owner Seller",
+      isSeller: true,
     });
   });
 
@@ -11121,5 +11192,160 @@ describe("API integration baseline", () => {
       .map((action) => action.code);
     expect(externalAllowedCodes).toContain("ver");
     expect(externalAllowedCodes).not.toContain("modificar");
+  });
+
+  test("planeacion comercial crea T3 2026, captura metas, publica y duplica una nueva version", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.planning@example.com`,
+    );
+    expect(loginResponse.status).toBe(200);
+
+    const createPeriodResponse = await request(app)
+      .post("/api/commercial-planning/periods")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        year: 2026,
+        quarter: 3,
+        baseCurrencyCode: "USD",
+        notes: "Planeacion inicial T3 2026",
+      });
+
+    expect(createPeriodResponse.status).toBe(201);
+    expect(createPeriodResponse.body.period.label).toBe("T3 2026");
+    expect(createPeriodResponse.body.createdVersionId).toBeGreaterThan(0);
+
+    const versionId = Number(createPeriodResponse.body.createdVersionId);
+
+    const saveTargetsResponse = await request(app)
+      .put(`/api/commercial-planning/versions/${versionId}/targets`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        targets: [
+          {
+            sellerUserId: ctx.sellerUserId,
+            salesQuotaAmount: 100000,
+            currencyCode: "USD",
+            expectedMarginPercent: 22,
+            notes: "Meta inicial del trimestre",
+          },
+          {
+            sellerUserId: ctx.sellerAltUserId,
+            salesQuotaAmount: 80000,
+            currencyCode: "USD",
+            expectedMarginPercent: 18,
+            notes: "Meta secundaria del trimestre",
+          },
+        ],
+      });
+
+    expect(saveTargetsResponse.status).toBe(200);
+    expect(saveTargetsResponse.body.targets).toHaveLength(2);
+    expect(saveTargetsResponse.body.targets[0]).toEqual(
+      expect.objectContaining({
+        currencyCode: "USD",
+      }),
+    );
+
+    const validateResponse = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/validate`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(validateResponse.status).toBe(200);
+    expect(validateResponse.body.errors).toEqual([]);
+    expect(validateResponse.body.warnings).toEqual([]);
+    expect(validateResponse.body.canPublish).toBe(true);
+
+    const publishResponse = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/publish`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(publishResponse.status).toBe(200);
+    expect(publishResponse.body.version.status).toBe("active");
+
+    const createNewVersionResponse = await request(app)
+      .post(
+        `/api/commercial-planning/periods/${createPeriodResponse.body.period.id}/versions`,
+      )
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(createNewVersionResponse.status).toBe(201);
+    expect(createNewVersionResponse.body.version.versionNumber).toBe(2);
+    expect(createNewVersionResponse.body.targets).toHaveLength(2);
+    expect(
+      createNewVersionResponse.body.targets.map(
+        (item) => item.salesQuotaAmount,
+      ),
+    ).toEqual(expect.arrayContaining([100000, 80000]));
+  });
+
+  test("planeacion comercial exige justificacion cuando una version se publica con advertencias", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.planning@example.com`,
+    );
+    expect(loginResponse.status).toBe(200);
+
+    const createPeriodResponse = await request(app)
+      .post("/api/commercial-planning/periods")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        year: 2027,
+        quarter: 1,
+        baseCurrencyCode: "USD",
+        notes: "Planeacion inicial T1 2027",
+      });
+
+    expect(createPeriodResponse.status).toBe(201);
+    const versionId = Number(createPeriodResponse.body.createdVersionId);
+
+    const saveTargetsResponse = await request(app)
+      .put(`/api/commercial-planning/versions/${versionId}/targets`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        targets: [
+          {
+            sellerUserId: ctx.sellerUserId,
+            salesQuotaAmount: 120000,
+            currencyCode: "USD",
+            expectedMarginPercent: 25,
+            notes: "Se deja un vendedor sin meta para probar advertencias",
+          },
+        ],
+      });
+
+    expect(saveTargetsResponse.status).toBe(200);
+
+    const validateResponse = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/validate`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(validateResponse.status).toBe(200);
+    expect(validateResponse.body.errors).toEqual([]);
+    expect(validateResponse.body.warnings.length).toBeGreaterThan(0);
+    expect(validateResponse.body.requiresOverride).toBe(true);
+
+    const publishWithoutJustification = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/publish`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({});
+
+    expect(publishWithoutJustification.status).toBe(400);
+    expect(publishWithoutJustification.body.message).toContain("justificacion");
+
+    const publishWithJustification = await request(app)
+      .post(`/api/commercial-planning/versions/${versionId}/publish`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        justification:
+          "Se publica con una vacante comercial abierta que aun no recibe meta formal.",
+      });
+
+    expect(publishWithJustification.status).toBe(200);
+    expect(publishWithJustification.body.version.status).toBe("active");
   });
 });

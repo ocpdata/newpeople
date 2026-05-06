@@ -73,6 +73,13 @@ function normalizeText(value) {
     .trim();
 }
 
+function hasSellerRole(rolesValue) {
+  return String(rolesValue || "")
+    .split(",")
+    .map((role) => role.trim().toLowerCase())
+    .includes("vendedor");
+}
+
 function uniqueStrings(items) {
   return Array.from(
     new Set(
@@ -548,23 +555,29 @@ async function resolveAllowedAssignmentUsers(conn, { accountId }) {
       (sql, sqlParams) => conn.query(sql, sqlParams).then(([rows]) => rows),
       accountOwners.map((item) => Number(item.id)),
     );
-    return {
-      selectionMode: "account_owners",
-      items: ownerRows.map((row) => ({
-        id: Number(row.id),
-        fullName: row.full_name,
-        email: row.email,
-        roles: row.roles || "",
-      })),
-    };
+    const sellerOwnerRows = ownerRows.filter((row) => hasSellerRole(row.roles));
+    if (sellerOwnerRows.length) {
+      return {
+        selectionMode: "account_owners",
+        items: sellerOwnerRows.map((row) => ({
+          id: Number(row.id),
+          fullName: row.full_name,
+          email: row.email,
+          roles: row.roles || "",
+        })),
+      };
+    }
   }
 
   const fallbackRows = await loadAllActiveUsers((sql, sqlParams) =>
     conn.query(sql, sqlParams).then(([rows]) => rows),
   );
+  const sellerFallbackRows = fallbackRows.filter((row) =>
+    hasSellerRole(row.roles),
+  );
   return {
-    selectionMode: "fallback_all_active_users",
-    items: fallbackRows.map((row) => ({
+    selectionMode: "fallback_all_active_sellers",
+    items: sellerFallbackRows.map((row) => ({
       id: Number(row.id),
       fullName: row.full_name,
       email: row.email,
@@ -1302,6 +1315,10 @@ export async function getPotentialOpportunityCaseDetail({ user, caseId }) {
   const accountOwnersByAccountId = await loadAccountOwnersMap([
     Number(row.account_id),
   ]);
+  const ownerRows = row.owner_user_id
+    ? await loadActiveUsersByIds(query, [Number(row.owner_user_id)])
+    : [];
+  const ownerIsSeller = hasSellerRole(ownerRows[0]?.roles);
 
   return {
     id: Number(row.id),
@@ -1342,6 +1359,7 @@ export async function getPotentialOpportunityCaseDetail({ user, caseId }) {
       ? {
           id: Number(row.owner_user_id),
           fullName: row.owner_name,
+          isSeller: ownerIsSeller,
         }
       : null,
     convertedOpportunity: row.converted_opportunity_id
@@ -1515,6 +1533,28 @@ export async function convertPotentialOpportunityCase({
       throw error;
     }
 
+    if (!current.owner_user_id) {
+      const error = new Error(
+        "No se puede convertir el caso sin un vendedor asignado",
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    const ownerRows = await loadActiveUsersByIds(
+      (sql, sqlParams) => conn.query(sql, sqlParams).then(([rows]) => rows),
+      [Number(current.owner_user_id)],
+    );
+    const ownerRow = ownerRows[0] || null;
+
+    if (!ownerRow || !hasSellerRole(ownerRow.roles)) {
+      const error = new Error(
+        "El asignado del caso debe tener rol de vendedor antes de convertir",
+      );
+      error.status = 409;
+      throw error;
+    }
+
     const creationStatusCode = user.permissionSet?.has("oportunidades.create")
       ? "activada"
       : "pendiente_activacion";
@@ -1539,9 +1579,7 @@ export async function convertPotentialOpportunityCase({
     const businessLineId = payload.businessLineId
       ? Number(payload.businessLineId)
       : await getIdByCodeWithConn(conn, "opportunity_business_lines", "otros");
-    const sellerUserId = payload.ownerUserId
-      ? Number(payload.ownerUserId)
-      : Number(user.id);
+    const sellerUserId = Number(current.owner_user_id);
 
     const [insertResult] = await conn.query(
       `INSERT INTO opportunities

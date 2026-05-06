@@ -21,6 +21,7 @@ const InteractionsPage = lazy(() => import("./InteractionsPage"));
 const ProvidersPage = lazy(() => import("./ProvidersPage"));
 const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
 const ExecutionCommercialPage = lazy(() => import("./ExecutionCommercialPage"));
+const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
   () => import("./CommercialEnablementPage"),
 );
@@ -113,6 +114,7 @@ export default function AppShell({
   const canAccessPotentialOpportunities =
     can("oportunidades_potenciales.read") ||
     can("oportunidades_potenciales.read_all");
+  const canAccessCommercialPlanning = can("planeacion_comercial.read");
   const canAccessCommercialEnablement =
     can("enablement_comercial.read") ||
     can("enablement_comercial.update") ||
@@ -210,6 +212,16 @@ export default function AppShell({
           element={
             can("oportunidades.read") ? (
               <ExecutionCommercialPage currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/commercial-planning"
+          element={
+            canAccessCommercialPlanning ? (
+              <CommercialPlanningPage can={can} />
             ) : (
               <Navigate to="/" />
             )
@@ -348,6 +360,14 @@ export default function AppShell({
 
           {(can("oportunidades.read") || canOpenCommercialEnablementShell) && (
             <SidebarNavGroup title="Ejecucion">
+              {canAccessCommercialPlanning ? (
+                <GuardedNavLink
+                  to="/commercial-planning"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Planeacion Comercial
+                </GuardedNavLink>
+              ) : null}
               {can("oportunidades.read") ? (
                 <GuardedNavLink
                   to="/execution-commercial"

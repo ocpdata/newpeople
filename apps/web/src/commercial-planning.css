@@ -1,0 +1,272 @@
+.commercial-planning-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.commercial-planning-header,
+.commercial-planning-context-bar,
+.commercial-planning-card-header,
+.commercial-planning-header-actions,
+.commercial-planning-form-actions,
+.commercial-planning-context-pills {
+  display: flex;
+  gap: 12px;
+}
+
+.commercial-planning-header,
+.commercial-planning-card-header,
+.commercial-planning-periods-grid {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.commercial-planning-header-actions,
+.commercial-planning-form-actions,
+.commercial-planning-context-pills {
+  flex-wrap: wrap;
+}
+
+.commercial-planning-title-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.commercial-planning-context-bar {
+  align-items: end;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid #d6dce8;
+  border-radius: 14px;
+  background: #f7f9fc;
+}
+
+.commercial-planning-context-bar label,
+.commercial-planning-form-grid label,
+.commercial-planning-justification-box label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+  font-size: 13px;
+  color: #324154;
+}
+
+.commercial-planning-context-bar select,
+.commercial-planning-form-grid input,
+.commercial-planning-form-grid select,
+.commercial-planning-form-grid textarea,
+.commercial-planning-justification-box textarea,
+.commercial-planning-table input,
+.commercial-planning-table textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #c8d2e3;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: #fff;
+}
+
+.commercial-planning-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #e9eef8;
+  color: #274062;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.commercial-planning-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.commercial-planning-tab {
+  border: 1px solid #d6dce8;
+  background: #fff;
+  color: #40546d;
+  border-radius: 999px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.commercial-planning-tab.is-active {
+  background: #163a63;
+  color: #fff;
+  border-color: #163a63;
+}
+
+.commercial-planning-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.commercial-planning-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.commercial-planning-summary-card,
+.commercial-planning-card {
+  border: 1px solid #d6dce8;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 37, 63, 0.05);
+}
+
+.commercial-planning-summary-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.commercial-planning-summary-card span {
+  color: #5a6c82;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.commercial-planning-summary-card strong {
+  font-size: 28px;
+  color: #102a43;
+}
+
+.commercial-planning-summary-card p {
+  margin: 0;
+  color: #5a6c82;
+  font-size: 13px;
+}
+
+.commercial-planning-summary-card.is-warn {
+  background: #fff7e7;
+}
+
+.commercial-planning-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.commercial-planning-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border: 1px dashed #c8d2e3;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.commercial-planning-empty-state h3,
+.commercial-planning-empty-state p {
+  margin: 0;
+}
+
+.commercial-planning-empty-state p {
+  margin-top: 4px;
+  color: #5a6c82;
+}
+
+.commercial-planning-card-header h3,
+.commercial-planning-card-header p {
+  margin: 0;
+}
+
+.commercial-planning-card-header p {
+  margin-top: 4px;
+  color: #5a6c82;
+}
+
+.commercial-planning-validation-grid,
+.commercial-planning-periods-grid,
+.commercial-planning-form-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.commercial-planning-validation-grid,
+.commercial-planning-periods-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.commercial-planning-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.commercial-planning-form-grid .is-wide {
+  grid-column: 1 / -1;
+}
+
+.commercial-planning-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #40546d;
+}
+
+.commercial-planning-table-wrap {
+  overflow-x: auto;
+}
+
+.commercial-planning-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+}
+
+.commercial-planning-table th,
+.commercial-planning-table td {
+  text-align: left;
+  padding: 12px 10px;
+  border-bottom: 1px solid #e6ebf2;
+  vertical-align: top;
+}
+
+.commercial-planning-table th {
+  color: #52667d;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.commercial-planning-table tbody tr.is-selected {
+  background: #f5f8fc;
+}
+
+.commercial-planning-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.commercial-planning-table textarea {
+  min-height: 76px;
+}
+
+.commercial-planning-justification-box textarea {
+  min-height: 90px;
+}
+
+@media (max-width: 900px) {
+  .commercial-planning-header,
+  .commercial-planning-card-header,
+  .commercial-planning-empty-state {
+    flex-direction: column;
+  }
+
+  .commercial-planning-context-bar {
+    align-items: stretch;
+  }
+}

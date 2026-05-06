@@ -16,6 +16,7 @@ import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
 import commercialEnablementRoutes from "./routes.commercial-enablement.js";
+import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import settingsRoutes from "./routes.settings.js";
 
 export function createApp() {
@@ -48,6 +49,12 @@ export function createApp() {
     authRequired,
     loadUser,
     commercialEnablementRoutes,
+  );
+  app.use(
+    "/api/commercial-planning",
+    authRequired,
+    loadUser,
+    commercialPlanningRoutes,
   );
   app.use(
     "/api/potential-opportunities",

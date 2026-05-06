@@ -8,6 +8,8 @@ import { startAuditRetentionJob } from "./audit.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
+import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
+import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
@@ -17,12 +19,14 @@ export async function startServer() {
   await ensureCorePermissions();
   await ensureInteractionPermissions();
   await ensureCommercialEnablementPermissions();
+  await ensureCommercialPlanningPermissions();
   await ensureAccountInteractionsSchema();
   await ensureInteractionSchema();
   await ensureOpportunityDocumentSchema();
   await ensureOpportunityWorkspaceSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
+  await ensureCommercialPlanningSchema();
   await startAuditRetentionJob();
   await startOpportunityDocumentProcessingWorker();
   return app.listen(config.port, () => {

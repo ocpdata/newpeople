@@ -484,6 +484,17 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
     }
   }
 
+  const hasAssignedSellerOwner = Boolean(
+    detail?.owner?.id && detail?.owner?.isSeller,
+  );
+  const convertBlockedMessage = !detail
+    ? ""
+    : !detail.owner?.id
+      ? "Asigna primero un vendedor al caso; esa persona quedará como vendedor de la oportunidad al convertir."
+      : !detail.owner.isSeller
+        ? "El asignado actual del caso sería el vendedor de la oportunidad, pero no tiene rol de vendedor. Reasigna el caso a un vendedor antes de convertirlo."
+        : "";
+
   return (
     <section className="panel potential-opportunities-page">
       <div className="potential-opportunities-toolbar">
@@ -1037,15 +1048,21 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
                         ))}
                       </select>
                     </label>
-                    {assignmentSelectionMode === "fallback_all_active_users" ? (
+                    <div className="potential-opportunity-actions-help">
+                      La persona asignada a este caso será el vendedor de la
+                      oportunidad cuando conviertas este caso.
+                    </div>
+                    {assignmentSelectionMode ===
+                    "fallback_all_active_sellers" ? (
                       <div className="potential-opportunity-actions-help">
-                        No hay owners definidos en la cuenta. Por eso, de forma
-                        excepcional, puedes elegir cualquier usuario activo.
+                        No hay owners vendedores definidos en la cuenta. Por
+                        eso, de forma excepcional, puedes elegir cualquier
+                        vendedor activo.
                       </div>
                     ) : (
                       <div className="potential-opportunity-actions-help">
                         Solo puedes asignar a uno de los owners actuales de la
-                        cuenta.
+                        cuenta que tenga rol de vendedor.
                       </div>
                     )}
                     <button
@@ -1073,13 +1090,19 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
                 ) : null}
               </div>
 
-              {canConvert && !detail.convertedOpportunity ? (
+              {canConvert &&
+              !detail.convertedOpportunity &&
+              hasAssignedSellerOwner ? (
                 <form
                   className="potential-opportunity-convert-form"
                   onSubmit={handleConvert}
                 >
                   <div className="potential-opportunity-convert-form-header">
                     <h4>Convertir a oportunidad</h4>
+                    <p className="potential-opportunity-actions-help">
+                      El asignado actual del caso se usará como vendedor de la
+                      oportunidad al convertir.
+                    </p>
                   </div>
                   <div className="potential-opportunity-convert-form-fields">
                     <label>
@@ -1151,6 +1174,14 @@ export default function PotentialOpportunitiesPage({ can, currentUser }) {
                     </button>
                   </div>
                 </form>
+              ) : null}
+
+              {canConvert &&
+              !detail.convertedOpportunity &&
+              !hasAssignedSellerOwner ? (
+                <div className="potential-opportunity-actions-help">
+                  <strong>Conversión bloqueada</strong> {convertBlockedMessage}
+                </div>
               ) : null}
 
               {detail.convertedOpportunity ? (
