@@ -203,12 +203,34 @@ const OPPORTUNITY_WORKSPACE_SCHEMA_STATEMENTS = [
   )`,
 ];
 
+async function ensureWorkspaceActionColumn(columnName, definition) {
+  const rows = await query(
+    `SHOW COLUMNS FROM opportunity_workspace_actions LIKE ?`,
+    [columnName],
+  );
+  if (rows.length) {
+    return;
+  }
+
+  await query(
+    `ALTER TABLE opportunity_workspace_actions ADD COLUMN ${definition}`,
+  );
+}
+
 export async function ensureOpportunityWorkspaceSchema() {
   if (!ensureOpportunityWorkspaceSchemaPromise) {
     ensureOpportunityWorkspaceSchemaPromise = (async () => {
       for (const statement of OPPORTUNITY_WORKSPACE_SCHEMA_STATEMENTS) {
         await query(statement);
       }
+      await ensureWorkspaceActionColumn(
+        "scheduled_at",
+        "scheduled_at DATETIME(3) NULL AFTER due_date",
+      );
+      await ensureWorkspaceActionColumn(
+        "is_primary_next_step",
+        "is_primary_next_step TINYINT(1) NOT NULL DEFAULT 0 AFTER notes",
+      );
     })().catch((error) => {
       ensureOpportunityWorkspaceSchemaPromise = undefined;
       throw error;

@@ -1001,37 +1001,23 @@ button:disabled {
 }
 
 .commercial-development-kicker {
-  display: inline-flex;
-  padding: 0.3rem 0.72rem;
-  border-radius: 999px;
-  background: #e8f1df;
-  color: #385a2d;
-  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.commercial-development-calendar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .commercial-development-title-row h2 {
   margin: 0.2rem 0 0;
 }
 
-.commercial-development-toolbar {
-  align-items: end;
-}
-
-.commercial-development-toolbar label,
-.commercial-development-form label {
-  display: grid;
-  gap: 0.35rem;
-  color: #57685b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.commercial-development-toolbar select,
-.commercial-development-form input,
-.commercial-development-form textarea,
 .commercial-development-form select {
   width: 100%;
 }
@@ -1104,6 +1090,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 .commercial-development-side-stack,
@@ -1200,6 +1187,7 @@ button:disabled {
 
 .commercial-development-gap-coverage-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.9rem;
 }
 
@@ -1207,9 +1195,9 @@ button:disabled {
   border: 1px solid rgba(58, 73, 49, 0.1);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.94);
-  padding: 1rem;
+  padding: 0.9rem;
   display: grid;
-  gap: 0.85rem;
+  gap: 0.7rem;
 }
 
 .commercial-development-gap-coverage-card strong {
@@ -1219,30 +1207,1501 @@ button:disabled {
 .commercial-development-gap-coverage-card p {
   margin: 0;
   color: #56614f;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
 .commercial-development-gap-coverage-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.55rem;
 }
 
 .commercial-development-gap-coverage-grid > div,
 .commercial-development-gap-coverage-meta {
-  padding: 0.85rem;
+  min-width: 0;
+  padding: 0.7rem;
   border-radius: 14px;
   background: #f8f8f2;
 }
 
+.commercial-development-gap-coverage-grid > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.commercial-development-gap-coverage-grid span {
+  display: block;
+}
+
+.commercial-development-gap-coverage-grid strong {
+  display: block;
+  min-width: 0;
+  font-size: 0.98rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .commercial-development-gap-coverage-meta {
   display: grid;
-  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.commercial-development-gap-coverage-insight {
+  min-width: 0;
+  padding: 0.78rem 0.85rem;
+  border-radius: 16px;
+  background: #f8f8f2;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.commercial-development-gap-coverage-insight span {
+  color: #6d7862;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.commercial-development-gap-coverage-insight p {
+  font-size: 0.95rem;
+  line-height: 1.42;
+  color: #42503c;
+}
+
+.commercial-development-gap-coverage-insight.is-accent {
+  background: linear-gradient(180deg, #f5f8ef, #fbfcf8);
+  border: 1px solid rgba(70, 96, 49, 0.12);
 }
 
 .commercial-development-gap-coverage-actions {
   display: flex;
   justify-content: flex-start;
+}
+
+.commercial-development-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.commercial-development-card-badges {
+  display: inline-grid;
+  gap: 0.35rem;
+  justify-items: end;
+}
+
+.commercial-development-date-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.24rem 0.58rem;
+  border-radius: 999px;
+  background: #f6f6ef;
+  color: #61705b;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.commercial-development-activity-trigger {
+  width: 2.35rem;
+  height: 2.35rem;
+  border: 1px solid rgba(58, 73, 49, 0.14);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fbfcf7;
+  color: #466031;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.commercial-development-activity-trigger svg {
+  width: 1.18rem;
+  height: 1.18rem;
+  display: block;
+  overflow: visible;
+}
+
+.commercial-development-activity-trigger:hover {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.34);
+  background: #f4f8ed;
+}
+
+.commercial-development-activity-trigger.has-activity {
+  background: #eef7e7;
+  border-color: rgba(60, 106, 49, 0.28);
+}
+
+.commercial-development-activity-preview {
+  padding: 0.75rem 0.85rem;
+  border-radius: 14px;
+  background: #f6f6ef;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.commercial-development-activity-preview p {
+  font-size: 0.9rem;
+}
+
+.commercial-development-calendar-panel {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.commercial-development-focus-layout {
+  grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+  align-items: start;
+}
+
+.commercial-development-calendar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+
+.commercial-development-funnel-panel {
+  justify-self: start;
+  width: min(100%, 30rem);
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.48rem;
+}
+
+.commercial-development-funnel-header {
+  align-items: flex-start;
+}
+
+.commercial-development-funnel-panel .commercial-development-section-header h3 {
+  font-size: 0.95rem;
+}
+
+.commercial-development-funnel-panel .commercial-development-section-header p,
+.commercial-development-funnel-panel .commercial-development-section-header > span,
+.commercial-development-funnel-footer p {
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.commercial-development-funnel-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.commercial-development-funnel-summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.commercial-development-funnel-chip {
+  padding: 0.3rem 0.38rem;
+  border-radius: 10px;
+  border: 1px solid rgba(74, 96, 65, 0.08);
+  background: linear-gradient(180deg, #f4f7ed 0%, #ffffff 100%);
+  display: grid;
+  gap: 0.08rem;
+}
+
+.commercial-development-funnel-chip span,
+.commercial-development-funnel-stage-topline span,
+.commercial-development-funnel-stage-topline small {
+  color: #67755f;
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.commercial-development-funnel-chip strong {
+  color: #223120;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.commercial-development-funnel-visual {
+  --funnel-row-gap: 0.38rem;
+  display: grid;
+  gap: var(--funnel-row-gap);
+}
+
+.commercial-development-funnel-row {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  gap: 0.38rem;
+}
+
+.commercial-development-funnel-row.is-dimmed {
+  opacity: 0.46;
+}
+
+.commercial-development-funnel-stage {
+  position: relative;
+  justify-self: center;
+  min-width: min(100%, 140px);
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  display: block;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+.commercial-development-funnel-stage-shell {
+  position: relative;
+  min-height: 3.4rem;
+  padding: 0.58rem 1.7rem 0.58rem 2.1rem;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0.28rem;
+  clip-path: polygon(3.5% 0, 96.5% 0, 89% 100%, 11% 100%);
+  border-radius: 999px 999px 12px 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 26%),
+    linear-gradient(180deg, color-mix(in srgb, var(--funnel-stage-color) 96%, white 4%) 0%, color-mix(in srgb, var(--funnel-stage-color) 84%, #123246 16%) 100%);
+  border: 1px solid var(--funnel-stage-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 12px 20px rgba(35, 46, 59, 0.08);
+  overflow: hidden;
+}
+
+.commercial-development-funnel-stage-head {
+  position: absolute;
+  top: 0.48rem;
+  left: clamp(1.45rem, 7%, 2.45rem);
+  right: clamp(1.3rem, 6%, 2.1rem);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.commercial-development-funnel-stage:hover {
+  transform: translateY(-2px);
+}
+
+.commercial-development-funnel-row-marker-slot {
+  position: relative;
+  width: clamp(2.45rem, 4.5vw, 3.45rem);
+  flex: 0 0 clamp(2.45rem, 4.5vw, 3.45rem);
+  display: block;
+  pointer-events: none;
+}
+
+.commercial-development-funnel-group-marker {
+  position: absolute;
+  top: 0;
+  left: -0.18rem;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.2rem;
+  width: 100%;
+  height: calc(
+    (100% * var(--funnel-group-stage-span)) +
+      (var(--funnel-row-gap) * (var(--funnel-group-stage-span) - 1))
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.commercial-development-funnel-group-marker.is-committed {
+  top: 0.09rem;
+  left: -0.28rem;
+  height: calc(
+    ((100% * var(--funnel-group-stage-span)) +
+        (var(--funnel-row-gap) * (var(--funnel-group-stage-span) - 1))) - 0.36rem
+  );
+}
+
+.commercial-development-funnel-group-brace {
+  width: 0.43rem;
+  flex: 0 0 0.43rem;
+  height: 100%;
+  overflow: visible;
+  color: rgba(55, 76, 101, 0.52);
+}
+
+.commercial-development-funnel-group-brace path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.commercial-development-funnel-group-label {
+  align-self: center;
+  width: 2.98rem;
+  flex: 0 0 2.98rem;
+  color: #54647a;
+  font-size: 0.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.commercial-development-funnel-row.is-active .commercial-development-funnel-stage-shell {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 20px 36px rgba(35, 46, 59, 0.16),
+    0 0 0 3px color-mix(in srgb, var(--funnel-stage-color) 24%, white 76%);
+}
+
+.commercial-development-funnel-row.is-empty .commercial-development-funnel-stage {
+  opacity: 0.42;
+}
+
+.commercial-development-funnel-row.is-empty .commercial-development-funnel-stage {
+  cursor: default;
+}
+
+.commercial-development-funnel-stage-name,
+.commercial-development-funnel-stage-share {
+  color: rgba(241, 248, 253, 0.9);
+  font-size: 0.42rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(17, 32, 48, 0.18);
+}
+
+.commercial-development-funnel-stage-name {
+  max-width: min(58%, 18rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commercial-development-funnel-stage-share {
+  flex-shrink: 0;
+  min-width: 1.6rem;
+  text-align: right;
+}
+
+.commercial-development-funnel-stage-body {
+  min-height: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.08rem;
+  text-align: center;
+}
+
+.commercial-development-funnel-stage-shell strong {
+  color: #f7fbff;
+  font-size: 0.56rem;
+  line-height: 1.08;
+  letter-spacing: 0.01em;
+}
+
+.commercial-development-funnel-stage-shell p {
+  margin: 0;
+  color: rgba(239, 246, 252, 0.84);
+  line-height: 1.2;
+  font-size: 0.46rem;
+}
+
+.commercial-development-funnel-tip {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 10px solid #4b7fbc;
+  filter: drop-shadow(0 5px 6px rgba(48, 74, 118, 0.16));
+}
+
+.commercial-development-funnel-tip-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.38rem;
+}
+
+.commercial-development-funnel-tip-slot {
+  min-width: min(100%, 140px);
+  display: flex;
+  justify-content: center;
+}
+
+.commercial-development-funnel-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.commercial-development-funnel-footer p {
+  line-height: 1.4;
+}
+
+.commercial-development-daily-focus-panel {
+  min-width: 0;
+  align-self: start;
+  justify-self: stretch;
+  width: 100%;
+  gap: 0.72rem;
+}
+
+.commercial-development-daily-focus-header h3 {
+  font-size: 1rem;
+}
+
+.commercial-development-daily-focus-header p,
+.commercial-development-daily-focus-header > span {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.commercial-development-daily-focus-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.commercial-development-daily-focus-stat,
+.commercial-development-daily-focus-featured,
+.commercial-development-daily-focus-item {
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fbfcf8 0%, #ffffff 100%);
+}
+
+.commercial-development-daily-focus-stat {
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.commercial-development-daily-focus-stat span,
+.commercial-development-daily-focus-kicker {
+  color: #6b7861;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commercial-development-daily-focus-stat strong {
+  color: #21331e;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.commercial-development-daily-focus-stat small {
+  color: #65715b;
+  font-size: 0.73rem;
+  line-height: 1.2;
+}
+
+.commercial-development-daily-focus-featured,
+.commercial-development-daily-focus-item {
+  padding: 0.78rem 0.86rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.commercial-development-daily-focus-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.commercial-development-daily-focus-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.commercial-development-daily-focus-item-head strong {
+  color: #20311f;
+  font-size: 0.92rem;
+  line-height: 1.15;
+}
+
+.commercial-development-daily-focus-item-head p,
+.commercial-development-daily-focus-featured p,
+.commercial-development-daily-focus-item-copy {
+  margin: 0;
+  color: #4d5a46;
+  font-size: 0.82rem;
+  line-height: 1.38;
+}
+
+.commercial-development-daily-focus-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.commercial-development-daily-focus-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: #f5f6ef;
+  color: #66715f;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.commercial-development-daily-focus-meta span.is-overdue {
+  background: #fff0ee;
+  color: #9c362d;
+}
+
+.commercial-development-score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  padding: 0.24rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(58, 73, 49, 0.12);
+  background: #f4f7f1;
+  color: #29411f;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.commercial-development-score-badge.is-green {
+  background: #edf9f0;
+  border-color: #b9e1c4;
+  color: #21683d;
+}
+
+.commercial-development-score-badge.is-amber {
+  background: #fff7e7;
+  border-color: #efd69c;
+  color: #906713;
+}
+
+.commercial-development-score-badge.is-red {
+  background: #fff0ee;
+  border-color: #efc0bb;
+  color: #9c362d;
+}
+
+.commercial-development-score-badge.is-neutral {
+  background: #f2f5f8;
+  border-color: #d4dde6;
+  color: #5a6b7c;
+}
+
+.commercial-development-daily-focus-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.commercial-development-calendar-header {
+  align-items: flex-start;
+}
+
+.commercial-development-calendar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.commercial-development-calendar-view-switcher {
+  display: inline-flex;
+  padding: 0.18rem;
+  border-radius: 999px;
+  background: #f3f5ec;
+  border: 1px solid rgba(70, 96, 49, 0.08);
+  gap: 0.15rem;
+}
+
+.commercial-development-calendar-view-switcher button {
+  border: 0;
+  background: transparent;
+  color: #5a6752;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.38rem 0.72rem;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.commercial-development-calendar-view-switcher button.is-active {
+  background: #304328;
+  color: #f8fbf3;
+}
+
+.commercial-development-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.commercial-development-calendar-nav-segmented {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem;
+  border-radius: 14px;
+  background: #f3f5ec;
+  border: 1px solid rgba(70, 96, 49, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.commercial-development-calendar-nav-segmented button {
+  min-height: 2.2rem;
+  padding: 0.42rem 0.7rem;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #4f5f48;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.commercial-development-calendar-nav-segmented button:hover {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.commercial-development-calendar-nav-segmented button.is-accent {
+  background: #ffffff;
+  color: #28421f;
+  box-shadow: 0 6px 14px rgba(50, 67, 38, 0.08);
+}
+
+.commercial-development-calendar-date-input {
+  display: inline-grid;
+  gap: 0.12rem;
+  color: #31402c;
+  font-size: 0.77rem;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.commercial-development-calendar-date-input input,
+.commercial-development-calendar-create-box select {
+  border: 1px solid #d6dfd2;
+  border-radius: 12px;
+  background: #fff;
+  color: #223120;
+  padding: 0.52rem 0.72rem;
+  font: inherit;
+}
+
+.commercial-development-calendar-date-input input {
+  min-height: 2.35rem;
+}
+
+.commercial-development-calendar-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.commercial-development-calendar-summary > div {
+  padding: 0.8rem 0.9rem;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f7f8f2 0%, #ffffff 100%);
+  display: grid;
+  gap: 0.18rem;
+}
+
+.commercial-development-calendar-summary span,
+.commercial-development-calendar-detail-header span,
+.commercial-development-calendar-event-meta span {
+  color: #68755f;
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.commercial-development-calendar-summary strong {
+  color: #223120;
+  font-size: 1.2rem;
+}
+
+.commercial-development-calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.95fr);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.commercial-development-calendar-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.commercial-development-calendar-month-frame {
+  display: grid;
+  gap: 0.5rem;
+  max-height: min(68vh, 780px);
+  overflow: auto;
+  padding-right: 0.2rem;
+  scrollbar-gutter: stable;
+}
+
+.commercial-development-calendar-month-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.45rem;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding-bottom: 0.15rem;
+  background: linear-gradient(180deg, rgba(248, 250, 243, 0.98), rgba(248, 250, 243, 0.9));
+  backdrop-filter: blur(8px);
+}
+
+.commercial-development-calendar-month-weekday {
+  padding: 0.72rem 0.55rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #eef4e6 0%, #f8faf3 100%);
+  color: #4a6041;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  border: 1px solid rgba(74, 96, 65, 0.08);
+  box-shadow: 0 8px 20px rgba(38, 54, 31, 0.04);
+}
+
+.commercial-development-calendar-grid.is-day {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.commercial-development-calendar-grid.is-week {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.commercial-development-calendar-grid.is-month {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.commercial-development-calendar-day {
+  min-width: 0;
+  position: relative;
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.65rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease,
+    filter 160ms ease;
+}
+
+.commercial-development-calendar-day:hover {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.2);
+  box-shadow: 0 18px 28px rgba(34, 49, 32, 0.06);
+}
+
+.commercial-development-calendar-day.is-selected {
+  border-color: rgba(70, 96, 49, 0.34);
+  background: linear-gradient(180deg, #f7faef 0%, #ffffff 100%);
+}
+
+.commercial-development-calendar-day.is-today {
+  box-shadow: inset 0 0 0 1px rgba(70, 96, 49, 0.18);
+}
+
+.commercial-development-calendar-day.is-placeholder {
+  cursor: default;
+  min-height: 9.75rem;
+  background:
+    linear-gradient(180deg, rgba(244, 246, 238, 0.9), rgba(250, 251, 247, 0.92));
+  border-style: dashed;
+  border-color: rgba(92, 107, 81, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+
+.commercial-development-calendar-day.is-month {
+  min-height: 9.75rem;
+  align-content: start;
+}
+
+.commercial-development-calendar-day.is-heat-0 {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 251, 247, 0.96));
+}
+
+.commercial-development-calendar-day.is-heat-1 {
+  background:
+    linear-gradient(180deg, rgba(239, 246, 232, 0.9), rgba(255, 255, 255, 0.96));
+  border-color: rgba(92, 126, 71, 0.16);
+}
+
+.commercial-development-calendar-day.is-heat-2 {
+  background:
+    linear-gradient(180deg, rgba(224, 239, 209, 0.98), rgba(252, 253, 249, 0.98));
+  border-color: rgba(89, 124, 64, 0.22);
+}
+
+.commercial-development-calendar-day.is-heat-3 {
+  background:
+    linear-gradient(180deg, rgba(206, 231, 187, 0.98), rgba(249, 251, 244, 0.98));
+  border-color: rgba(74, 109, 50, 0.28);
+}
+
+.commercial-development-calendar-day.is-heat-1 .commercial-development-calendar-count {
+  background: #e4f0d9;
+}
+
+.commercial-development-calendar-day.is-heat-2 .commercial-development-calendar-count {
+  background: #d6e8c2;
+}
+
+.commercial-development-calendar-day.is-heat-3 .commercial-development-calendar-count {
+  background: #c3dfaa;
+}
+
+.commercial-development-calendar-placeholder-mark {
+  width: 2.2rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: rgba(101, 118, 89, 0.14);
+  display: inline-block;
+}
+
+.commercial-development-calendar-month-day-copy {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.commercial-development-calendar-month-day-number {
+  font-size: 1.45rem;
+  line-height: 1;
+  color: #20301b;
+}
+
+.commercial-development-calendar-month-day-label {
+  color: #6b7762;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commercial-development-calendar-day-header {
+  display: flex;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding-right: 2.4rem;
+}
+
+.commercial-development-calendar-day-header > div {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.commercial-development-calendar-day-header span {
+  color: #6a7560;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.commercial-development-calendar-day-header strong {
+  color: #24301f;
+  font-size: 0.95rem;
+  line-height: 1.22;
+}
+
+.commercial-development-calendar-count {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  min-width: 1.85rem;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #eef5e8;
+  color: #35512d;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.commercial-development-calendar-day-items {
+  display: grid;
+  gap: 0.38rem;
+  align-content: start;
+}
+
+.commercial-development-calendar-preview-pill,
+.commercial-development-calendar-preview-more {
+  padding: 0.36rem 0.5rem;
+  border-radius: 999px;
+  background: #f5f6ef;
+  color: #55644e;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commercial-development-calendar-day.is-month .commercial-development-calendar-preview-pill,
+.commercial-development-calendar-day.is-month .commercial-development-calendar-preview-more {
+  border-radius: 10px;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.commercial-development-calendar-month-frame::-webkit-scrollbar {
+  width: 10px;
+}
+
+.commercial-development-calendar-month-frame::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(87, 110, 72, 0.26);
+}
+
+.commercial-development-calendar-month-frame::-webkit-scrollbar-track {
+  background: rgba(229, 235, 221, 0.35);
+}
+
+.commercial-development-calendar-preview-more {
+  background: transparent;
+  padding-left: 0;
+}
+
+.commercial-development-calendar-detail {
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(236, 243, 227, 0.85), transparent 30%),
+    linear-gradient(180deg, #fbfcf7 0%, #ffffff 100%);
+  padding: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.commercial-development-calendar-detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.commercial-development-calendar-detail-heading {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.commercial-development-calendar-detail-header h4 {
+  margin: 0.12rem 0 0;
+  color: #1f2c1b;
+}
+
+.commercial-development-calendar-detail-heading p {
+  margin: 0;
+  color: #62705c;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  text-transform: capitalize;
+}
+
+.commercial-development-calendar-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.commercial-development-calendar-detail-chip {
+  padding: 0.46rem 0.7rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f4f7ed 0%, #ffffff 100%);
+  border: 1px solid rgba(74, 96, 65, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.commercial-development-calendar-detail-chip span {
+  color: #6b7864;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commercial-development-calendar-detail-chip strong {
+  color: #1f2c1b;
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.commercial-development-calendar-create-box {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.95rem;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f2f5eb 0%, #fbfcf8 100%);
+  border: 1px solid rgba(74, 96, 65, 0.08);
+}
+
+.commercial-development-calendar-create-copy {
+  display: grid;
+  gap: 0.14rem;
+  position: relative;
+  padding-left: 2.35rem;
+}
+
+.commercial-development-calendar-create-copy strong {
+  color: #223120;
+}
+
+.commercial-development-calendar-create-copy p {
+  margin: 0;
+  color: #62705c;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.commercial-development-calendar-inline-icon,
+.commercial-development-calendar-empty-icon {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #466031;
+  background: rgba(224, 237, 211, 0.9);
+}
+
+.commercial-development-calendar-inline-icon {
+  position: absolute;
+  left: 0;
+  top: 0.05rem;
+}
+
+.commercial-development-calendar-inline-icon svg,
+.commercial-development-calendar-empty-icon svg {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+
+.commercial-development-calendar-create-box label {
+  display: grid;
+  gap: 0.28rem;
+  color: #31402c;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.commercial-development-calendar-event-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.commercial-development-calendar-event-card {
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 16px;
+  background: #fff;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.commercial-development-calendar-event-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.22);
+  box-shadow: 0 18px 28px rgba(34, 49, 32, 0.05);
+}
+
+.commercial-development-calendar-event-card strong {
+  color: #223120;
+}
+
+.commercial-development-calendar-event-card p {
+  margin: 0;
+  color: #4f5d49;
+  line-height: 1.35;
+}
+
+.commercial-development-calendar-event-meta {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.commercial-development-calendar-empty-state {
+  padding: 1.25rem 1rem;
+  border-radius: 18px;
+  border: 1px dashed rgba(92, 107, 81, 0.2);
+  background: linear-gradient(180deg, rgba(248, 250, 243, 0.92), rgba(255, 255, 255, 0.98));
+  text-align: center;
+  display: grid;
+  gap: 0.45rem;
+  justify-items: center;
+}
+
+.commercial-development-calendar-empty-state strong {
+  color: #223120;
+  font-size: 1rem;
+}
+
+.commercial-development-calendar-empty-state p {
+  margin: 0;
+  color: #55644f;
+  line-height: 1.45;
+}
+
+.modal-dialog.commercial-development-activity-modal {
+  max-width: 960px;
+  width: min(97vw, 960px);
+  display: grid;
+  gap: 0.95rem;
+  border: 1px solid rgba(61, 79, 47, 0.08);
+  border-radius: 24px;
+  padding: 1.1rem;
+  background:
+    radial-gradient(circle at top left, rgba(242, 246, 235, 0.95), transparent 34%),
+    linear-gradient(180deg, #ffffff, #fcfcf8);
+  box-shadow: 0 28px 70px rgba(34, 49, 32, 0.16);
+}
+
+.commercial-development-activity-modal-header {
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid #ece8dc;
+}
+
+.commercial-development-activity-header-copy {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.commercial-development-activity-kicker {
+  color: #68755f;
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.commercial-development-activity-modal .modal-title {
+  margin: 0;
+  color: #1e2a1b;
+  font-size: 1.42rem;
+  line-height: 1.05;
+}
+
+.commercial-development-activity-modal .section-helper-text {
+  margin: 0;
+  max-width: 56ch;
+  color: #5b6852;
+  line-height: 1.35;
+  font-size: 0.94rem;
+}
+
+.commercial-development-activity-context {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(78, 95, 62, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(246, 247, 238, 0.95), rgba(255, 255, 255, 0.98));
+  display: grid;
+  gap: 0.32rem;
+}
+
+.commercial-development-activity-context-head {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.commercial-development-activity-context-label {
+  color: #6c7863;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commercial-development-activity-context strong {
+  color: #223120;
+}
+
+.commercial-development-activity-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.commercial-development-activity-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.commercial-development-activity-form-section {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.78rem 0.85rem;
+  border: 1px solid rgba(78, 95, 62, 0.08);
+  border-radius: 16px;
+  background: rgba(251, 252, 247, 0.92);
+}
+
+.commercial-development-activity-section-heading {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.commercial-development-activity-section-heading strong {
+  color: #24301f;
+}
+
+.commercial-development-activity-section-heading p {
+  margin: 0;
+  color: #63705b;
+  font-size: 0.86rem;
+  line-height: 1.32;
+}
+
+.commercial-development-field {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.commercial-development-field > span {
+  color: #31402c;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.commercial-development-activity-modal select,
+.commercial-development-activity-modal input,
+.commercial-development-activity-modal textarea {
+  width: 100%;
+  border: 1px solid #d6dfd2;
+  border-radius: 12px;
+  background: #fff;
+  color: #223120;
+  padding: 0.72rem 0.8rem;
+  font: inherit;
+  line-height: 1.25;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.commercial-development-activity-modal select:focus,
+.commercial-development-activity-modal input:focus,
+.commercial-development-activity-modal textarea:focus {
+  outline: none;
+  border-color: #6a8d4d;
+  box-shadow: 0 0 0 4px rgba(106, 141, 77, 0.14);
+}
+
+.commercial-development-activity-modal textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.commercial-development-activity-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 600;
+  color: #32452b;
+  padding: 0.05rem 0.05rem;
+}
+
+.commercial-development-activity-checkbox input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.commercial-development-activity-summary-strip {
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: #f8f8f2;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.commercial-development-activity-summary-strip p {
+  margin: 0;
+  color: #54604a;
+}
+
+.commercial-development-activity-list-view {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.commercial-development-activity-list-toolbar,
+.commercial-development-activity-form-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.commercial-development-activity-list-toolbar strong {
+  color: #24301f;
+  display: block;
+  margin-bottom: 0.12rem;
+}
+
+.commercial-development-activity-list-toolbar p {
+  margin: 0;
+  color: #61705b;
+  font-size: 0.86rem;
+}
+
+.commercial-development-activity-form-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.38rem 0.68rem;
+  border-radius: 999px;
+  background: #eef4e8;
+  color: #466031;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.commercial-development-activity-inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.68rem 0.8rem;
+  border-radius: 14px;
+  background: #eef4e8;
+  color: #43523d;
+}
+
+.commercial-development-activity-inline-actions span {
+  font-size: 0.86rem;
+}
+
+.commercial-development-activity-history {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.commercial-development-activity-history-item {
+  padding: 0.78rem 0.88rem;
+  border: 1px solid rgba(78, 95, 62, 0.1);
+  border-radius: 16px;
+  background: #fff;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.commercial-development-activity-history-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.commercial-development-activity-history-button:hover {
+  border-color: rgba(70, 96, 49, 0.26);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(41, 51, 32, 0.1);
+}
+
+.commercial-development-activity-history-item p,
+.commercial-development-activity-history-item span {
+  margin: 0;
+  color: #56614f;
+}
+
+.commercial-development-activity-actions {
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding-top: 0.15rem;
+}
+
+.commercial-development-activity-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.2rem;
+}
+
+.commercial-development-activity-icon-button {
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid rgba(58, 73, 49, 0.14);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fbfcf7;
+  color: #466031;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.commercial-development-activity-icon-button svg {
+  width: 1.14rem;
+  height: 1.14rem;
+  display: block;
+  overflow: visible;
+}
+
+.commercial-development-activity-icon-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.3);
+  background: #f4f8ed;
+  box-shadow: 0 10px 18px rgba(41, 51, 32, 0.08);
 }
 
 .commercial-development-snapshot-table {
@@ -1407,11 +2866,94 @@ button:disabled {
   }
 
   .commercial-development-metrics-grid,
+  .commercial-development-calendar-summary,
   .commercial-development-stage-grid,
+  .commercial-development-gap-coverage-list,
   .commercial-development-opportunity-summary,
   .commercial-development-form-grid,
   .commercial-development-subgrid {
     grid-template-columns: 1fr;
+  }
+
+  .commercial-development-funnel-toolbar,
+  .commercial-development-funnel-footer,
+  .commercial-development-funnel-stage-head,
+  .commercial-development-daily-focus-item-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .commercial-development-daily-focus-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .commercial-development-funnel-row {
+    display: flex;
+  }
+
+  .commercial-development-funnel-visual {
+    gap: 0.75rem;
+  }
+
+  .commercial-development-funnel-stage {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .commercial-development-funnel-stage-shell {
+    min-height: 7.2rem;
+    padding: 1rem 1.6rem 1.1rem 2rem;
+  }
+
+  .commercial-development-funnel-stage-name {
+    white-space: normal;
+    font-size: 0.69rem;
+    line-height: 1.15;
+  }
+
+  .commercial-development-funnel-stage-share {
+    min-width: auto;
+    font-size: 0.68rem;
+  }
+
+  .commercial-development-gap-coverage-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .commercial-development-activity-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .commercial-development-calendar-layout,
+  .commercial-development-calendar-grid.is-week,
+  .commercial-development-calendar-grid.is-month {
+    grid-template-columns: 1fr;
+  }
+
+  .commercial-development-calendar-month-weekdays {
+    display: none;
+  }
+
+  .commercial-development-calendar-day.is-placeholder {
+    display: none;
+  }
+
+  .commercial-development-calendar-toolbar,
+  .commercial-development-calendar-nav,
+  .commercial-development-calendar-detail-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .commercial-development-activity-inline-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .commercial-development-activity-list-toolbar,
+  .commercial-development-activity-form-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -9974,7 +11516,7 @@ td {
 }
 
 .opportunity-workspace-summary-grid-executive {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .opportunity-workspace-summary-card,
@@ -10415,6 +11957,7 @@ td {
 }
 
 @media (max-width: 1280px) {
+  .opportunity-workspace-summary-grid-executive,
   .opportunity-workspace-scorecard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

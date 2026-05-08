@@ -59,6 +59,13 @@ function formatDateTime(value) {
   return date.toLocaleString("es-ES");
 }
 
+function formatOpportunityScore(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return null;
+  const scaledValue = Math.max(0, Math.min(10, (numericValue / 3) * 10));
+  return Number(scaledValue.toFixed(1));
+}
+
 function derivePurchaseMaturity({ budgetItem, decidersItem, currentStage }) {
   const score =
     Number(budgetItem?.score || 0) +
@@ -343,6 +350,9 @@ export default function OpportunityWorkspacePanel({
     decidersItem,
     currentStage,
   });
+  const opportunityScore = formatOpportunityScore(
+    workspace?.scorecard?.averageScore,
+  );
   const recommendedStrategy = workspace?.recommendedStrategy || {
     heading:
       "La estrategia recomendada aun no esta disponible para esta oportunidad.",
@@ -561,6 +571,16 @@ export default function OpportunityWorkspacePanel({
                 summary:
                   noDecisionRiskItem?.summary ||
                   "No hay lectura de riesgo de estancamiento disponible.",
+              },
+              {
+                label: "Score de oportunidad",
+                value:
+                  opportunityScore === null ? "-" : `${opportunityScore}/10`,
+                tone: workspace.summary?.health?.overallTone,
+                summary:
+                  opportunityScore === null
+                    ? "No hay score consolidado disponible para la oportunidad."
+                    : "Escala 0-10 basada en el scorecard actual y alineada con la salud general de la oportunidad.",
               },
             ].map((item) => (
               <article

@@ -1152,6 +1152,29 @@ test.describe("contacts opportunities", () => {
     ).toBeVisible();
   });
 
+  test("permite guardar una nueva fecha de cierre aunque el vendedor actual no esté en catálogo", async ({
+    page,
+  }) => {
+    const fixture = createCommercialFlowFixture({
+      opportunityName: "Expansion legacy seller 2026",
+    });
+    fixture.detail.seller_user_id = 999;
+    fixture.detail.updated_by_name = "Legacy Seller";
+
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture);
+    await page.goto("http://127.0.0.1:4173/opportunities");
+
+    await openOpportunityEditor(page, "Expansion legacy seller 2026");
+    const closeDateInput = page.locator(".audit-date-input").first();
+
+    await closeDateInput.fill("20/08/2026");
+    await page.getByRole("button", { name: "Guardar cambios" }).click();
+
+    await expect(page.getByText(/Oportunidad actualizada/i)).toBeVisible();
+    await expect.poll(() => fixture.detail.close_date).toBe("2026-08-20");
+  });
+
   test("propone respuestas desde documentos y permite aplicarlas", async ({
     page,
   }) => {

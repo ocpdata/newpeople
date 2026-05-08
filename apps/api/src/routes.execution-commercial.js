@@ -1,9 +1,11 @@
 import express from "express";
 import { requirePermission } from "./auth.js";
+import { logAuditEvent } from "./audit.js";
 import {
   loadCommercialEnablementRecommendationCatalog,
   recommendCommercialEnablementResources,
 } from "./commercial-enablement/service.js";
+import { config } from "./config.js";
 import { query } from "./db.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import {
@@ -16,12 +18,26 @@ const router = express.Router();
 
 const STAGE_SLA_DAYS = {
   contacto_inicial: 3,
+  identificacion_oportunidad: 3,
+  desarrollo: 5,
+  cotizacion: 5,
+  demostracion: 6,
+  negociacion: 4,
+  waiting: 3,
   descubrimiento: 5,
   validacion_valor: 5,
   propuesta: 6,
-  negociacion: 4,
   cierre: 3,
 };
+
+const LATE_STAGE_CODES = new Set([
+  "cotizacion",
+  "demostracion",
+  "negociacion",
+  "waiting",
+  "propuesta",
+  "cierre",
+]);
 
 const CADENCE_VISIBLE_LIMIT = 10;
 const DEVELOPMENT_PRIORITY_LIMIT = 12;
@@ -31,6 +47,15 @@ const NEXT_STEP_ACTION_TYPES = new Set([
   "next_step",
   "follow_up",
   "waiting_customer",
+]);
+
+const COMMERCIAL_ACTIVITY_ACTION_TYPES = new Set([
+  ...NEXT_STEP_ACTION_TYPES,
+  "call",
+  "conference",
+  "visit",
+  "presentation",
+  "other",
 ]);
 
 const DEPENDENCY_TYPE_LABELS = {
@@ -96,6 +121,14 @@ function roundAmount(value) {
   return Number(Number(value || 0).toFixed(2));
 }
 
+function toOpportunityScore(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return roundAmount(clampNumber((numericValue / 3) * 10, 0, 10));
+}
+
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -133,6 +166,66 @@ function getQuarterDateRange(year, quarter) {
   };
 }
 
+function parseDateOnly(value) {
+  const rawValue = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    return null;
+  }
+  const [year, month, day] = rawValue.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addUtcDays(date, days) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + Number(days || 0));
+  return next;
+}
+
+function getCalendarRange(view, requestedDate) {
+  const normalizedView = ["day", "week", "month"].includes(view)
+    ? view
+    : "week";
+  const anchor =
+    parseDateOnly(requestedDate) || parseDateOnly(toIsoDate(new Date()));
+
+  let start = anchor;
+  let end = anchor;
+  if (normalizedView === "week") {
+    const dayOfWeek = anchor.getUTCDay();
+    const offset = (dayOfWeek + 6) % 7;
+    start = addUtcDays(anchor, -offset);
+    end = addUtcDays(start, 6);
+  }
+  if (normalizedView === "month") {
+    start = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+    end = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() + 1, 0),
+    );
+  }
+
+  return {
+    view: normalizedView,
+    selectedDate: toIsoDate(anchor),
+    startDate: toIsoDate(start),
+    endDate: toIsoDate(end),
+    startDateTime: start,
+    endExclusiveDateTime: addUtcDays(end, 1),
+  };
+}
+
+function listDateRangeDays(startDate, endDate) {
+  const dates = [];
+  for (
+    let cursor = parseDateOnly(startDate);
+    cursor && cursor <= parseDateOnly(endDate);
+    cursor = addUtcDays(cursor, 1)
+  ) {
+    dates.push(toIsoDate(cursor));
+  }
+  return dates;
+}
+
 function isDateWithinQuarter(value, year, quarter) {
   const isoDate = toIsoDate(value);
   if (!isoDate) return false;
@@ -142,17 +235,20 @@ function isDateWithinQuarter(value, year, quarter) {
 
 function getStageConfidence(stageCode, stageOrder = 0, maxStageOrder = 6) {
   const mapped = {
-    contacto_inicial: 0.12,
-    identificacion_oportunidad: 0.18,
-    descubrimiento: 0.28,
+    contacto_inicial: 0,
+    identificacion_oportunidad: 0,
+    desarrollo: 0.2,
+    cotizacion: 0.45,
+    demostracion: 0.65,
+    negociacion: 0.85,
+    waiting: 1,
+    descubrimiento: 0.2,
     validacion_valor: 0.45,
-    propuesta: 0.68,
-    negociacion: 0.84,
-    cierre: 0.94,
-    waiting: 0.4,
+    propuesta: 0.65,
+    cierre: 1,
   }[stageCode];
 
-  if (mapped) {
+  if (mapped !== undefined) {
     return mapped;
   }
 
@@ -258,7 +354,7 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
      GROUP BY o.seller_user_id`,
     hasGlobalScope
       ? [...wonParams, startDate, endDate]
-      : [...wonParams, startDate, endDate, Number(user.id)],
+      : [wonParams[0], startDate, endDate, wonParams[1]],
   ).catch(() => []);
 
   const wonBySellerId = wonRows.reduce((accumulator, row) => {
@@ -470,6 +566,224 @@ function getRecommendedNextMove(value) {
   return value.title || value.text || "Concreta el siguiente movimiento comercial con evidencia y fecha.";
 }
 
+function extractResponseOutputText(data) {
+  const directOutputText = String(data?.output_text || "").trim();
+  if (directOutputText) return directOutputText;
+
+  const outputEntries = Array.isArray(data?.output) ? data.output : [];
+  return (
+    outputEntries
+      .flatMap((entry) => (Array.isArray(entry?.content) ? entry.content : []))
+      .filter((part) => part?.type === "output_text")
+      .map((part) => String(part?.text || "").trim())
+      .find(Boolean) || ""
+  );
+}
+
+function extractJsonObject(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function buildOpportunityNarrativeFallback(item) {
+  const stageLabel = item.stageName || "Sin etapa";
+  const executionSummary = item.executionState?.summary || "Sin lectura operativa disponible.";
+  const closeDateLabel = item.closeDate
+    ? `Cierre objetivo ${toIsoDate(item.closeDate) || "sin fecha"}.`
+    : "Sin fecha de cierre confirmada.";
+  const topRisk = Array.isArray(item.riskReasons) && item.riskReasons.length
+    ? `Señal principal: ${item.riskReasons[0]}.`
+    : "No hay una señal crítica dominante documentada.";
+
+  let statusSummary = `Etapa ${stageLabel}. ${executionSummary} ${topRisk} ${closeDateLabel}`;
+  if (item.executionState?.code === "esperando_cliente") {
+    statusSummary = `Etapa ${stageLabel}. La oportunidad depende de una respuesta o decisión del cliente y conviene evitar que se enfríe. ${topRisk}`;
+  } else if (item.executionState?.code === "esperando_interno") {
+    statusSummary = `Etapa ${stageLabel}. El avance depende de destrabar un compromiso interno antes de volver a empujar al cliente. ${topRisk}`;
+  } else if (item.executionState?.code === "sin_conduccion") {
+    statusSummary = `Etapa ${stageLabel}. La oportunidad sigue abierta, pero hoy no tiene conducción operativa visible ni compromiso vigente. ${topRisk}`;
+  }
+
+  const nextStepRecommendation = item.recommendedNextMove
+    ? getRecommendedNextMove(item.recommendedNextMove)
+    : buildDevelopmentRecommendation(item);
+
+  const blockedScorecards = (item.scorecardItems || [])
+    .filter((scorecardItem) => scorecardItem?.tone === "red")
+    .map((scorecardItem) => scorecardItem?.label)
+    .filter(Boolean);
+  if (blockedScorecards.length) {
+    statusSummary = `${statusSummary} Frente comercial más débil: ${blockedScorecards
+      .slice(0, 2)
+      .join(" y ")}.`;
+  }
+
+  return {
+    aiStatusSummary: statusSummary.trim(),
+    aiNextStepRecommendation: String(nextStepRecommendation || "").trim(),
+    aiNarrativeSource: "fallback",
+  };
+}
+
+async function requestOpportunityNarrativesWithAi(items) {
+  if (!config.openai.apiKey || !items.length) {
+    return new Map();
+  }
+
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Analiza oportunidades comerciales CRM y responde solo con JSON válido. No inventes datos ni hechos no presentes en la entrada. Debes producir dos textos breves por oportunidad para ayudar al vendedor: un estado realista y una recomendación concreta del siguiente paso. Razona según este proceso de venta B2B: contacto inicial, identificación de oportunidad, desarrollo, cotización, demostración, negociación y waiting. Usa la etapa actual, el estado de ejecución, el scorecard comercial, las debilidades abiertas, la inactividad, las dependencias, el siguiente paso vigente y la estrategia recomendada. El estado debe explicar qué está pasando de verdad en la oportunidad y cuál es la traba comercial principal. La recomendación debe decir qué hacer ahora para mover la oportunidad, no repetir frases vacías como 'dar seguimiento' o 'avanzar etapa'. Prioriza cerrar brechas reales de urgencia, presupuesto, decisores, no decisión, bloqueo interno, ausencia de conducción o falta de validación de etapa. Si la oportunidad está en negociación o waiting, enfócate en decisión, cierre y protección del deal. Si está en desarrollo, cotización o demostración, enfócate en cómo conseguir la siguiente señal de compra. Si falta información, dilo con honestidad pero sigue dando la mejor recomendación posible basada en la evidencia estructurada. Limita cada texto a máximo 320 caracteres.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          opportunities: items.map((item) => ({
+            opportunityId: item.id,
+            name: item.name,
+            accountName: item.accountName,
+            amountUsd: Number(item.amountUsd || 0),
+            stageName: item.stageName,
+            stageCode: item.stageCode,
+            executionState: item.executionState,
+            riskLevel: item.riskLevel,
+            riskReasons: item.riskReasons,
+            daysSinceActivity: Number(item.daysSinceActivity || 0),
+            slaDays: Number(item.slaDays || 0),
+            currentStageValidated: Boolean(item.currentStageValidated),
+            workspaceSummary: item.workspaceSummary || null,
+            scorecardOverallTone: item.scorecardOverallTone || "neutral",
+            scorecardItems: (item.scorecardItems || []).map((scorecardItem) => ({
+              label: scorecardItem.label,
+              tone: scorecardItem.tone,
+              statusLabel: scorecardItem.statusLabel,
+              summary: scorecardItem.summary,
+            })),
+            openWeaknesses: (item.openWeaknesses || []).map((weakness) => ({
+              title: weakness.title,
+              severity: weakness.severity,
+              detail: weakness.detail,
+            })),
+            nextStep: item.nextStep
+              ? {
+                  title: item.nextStep.title || "",
+                  actionType: item.nextStep.actionType || "",
+                  dueDate: item.nextStep.dueDate || null,
+                  isOverdue: Boolean(item.nextStep.isOverdue),
+                  successCriteria: item.nextStep.successCriteria || "",
+                }
+              : null,
+            dependencies: (item.dependencies || []).map((dependency) => ({
+              title: dependency.title,
+              dependencyLabel: dependency.dependencyLabel,
+              status: dependency.status,
+              isOverdue: Boolean(dependency.isOverdue),
+            })),
+            closeDate: item.closeDate || null,
+            recommendedHeading: item.recommendedHeading || "",
+            recommendedRoute: item.recommendedRoute || "",
+            recommendedFinalObjective: item.recommendedFinalObjective || "",
+            recommendedStrategySteps: (item.recommendedStrategySteps || []).map((step) => ({
+              priorityLabel: step.priorityLabel,
+              title: step.title,
+              text: step.text,
+            })),
+            recommendedNextMove: getRecommendedNextMove(item.recommendedNextMove),
+            fallback: buildOpportunityNarrativeFallback(item),
+          })),
+          expectedShape: {
+            insights: [
+              {
+                opportunityId: 0,
+                aiStatusSummary: "string",
+                aiNextStepRecommendation: "string",
+              },
+            ],
+          },
+        }),
+      },
+    ],
+  };
+
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const parsed = extractJsonObject(extractResponseOutputText(data));
+  const insights = Array.isArray(parsed?.insights) ? parsed.insights : [];
+
+  return new Map(
+    insights
+      .filter((item) => Number.isInteger(Number(item?.opportunityId)))
+      .map((item) => [
+        Number(item.opportunityId),
+        {
+          aiStatusSummary: String(item.aiStatusSummary || "").trim(),
+          aiNextStepRecommendation: String(item.aiNextStepRecommendation || "").trim(),
+          aiNarrativeSource: "openai",
+        },
+      ]),
+  );
+}
+
+async function enrichOpportunityNarratives(items) {
+  const withFallback = items.map((item) => ({
+    ...item,
+    ...buildOpportunityNarrativeFallback(item),
+  }));
+
+  if (!config.openai.apiKey || !withFallback.length) {
+    return withFallback;
+  }
+
+  try {
+    const aiInsights = await requestOpportunityNarrativesWithAi(withFallback);
+    return withFallback.map((item) => {
+      const aiInsight = aiInsights.get(item.id);
+      if (!aiInsight) return item;
+      return {
+        ...item,
+        aiStatusSummary: aiInsight.aiStatusSummary || item.aiStatusSummary,
+        aiNextStepRecommendation:
+          aiInsight.aiNextStepRecommendation || item.aiNextStepRecommendation,
+        aiNarrativeSource: aiInsight.aiNarrativeSource,
+      };
+    });
+  } catch {
+    return withFallback;
+  }
+}
+
 function buildPriorityItems(items, planningSnapshot) {
   const maxAmount = items.length
     ? Math.max(...items.map((item) => Number(item.amountUsd || 0)), 1)
@@ -633,6 +947,9 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         opportunityId: item.id,
         opportunityName: item.name,
         accountName: item.accountName,
+        opportunityScore: item.opportunityScore ?? null,
+        scoreTone:
+          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
         title: "Definir siguiente paso",
         detail: item.primaryRecommendation,
         dueDate: null,
@@ -644,6 +961,9 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         opportunityId: item.id,
         opportunityName: item.name,
         accountName: item.accountName,
+        opportunityScore: item.opportunityScore ?? null,
+        scoreTone:
+          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
         title: item.nextStep.title || "Cerrar seguimiento vencido",
         detail: "El compromiso ya venció y debe renegociarse o completarse hoy.",
         dueDate: item.nextStep.dueDate || null,
@@ -660,6 +980,9 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         opportunityId: item.id,
         opportunityName: item.name,
         accountName: item.accountName,
+        opportunityScore: item.opportunityScore ?? null,
+        scoreTone:
+          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
         title: overdueDependency.title,
         detail: `Resolver ${overdueDependency.dependencyLabel} para liberar avance comercial.`,
         dueDate: overdueDependency.dueDate || null,
@@ -794,6 +1117,7 @@ async function listAccessibleOpportunities(user) {
     `SELECT o.id, o.account_id, o.name, o.amount_usd, o.close_date, o.sales_stage_id,
             o.commercial_status_id, o.seller_user_id, o.updated_at,
             a.name AS account_name,
+            oas.code AS activation_status_code,
             oss.code AS sales_stage_code,
             oss.name AS sales_stage_name,
             oss.stage_order,
@@ -803,10 +1127,12 @@ async function listAccessibleOpportunities(user) {
      FROM opportunities o
      ${ownershipJoin}
      INNER JOIN accounts a ON a.id = o.account_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
      INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
      INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      LEFT JOIN users su ON su.id = o.seller_user_id
      WHERE ocs.code NOT IN ('ganada', 'perdida', 'cancelada')
+       AND oas.code = 'activada'
        ${hasGlobalOpportunityScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ?)"}
      ORDER BY o.updated_at DESC, o.id DESC`,
     params,
@@ -988,15 +1314,23 @@ async function listLastActivityByOpportunity(opportunityIds) {
 
 function selectPrimaryNextStep(actions, currentStageId) {
   const candidates = (actions || [])
+    .filter((action) => COMMERCIAL_ACTIVITY_ACTION_TYPES.has(action.actionType))
     .filter((action) =>
       ["pending", "in_progress", "blocked"].includes(action.status),
     )
     .sort((left, right) => {
-      const leftDue = left.dueDate
-        ? new Date(left.dueDate).getTime()
+      const leftPrimary = Boolean(left.isPrimaryNextStep);
+      const rightPrimary = Boolean(right.isPrimaryNextStep);
+      if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1;
+      const leftDue = left.scheduledAt
+        ? new Date(left.scheduledAt).getTime()
+        : left.dueDate
+          ? new Date(left.dueDate).getTime()
         : Number.MAX_SAFE_INTEGER;
-      const rightDue = right.dueDate
-        ? new Date(right.dueDate).getTime()
+      const rightDue = right.scheduledAt
+        ? new Date(right.scheduledAt).getTime()
+        : right.dueDate
+          ? new Date(right.dueDate).getTime()
         : Number.MAX_SAFE_INTEGER;
       if (leftDue !== rightDue) return leftDue - rightDue;
       const leftCurrent =
@@ -1023,14 +1357,72 @@ function mapNextStep(nextStep) {
     title: nextStep.title,
     actionType: nextStep.actionType || "next_step",
     dueDate: nextStep.dueDate,
+    scheduledAt: nextStep.scheduledAt || null,
     status: nextStep.status,
     successCriteria: nextStep.successCriteria || "",
+    notes: nextStep.notes || "",
+    isPrimaryNextStep: Boolean(nextStep.isPrimaryNextStep),
     ownerUserId:
       nextStep.ownerUserId === null ? null : Number(nextStep.ownerUserId),
     ownerUserName: nextStep.ownerUserName || "",
     isOverdue: Boolean(nextStep.dueDate && getDiffDays(nextStep.dueDate) > 0),
   };
 }
+
+function getActionTimestamp(action) {
+  const rawValue =
+    action?.scheduledAt ||
+    action?.dueDate ||
+    action?.updatedAt ||
+    action?.createdAt ||
+    null;
+  if (!rawValue) {
+    return Number.NaN;
+  }
+  const parsed = new Date(rawValue);
+  return Number.isNaN(parsed.getTime()) ? Number.NaN : parsed.getTime();
+}
+
+function mapCommercialActivity(action) {
+  return {
+    id: Number(action.id),
+    title: action.title || "",
+    activityType: action.actionType || "other",
+    status: action.status || "pending",
+    scheduledAt: action.scheduledAt || null,
+    dueDate: action.dueDate || null,
+    note: action.notes || "",
+    isPrimaryNextStep: Boolean(action.isPrimaryNextStep),
+    createdAt: action.createdAt || null,
+    updatedAt: action.updatedAt || null,
+  };
+}
+
+function buildCommercialActivitySummary(actions) {
+  const activityItems = (actions || [])
+    .filter((action) => COMMERCIAL_ACTIVITY_ACTION_TYPES.has(action.actionType))
+    .map(mapCommercialActivity);
+
+  const nextScheduledActivity = [...activityItems]
+    .filter((action) => ["pending", "in_progress", "blocked"].includes(action.status))
+    .sort((left, right) => getActionTimestamp(left) - getActionTimestamp(right))[0] || null;
+
+  const lastCompletedActivity = [...activityItems]
+    .filter((action) => action.status === "done")
+    .sort((left, right) => getActionTimestamp(right) - getActionTimestamp(left))[0] || null;
+
+  const recentActivities = [...activityItems]
+    .sort((left, right) => getActionTimestamp(right) - getActionTimestamp(left))
+    .slice(0, 5);
+
+  return {
+    activityCount: activityItems.length,
+    nextScheduledActivity,
+    lastCompletedActivity,
+    recentActivities,
+  };
+}
+  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
 
 function mapDependencyRow(row) {
   return {
@@ -1076,9 +1468,7 @@ function determineCadenceType(opportunityItem) {
     return "rescue_inactive";
   }
   if (
-    ["propuesta", "negociacion", "cierre", "waiting"].includes(
-      opportunityItem.stageCode,
-    ) ||
+    LATE_STAGE_CODES.has(opportunityItem.stageCode) ||
     opportunityItem.nextStep?.actionType === "waiting_customer"
   ) {
     return "proposal_conversion";
@@ -1154,11 +1544,7 @@ function buildCadenceSuggestionAssessment(opportunityItem) {
     score += 10;
     reasons.push("Riesgo de decision o sponsor insuficiente");
   }
-  if (
-    ["propuesta", "negociacion", "cierre", "waiting"].includes(
-      opportunityItem.stageCode,
-    )
-  ) {
+  if (LATE_STAGE_CODES.has(opportunityItem.stageCode)) {
     score += 6;
   }
 
@@ -1596,6 +1982,156 @@ async function findOpenNextStepAction(opportunityId) {
   return rows[0] ? Number(rows[0].id) : null;
 }
 
+async function clearPrimaryNextStepActions(opportunityId, excludeActionId = null) {
+  const params = [opportunityId];
+  let whereClause = "opportunity_id = ? AND is_primary_next_step = 1";
+  if (excludeActionId) {
+    whereClause += " AND id <> ?";
+    params.push(Number(excludeActionId));
+  }
+
+  await query(
+    `UPDATE opportunity_workspace_actions
+     SET is_primary_next_step = 0,
+         updated_at = NOW(3)
+     WHERE ${whereClause}`,
+    params,
+  );
+}
+
+async function loadCommercialActivityAction(opportunityId, actionId) {
+  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
+  const rows = await query(
+    `SELECT id, opportunity_id, action_type, status, title, notes, scheduled_at,
+            due_date, owner_user_id, linked_stage_id, is_primary_next_step
+     FROM opportunity_workspace_actions
+     WHERE id = ?
+       AND opportunity_id = ?
+       AND action_type IN (${actionTypes.map(() => "?").join(", ")})
+     LIMIT 1`,
+    [actionId, opportunityId, ...actionTypes],
+  );
+
+  return rows[0] || null;
+}
+
+async function listCommercialCalendarActivities({
+  user,
+  view,
+  date,
+  includeCompleted,
+  year = null,
+  quarter = null,
+}) {
+  const range = getCalendarRange(view, date);
+  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
+  const params = [];
+  const ownershipJoin = buildOwnershipJoin(user, params);
+  const where = [
+    `a.scheduled_at >= ?`,
+    `a.scheduled_at < ?`,
+    `a.action_type IN (${actionTypes.map(() => "?").join(", ")})`,
+    includeCompleted
+      ? `a.status IN ('pending', 'in_progress', 'blocked', 'done')`
+      : `a.status IN ('pending', 'in_progress', 'blocked')`,
+    `ocs.code NOT IN ('ganada', 'perdida', 'cancelada')`,
+    `oas.code = 'activada'`,
+  ];
+
+  params.push(range.startDateTime, range.endExclusiveDateTime, ...actionTypes);
+
+  if (year !== null && quarter !== null) {
+    const quarterRange = getQuarterDateRange(year, quarter);
+    where.push(`o.close_date BETWEEN ? AND ?`);
+    params.push(quarterRange.startDate, quarterRange.endDate);
+  }
+
+  if (!hasGlobalOpportunityScope(user)) {
+    where.push(`(ao_scope.user_id IS NOT NULL OR o.created_by = ?)`);
+    params.push(Number(user.id));
+  }
+
+  const rows = await query(
+    `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
+            a.scheduled_at, a.is_primary_next_step,
+            o.name AS opportunity_name, o.close_date, o.amount_usd,
+            ac.name AS account_name,
+            oss.name AS stage_name
+     FROM opportunity_workspace_actions a
+     INNER JOIN opportunities o ON o.id = a.opportunity_id
+     ${ownershipJoin}
+     INNER JOIN accounts ac ON ac.id = o.account_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY a.scheduled_at ASC, a.is_primary_next_step DESC, o.amount_usd DESC, o.name ASC`,
+    params,
+  );
+
+  const items = rows.map((row) => ({
+    id: Number(row.id),
+    opportunityId: Number(row.opportunity_id),
+    opportunityName: row.opportunity_name,
+    accountName: row.account_name,
+    activityType: row.action_type,
+    status: row.status,
+    scheduledAt: row.scheduled_at,
+    scheduledDate: toIsoDate(row.scheduled_at),
+    title: row.title || "",
+    note: row.notes || "",
+    isPrimaryNextStep: Boolean(row.is_primary_next_step),
+    stageName: row.stage_name || "",
+    closeDate: row.close_date,
+    amountUsd: Number(row.amount_usd || 0),
+  }));
+
+  const groupedItems = items.reduce((accumulator, item) => {
+    const key = item.scheduledDate;
+    if (!accumulator.has(key)) {
+      accumulator.set(key, []);
+    }
+    accumulator.get(key).push(item);
+    return accumulator;
+  }, new Map());
+
+  const summary = items.reduce(
+    (accumulator, item) => {
+      accumulator.total += 1;
+      if (item.status === "pending") accumulator.pending += 1;
+      if (item.status === "in_progress") accumulator.inProgress += 1;
+      if (item.status === "blocked") accumulator.blocked += 1;
+      if (item.status === "done") accumulator.done += 1;
+      return accumulator;
+    },
+    {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+    },
+  );
+
+  return {
+    filters: {
+      view: range.view,
+      date: range.selectedDate,
+      rangeStart: range.startDate,
+      rangeEnd: range.endDate,
+      includeCompleted: Boolean(includeCompleted),
+      year,
+      quarter,
+    },
+    summary,
+    days: listDateRangeDays(range.startDate, range.endDate).map((day) => ({
+      date: day,
+      count: (groupedItems.get(day) || []).length,
+      items: groupedItems.get(day) || [],
+    })),
+  };
+}
+
 router.get(
   "/dashboard",
   requirePermission("oportunidades.read"),
@@ -1620,7 +2156,7 @@ router.get(
       },
       new Map(),
     );
-    const executionItems = await Promise.all(
+    let executionItems = await Promise.all(
       opportunityRows.map(async (row) => {
         const opportunityState = {
           ...row,
@@ -1639,6 +2175,9 @@ router.get(
           opportunityState.salesStageId,
         );
         const mappedNextStep = mapNextStep(nextStep);
+        const activitySummary = buildCommercialActivitySummary(
+          workspace.actions || [],
+        );
         const lastActivityAt =
           lastActivityByOpportunity.get(Number(row.id)) ||
           (row.updated_at ? new Date(row.updated_at) : null) ||
@@ -1682,8 +2221,32 @@ router.get(
           daysSinceActivity,
           slaDays,
           slaBreached: daysSinceActivity > slaDays,
+          currentStageValidated: Boolean(workspace.currentStage?.isValidated),
+          workspaceSummary: workspace.summary || null,
+          opportunityScore: toOpportunityScore(
+            workspace.scorecard?.averageScore,
+          ),
+          scorecardOverallTone: workspace.scorecard?.overallTone || "neutral",
+          scorecardItems: (workspace.scorecard?.items || []).map((scorecardItem) => ({
+            label: scorecardItem.label,
+            tone: scorecardItem.tone,
+            statusLabel: scorecardItem.statusLabel,
+            summary: scorecardItem.summary,
+          })),
+          openWeaknesses: (workspace.weaknesses || [])
+            .filter((weakness) => weakness.status === "open")
+            .slice(0, 3)
+            .map((weakness) => ({
+              title: weakness.title,
+              severity: weakness.severity,
+              detail: weakness.detail || "",
+            })),
           recommendedHeading: workspace.recommendedStrategy?.heading || "",
           recommendedRoute: workspace.recommendedStrategy?.route || "",
+          recommendedFinalObjective:
+            workspace.recommendedStrategy?.finalObjective || "",
+          recommendedStrategySteps:
+            (workspace.recommendedStrategy?.steps || []).slice(0, 3),
           recommendedNextMove: workspace.recommendedStrategy?.steps?.[0] || "",
           weaknessCount: (workspace.weaknesses || []).length,
           criticalWeaknessCount: risk.criticalWeaknessCount,
@@ -1694,6 +2257,10 @@ router.get(
           decisionRiskTone:
             workspace.scorecard?.signals?.decisionRisk?.tone || "neutral",
           nextStep: mappedNextStep,
+          nextScheduledActivity: activitySummary.nextScheduledActivity,
+          lastCompletedActivity: activitySummary.lastCompletedActivity,
+          recentActivities: activitySummary.recentActivities,
+          activityCount: activitySummary.activityCount,
         };
 
         item.reminders = buildExecutionReminders({
@@ -1720,6 +2287,27 @@ router.get(
 
         return item;
       }),
+    );
+
+    const quarterOpportunityIds = new Set(
+      executionItems
+        .filter((item) =>
+          isDateWithinQuarter(
+            item.closeDate,
+            quarterSelection.year,
+            quarterSelection.quarter,
+          ),
+        )
+        .map((item) => item.id),
+    );
+    const quarterNarratives = await enrichOpportunityNarratives(
+      executionItems.filter((item) => quarterOpportunityIds.has(item.id)),
+    );
+    const quarterNarrativeById = new Map(
+      quarterNarratives.map((item) => [item.id, item]),
+    );
+    executionItems = executionItems.map(
+      (item) => quarterNarrativeById.get(item.id) || item,
     );
 
     const activeCadenceRows = await listActiveCadences(opportunityIds);
@@ -1985,6 +2573,249 @@ router.get(
   },
 );
 
+router.get(
+  "/calendar",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const view = String(req.query?.view || "week").trim();
+    if (!["day", "week", "month"].includes(view)) {
+      return res.status(400).json({ message: "view invalido" });
+    }
+
+    const date = String(req.query?.date || "").trim();
+    const includeCompleted = String(req.query?.includeCompleted || "false") === "true";
+    const hasQuarterFilter =
+      req.query?.year !== undefined || req.query?.quarter !== undefined;
+    const quarterSelection = hasQuarterFilter
+      ? resolveQuarterSelection(req.query)
+      : { year: null, quarter: null };
+
+    const payload = await listCommercialCalendarActivities({
+      user: req.user,
+      view,
+      date,
+      includeCompleted,
+      year: quarterSelection.year,
+      quarter: quarterSelection.quarter,
+    });
+
+    return res.json(payload);
+  },
+);
+
+router.post(
+  "/opportunities/:id/activities",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Oportunidad invalida" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const activityType = String(req.body?.activityType || "").trim();
+    const scheduledAtRaw = String(req.body?.scheduledAt || "").trim();
+    const objective = String(req.body?.objective || "").trim();
+    const note = String(req.body?.note || "").trim();
+    const isPrimaryNextStep = Boolean(req.body?.isPrimaryNextStep);
+
+    if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(activityType)) {
+      return res.status(400).json({ message: "activityType invalido" });
+    }
+    if (!scheduledAtRaw) {
+      return res.status(400).json({ message: "scheduledAt es obligatorio" });
+    }
+    if (!objective) {
+      return res.status(400).json({ message: "El objetivo es obligatorio" });
+    }
+
+    const scheduledAt = new Date(scheduledAtRaw);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      return res.status(400).json({ message: "scheduledAt invalido" });
+    }
+
+    const actionId = await saveOpportunityAction({
+      opportunityId,
+      actionId: null,
+      payload: {
+        linked_stage_id: Number(opportunity.sales_stage_id),
+        action_type: activityType,
+        priority: isPrimaryNextStep ? "high" : "medium",
+        title: objective,
+        owner_user_id: Number(req.user.id),
+        due_date: scheduledAtRaw.slice(0, 10),
+        scheduled_at: scheduledAt,
+        success_criteria: "",
+        notes: note || null,
+        is_primary_next_step: isPrimaryNextStep ? 1 : 0,
+        status: "pending",
+      },
+      userId: Number(req.user.id),
+    });
+
+    if (isPrimaryNextStep) {
+      await clearPrimaryNextStepActions(opportunityId, actionId);
+    }
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_activity_created",
+      entityType: "opportunity",
+      entityId: opportunityId,
+      detail: `Actividad programada: ${objective}`,
+      after: {
+        actionId,
+        activityType,
+        objective,
+        scheduledAt,
+        isPrimaryNextStep,
+      },
+    });
+
+    return res.status(201).json({
+      id: actionId,
+      message: "Actividad programada",
+    });
+  },
+);
+
+router.patch(
+  "/opportunities/:id/activities/:activityId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    const activityId = Number(req.params.activityId);
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(activityId) ||
+      activityId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const currentActivity = await loadCommercialActivityAction(
+      opportunityId,
+      activityId,
+    );
+    if (!currentActivity) {
+      return res.status(404).json({ message: "Actividad no encontrada" });
+    }
+
+    const nextActivityType = req.body?.activityType === undefined
+      ? String(currentActivity.action_type || "")
+      : String(req.body.activityType || "").trim();
+    const nextObjective = req.body?.objective === undefined
+      ? String(currentActivity.title || "")
+      : String(req.body.objective || "").trim();
+    const nextNote = req.body?.note === undefined
+      ? String(currentActivity.notes || "")
+      : String(req.body.note || "").trim();
+    const scheduledAtRaw = req.body?.scheduledAt === undefined
+      ? currentActivity.scheduled_at || currentActivity.due_date || null
+      : String(req.body.scheduledAt || "").trim();
+    const nextStatus = req.body?.status === undefined
+      ? String(currentActivity.status || "pending")
+      : String(req.body.status || "").trim();
+
+    if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(nextActivityType)) {
+      return res.status(400).json({ message: "activityType invalido" });
+    }
+    if (!nextObjective) {
+      return res.status(400).json({ message: "El objetivo es obligatorio" });
+    }
+    if (!["pending", "in_progress", "blocked", "done"].includes(nextStatus)) {
+      return res.status(400).json({ message: "status invalido" });
+    }
+    if (!scheduledAtRaw) {
+      return res.status(400).json({ message: "scheduledAt es obligatorio" });
+    }
+
+    const scheduledAt = new Date(scheduledAtRaw);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      return res.status(400).json({ message: "scheduledAt invalido" });
+    }
+
+    const isOpenStatus = ["pending", "in_progress", "blocked"].includes(nextStatus);
+    const nextIsPrimaryNextStep = isOpenStatus && req.body?.isPrimaryNextStep !== undefined
+      ? Boolean(req.body.isPrimaryNextStep)
+      : isOpenStatus && Boolean(currentActivity.is_primary_next_step);
+
+    await saveOpportunityAction({
+      opportunityId,
+      actionId: activityId,
+      payload: {
+        linked_stage_id: Number(
+          currentActivity.linked_stage_id || opportunity.sales_stage_id,
+        ),
+        action_type: nextActivityType,
+        priority: nextIsPrimaryNextStep ? "high" : "medium",
+        title: nextObjective,
+        owner_user_id:
+          currentActivity.owner_user_id === null
+            ? Number(req.user.id)
+            : Number(currentActivity.owner_user_id),
+        due_date: String(scheduledAt.toISOString().slice(0, 10)),
+        scheduled_at: scheduledAt,
+        success_criteria: "",
+        notes: nextNote || null,
+        is_primary_next_step: nextIsPrimaryNextStep ? 1 : 0,
+        status: nextStatus,
+      },
+      userId: Number(req.user.id),
+    });
+
+    if (nextIsPrimaryNextStep) {
+      await clearPrimaryNextStepActions(opportunityId, activityId);
+    }
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: nextStatus === "done"
+        ? "workspace_activity_completed"
+        : "workspace_activity_updated",
+      entityType: "opportunity",
+      entityId: opportunityId,
+      detail: nextStatus === "done"
+        ? `Actividad realizada: ${nextObjective}`
+        : `Actividad actualizada: ${nextObjective}`,
+      after: {
+        actionId: activityId,
+        activityType: nextActivityType,
+        objective: nextObjective,
+        scheduledAt,
+        status: nextStatus,
+        isPrimaryNextStep: nextIsPrimaryNextStep,
+      },
+    });
+
+    return res.json({
+      id: activityId,
+      message:
+        nextStatus === "done"
+          ? "Actividad marcada como realizada"
+          : "Actividad actualizada",
+    });
+  },
+);
+
 router.post(
   "/opportunities/:id/next-step",
   requirePermission("oportunidades.update"),
@@ -2030,11 +2861,14 @@ router.post(
         title,
         owner_user_id: ownerUserId,
         due_date: dueDate,
+        is_primary_next_step: 1,
         success_criteria: successCriteria,
         status: "pending",
       },
       userId: Number(req.user.id),
     });
+
+    await clearPrimaryNextStepActions(opportunityId, actionId);
 
     return res.status(existingActionId ? 200 : 201).json({
       id: actionId,

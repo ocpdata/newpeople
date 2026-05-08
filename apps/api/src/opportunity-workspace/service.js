@@ -2577,7 +2577,13 @@ async function getActions(opportunityId) {
      LEFT JOIN opportunity_workspace_weaknesses w ON w.id = a.linked_weakness_id
      LEFT JOIN opportunity_workspace_stakeholders s ON s.id = a.stakeholder_id
      WHERE a.opportunity_id = ?
-     ORDER BY FIELD(a.status, 'pending', 'in_progress', 'blocked', 'done'), a.due_date IS NULL, a.due_date, a.updated_at DESC`,
+     ORDER BY FIELD(a.status, 'pending', 'in_progress', 'blocked', 'done'),
+              a.is_primary_next_step DESC,
+              a.scheduled_at IS NULL,
+              a.scheduled_at,
+              a.due_date IS NULL,
+              a.due_date,
+              a.updated_at DESC`,
     [opportunityId],
   );
 }
@@ -2765,11 +2771,15 @@ export async function buildOpportunityWorkspace({
     ownerUserId: row.owner_user_id ? Number(row.owner_user_id) : null,
     ownerName: row.owner_name || "",
     dueDate: row.due_date || null,
+    scheduledAt: row.scheduled_at || null,
     successCriteria: row.success_criteria || "",
     notes: row.notes || "",
+    isPrimaryNextStep: Boolean(row.is_primary_next_step),
     stageName: row.stage_name || "",
     weaknessTitle: row.weakness_title || "",
     stakeholderName: row.stakeholder_name || "",
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
   }));
   const stageValidationsByStageId = await getLatestWorkspaceStageValidations({
     opportunityId,
@@ -3200,8 +3210,10 @@ export async function saveOpportunityAction({
       "stakeholder_id",
       "owner_user_id",
       "due_date",
+      "scheduled_at",
       "success_criteria",
       "notes",
+      "is_primary_next_step",
       "updated_by_user_id",
     ],
     payload: { ...payload, updated_by_user_id: userId },

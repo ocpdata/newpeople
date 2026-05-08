@@ -7361,6 +7361,454 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("desarrollo comercial permite programar actividad y reflejarla en la tarjeta", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_activity`,
+    );
+
+    const createActivityResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/activities`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        activityType: "call",
+        scheduledAt: "2026-08-12T16:30:00.000Z",
+        objective: "Confirmar decisor, fecha de comite y condiciones de cierre.",
+        note: "Participan sponsor y compras.",
+        isPrimaryNextStep: true,
+      });
+
+    expect(createActivityResponse.status).toBe(201);
+    const activityId = Number(createActivityResponse.body.id);
+    expect(activityId).toBeGreaterThan(0);
+
+    const rescheduleActivityResponse = await request(app)
+      .patch(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/activities/${activityId}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        activityType: "visit",
+        scheduledAt: "2026-08-14T18:00:00.000Z",
+        objective: "Revisar propuesta final con sponsor y compras en sitio.",
+        note: "Se reprograma por disponibilidad del cliente.",
+        isPrimaryNextStep: true,
+      });
+
+    expect(rescheduleActivityResponse.status).toBe(200);
+
+    const dashboardResponse = await request(app)
+      .get("/api/commercial-development/dashboard")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+
+    const workItem = dashboardResponse.body.workboard.find(
+      (item) => item.id === fixture.opportunityId,
+    );
+
+    expect(workItem).toEqual(
+      expect.objectContaining({
+        id: fixture.opportunityId,
+        activityCount: expect.any(Number),
+        nextScheduledActivity: expect.objectContaining({
+          id: activityId,
+          activityType: "visit",
+          title: "Revisar propuesta final con sponsor y compras en sitio.",
+        }),
+        nextStep: expect.objectContaining({
+          actionType: "visit",
+          title: "Revisar propuesta final con sponsor y compras en sitio.",
+        }),
+        recentActivities: expect.arrayContaining([
+          expect.objectContaining({
+            id: activityId,
+            activityType: "visit",
+            title: "Revisar propuesta final con sponsor y compras en sitio.",
+          }),
+        ]),
+      }),
+    );
+    expect(workItem.activityCount).toBeGreaterThanOrEqual(1);
+
+    const completeActivityResponse = await request(app)
+      .patch(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/activities/${activityId}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        status: "done",
+        activityType: "visit",
+        scheduledAt: "2026-08-14T18:00:00.000Z",
+        objective: "Revisar propuesta final con sponsor y compras en sitio.",
+        note: "Actividad ejecutada con decision de siguiente revision interna.",
+        isPrimaryNextStep: false,
+      });
+
+    expect(completeActivityResponse.status).toBe(200);
+
+    const completedDashboardResponse = await request(app)
+      .get("/api/commercial-development/dashboard")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(completedDashboardResponse.status).toBe(200);
+
+    const completedWorkItem = completedDashboardResponse.body.workboard.find(
+      (item) => item.id === fixture.opportunityId,
+    );
+
+    expect(completedWorkItem.nextScheduledActivity).toBeNull();
+    expect(completedWorkItem.lastCompletedActivity).toEqual(
+      expect.objectContaining({
+        id: activityId,
+        activityType: "visit",
+        status: "done",
+      }),
+    );
+  });
+
+  test("desarrollo comercial expone calendario de actividades por dia semana y mes", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_calendar`,
+    );
+
+    const createActivityResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/activities`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        activityType: "call",
+        scheduledAt: "2026-08-12T16:30:00.000Z",
+        objective: "Confirmar status del cierre con sponsor.",
+        note: "Agenda semanal.",
+        isPrimaryNextStep: true,
+      });
+
+    expect(createActivityResponse.status).toBe(201);
+
+    const dayResponse = await request(app)
+      .get(
+        "/api/commercial-development/calendar?view=day&date=2026-08-12&includeCompleted=false",
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(dayResponse.status).toBe(200);
+    expect(dayResponse.body.filters).toEqual(
+      expect.objectContaining({
+        view: "day",
+        date: "2026-08-12",
+        rangeStart: "2026-08-12",
+        rangeEnd: "2026-08-12",
+      }),
+    );
+    expect(dayResponse.body.days).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          date: "2026-08-12",
+          count: 1,
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              opportunityId: fixture.opportunityId,
+              opportunityName: expect.any(String),
+              activityType: "call",
+              status: "pending",
+            }),
+          ]),
+        }),
+      ]),
+    );
+
+    const weekResponse = await request(app)
+      .get(
+        "/api/commercial-development/calendar?view=week&date=2026-08-12&includeCompleted=false",
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(weekResponse.status).toBe(200);
+    expect(weekResponse.body.filters).toEqual(
+      expect.objectContaining({
+        view: "week",
+        date: "2026-08-12",
+        rangeStart: "2026-08-10",
+        rangeEnd: "2026-08-16",
+      }),
+    );
+    expect(weekResponse.body.days).toHaveLength(7);
+
+    const monthResponse = await request(app)
+      .get(
+        "/api/commercial-development/calendar?view=month&date=2026-08-12&includeCompleted=false",
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(monthResponse.status).toBe(200);
+    expect(monthResponse.body.filters).toEqual(
+      expect.objectContaining({
+        view: "month",
+        date: "2026-08-12",
+        rangeStart: "2026-08-01",
+        rangeEnd: "2026-08-31",
+      }),
+    );
+    expect(monthResponse.body.days).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          date: "2026-08-12",
+          count: 1,
+        }),
+      ]),
+    );
+  });
+
+  test("desarrollo comercial calcula real ganado segun el trimestre seleccionado", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_actual_by_quarter`,
+    );
+
+    const actorUserId = ctx.opportunityFlowUserId;
+    const now = new Date();
+
+    for (const quarter of [1, 2]) {
+      await query(
+        `INSERT INTO commercial_planning_periods
+           (plan_year, plan_quarter, base_currency_code, status, notes,
+            created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+            created_at, updated_at)
+         VALUES (?, ?, 'USD', 'active', ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          2027,
+          quarter,
+          `Plan API desarrollo comercial T${quarter}`,
+          actorUserId,
+          actorUserId,
+          now,
+          actorUserId,
+          now,
+          now,
+        ],
+      );
+      const [periodRow] = await query(
+        `SELECT id
+         FROM commercial_planning_periods
+         WHERE plan_year = 2027 AND plan_quarter = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [quarter],
+      );
+
+      await query(
+        `INSERT INTO commercial_planning_versions
+           (period_id, version_number, label, status, notes,
+            created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+            created_at, updated_at)
+         VALUES (?, 1, ?, 'active', NULL, ?, ?, ?, ?, ?, ?)`,
+        [
+          periodRow.id,
+          `T${quarter} 2027 v1`,
+          actorUserId,
+          actorUserId,
+          now,
+          actorUserId,
+          now,
+          now,
+        ],
+      );
+      const [versionRow] = await query(
+        `SELECT id
+         FROM commercial_planning_versions
+         WHERE period_id = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [periodRow.id],
+      );
+
+      await query(
+        `INSERT INTO commercial_planning_targets
+           (version_id, seller_user_id, sales_quota_amount, currency_code,
+            expected_margin_percent, expected_contribution_amount, notes, status,
+            created_by_user_id, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, 'USD', ?, ?, NULL, 'complete', ?, ?, ?, ?)`,
+        [
+          versionRow.id,
+          actorUserId,
+          100000,
+          24,
+          24000,
+          actorUserId,
+          actorUserId,
+          now,
+          now,
+        ],
+      );
+    }
+
+    await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad ganada ${TEST_PREFIX}_commercial_development_actual_by_quarter`,
+        33000,
+        fixture.accountId,
+        '2027-05-15',
+        fixture.contactId,
+        ctx.catalogIds.salesStageWaitingId,
+        ctx.catalogIds.businessLineId,
+        actorUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialWonStatusId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+      ],
+    );
+    const [wonOpportunityRow] = await query(
+      `SELECT id
+       FROM opportunities
+       WHERE name = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [
+        `Oportunidad ganada ${TEST_PREFIX}_commercial_development_actual_by_quarter`,
+      ],
+    );
+    cleanup.opportunityIds.push(Number(wonOpportunityRow.id));
+
+    const q1Response = await request(app)
+      .get('/api/commercial-development/dashboard?year=2027&quarter=1')
+      .set('Authorization', `Bearer ${fixture.token}`);
+    const q2Response = await request(app)
+      .get('/api/commercial-development/dashboard?year=2027&quarter=2')
+      .set('Authorization', `Bearer ${fixture.token}`);
+
+    expect(q1Response.status).toBe(200);
+    expect(q2Response.status).toBe(200);
+    expect(q1Response.body.development.quota.actualAmount).toBe(0);
+    expect(q2Response.body.development.quota.actualAmount).toBe(33000);
+  });
+
+  test("desarrollo comercial excluye oportunidades desactivadas del pipeline del periodo", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_dev_dash_inactive`,
+    );
+
+    const actorUserId = ctx.opportunityFlowUserId;
+    const now = new Date();
+
+    await query(
+      `INSERT INTO commercial_planning_periods
+         (plan_year, plan_quarter, base_currency_code, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, ?, 'USD', 'active', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        2027,
+        3,
+        'Plan API desarrollo comercial excluye desactivadas',
+        actorUserId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+    const [periodRow] = await query(
+      `SELECT id
+       FROM commercial_planning_periods
+       WHERE plan_year = 2027 AND plan_quarter = 3
+       ORDER BY id DESC
+       LIMIT 1`,
+      [],
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_versions
+         (period_id, version_number, label, status, notes,
+          created_by_user_id, updated_by_user_id, published_at, published_by_user_id,
+          created_at, updated_at)
+       VALUES (?, 1, 'T3 2027 v1', 'active', NULL, ?, ?, ?, ?, ?, ?)`,
+      [periodRow.id, actorUserId, actorUserId, now, actorUserId, now, now],
+    );
+    const [versionRow] = await query(
+      `SELECT id
+       FROM commercial_planning_versions
+       WHERE period_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [periodRow.id],
+    );
+
+    await query(
+      `INSERT INTO commercial_planning_targets
+         (version_id, seller_user_id, sales_quota_amount, currency_code,
+          expected_margin_percent, expected_contribution_amount, notes, status,
+          created_by_user_id, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'USD', ?, ?, NULL, 'complete', ?, ?, ?, ?)`,
+      [
+        versionRow.id,
+        actorUserId,
+        100000,
+        24,
+        24000,
+        actorUserId,
+        actorUserId,
+        now,
+        now,
+      ],
+    );
+
+    await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad desactivada ${TEST_PREFIX}_dev_dash_inactive`,
+        55000,
+        fixture.accountId,
+        '2027-08-15',
+        fixture.contactId,
+        ctx.catalogIds.salesStageWaitingId,
+        ctx.catalogIds.businessLineId,
+        actorUserId,
+        null,
+        ctx.catalogIds.opportunityInactiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+      ],
+    );
+    const [inactiveOpportunityRow] = await query(
+      `SELECT id
+       FROM opportunities
+       WHERE name = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [
+        `Oportunidad desactivada ${TEST_PREFIX}_dev_dash_inactive`,
+      ],
+    );
+    cleanup.opportunityIds.push(Number(inactiveOpportunityRow.id));
+
+    const dashboardResponse = await request(app)
+      .get('/api/commercial-development/dashboard?year=2027&quarter=3')
+      .set('Authorization', `Bearer ${fixture.token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+    expect(dashboardResponse.body.development.quota.openAmount).toBe(0);
+    expect(dashboardResponse.body.development.pipelineByStage).toEqual([]);
+  });
+
   test("desarrollo comercial limita la cuota trimestral al vendedor autenticado sin alcance global", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_development_scope`,

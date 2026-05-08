@@ -4,6 +4,29 @@ import { es } from "date-fns/locale";
 import OpportunityDocumentsPanel from "./OpportunityDocumentsPanel";
 import OpportunityWorkspacePanel from "./OpportunityWorkspacePanel";
 
+function withCurrentCatalogOption(options, currentValue, labelKey = "name") {
+  if (!currentValue) return options;
+
+  const normalizedCurrentValue = String(currentValue);
+  if (
+    options.some(
+      (option) => String(option?.id || option?.code || "") === normalizedCurrentValue,
+    )
+  ) {
+    return options;
+  }
+
+  return [
+    {
+      id: normalizedCurrentValue,
+      [labelKey]: `Actual (${normalizedCurrentValue})`,
+      full_name: `Actual (${normalizedCurrentValue})`,
+      name: `Actual (${normalizedCurrentValue})`,
+    },
+    ...options,
+  ];
+}
+
 function OpportunityFormModal({
   isOpen,
   error,
@@ -171,6 +194,26 @@ function OpportunityFormModal({
     : editingOpportunityId
       ? "Estamos actualizando la oportunidad para dejar registrados los cambios y mantener el seguimiento comercial al dia."
       : "Estamos registrando la oportunidad con su contexto comercial para dejarla lista y continuar con el seguimiento.";
+  const accountOptions = withCurrentCatalogOption(catalogs.accounts, form.accountId);
+  const currentContactOptions = withCurrentCatalogOption(
+    contactOptions,
+    form.contactId,
+    "full_name",
+  );
+  const businessLineOptions = withCurrentCatalogOption(
+    catalogs.businessLines,
+    form.businessLineId,
+  );
+  const sellerOptions = withCurrentCatalogOption(
+    catalogs.sellerUsers,
+    form.sellerUserId,
+    "full_name",
+  );
+  const presalesOptions = withCurrentCatalogOption(
+    catalogs.presalesUsers,
+    form.presalesUserId,
+    "full_name",
+  );
 
   function handleClose() {
     if (isModalLocked) return;
@@ -372,7 +415,7 @@ function OpportunityFormModal({
                     required
                   >
                     <option value="">Selecciona cuenta</option>
-                    {catalogs.accounts.map((account) => (
+                    {accountOptions.map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.name}
                       </option>
@@ -395,7 +438,7 @@ function OpportunityFormModal({
                     required
                   >
                     <option value="">Selecciona contacto</option>
-                    {contactOptions.map((contact) => (
+                    {currentContactOptions.map((contact) => (
                       <option key={contact.id} value={contact.id}>
                         {contact.full_name}
                       </option>
@@ -435,7 +478,7 @@ function OpportunityFormModal({
                     required
                   >
                     <option value="">Selecciona linea</option>
-                    {catalogs.businessLines.map((line) => (
+                    {businessLineOptions.map((line) => (
                       <option key={line.id} value={line.id}>
                         {line.name}
                       </option>
@@ -457,7 +500,7 @@ function OpportunityFormModal({
                     required
                   >
                     <option value="">Selecciona vendedor</option>
-                    {catalogs.sellerUsers.map((user) => (
+                    {sellerOptions.map((user) => (
                       <option key={user.id} value={user.id}>
                         {user.full_name}
                       </option>
@@ -476,7 +519,7 @@ function OpportunityFormModal({
                     }
                   >
                     <option value="">Sin preventa</option>
-                    {catalogs.presalesUsers.map((user) => (
+                    {presalesOptions.map((user) => (
                       <option key={user.id} value={user.id}>
                         {user.full_name}
                       </option>
