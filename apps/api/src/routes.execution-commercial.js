@@ -1,7 +1,11 @@
+import { buffer as streamToBuffer } from "node:stream/consumers";
 import express from "express";
 import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import {
+  getCommercialEnablementAssetDetail,
+  getCommercialEnablementFileStream,
+  listCommercialEnablementAssets,
   loadCommercialEnablementRecommendationCatalog,
   recommendCommercialEnablementResources,
 } from "./commercial-enablement/service.js";
@@ -9,10 +13,17 @@ import { config } from "./config.js";
 import { query } from "./db.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import {
+  getDocumentContentStream,
+  listOpportunityDocuments,
+} from "./opportunity-documents/service.js";
+import {
   buildOpportunityWorkspace,
   saveOpportunityAction,
 } from "./opportunity-workspace/service.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
+import { buildQuotationPdfBuffer } from "./quotationPdf.js";
+import { getCompanyDocumentBranding } from "./settings.js";
+import { sendCommercialActionEmail } from "./utils.js";
 
 const router = express.Router();
 
@@ -43,6 +54,19 @@ const CADENCE_VISIBLE_LIMIT = 10;
 const DEVELOPMENT_PRIORITY_LIMIT = 12;
 const DEVELOPMENT_ACTION_LIMIT = 10;
 
+const COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
+const COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+const COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "text/plain",
+  "image/png",
+  "image/jpeg",
+]);
+
 const NEXT_STEP_ACTION_TYPES = new Set([
   "next_step",
   "follow_up",
@@ -50,12 +74,61 @@ const NEXT_STEP_ACTION_TYPES = new Set([
 ]);
 
 const COMMERCIAL_ACTIVITY_ACTION_TYPES = new Set([
-  ...NEXT_STEP_ACTION_TYPES,
   "call",
   "conference",
   "visit",
   "presentation",
   "other",
+]);
+
+const COMMERCIAL_ACTION_ITEM_TYPES = new Set([
+  ...NEXT_STEP_ACTION_TYPES,
+  "send_email",
+  "prepare_proposal",
+  "request_information",
+  "coordinate_presales",
+  "send_documentation",
+  "update_quote",
+  "internal_approval",
+  "other_action",
+]);
+
+const COMMERCIAL_TIMELINE_ACTION_TYPES = new Set([
+  ...COMMERCIAL_ACTIVITY_ACTION_TYPES,
+  ...COMMERCIAL_ACTION_ITEM_TYPES,
+]);
+
+const COMMERCIAL_ACTIVITY_STATUSES = new Set([
+  "pending",
+  "confirmed",
+  "done",
+  "missed",
+  "rescheduled",
+  "cancelled",
+  "in_progress",
+  "blocked",
+]);
+
+const COMMERCIAL_ACTION_STATUSES = new Set([
+  "pending",
+  "in_progress",
+  "blocked",
+  "done",
+  "cancelled",
+]);
+
+const COMMERCIAL_ACTIVITY_OPEN_STATUSES = new Set([
+  "pending",
+  "confirmed",
+  "rescheduled",
+  "in_progress",
+  "blocked",
+]);
+
+const COMMERCIAL_ACTION_OPEN_STATUSES = new Set([
+  "pending",
+  "in_progress",
+  "blocked",
 ]);
 
 const DEPENDENCY_TYPE_LABELS = {
@@ -142,18 +215,65 @@ function toIsoDate(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function buildContactDisplayName(contact) {
+  return String(
+    contact?.full_name ||
+      contact?.fullName ||
+      [contact?.first_name, contact?.last_name].filter(Boolean).join(" "),
+  ).trim();
+}
+
+async function listContactsByAccountIds(accountIds) {
+  const normalizedIds = Array.from(
+    new Set(
+      (accountIds || [])
+        .map((value) => Number(value || 0))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+  if (!normalizedIds.length) {
+    return new Map();
+  }
+
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT c.id, c.account_id, c.first_name, c.last_name, c.position_title, c.email
+     FROM contacts c
+     WHERE c.account_id IN (${placeholders})
+       AND COALESCE(TRIM(c.email), '') <> ''
+     ORDER BY c.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
+    normalizedIds,
+  ).catch(() => []);
+
+  return rows.reduce((accumulator, row) => {
+    const accountId = Number(row.account_id || 0);
+    if (!accountId) return accumulator;
+    const current = accumulator.get(accountId) || [];
+    current.push({
+      id: Number(row.id),
+      fullName: buildContactDisplayName(row),
+      positionTitle: row.position_title || "",
+      email: row.email || "",
+    });
+    accumulator.set(accountId, current);
+    return accumulator;
+  }, new Map());
+}
+
 function resolveQuarterSelection(input) {
   const now = new Date();
   const fallbackQuarter = Math.floor(now.getMonth() / 3) + 1;
   const year = Number(input?.year);
   const quarter = Number(input?.quarter);
   return {
-    year: Number.isInteger(year) && year >= 2020 && year <= 2100
-      ? year
-      : now.getFullYear(),
-    quarter: Number.isInteger(quarter) && quarter >= 1 && quarter <= 4
-      ? quarter
-      : fallbackQuarter,
+    year:
+      Number.isInteger(year) && year >= 2020 && year <= 2100
+        ? year
+        : now.getFullYear(),
+    quarter:
+      Number.isInteger(quarter) && quarter >= 1 && quarter <= 4
+        ? quarter
+        : fallbackQuarter,
   };
 }
 
@@ -198,7 +318,9 @@ function getCalendarRange(view, requestedDate) {
     end = addUtcDays(start, 6);
   }
   if (normalizedView === "month") {
-    start = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+    start = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1),
+    );
     end = new Date(
       Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() + 1, 0),
     );
@@ -256,11 +378,19 @@ function getStageConfidence(stageCode, stageOrder = 0, maxStageOrder = 6) {
     return 0.35;
   }
 
-  return clampNumber(Number(stageOrder || 0) / Number(maxStageOrder || 1), 0.1, 0.95);
+  return clampNumber(
+    Number(stageOrder || 0) / Number(maxStageOrder || 1),
+    0.1,
+    0.95,
+  );
 }
 
 function isCommittedStage(stageCode) {
   return stageCode === "negociacion" || stageCode === "waiting";
+}
+
+function isRealWonStage(stageCode) {
+  return stageCode === "cierre";
 }
 
 async function listDevelopmentPeriods() {
@@ -336,38 +466,6 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
     : [];
 
   const { startDate, endDate } = getQuarterDateRange(year, quarter);
-  const wonParams = [];
-  const ownershipJoin = buildOwnershipJoin(user, wonParams);
-  if (!hasGlobalScope) {
-    wonParams.push(Number(user.id));
-  }
-  const wonRows = await query(
-    `SELECT o.seller_user_id,
-            COALESCE(SUM(o.amount_usd), 0) AS won_amount,
-            COUNT(*) AS won_count
-     FROM opportunities o
-     ${ownershipJoin}
-     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
-     WHERE ocs.code = 'ganada'
-       AND o.close_date BETWEEN ? AND ?
-       ${hasGlobalScope ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ?)"}
-     GROUP BY o.seller_user_id`,
-    hasGlobalScope
-      ? [...wonParams, startDate, endDate]
-      : [wonParams[0], startDate, endDate, wonParams[1]],
-  ).catch(() => []);
-
-  const wonBySellerId = wonRows.reduce((accumulator, row) => {
-    accumulator.set(
-      row.seller_user_id === null ? null : Number(row.seller_user_id),
-      {
-        wonAmount: roundAmount(row.won_amount),
-        wonCount: Number(row.won_count || 0),
-      },
-    );
-    return accumulator;
-  }, new Map());
-
   const stageOrderValues = openItems.map((item) => Number(item.stageId || 0));
   const maxStageOrder = stageOrderValues.length
     ? Math.max(...stageOrderValues)
@@ -375,7 +473,24 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
   const openItemsInQuarter = openItems.filter((item) =>
     isDateWithinQuarter(item.closeDate, year, quarter),
   );
+  const actualBySellerId = openItemsInQuarter.reduce((accumulator, item) => {
+    if (!isRealWonStage(item.stageCode)) {
+      return accumulator;
+    }
+    const key = item.sellerUserId || null;
+    const current = accumulator.get(key) || {
+      actualAmount: 0,
+      actualCount: 0,
+    };
+    current.actualAmount += Number(item.amountUsd || 0);
+    current.actualCount += 1;
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
   const openBySellerId = openItemsInQuarter.reduce((accumulator, item) => {
+    if (isRealWonStage(item.stageCode)) {
+      return accumulator;
+    }
     const key = item.sellerUserId || null;
     const current = accumulator.get(key) || {
       openAmount: 0,
@@ -400,7 +515,10 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
 
   const targetSnapshots = targetRows.map((row) => {
     const sellerUserId = Number(row.seller_user_id);
-    const won = wonBySellerId.get(sellerUserId) || { wonAmount: 0, wonCount: 0 };
+    const actual = actualBySellerId.get(sellerUserId) || {
+      actualAmount: 0,
+      actualCount: 0,
+    };
     const open = openBySellerId.get(sellerUserId) || {
       openAmount: 0,
       committedOpenAmount: 0,
@@ -408,7 +526,9 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
       openCount: 0,
     };
     const quotaAmount = roundAmount(row.sales_quota_amount);
-    const projectedAmount = roundAmount(won.wonAmount + open.weightedOpenAmount);
+    const projectedAmount = roundAmount(
+      actual.actualAmount + open.weightedOpenAmount,
+    );
     return {
       sellerUserId,
       sellerUserName: row.seller_user_name,
@@ -416,16 +536,18 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
       currencyCode: row.currency_code || periodRow?.base_currency_code || "USD",
       expectedMarginPercent: Number(row.expected_margin_percent || 0),
       expectedContributionAmount: roundAmount(row.expected_contribution_amount),
-      wonAmount: won.wonAmount,
-      wonCount: won.wonCount,
+      wonAmount: roundAmount(actual.actualAmount),
+      wonCount: actual.actualCount,
       openAmount: roundAmount(open.openAmount),
       committedOpenAmount: roundAmount(open.committedOpenAmount),
       openCount: open.openCount,
       weightedOpenAmount: roundAmount(open.weightedOpenAmount),
-      gapAmount: roundAmount(Math.max(quotaAmount - won.wonAmount, 0)),
-      projectedGapAmount: roundAmount(Math.max(quotaAmount - projectedAmount, 0)),
+      gapAmount: roundAmount(Math.max(quotaAmount - actual.actualAmount, 0)),
+      projectedGapAmount: roundAmount(
+        Math.max(quotaAmount - projectedAmount, 0),
+      ),
       attainmentPercent: quotaAmount
-        ? roundAmount((won.wonAmount / quotaAmount) * 100)
+        ? roundAmount((actual.actualAmount / quotaAmount) * 100)
         : null,
       projectionPercent: quotaAmount
         ? roundAmount((projectedAmount / quotaAmount) * 100)
@@ -434,13 +556,22 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
   });
 
   const assignedAmount = roundAmount(
-    targetSnapshots.reduce((total, item) => total + Number(item.quotaAmount || 0), 0),
+    targetSnapshots.reduce(
+      (total, item) => total + Number(item.quotaAmount || 0),
+      0,
+    ),
   );
   const actualAmount = roundAmount(
-    targetSnapshots.reduce((total, item) => total + Number(item.wonAmount || 0), 0),
+    targetSnapshots.reduce(
+      (total, item) => total + Number(item.wonAmount || 0),
+      0,
+    ),
   );
   const openAmount = roundAmount(
-    targetSnapshots.reduce((total, item) => total + Number(item.openAmount || 0), 0),
+    targetSnapshots.reduce(
+      (total, item) => total + Number(item.openAmount || 0),
+      0,
+    ),
   );
   const committedOpenAmount = roundAmount(
     targetSnapshots.reduce(
@@ -466,12 +597,17 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
       year,
       quarter,
       label: getQuarterLabel(year, quarter),
-      baseCurrencyCode: periodRow?.base_currency_code || targetSnapshots[0]?.currencyCode || "USD",
+      baseCurrencyCode:
+        periodRow?.base_currency_code ||
+        targetSnapshots[0]?.currencyCode ||
+        "USD",
       status: periodRow?.status || "unplanned",
       hasPlan: Boolean(periodRow),
       hasPublishedVersion: periodRow?.version_status === "active",
       versionId: periodRow?.version_id ? Number(periodRow.version_id) : null,
-      versionNumber: periodRow?.version_number ? Number(periodRow.version_number) : null,
+      versionNumber: periodRow?.version_number
+        ? Number(periodRow.version_number)
+        : null,
       versionLabel: periodRow?.version_label || null,
       notes: periodRow?.notes || "",
       startDate,
@@ -555,15 +691,23 @@ function buildDevelopmentRecommendation(item) {
     return "Empuja confirmación del cliente con resumen ejecutivo y fecha cerrada de decisión.";
   }
   if (item.riskLevel === "high") {
-    return item.riskReasons?.[0] || "Atiende la principal señal de riesgo antes del siguiente hito comercial.";
+    return (
+      item.riskReasons?.[0] ||
+      "Atiende la principal señal de riesgo antes del siguiente hito comercial."
+    );
   }
   return getRecommendedNextMove(item.recommendedNextMove);
 }
 
 function getRecommendedNextMove(value) {
-  if (!value) return "Concreta el siguiente movimiento comercial con evidencia y fecha.";
+  if (!value)
+    return "Concreta el siguiente movimiento comercial con evidencia y fecha.";
   if (typeof value === "string") return value;
-  return value.title || value.text || "Concreta el siguiente movimiento comercial con evidencia y fecha.";
+  return (
+    value.title ||
+    value.text ||
+    "Concreta el siguiente movimiento comercial con evidencia y fecha."
+  );
 }
 
 function extractResponseOutputText(data) {
@@ -600,13 +744,15 @@ function extractJsonObject(value) {
 
 function buildOpportunityNarrativeFallback(item) {
   const stageLabel = item.stageName || "Sin etapa";
-  const executionSummary = item.executionState?.summary || "Sin lectura operativa disponible.";
+  const executionSummary =
+    item.executionState?.summary || "Sin lectura operativa disponible.";
   const closeDateLabel = item.closeDate
     ? `Cierre objetivo ${toIsoDate(item.closeDate) || "sin fecha"}.`
     : "Sin fecha de cierre confirmada.";
-  const topRisk = Array.isArray(item.riskReasons) && item.riskReasons.length
-    ? `Señal principal: ${item.riskReasons[0]}.`
-    : "No hay una señal crítica dominante documentada.";
+  const topRisk =
+    Array.isArray(item.riskReasons) && item.riskReasons.length
+      ? `Señal principal: ${item.riskReasons[0]}.`
+      : "No hay una señal crítica dominante documentada.";
 
   let statusSummary = `Etapa ${stageLabel}. ${executionSummary} ${topRisk} ${closeDateLabel}`;
   if (item.executionState?.code === "esperando_cliente") {
@@ -669,12 +815,14 @@ async function requestOpportunityNarrativesWithAi(items) {
             currentStageValidated: Boolean(item.currentStageValidated),
             workspaceSummary: item.workspaceSummary || null,
             scorecardOverallTone: item.scorecardOverallTone || "neutral",
-            scorecardItems: (item.scorecardItems || []).map((scorecardItem) => ({
-              label: scorecardItem.label,
-              tone: scorecardItem.tone,
-              statusLabel: scorecardItem.statusLabel,
-              summary: scorecardItem.summary,
-            })),
+            scorecardItems: (item.scorecardItems || []).map(
+              (scorecardItem) => ({
+                label: scorecardItem.label,
+                tone: scorecardItem.tone,
+                statusLabel: scorecardItem.statusLabel,
+                summary: scorecardItem.summary,
+              }),
+            ),
             openWeaknesses: (item.openWeaknesses || []).map((weakness) => ({
               title: weakness.title,
               severity: weakness.severity,
@@ -699,12 +847,16 @@ async function requestOpportunityNarrativesWithAi(items) {
             recommendedHeading: item.recommendedHeading || "",
             recommendedRoute: item.recommendedRoute || "",
             recommendedFinalObjective: item.recommendedFinalObjective || "",
-            recommendedStrategySteps: (item.recommendedStrategySteps || []).map((step) => ({
-              priorityLabel: step.priorityLabel,
-              title: step.title,
-              text: step.text,
-            })),
-            recommendedNextMove: getRecommendedNextMove(item.recommendedNextMove),
+            recommendedStrategySteps: (item.recommendedStrategySteps || []).map(
+              (step) => ({
+                priorityLabel: step.priorityLabel,
+                title: step.title,
+                text: step.text,
+              }),
+            ),
+            recommendedNextMove: getRecommendedNextMove(
+              item.recommendedNextMove,
+            ),
             fallback: buildOpportunityNarrativeFallback(item),
           })),
           expectedShape: {
@@ -749,7 +901,9 @@ async function requestOpportunityNarrativesWithAi(items) {
         Number(item.opportunityId),
         {
           aiStatusSummary: String(item.aiStatusSummary || "").trim(),
-          aiNextStepRecommendation: String(item.aiNextStepRecommendation || "").trim(),
+          aiNextStepRecommendation: String(
+            item.aiNextStepRecommendation || "",
+          ).trim(),
           aiNarrativeSource: "openai",
         },
       ]),
@@ -803,11 +957,18 @@ function buildPriorityItems(items, planningSnapshot) {
       );
       const impactScore = Math.round(
         amountRatio * 45 +
-          Math.min(quotaGapAmount > 0 ? Number(item.amountUsd || 0) / quotaGapAmount : 0.45, 1) * 35 +
+          Math.min(
+            quotaGapAmount > 0
+              ? Number(item.amountUsd || 0) / quotaGapAmount
+              : 0.45,
+            1,
+          ) *
+            35 +
           stageConfidence * 20,
       );
 
-      let riskScore = item.riskLevel === "high" ? 70 : item.riskLevel === "medium" ? 45 : 15;
+      let riskScore =
+        item.riskLevel === "high" ? 70 : item.riskLevel === "medium" ? 45 : 15;
       riskScore += Math.min((item.riskReasons || []).length * 6, 18);
       riskScore += item.nextStep?.isOverdue ? 12 : 0;
       riskScore += item.executionState?.code === "bloqueada" ? 10 : 0;
@@ -815,9 +976,10 @@ function buildPriorityItems(items, planningSnapshot) {
       riskScore = clampNumber(riskScore, 0, 100);
 
       const closeDate = item.closeDate ? new Date(item.closeDate) : null;
-      const daysToClose = closeDate && !Number.isNaN(closeDate.getTime())
-        ? Math.ceil((closeDate.getTime() - Date.now()) / 86400000)
-        : null;
+      const daysToClose =
+        closeDate && !Number.isNaN(closeDate.getTime())
+          ? Math.ceil((closeDate.getTime() - Date.now()) / 86400000)
+          : null;
       let urgencyScore = 25;
       if (daysToClose !== null) {
         if (daysToClose <= 7) urgencyScore += 35;
@@ -855,7 +1017,12 @@ function buildPriorityItems(items, planningSnapshot) {
     });
 }
 
-function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities, quarterPipeline }) {
+function buildDevelopmentRecommendations({
+  summary,
+  planningSnapshot,
+  priorities,
+  quarterPipeline,
+}) {
   const recommendations = [];
   const quota = planningSnapshot.quota || {};
 
@@ -863,7 +1030,8 @@ function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities
     recommendations.push({
       type: "planning_gap",
       title: `No existe cuota publicada para ${planningSnapshot.period?.label}`,
-      detail: "Publica una versión activa en Planeación Comercial para medir avance real contra meta.",
+      detail:
+        "Publica una versión activa en Planeación Comercial para medir avance real contra meta.",
       tone: "medium",
     });
   } else if (Number(quota.gapAmount || 0) > 0) {
@@ -875,13 +1043,15 @@ function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities
       detail:
         committedOpenAmount >= Number(quota.gapAmount || 0)
           ? "El pipeline comprometido ya cubre la brecha actual, pero depende de ejecutar bien las oportunidades del tramo final."
-          : committedOpenAmount + weightedOpenAmount >= Number(quota.gapAmount || 0)
+          : committedOpenAmount + weightedOpenAmount >=
+              Number(quota.gapAmount || 0)
             ? "Lo comprometido no alcanza; necesitas convertir también oportunidades en maduración para cubrir la brecha."
             : "Ni el pipeline comprometido ni el ponderado actuales alcanzan la brecha; hace falta abrir o acelerar cobertura.",
       tone:
         committedOpenAmount >= Number(quota.gapAmount || 0)
           ? "medium"
-          : committedOpenAmount + weightedOpenAmount >= Number(quota.gapAmount || 0)
+          : committedOpenAmount + weightedOpenAmount >=
+              Number(quota.gapAmount || 0)
             ? "medium"
             : "high",
     });
@@ -889,7 +1059,8 @@ function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities
     recommendations.push({
       type: "quota_on_track",
       title: "La cuota del trimestre ya está cubierta en real",
-      detail: "Protege los cierres ganados y reorienta foco a expansión o margen.",
+      detail:
+        "Protege los cierres ganados y reorienta foco a expansión o margen.",
       tone: "low",
     });
   }
@@ -898,7 +1069,8 @@ function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities
     recommendations.push({
       type: "next_step",
       title: `${summary.withoutNextStep} oportunidad(es) siguen sin siguiente paso`,
-      detail: "La prioridad operativa más barata es cerrar conducción visible en oportunidades con monto relevante.",
+      detail:
+        "La prioridad operativa más barata es cerrar conducción visible en oportunidades con monto relevante.",
       tone: "high",
     });
   }
@@ -936,7 +1108,11 @@ function buildDevelopmentRecommendations({ summary, planningSnapshot, priorities
   return recommendations.slice(0, 5);
 }
 
-function buildActionsToday({ priorities, activeCadences, pendingInteractions }) {
+function buildActionsToday({
+  priorities,
+  activeCadences,
+  pendingInteractions,
+}) {
   const actionItems = [];
 
   priorities.forEach((item) => {
@@ -949,7 +1125,8 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         accountName: item.accountName,
         opportunityScore: item.opportunityScore ?? null,
         scoreTone:
-          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
+          item.workspaceSummary?.health?.overallTone ||
+          item.scorecardOverallTone,
         title: "Definir siguiente paso",
         detail: item.primaryRecommendation,
         dueDate: null,
@@ -963,9 +1140,11 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         accountName: item.accountName,
         opportunityScore: item.opportunityScore ?? null,
         scoreTone:
-          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
+          item.workspaceSummary?.health?.overallTone ||
+          item.scorecardOverallTone,
         title: item.nextStep.title || "Cerrar seguimiento vencido",
-        detail: "El compromiso ya venció y debe renegociarse o completarse hoy.",
+        detail:
+          "El compromiso ya venció y debe renegociarse o completarse hoy.",
         dueDate: item.nextStep.dueDate || null,
       });
     }
@@ -982,7 +1161,8 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
         accountName: item.accountName,
         opportunityScore: item.opportunityScore ?? null,
         scoreTone:
-          item.workspaceSummary?.health?.overallTone || item.scorecardOverallTone,
+          item.workspaceSummary?.health?.overallTone ||
+          item.scorecardOverallTone,
         title: overdueDependency.title,
         detail: `Resolver ${overdueDependency.dependencyLabel} para liberar avance comercial.`,
         dueDate: overdueDependency.dueDate || null,
@@ -1011,10 +1191,12 @@ function buildActionsToday({ priorities, activeCadences, pendingInteractions }) 
       kind: "interaction",
       priorityScore: 55,
       opportunityId: item.primaryOpportunityId,
-      opportunityName: item.primaryOpportunityName || "Sin oportunidad principal",
+      opportunityName:
+        item.primaryOpportunityName || "Sin oportunidad principal",
       accountName: item.accountName,
       title: item.title,
-      detail: "Resolver interacción pendiente que puede destrabar evidencia o avance.",
+      detail:
+        "Resolver interacción pendiente que puede destrabar evidencia o avance.",
       dueDate: item.createdAt || null,
     });
   });
@@ -1123,7 +1305,8 @@ async function listAccessibleOpportunities(user) {
             oss.stage_order,
             ocs.code AS commercial_status_code,
             ocs.name AS commercial_status_name,
-            su.full_name AS seller_user_name
+          su.full_name AS seller_user_name,
+          su.email AS seller_user_email
      FROM opportunities o
      ${ownershipJoin}
      INNER JOIN accounts a ON a.id = o.account_id
@@ -1314,10 +1497,8 @@ async function listLastActivityByOpportunity(opportunityIds) {
 
 function selectPrimaryNextStep(actions, currentStageId) {
   const candidates = (actions || [])
-    .filter((action) => COMMERCIAL_ACTIVITY_ACTION_TYPES.has(action.actionType))
-    .filter((action) =>
-      ["pending", "in_progress", "blocked"].includes(action.status),
-    )
+    .filter((action) => COMMERCIAL_TIMELINE_ACTION_TYPES.has(action.actionType))
+    .filter((action) => isCommercialEntryOpen(action))
     .sort((left, right) => {
       const leftPrimary = Boolean(left.isPrimaryNextStep);
       const rightPrimary = Boolean(right.isPrimaryNextStep);
@@ -1326,12 +1507,12 @@ function selectPrimaryNextStep(actions, currentStageId) {
         ? new Date(left.scheduledAt).getTime()
         : left.dueDate
           ? new Date(left.dueDate).getTime()
-        : Number.MAX_SAFE_INTEGER;
+          : Number.MAX_SAFE_INTEGER;
       const rightDue = right.scheduledAt
         ? new Date(right.scheduledAt).getTime()
         : right.dueDate
           ? new Date(right.dueDate).getTime()
-        : Number.MAX_SAFE_INTEGER;
+          : Number.MAX_SAFE_INTEGER;
       if (leftDue !== rightDue) return leftDue - rightDue;
       const leftCurrent =
         Number(left.linkedStageId || 0) === Number(currentStageId);
@@ -1383,46 +1564,99 @@ function getActionTimestamp(action) {
   return Number.isNaN(parsed.getTime()) ? Number.NaN : parsed.getTime();
 }
 
-function mapCommercialActivity(action) {
+function getCommercialEntryKind(actionType) {
+  return COMMERCIAL_ACTIVITY_ACTION_TYPES.has(actionType)
+    ? "activity"
+    : "action";
+}
+
+function isCommercialEntryOpen(entry) {
+  const entryKind = getCommercialEntryKind(
+    entry?.actionType || entry?.entryType || "",
+  );
+  const openStatuses =
+    entryKind === "activity"
+      ? COMMERCIAL_ACTIVITY_OPEN_STATUSES
+      : COMMERCIAL_ACTION_OPEN_STATUSES;
+  return openStatuses.has(entry?.status);
+}
+
+function mapCommercialTimelineEntry(action) {
+  const entryKind = getCommercialEntryKind(action.actionType);
   return {
     id: Number(action.id),
+    entryKind,
     title: action.title || "",
+    entryType: action.actionType || "other",
     activityType: action.actionType || "other",
     status: action.status || "pending",
+    priority: action.priority || "medium",
     scheduledAt: action.scheduledAt || null,
     dueDate: action.dueDate || null,
     note: action.notes || "",
+    details: action.details || null,
+    successCriteria: action.successCriteria || "",
     isPrimaryNextStep: Boolean(action.isPrimaryNextStep),
+    ownerUserId:
+      action.ownerUserId === null ? null : Number(action.ownerUserId),
+    ownerUserName: action.ownerName || action.ownerUserName || "",
     createdAt: action.createdAt || null,
     updatedAt: action.updatedAt || null,
   };
 }
 
 function buildCommercialActivitySummary(actions) {
-  const activityItems = (actions || [])
-    .filter((action) => COMMERCIAL_ACTIVITY_ACTION_TYPES.has(action.actionType))
-    .map(mapCommercialActivity);
+  const timelineItems = (actions || [])
+    .filter((action) => COMMERCIAL_TIMELINE_ACTION_TYPES.has(action.actionType))
+    .map(mapCommercialTimelineEntry);
 
-  const nextScheduledActivity = [...activityItems]
-    .filter((action) => ["pending", "in_progress", "blocked"].includes(action.status))
-    .sort((left, right) => getActionTimestamp(left) - getActionTimestamp(right))[0] || null;
+  const activityItems = timelineItems.filter(
+    (item) => item.entryKind === "activity",
+  );
+  const actionItems = timelineItems.filter(
+    (item) => item.entryKind === "action",
+  );
 
-  const lastCompletedActivity = [...activityItems]
-    .filter((action) => action.status === "done")
-    .sort((left, right) => getActionTimestamp(right) - getActionTimestamp(left))[0] || null;
+  const nextScheduledActivity =
+    [...activityItems]
+      .filter((action) => isCommercialEntryOpen(action))
+      .sort(
+        (left, right) => getActionTimestamp(left) - getActionTimestamp(right),
+      )[0] || null;
+
+  const nextPendingAction =
+    [...actionItems]
+      .filter((action) => isCommercialEntryOpen(action))
+      .sort(
+        (left, right) => getActionTimestamp(left) - getActionTimestamp(right),
+      )[0] || null;
+
+  const lastCompletedActivity =
+    [...activityItems]
+      .filter((action) => action.status === "done")
+      .sort(
+        (left, right) => getActionTimestamp(right) - getActionTimestamp(left),
+      )[0] || null;
 
   const recentActivities = [...activityItems]
     .sort((left, right) => getActionTimestamp(right) - getActionTimestamp(left))
     .slice(0, 5);
 
+  const recentTimeline = [...timelineItems]
+    .sort((left, right) => getActionTimestamp(right) - getActionTimestamp(left))
+    .slice(0, 8);
+
   return {
     activityCount: activityItems.length,
+    actionCount: actionItems.length,
     nextScheduledActivity,
+    nextPendingAction,
     lastCompletedActivity,
     recentActivities,
+    recentTimeline,
   };
 }
-  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
+const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
 
 function mapDependencyRow(row) {
   return {
@@ -1871,7 +2105,8 @@ async function loadOpportunityForExecution(user, opportunityId) {
             oss.stage_order,
             ocs.code AS commercial_status_code,
             ocs.name AS commercial_status_name,
-            su.full_name AS seller_user_name
+          su.full_name AS seller_user_name,
+          su.email AS seller_user_email
      FROM opportunities o
      ${ownershipJoin}
      INNER JOIN accounts a ON a.id = o.account_id
@@ -1982,7 +2217,10 @@ async function findOpenNextStepAction(opportunityId) {
   return rows[0] ? Number(rows[0].id) : null;
 }
 
-async function clearPrimaryNextStepActions(opportunityId, excludeActionId = null) {
+async function clearPrimaryNextStepActions(
+  opportunityId,
+  excludeActionId = null,
+) {
   const params = [opportunityId];
   let whereClause = "opportunity_id = ? AND is_primary_next_step = 1";
   if (excludeActionId) {
@@ -2000,10 +2238,11 @@ async function clearPrimaryNextStepActions(opportunityId, excludeActionId = null
 }
 
 async function loadCommercialActivityAction(opportunityId, actionId) {
-  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
+  const actionTypes = Array.from(COMMERCIAL_TIMELINE_ACTION_TYPES);
   const rows = await query(
     `SELECT id, opportunity_id, action_type, status, title, notes, scheduled_at,
-            due_date, owner_user_id, linked_stage_id, is_primary_next_step
+            due_date, owner_user_id, linked_stage_id, is_primary_next_step,
+            priority, success_criteria, details_json
      FROM opportunity_workspace_actions
      WHERE id = ?
        AND opportunity_id = ?
@@ -2013,6 +2252,1075 @@ async function loadCommercialActivityAction(opportunityId, actionId) {
   );
 
   return rows[0] || null;
+}
+
+function parseCommercialActionDetails(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCommercialEmailDraft(details = {}) {
+  const normalizedPurpose = String(details.purpose || "proposal").trim();
+  const normalizedPurposeOther = String(details.purposeOther || "").trim();
+  const hasKnownPurpose = new Set([
+    "proposal",
+    "request_information",
+    "other",
+  ]).has(normalizedPurpose);
+  return {
+    recipient: String(details.recipient || "").trim(),
+    cc: String(details.cc || "").trim(),
+    subject: String(details.subject || "").trim(),
+    purpose: hasKnownPurpose
+      ? normalizedPurpose || "proposal"
+      : normalizedPurpose
+        ? "other"
+        : "proposal",
+    purposeOther: hasKnownPurpose
+      ? normalizedPurposeOther
+      : normalizedPurposeOther || normalizedPurpose,
+    messageBody: String(details.messageBody || "").trim(),
+    attachmentsNote: String(details.attachmentsNote || "").trim(),
+    attachments: Array.isArray(details.attachments)
+      ? details.attachments
+          .map((attachment) => normalizeCommercialEmailAttachment(attachment))
+          .filter(Boolean)
+      : [],
+    expectedResponse: String(details.expectedResponse || "").trim(),
+    responseDueDate: String(details.responseDueDate || "").trim(),
+    markDoneOnSend: Boolean(details.markDoneOnSend),
+    sentAt: details.sentAt ? String(details.sentAt) : "",
+    sentByUserId: details.sentByUserId ? Number(details.sentByUserId) : null,
+    sentByUserName: details.sentByUserName
+      ? String(details.sentByUserName)
+      : "",
+    lastSendStatus: details.lastSendStatus
+      ? String(details.lastSendStatus)
+      : "",
+    lastSendError: details.lastSendError ? String(details.lastSendError) : "",
+    lastDraftSavedAt: details.lastDraftSavedAt
+      ? String(details.lastDraftSavedAt)
+      : "",
+    lastDraftSavedByUserId: details.lastDraftSavedByUserId
+      ? Number(details.lastDraftSavedByUserId)
+      : null,
+    lastDraftSavedByUserName: details.lastDraftSavedByUserName
+      ? String(details.lastDraftSavedByUserName)
+      : "",
+    lastRecipientSnapshot: details.lastRecipientSnapshot
+      ? String(details.lastRecipientSnapshot)
+      : "",
+    lastSubjectSnapshot: details.lastSubjectSnapshot
+      ? String(details.lastSubjectSnapshot)
+      : "",
+    replyToEmail: details.replyToEmail ? String(details.replyToEmail) : "",
+  };
+}
+
+function normalizeCommercialEmailAttachment(attachment = {}) {
+  const sourceType = String(attachment.sourceType || "").trim();
+  if (!sourceType) {
+    return null;
+  }
+
+  const normalized = {
+    id:
+      String(attachment.id || "").trim() ||
+      `${sourceType}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    sourceType,
+    sourceLabel: String(attachment.sourceLabel || "").trim(),
+    fileName: String(attachment.fileName || "").trim(),
+    mimeType: String(attachment.mimeType || "")
+      .trim()
+      .toLowerCase(),
+    byteSize:
+      attachment.byteSize === null || attachment.byteSize === undefined
+        ? null
+        : Number(attachment.byteSize),
+    resourcePublicId: String(attachment.resourcePublicId || "").trim(),
+    filePublicId: String(attachment.filePublicId || "").trim(),
+    documentPublicId: String(attachment.documentPublicId || "").trim(),
+    quotationId: attachment.quotationId ? Number(attachment.quotationId) : null,
+    quotationVersionId: attachment.quotationVersionId
+      ? Number(attachment.quotationVersionId)
+      : null,
+    proposalName: String(attachment.proposalName || "").trim(),
+  };
+
+  if (normalized.sourceType === "library_file") {
+    return normalized.resourcePublicId && normalized.filePublicId
+      ? normalized
+      : null;
+  }
+
+  if (normalized.sourceType === "opportunity_document") {
+    return normalized.documentPublicId ? normalized : null;
+  }
+
+  if (normalized.sourceType === "quotation_pdf") {
+    return normalized.quotationVersionId ? normalized : null;
+  }
+
+  return null;
+}
+
+function getCommercialEmailAttachmentNames(details = {}) {
+  const attachments = Array.isArray(details.attachments)
+    ? details.attachments
+    : [];
+  const names = attachments
+    .map((attachment) =>
+      String(attachment?.fileName || attachment?.proposalName || "").trim(),
+    )
+    .filter(Boolean);
+  if (names.length) {
+    return names;
+  }
+  const legacyNote = String(details.attachmentsNote || "").trim();
+  return legacyNote ? [legacyNote] : [];
+}
+
+function getCommercialEmailAttachmentsSummary(details = {}) {
+  return getCommercialEmailAttachmentNames(details).join(", ");
+}
+
+function isCommercialEmailAttachmentMimeTypeAllowed(mimeType) {
+  const normalizedMimeType = String(mimeType || "")
+    .trim()
+    .toLowerCase();
+  return COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES.has(normalizedMimeType);
+}
+
+function validateCommercialEmailAttachments(attachments = []) {
+  if (attachments.length > COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES) {
+    return `Solo puedes incluir hasta ${COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES} documentos por correo.`;
+  }
+
+  const invalidAttachment = attachments.find((attachment) => {
+    if (
+      attachment?.mimeType &&
+      !isCommercialEmailAttachmentMimeTypeAllowed(attachment.mimeType)
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  if (invalidAttachment) {
+    return `El archivo ${invalidAttachment.fileName || "seleccionado"} no tiene un tipo permitido para envio.`;
+  }
+
+  const knownTotalBytes = attachments.reduce(
+    (total, attachment) => total + Number(attachment?.byteSize || 0),
+    0,
+  );
+  if (
+    knownTotalBytes > 0 &&
+    knownTotalBytes > COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES
+  ) {
+    return "El tamaño total de adjuntos supera el límite permitido para el correo.";
+  }
+
+  return "";
+}
+
+async function loadCommercialEmailAttachmentOptions({ user, opportunityId }) {
+  const [libraryFiles, quotationVersions] = await Promise.all([
+    listCommercialLibraryFilesForEmail({ user }),
+    listCommercialQuotationVersionsForEmail({ opportunityId }),
+  ]);
+
+  return {
+    libraryFiles,
+    quotationVersions,
+    constraints: {
+      maxFiles: COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES,
+      maxTotalBytes: COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES,
+      allowedMimeTypes: Array.from(
+        COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES,
+      ),
+    },
+  };
+}
+
+async function listCommercialLibraryFilesForEmail({ user }) {
+  const assetResult = await listCommercialEnablementAssets({
+    user,
+    filters: {
+      status: "published",
+      visibilityLevel: "client_safe",
+      pageSize: 80,
+      sort: "updated_desc",
+    },
+  }).catch(() => ({ items: [] }));
+
+  const items = Array.isArray(assetResult?.items) ? assetResult.items : [];
+  const details = await Promise.all(
+    items.map((item) =>
+      getCommercialEnablementAssetDetail({
+        user,
+        assetPublicId: item.publicId,
+      }).catch(() => null),
+    ),
+  );
+
+  return details.filter(Boolean).flatMap((asset) =>
+    (asset.files || [])
+      .filter(
+        (file) =>
+          file?.isAvailable !== false &&
+          isCommercialEmailAttachmentMimeTypeAllowed(file?.mimeType),
+      )
+      .map((file) => ({
+        id: `library:${asset.publicId}:${file.publicId}`,
+        sourceType: "library_file",
+        sourceLabel: "Biblioteca",
+        resourcePublicId: asset.publicId,
+        filePublicId: file.publicId,
+        fileName: file.originalFileName || file.storedFileName || "archivo",
+        mimeType: file.mimeType || "application/octet-stream",
+        byteSize:
+          file.byteSize === null || file.byteSize === undefined
+            ? null
+            : Number(file.byteSize),
+        title: asset.title || "Activo comercial",
+        summary: asset.summary || "",
+        assetTypeLabel: asset.assetTypeLabel || "",
+      })),
+  );
+}
+
+async function listCommercialQuotationVersionsForEmail({ opportunityId }) {
+  const rows = await query(
+    `SELECT q.id AS quotation_id,
+            qv.id AS quotation_version_id,
+            qv.version_number,
+            qv.proposal_name,
+            qv.quotation_date,
+            qs.name AS status_name,
+            qs.ui_key AS status_ui_key
+     FROM quotations q
+     INNER JOIN quotation_versions qv ON qv.quotation_id = q.id
+     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+     WHERE q.opportunity_id = ?
+     ORDER BY qv.version_number DESC, qv.id DESC`,
+    [Number(opportunityId)],
+  ).catch(() => []);
+
+  return rows.map((row) => ({
+    id: `quotation:${Number(row.quotation_id)}:${Number(row.quotation_version_id)}`,
+    sourceType: "quotation_pdf",
+    sourceLabel: "Propuesta",
+    quotationId: Number(row.quotation_id),
+    quotationVersionId: Number(row.quotation_version_id),
+    proposalName: String(row.proposal_name || "").trim() || "Propuesta",
+    fileName: `${String(row.proposal_name || "Propuesta").trim() || "Propuesta"}.pdf`,
+    mimeType: "application/pdf",
+    byteSize: null,
+    versionNumber: Number(row.version_number || 0),
+    quotationDate: row.quotation_date || "",
+    statusName: row.status_name || "",
+    statusUiKey: row.status_ui_key || "",
+  }));
+}
+
+async function resolveCommercialEmailAttachments({
+  user,
+  opportunity,
+  details,
+}) {
+  const attachments = Array.isArray(details?.attachments)
+    ? details.attachments
+    : [];
+  if (!attachments.length) {
+    return [];
+  }
+
+  const validationError = validateCommercialEmailAttachments(attachments);
+  if (validationError) {
+    const error = new Error(validationError);
+    error.status = 400;
+    throw error;
+  }
+
+  let totalBytes = 0;
+  const resolvedAttachments = [];
+  for (const attachment of attachments) {
+    const resolved = await resolveCommercialEmailAttachment({
+      opportunity,
+      user,
+      attachment,
+    });
+    totalBytes += Number(resolved.byteSize || 0);
+    if (totalBytes > COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+      const error = new Error(
+        "El tamaño total de adjuntos supera el límite permitido para el correo.",
+      );
+      error.status = 400;
+      throw error;
+    }
+    resolvedAttachments.push({
+      filename: resolved.fileName,
+      contentType: resolved.mimeType,
+      content: resolved.content,
+    });
+  }
+
+  return resolvedAttachments;
+}
+
+async function resolveCommercialEmailAttachment({
+  opportunity,
+  user,
+  attachment,
+}) {
+  if (attachment.sourceType === "library_file") {
+    const file = await getCommercialEnablementFileStream({
+      user,
+      assetPublicId: attachment.resourcePublicId,
+      filePublicId: attachment.filePublicId,
+    });
+    if (!file) {
+      const error = new Error("Activo de biblioteca no encontrado");
+      error.status = 404;
+      throw error;
+    }
+    const content = await streamToBuffer(file.stream);
+    return {
+      fileName: attachment.fileName || file.fileName || "archivo",
+      mimeType:
+        attachment.mimeType || file.mimeType || "application/octet-stream",
+      content,
+      byteSize: content.length,
+    };
+  }
+
+  if (attachment.sourceType === "opportunity_document") {
+    const accessRows = await query(
+      `SELECT 1
+       FROM opportunity_document_links odl
+       INNER JOIN documents d ON d.id = odl.document_id
+       WHERE odl.opportunity_id = ?
+         AND d.public_id = ?
+         AND d.is_deleted = 0
+       LIMIT 1`,
+      [Number(opportunity.id), attachment.documentPublicId],
+    );
+    if (!accessRows.length) {
+      const error = new Error("Documento no disponible para esta oportunidad");
+      error.status = 404;
+      throw error;
+    }
+
+    const result = await getDocumentContentStream({
+      documentPublicId: attachment.documentPublicId,
+    });
+    const content = await streamToBuffer(result.stream);
+    return {
+      fileName:
+        attachment.fileName ||
+        result.document.original_file_name ||
+        "documento",
+      mimeType:
+        attachment.mimeType ||
+        result.document.mime_type ||
+        "application/octet-stream",
+      content,
+      byteSize: content.length,
+    };
+  }
+
+  if (attachment.sourceType === "quotation_pdf") {
+    return buildCommercialQuotationPdfAttachment({
+      opportunity,
+      quotationVersionId: attachment.quotationVersionId,
+      quotationId: attachment.quotationId,
+      fileName: attachment.fileName,
+    });
+  }
+
+  const error = new Error("Tipo de adjunto no soportado");
+  error.status = 400;
+  throw error;
+}
+
+async function buildCommercialQuotationPdfAttachment({
+  opportunity,
+  quotationVersionId,
+  quotationId,
+  fileName,
+}) {
+  const version = await loadCommercialQuotationVersionForAttachment({
+    opportunityId: Number(opportunity.id),
+    quotationVersionId,
+    quotationId,
+  });
+  if (!version) {
+    const error = new Error("Version de propuesta no encontrada");
+    error.status = 404;
+    throw error;
+  }
+
+  const [sections, company, catalogs] = await Promise.all([
+    loadCommercialQuotationSectionsForAttachment(quotationVersionId),
+    getCompanyDocumentBranding(),
+    loadCommercialQuotationCatalogsForPdf(),
+  ]);
+
+  const printSections = buildCommercialQuotationPrintSections(sections);
+  const quotationSummary = calculateCommercialQuotationSummary(printSections, {
+    summaryDiscountMode: version.summary_discount_mode,
+    summaryDiscountValue: version.summary_discount_value,
+    summaryVatMode: version.summary_vat_mode,
+    summaryVatPct: version.summary_vat_pct,
+  });
+
+  const { buffer, fileName: generatedFileName } = await buildQuotationPdfBuffer(
+    {
+      company,
+      header: {
+        quotationNumber: String(version.quotation_id || ""),
+        versionNumber: String(version.version_number || ""),
+        quotationDate: version.quotation_date || "",
+        proposalName: version.proposal_name || "",
+        accountName: version.account_name || "",
+        contactName: version.contact_name || "",
+        contactEmail: version.contact_email || "",
+        contactPhone: version.contact_phone || "",
+        sellerName: version.seller_user_name || "",
+        sellerEmail: version.seller_user_email || "",
+        sellerPhone: version.seller_user_phone || "",
+      },
+      introduction: version.introduction || "",
+      sections: printSections,
+      summary: {
+        subtotal: quotationSummary.totalSalePriceTotal,
+        discount: quotationSummary.discountAmount,
+        discountedSubtotal: quotationSummary.discountedTotalAmount,
+        vatAmount: quotationSummary.vatAmount,
+        total:
+          quotationSummary.summaryVatMode === "total"
+            ? quotationSummary.totalWithVatAmount
+            : quotationSummary.discountedTotalAmount,
+        showVat: quotationSummary.summaryVatMode === "total",
+        vatMode: quotationSummary.summaryVatMode,
+        currencyCode: version.currency_code || "USD",
+      },
+      commercialTerms: {
+        deliveryTime:
+          catalogs.deliveryTimes.get(String(version.delivery_time || "")) || "",
+        quotationValidity:
+          catalogs.validityTerms.get(
+            String(version.quotation_validity || ""),
+          ) || "",
+        warranty:
+          catalogs.warrantyTerms.get(String(version.warranty_term || "")) || "",
+        paymentTerms:
+          catalogs.paymentTerms.get(String(version.payment_terms || "")) || "",
+        currency:
+          catalogs.currencies.get(String(version.currency_code || "")) ||
+          String(version.currency_code || ""),
+      },
+      notes: version.quotation_notes || "",
+    },
+  );
+
+  return {
+    fileName:
+      fileName ||
+      generatedFileName ||
+      `${version.proposal_name || "Propuesta"}.pdf`,
+    mimeType: "application/pdf",
+    content: buffer,
+    byteSize: buffer.length,
+  };
+}
+
+async function loadCommercialQuotationVersionForAttachment({
+  opportunityId,
+  quotationVersionId,
+  quotationId = null,
+}) {
+  const rows = await query(
+    `SELECT qv.id,
+            qv.quotation_id,
+            qv.version_number,
+            qv.contact_id,
+            qv.proposal_name,
+            qv.quotation_date,
+            qv.introduction,
+            qv.summary_discount_mode,
+            qv.summary_discount_value,
+            qv.summary_vat_mode,
+            qv.summary_vat_pct,
+            qv.delivery_time,
+            qv.quotation_validity,
+            qv.warranty_term,
+            qv.payment_terms,
+            qv.currency_code,
+            qv.quotation_notes,
+            o.name AS opportunity_name,
+            a.name AS account_name,
+            CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+            c.email AS contact_email,
+            c.phone AS contact_phone,
+            su.full_name AS seller_user_name,
+            su.email AS seller_user_email,
+            su.mobile AS seller_user_phone
+     FROM quotation_versions qv
+     INNER JOIN quotations q ON q.id = qv.quotation_id
+     INNER JOIN opportunities o ON o.id = q.opportunity_id
+     INNER JOIN accounts a ON a.id = o.account_id
+     INNER JOIN contacts c ON c.id = qv.contact_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
+     WHERE qv.id = ?
+       AND q.opportunity_id = ?
+       ${quotationId ? "AND q.id = ?" : ""}
+     LIMIT 1`,
+    quotationId
+      ? [Number(quotationVersionId), Number(opportunityId), Number(quotationId)]
+      : [Number(quotationVersionId), Number(opportunityId)],
+  );
+  return rows[0] || null;
+}
+
+async function loadCommercialQuotationSectionsForAttachment(
+  quotationVersionId,
+) {
+  const sections = await query(
+    `SELECT qs.id, qs.title, qs.display_order
+     FROM quotation_sections qs
+     WHERE qs.quotation_version_id = ?
+     ORDER BY qs.display_order, qs.id`,
+    [Number(quotationVersionId)],
+  );
+
+  const sectionIds = sections.map((section) => Number(section.id));
+  if (!sectionIds.length) {
+    return [];
+  }
+
+  const placeholders = sectionIds.map(() => "?").join(", ");
+  const items = await query(
+    `SELECT qsi.id,
+            qsi.quotation_section_id,
+            qsi.product_code,
+            qsi.product_description,
+            qsi.item_type,
+            qsi.bundle_parent_item_id,
+            qsi.quantity,
+            qsi.list_price_unit,
+            qsi.manufacturer_discount_pct,
+            qsi.import_cost_pct,
+            qsi.profit_margin_pct,
+            qsi.final_discount_pct,
+            qsi.display_order
+     FROM quotation_section_items qsi
+     WHERE qsi.quotation_section_id IN (${placeholders})
+     ORDER BY qsi.display_order, qsi.id`,
+    sectionIds,
+  );
+
+  const itemsBySectionId = items.reduce((map, item) => {
+    const key = Number(item.quotation_section_id);
+    const current = map.get(key) || [];
+    current.push({
+      id: Number(item.id),
+      quotationSectionId: key,
+      productCode: item.product_code || "",
+      productDescription: item.product_description || "",
+      itemType: item.item_type || "producto",
+      bundleParentItemId: item.bundle_parent_item_id
+        ? Number(item.bundle_parent_item_id)
+        : null,
+      quantity: Number(item.quantity || 0),
+      listPriceUnit: Number(item.list_price_unit || 0),
+      manufacturerDiscountPct: Number(item.manufacturer_discount_pct || 0),
+      importCostPct: Number(item.import_cost_pct || 0),
+      profitMarginPct: Number(item.profit_margin_pct || 0),
+      finalDiscountPct: Number(item.final_discount_pct || 0),
+      displayOrder: Number(item.display_order || 0),
+      isBundleComponent: Boolean(item.bundle_parent_item_id),
+    });
+    map.set(key, current);
+    return map;
+  }, new Map());
+
+  return sections.map((section) => ({
+    id: Number(section.id),
+    title: section.title || `Seccion ${section.id}`,
+    displayOrder: Number(section.display_order || 0),
+    items: itemsBySectionId.get(Number(section.id)) || [],
+  }));
+}
+
+async function loadCommercialQuotationCatalogsForPdf() {
+  const [
+    deliveryTimes,
+    validityTerms,
+    warrantyTerms,
+    paymentTerms,
+    currencies,
+  ] = await Promise.all([
+    query(
+      `SELECT code, name FROM quotation_delivery_times WHERE is_active = 1 ORDER BY display_order, id`,
+    ).catch(() => []),
+    query(
+      `SELECT code, name FROM quotation_validity_terms WHERE is_active = 1 ORDER BY display_order, id`,
+    ).catch(() => []),
+    query(
+      `SELECT code, name FROM quotation_warranty_terms WHERE is_active = 1 ORDER BY display_order, id`,
+    ).catch(() => []),
+    query(
+      `SELECT code, name FROM quotation_payment_terms WHERE is_active = 1 ORDER BY display_order, id`,
+    ).catch(() => []),
+    query(
+      `SELECT code, name FROM currencies WHERE is_active = 1 ORDER BY name, id`,
+    ).catch(() => []),
+  ]);
+
+  const buildMap = (rows) =>
+    rows.reduce(
+      (map, row) => map.set(String(row.code || ""), String(row.name || "")),
+      new Map(),
+    );
+
+  return {
+    deliveryTimes: buildMap(deliveryTimes),
+    validityTerms: buildMap(validityTerms),
+    warrantyTerms: buildMap(warrantyTerms),
+    paymentTerms: buildMap(paymentTerms),
+    currencies: buildMap(currencies),
+  };
+}
+
+function buildCommercialQuotationPrintSections(sections = []) {
+  return sections.map((section) => {
+    const items = Array.isArray(section.items) ? section.items : [];
+    const subtotal = items
+      .filter((item) => !item.bundleParentItemId)
+      .reduce((total, item) => {
+        const totals = calculateCommercialQuotationItemDisplayTotals(
+          item,
+          items,
+        );
+        return total + Number(totals.salePriceTotal || 0);
+      }, 0);
+
+    const rows = items.map((item) => {
+      const totals = calculateCommercialQuotationItemDisplayTotals(item, items);
+      return {
+        id: item.id,
+        displayOrder: item.displayOrder,
+        productCode: item.productCode,
+        productDescription: item.productDescription,
+        quantity: item.quantity,
+        quantityDisplay: Number(item.quantity || 0).toFixed(2),
+        salePriceUnit: totals.salePriceUnit,
+        salePriceTotal: totals.salePriceTotal,
+      };
+    });
+
+    return {
+      id: section.id,
+      title: section.title,
+      subtotal: roundCommercialQuotationMoney(subtotal),
+      rows,
+      items,
+    };
+  });
+}
+
+function roundCommercialQuotationMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function toCommercialQuotationPercentFactor(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) return 0;
+  return Math.min(Math.max(numericValue, 0), 100) / 100;
+}
+
+function calculateCommercialQuotationItemTotals(item) {
+  const quantity = Math.max(Number(item?.quantity || 0), 0);
+  const listPriceUnit = Math.max(Number(item?.listPriceUnit || 0), 0);
+  const manufacturerDiscount = toCommercialQuotationPercentFactor(
+    item?.manufacturerDiscountPct,
+  );
+  const importCost = toCommercialQuotationPercentFactor(item?.importCostPct);
+  const profitMargin = toCommercialQuotationPercentFactor(
+    item?.profitMarginPct,
+  );
+  const finalDiscount = toCommercialQuotationPercentFactor(
+    item?.finalDiscountPct,
+  );
+  const discountedListPriceUnit = listPriceUnit * (1 - manufacturerDiscount);
+  const costUnit = discountedListPriceUnit * (1 + importCost);
+  const costTotal = quantity * costUnit;
+  const salePriceBase = profitMargin >= 1 ? 0 : costUnit / (1 - profitMargin);
+  const salePriceUnit = salePriceBase * (1 - finalDiscount);
+
+  return {
+    discountedListPriceUnit,
+    costUnit,
+    costTotal,
+    salePriceUnit,
+    salePriceTotal: quantity * salePriceUnit,
+  };
+}
+
+function calculateCommercialQuotationItemDisplayTotals(item, allItems = []) {
+  const baseTotals = calculateCommercialQuotationItemTotals(item);
+  if (item?.isBundleComponent) {
+    return baseTotals;
+  }
+
+  const componentItems = Array.isArray(allItems)
+    ? allItems.filter(
+        (candidate) =>
+          Number(candidate?.bundleParentItemId || 0) === Number(item?.id || 0),
+      )
+    : [];
+
+  if (!componentItems.length) {
+    return baseTotals;
+  }
+
+  const aggregatedTotals = componentItems.reduce(
+    (accumulator, componentItem) => {
+      const componentTotals =
+        calculateCommercialQuotationItemTotals(componentItem);
+      return {
+        costTotal:
+          accumulator.costTotal + Number(componentTotals.costTotal || 0),
+        salePriceTotal:
+          accumulator.salePriceTotal +
+          Number(componentTotals.salePriceTotal || 0),
+      };
+    },
+    { costTotal: 0, salePriceTotal: 0 },
+  );
+
+  const quantity = Math.max(Number(item?.quantity || 0), 0);
+  return {
+    ...baseTotals,
+    costUnit:
+      quantity > 0
+        ? aggregatedTotals.costTotal / quantity
+        : aggregatedTotals.costTotal,
+    costTotal: aggregatedTotals.costTotal,
+    salePriceUnit:
+      quantity > 0
+        ? aggregatedTotals.salePriceTotal / quantity
+        : aggregatedTotals.salePriceTotal,
+    salePriceTotal: aggregatedTotals.salePriceTotal,
+  };
+}
+
+function resolveCommercialQuotationSummaryCategory(itemType) {
+  const normalizedType = String(itemType || "")
+    .trim()
+    .toLowerCase();
+  return normalizedType === "servicio" || normalizedType === "service"
+    ? "services"
+    : "products";
+}
+
+function calculateCommercialQuotationSummary(sections = [], options = {}) {
+  const buckets = {
+    products: { costTotal: 0, salePriceTotal: 0 },
+    services: { costTotal: 0, salePriceTotal: 0 },
+    total: { costTotal: 0, salePriceTotal: 0 },
+  };
+
+  sections.forEach((section) => {
+    const items = Array.isArray(section.items) ? section.items : [];
+    items.forEach((item) => {
+      if (item?.bundleParentItemId) {
+        return;
+      }
+      const category = resolveCommercialQuotationSummaryCategory(
+        item?.itemType,
+      );
+      const totals = calculateCommercialQuotationItemDisplayTotals(item, items);
+      buckets[category].costTotal += Number(totals.costTotal || 0);
+      buckets[category].salePriceTotal += Number(totals.salePriceTotal || 0);
+      buckets.total.costTotal += Number(totals.costTotal || 0);
+      buckets.total.salePriceTotal += Number(totals.salePriceTotal || 0);
+    });
+  });
+
+  const summaryDiscountMode =
+    options?.summaryDiscountMode === "amount" ? "amount" : "percentage";
+  const summaryDiscountValue = Number(options?.summaryDiscountValue || 0);
+  const normalizedSummaryDiscountPct =
+    summaryDiscountMode === "amount"
+      ? buckets.total.salePriceTotal > 0
+        ? Math.min(
+            Math.max(
+              (summaryDiscountValue / buckets.total.salePriceTotal) * 100,
+              0,
+            ),
+            100,
+          )
+        : 0
+      : Math.min(Math.max(summaryDiscountValue, 0), 100);
+
+  const totalSalePriceTotal = roundCommercialQuotationMoney(
+    buckets.total.salePriceTotal,
+  );
+  const discountAmount = roundCommercialQuotationMoney(
+    summaryDiscountMode === "amount"
+      ? Math.min(summaryDiscountValue, totalSalePriceTotal)
+      : totalSalePriceTotal * (normalizedSummaryDiscountPct / 100),
+  );
+  const discountedTotalAmount = roundCommercialQuotationMoney(
+    totalSalePriceTotal - discountAmount,
+  );
+  const summaryVatMode =
+    options?.summaryVatMode === "total"
+      ? "total"
+      : options?.summaryVatMode === "per_item"
+        ? "per_item"
+        : "without_vat";
+  const summaryVatPct = Math.min(
+    Math.max(Number(options?.summaryVatPct || 0), 0),
+    100,
+  );
+  const vatBaseAmount =
+    discountAmount > 0 ? discountedTotalAmount : totalSalePriceTotal;
+  const vatAmount = roundCommercialQuotationMoney(
+    summaryVatMode === "total" ? vatBaseAmount * (summaryVatPct / 100) : 0,
+  );
+  const totalWithVatAmount = roundCommercialQuotationMoney(
+    vatBaseAmount + vatAmount,
+  );
+
+  return {
+    totalSalePriceTotal,
+    discountAmount,
+    discountedTotalAmount,
+    summaryVatMode,
+    vatAmount,
+    totalWithVatAmount,
+  };
+}
+
+function getCommercialEmailSuggestionContextLabel(opportunity) {
+  const opportunityName = String(opportunity?.name || "").trim();
+  const accountName = String(opportunity?.account_name || "").trim();
+
+  if (opportunityName) return opportunityName;
+  if (accountName) return accountName;
+  return "la oportunidad";
+}
+
+function buildCommercialEmailSuggestionFallback(opportunity, details = {}) {
+  const normalizedDetails = normalizeCommercialEmailDraft(details);
+  const contextLabel = getCommercialEmailSuggestionContextLabel(opportunity);
+
+  if (normalizedDetails.purpose === "request_information") {
+    return {
+      subject: `Informacion de ${contextLabel}`,
+      messageBody: `Hola,\n\nComparto la informacion de ${contextLabel} para tu revision. Si necesitas algun dato adicional, con gusto lo revisamos.\n\nSaludos,`,
+      source: "fallback",
+    };
+  }
+
+  if (normalizedDetails.purpose === "other") {
+    const topic = normalizedDetails.purposeOther || contextLabel;
+    return {
+      subject: `${topic} - ${contextLabel}`,
+      messageBody: `Hola,\n\nTe comparto este correo sobre ${topic}. Quedo atento a tus comentarios y a cualquier siguiente paso necesario.\n\nSaludos,`,
+      source: "fallback",
+    };
+  }
+
+  return {
+    subject: `Propuesta para ${contextLabel}`,
+    messageBody: `Hola,\n\nComparto la propuesta de ${contextLabel} para tu revision. Quedo atento a tus comentarios y a los siguientes pasos.\n\nSaludos,`,
+    source: "fallback",
+  };
+}
+
+async function requestCommercialEmailSuggestionWithAi({
+  opportunity,
+  details,
+}) {
+  const fallback = buildCommercialEmailSuggestionFallback(opportunity, details);
+
+  if (!config.openai.apiKey) {
+    return fallback;
+  }
+
+  const normalizedDetails = normalizeCommercialEmailDraft(details);
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Eres un redactor comercial B2B. Responde solo con JSON válido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en español, claros, ejecutivos y listos para enviar. El asunto debe ser breve, específico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo simple, cuerpo breve y cierre profesional. Debe sonar comercial, concreto y útil para avanzar la oportunidad según el propósito indicado.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          opportunity: {
+            id: Number(opportunity?.id || 0),
+            name: String(opportunity?.name || "").trim(),
+            accountName: String(opportunity?.account_name || "").trim(),
+            stageName: String(opportunity?.sales_stage_name || "").trim(),
+            stageCode: String(opportunity?.sales_stage_code || "").trim(),
+            sellerName: String(opportunity?.seller_user_name || "").trim(),
+            amountUsd: Number(opportunity?.amount_usd || 0),
+            closeDate: opportunity?.close_date || null,
+          },
+          emailDraft: {
+            purpose: normalizedDetails.purpose,
+            purposeOther: normalizedDetails.purposeOther,
+            expectedResponse: normalizedDetails.expectedResponse,
+            attachmentsSummary:
+              getCommercialEmailAttachmentsSummary(normalizedDetails),
+            responseDueDate: normalizedDetails.responseDueDate,
+          },
+          writingGoal:
+            normalizedDetails.purpose === "proposal"
+              ? "Presentar o enviar una propuesta comercial."
+              : normalizedDetails.purpose === "request_information"
+                ? "Compartir informacion util para mover la oportunidad."
+                : `Redactar un correo sobre: ${normalizedDetails.purposeOther || "otro tema comercial relevante"}.`,
+          fallback,
+          expectedShape: {
+            subject: "string",
+            messageBody: "string",
+          },
+        }),
+      },
+    ],
+  };
+
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const parsed = extractJsonObject(extractResponseOutputText(data));
+  const subject = String(parsed?.subject || "").trim() || fallback.subject;
+  const messageBody =
+    String(parsed?.messageBody || "").trim() || fallback.messageBody;
+
+  return {
+    subject,
+    messageBody,
+    source: "openai",
+  };
+}
+
+function splitEmailList(value) {
+  return String(value || "")
+    .split(/[;,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildSendEmailActionTitle(details, fallbackTitle = "") {
+  return (
+    details.subject || String(fallbackTitle || "").trim() || "Enviar correo"
+  );
+}
+
+async function loadCommercialSendEmailContext({
+  req,
+  opportunityId,
+  activityId,
+}) {
+  const opportunity = await loadOpportunityForExecution(
+    req.user,
+    opportunityId,
+  );
+  if (!opportunity) {
+    return { error: { status: 404, message: "Oportunidad no encontrada" } };
+  }
+
+  const currentActivity = await loadCommercialActivityAction(
+    opportunityId,
+    activityId,
+  );
+  if (!currentActivity) {
+    return { error: { status: 404, message: "Actividad no encontrada" } };
+  }
+
+  if (String(currentActivity.action_type || "") !== "send_email") {
+    return {
+      error: {
+        status: 400,
+        message: "La accion indicada no es de tipo enviar correo",
+      },
+    };
+  }
+
+  const details = normalizeCommercialEmailDraft(
+    parseCommercialActionDetails(currentActivity.details_json) || {},
+  );
+  return {
+    opportunity,
+    currentActivity,
+    details,
+  };
+}
+
+async function persistCommercialEmailDraft({
+  opportunity,
+  currentActivity,
+  details,
+  req,
+  status,
+}) {
+  const nextTitle = buildSendEmailActionTitle(details, currentActivity.title);
+  await saveOpportunityAction({
+    opportunityId: Number(opportunity.id),
+    actionId: Number(currentActivity.id),
+    payload: {
+      linked_stage_id: Number(
+        currentActivity.linked_stage_id || opportunity.sales_stage_id,
+      ),
+      action_type: "send_email",
+      priority: String(currentActivity.priority || "medium"),
+      title: nextTitle,
+      owner_user_id:
+        currentActivity.owner_user_id === null
+          ? Number(req.user.id)
+          : Number(currentActivity.owner_user_id),
+      due_date: currentActivity.due_date,
+      scheduled_at: currentActivity.scheduled_at,
+      success_criteria: details.expectedResponse || "",
+      notes: currentActivity.notes || null,
+      is_primary_next_step: Number(currentActivity.is_primary_next_step || 0),
+      details_json: JSON.stringify(details),
+      status,
+    },
+    userId: Number(req.user.id),
+  });
+
+  return nextTitle;
 }
 
 async function listCommercialCalendarActivities({
@@ -2141,6 +3449,9 @@ router.get(
     const stagesCatalog = await listActiveSalesStages();
     const opportunityRows = await listAccessibleOpportunities(req.user);
     const opportunityIds = opportunityRows.map((row) => Number(row.id));
+    const accountContactsByAccountId = await listContactsByAccountIds(
+      opportunityRows.map((row) => row.account_id),
+    );
     const recommendationCatalog =
       await loadCommercialEnablementRecommendationCatalog();
     const dependencyRows = await listOpenDependencies(opportunityIds);
@@ -2206,6 +3517,8 @@ router.get(
           name: row.name,
           accountId: Number(row.account_id),
           accountName: row.account_name,
+          accountContacts:
+            accountContactsByAccountId.get(Number(row.account_id)) || [],
           amountUsd: Number(row.amount_usd || 0),
           closeDate: row.close_date,
           stageId: Number(row.sales_stage_id),
@@ -2227,12 +3540,14 @@ router.get(
             workspace.scorecard?.averageScore,
           ),
           scorecardOverallTone: workspace.scorecard?.overallTone || "neutral",
-          scorecardItems: (workspace.scorecard?.items || []).map((scorecardItem) => ({
-            label: scorecardItem.label,
-            tone: scorecardItem.tone,
-            statusLabel: scorecardItem.statusLabel,
-            summary: scorecardItem.summary,
-          })),
+          scorecardItems: (workspace.scorecard?.items || []).map(
+            (scorecardItem) => ({
+              label: scorecardItem.label,
+              tone: scorecardItem.tone,
+              statusLabel: scorecardItem.statusLabel,
+              summary: scorecardItem.summary,
+            }),
+          ),
           openWeaknesses: (workspace.weaknesses || [])
             .filter((weakness) => weakness.status === "open")
             .slice(0, 3)
@@ -2245,8 +3560,9 @@ router.get(
           recommendedRoute: workspace.recommendedStrategy?.route || "",
           recommendedFinalObjective:
             workspace.recommendedStrategy?.finalObjective || "",
-          recommendedStrategySteps:
-            (workspace.recommendedStrategy?.steps || []).slice(0, 3),
+          recommendedStrategySteps: (
+            workspace.recommendedStrategy?.steps || []
+          ).slice(0, 3),
           recommendedNextMove: workspace.recommendedStrategy?.steps?.[0] || "",
           weaknessCount: (workspace.weaknesses || []).length,
           criticalWeaknessCount: risk.criticalWeaknessCount,
@@ -2258,9 +3574,12 @@ router.get(
             workspace.scorecard?.signals?.decisionRisk?.tone || "neutral",
           nextStep: mappedNextStep,
           nextScheduledActivity: activitySummary.nextScheduledActivity,
+          nextPendingAction: activitySummary.nextPendingAction,
           lastCompletedActivity: activitySummary.lastCompletedActivity,
           recentActivities: activitySummary.recentActivities,
+          recentTimeline: activitySummary.recentTimeline,
           activityCount: activitySummary.activityCount,
+          actionCount: activitySummary.actionCount,
         };
 
         item.reminders = buildExecutionReminders({
@@ -2583,7 +3902,8 @@ router.get(
     }
 
     const date = String(req.query?.date || "").trim();
-    const includeCompleted = String(req.query?.includeCompleted || "false") === "true";
+    const includeCompleted =
+      String(req.query?.includeCompleted || "false") === "true";
     const hasQuarterFilter =
       req.query?.year !== undefined || req.query?.quarter !== undefined;
     const quarterSelection = hasQuarterFilter
@@ -2620,25 +3940,58 @@ router.post(
       return res.status(404).json({ message: "Oportunidad no encontrada" });
     }
 
-    const activityType = String(req.body?.activityType || "").trim();
+    const activityType = String(
+      req.body?.activityType || req.body?.entryType || "",
+    ).trim();
+    const entryKind =
+      String(
+        req.body?.entryKind || getCommercialEntryKind(activityType),
+      ).trim() === "action"
+        ? "action"
+        : "activity";
     const scheduledAtRaw = String(req.body?.scheduledAt || "").trim();
+    const dueDateRaw = String(req.body?.dueDate || "").trim();
     const objective = String(req.body?.objective || "").trim();
     const note = String(req.body?.note || "").trim();
+    const priority = String(req.body?.priority || "medium").trim() || "medium";
     const isPrimaryNextStep = Boolean(req.body?.isPrimaryNextStep);
+    const successCriteria = String(
+      req.body?.successCriteria || req.body?.details?.expectedResponse || "",
+    ).trim();
+    const details =
+      req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : null;
 
-    if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(activityType)) {
+    if (
+      (entryKind === "activity" &&
+        !COMMERCIAL_ACTIVITY_ACTION_TYPES.has(activityType)) ||
+      (entryKind === "action" &&
+        !COMMERCIAL_ACTION_ITEM_TYPES.has(activityType))
+    ) {
       return res.status(400).json({ message: "activityType invalido" });
-    }
-    if (!scheduledAtRaw) {
-      return res.status(400).json({ message: "scheduledAt es obligatorio" });
     }
     if (!objective) {
       return res.status(400).json({ message: "El objetivo es obligatorio" });
     }
 
-    const scheduledAt = new Date(scheduledAtRaw);
-    if (Number.isNaN(scheduledAt.getTime())) {
-      return res.status(400).json({ message: "scheduledAt invalido" });
+    let scheduledAt = null;
+    let dueDate = null;
+
+    if (entryKind === "activity") {
+      if (!scheduledAtRaw) {
+        return res.status(400).json({ message: "scheduledAt es obligatorio" });
+      }
+      scheduledAt = new Date(scheduledAtRaw);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        return res.status(400).json({ message: "scheduledAt invalido" });
+      }
+      dueDate = scheduledAtRaw.slice(0, 10);
+    } else {
+      dueDate = dueDateRaw || scheduledAtRaw.slice(0, 10);
+      if (!dueDate) {
+        return res.status(400).json({ message: "dueDate es obligatorio" });
+      }
     }
 
     const actionId = await saveOpportunityAction({
@@ -2647,14 +4000,15 @@ router.post(
       payload: {
         linked_stage_id: Number(opportunity.sales_stage_id),
         action_type: activityType,
-        priority: isPrimaryNextStep ? "high" : "medium",
+        priority: isPrimaryNextStep ? "high" : priority,
         title: objective,
         owner_user_id: Number(req.user.id),
-        due_date: scheduledAtRaw.slice(0, 10),
+        due_date: dueDate,
         scheduled_at: scheduledAt,
-        success_criteria: "",
+        success_criteria: successCriteria || "",
         notes: note || null,
         is_primary_next_step: isPrimaryNextStep ? 1 : 0,
+        details_json: details ? JSON.stringify(details) : null,
         status: "pending",
       },
       userId: Number(req.user.id),
@@ -2667,22 +4021,31 @@ router.post(
     await logAuditEvent({
       req,
       module: "opportunities.workspace",
-      action: "workspace_activity_created",
+      action:
+        entryKind === "activity"
+          ? "workspace_activity_created"
+          : "workspace_action_created",
       entityType: "opportunity",
       entityId: opportunityId,
-      detail: `Actividad programada: ${objective}`,
+      detail:
+        entryKind === "activity"
+          ? `Actividad programada: ${objective}`
+          : `Accion creada: ${objective}`,
       after: {
         actionId,
+        entryKind,
         activityType,
         objective,
         scheduledAt,
+        dueDate,
         isPrimaryNextStep,
       },
     });
 
     return res.status(201).json({
       id: actionId,
-      message: "Actividad programada",
+      message:
+        entryKind === "activity" ? "Actividad programada" : "Accion creada",
     });
   },
 );
@@ -2718,44 +4081,101 @@ router.patch(
       return res.status(404).json({ message: "Actividad no encontrada" });
     }
 
-    const nextActivityType = req.body?.activityType === undefined
-      ? String(currentActivity.action_type || "")
-      : String(req.body.activityType || "").trim();
-    const nextObjective = req.body?.objective === undefined
-      ? String(currentActivity.title || "")
-      : String(req.body.objective || "").trim();
-    const nextNote = req.body?.note === undefined
-      ? String(currentActivity.notes || "")
-      : String(req.body.note || "").trim();
-    const scheduledAtRaw = req.body?.scheduledAt === undefined
-      ? currentActivity.scheduled_at || currentActivity.due_date || null
-      : String(req.body.scheduledAt || "").trim();
-    const nextStatus = req.body?.status === undefined
-      ? String(currentActivity.status || "pending")
-      : String(req.body.status || "").trim();
+    const nextActivityType =
+      req.body?.activityType === undefined
+        ? String(currentActivity.action_type || "")
+        : String(req.body.activityType || "").trim();
+    const nextEntryKind =
+      String(
+        req.body?.entryKind || getCommercialEntryKind(nextActivityType),
+      ).trim() === "action"
+        ? "action"
+        : "activity";
+    const nextObjective =
+      req.body?.objective === undefined
+        ? String(currentActivity.title || "")
+        : String(req.body.objective || "").trim();
+    const nextNote =
+      req.body?.note === undefined
+        ? String(currentActivity.notes || "")
+        : String(req.body.note || "").trim();
+    const scheduledAtRaw =
+      req.body?.scheduledAt === undefined
+        ? currentActivity.scheduled_at || currentActivity.due_date || null
+        : String(req.body.scheduledAt || "").trim();
+    const dueDateRaw =
+      req.body?.dueDate === undefined
+        ? currentActivity.due_date || null
+        : String(req.body.dueDate || "").trim();
+    const nextStatus =
+      req.body?.status === undefined
+        ? String(currentActivity.status || "pending")
+        : String(req.body.status || "").trim();
+    const nextPriority =
+      req.body?.priority === undefined
+        ? String(currentActivity.priority || "medium")
+        : String(req.body.priority || "medium").trim();
+    const nextSuccessCriteria =
+      req.body?.successCriteria === undefined
+        ? String(currentActivity.success_criteria || "")
+        : String(req.body.successCriteria || "").trim();
+    const nextDetails =
+      req.body?.details === undefined
+        ? currentActivity.details_json
+          ? typeof currentActivity.details_json === "string"
+            ? JSON.parse(currentActivity.details_json)
+            : currentActivity.details_json
+          : null
+        : req.body?.details && typeof req.body.details === "object"
+          ? req.body.details
+          : null;
 
-    if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(nextActivityType)) {
+    if (
+      (nextEntryKind === "activity" &&
+        !COMMERCIAL_ACTIVITY_ACTION_TYPES.has(nextActivityType)) ||
+      (nextEntryKind === "action" &&
+        !COMMERCIAL_ACTION_ITEM_TYPES.has(nextActivityType))
+    ) {
       return res.status(400).json({ message: "activityType invalido" });
     }
     if (!nextObjective) {
       return res.status(400).json({ message: "El objetivo es obligatorio" });
     }
-    if (!["pending", "in_progress", "blocked", "done"].includes(nextStatus)) {
+    if (
+      !(nextEntryKind === "activity"
+        ? COMMERCIAL_ACTIVITY_STATUSES.has(nextStatus)
+        : COMMERCIAL_ACTION_STATUSES.has(nextStatus))
+    ) {
       return res.status(400).json({ message: "status invalido" });
     }
-    if (!scheduledAtRaw) {
-      return res.status(400).json({ message: "scheduledAt es obligatorio" });
+
+    let scheduledAt = null;
+    let dueDate = null;
+
+    if (nextEntryKind === "activity") {
+      if (!scheduledAtRaw) {
+        return res.status(400).json({ message: "scheduledAt es obligatorio" });
+      }
+      scheduledAt = new Date(scheduledAtRaw);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        return res.status(400).json({ message: "scheduledAt invalido" });
+      }
+      dueDate = String(scheduledAt.toISOString().slice(0, 10));
+    } else {
+      dueDate = String(dueDateRaw || "").trim();
+      if (!dueDate) {
+        return res.status(400).json({ message: "dueDate es obligatorio" });
+      }
     }
 
-    const scheduledAt = new Date(scheduledAtRaw);
-    if (Number.isNaN(scheduledAt.getTime())) {
-      return res.status(400).json({ message: "scheduledAt invalido" });
-    }
-
-    const isOpenStatus = ["pending", "in_progress", "blocked"].includes(nextStatus);
-    const nextIsPrimaryNextStep = isOpenStatus && req.body?.isPrimaryNextStep !== undefined
-      ? Boolean(req.body.isPrimaryNextStep)
-      : isOpenStatus && Boolean(currentActivity.is_primary_next_step);
+    const isOpenStatus =
+      nextEntryKind === "activity"
+        ? COMMERCIAL_ACTIVITY_OPEN_STATUSES.has(nextStatus)
+        : COMMERCIAL_ACTION_OPEN_STATUSES.has(nextStatus);
+    const nextIsPrimaryNextStep =
+      isOpenStatus && req.body?.isPrimaryNextStep !== undefined
+        ? Boolean(req.body.isPrimaryNextStep)
+        : isOpenStatus && Boolean(currentActivity.is_primary_next_step);
 
     await saveOpportunityAction({
       opportunityId,
@@ -2765,17 +4185,18 @@ router.patch(
           currentActivity.linked_stage_id || opportunity.sales_stage_id,
         ),
         action_type: nextActivityType,
-        priority: nextIsPrimaryNextStep ? "high" : "medium",
+        priority: nextIsPrimaryNextStep ? "high" : nextPriority,
         title: nextObjective,
         owner_user_id:
           currentActivity.owner_user_id === null
             ? Number(req.user.id)
             : Number(currentActivity.owner_user_id),
-        due_date: String(scheduledAt.toISOString().slice(0, 10)),
+        due_date: dueDate,
         scheduled_at: scheduledAt,
-        success_criteria: "",
+        success_criteria: nextSuccessCriteria || "",
         notes: nextNote || null,
         is_primary_next_step: nextIsPrimaryNextStep ? 1 : 0,
+        details_json: nextDetails ? JSON.stringify(nextDetails) : null,
         status: nextStatus,
       },
       userId: Number(req.user.id),
@@ -2788,19 +4209,31 @@ router.patch(
     await logAuditEvent({
       req,
       module: "opportunities.workspace",
-      action: nextStatus === "done"
-        ? "workspace_activity_completed"
-        : "workspace_activity_updated",
+      action:
+        nextStatus === "done"
+          ? nextEntryKind === "activity"
+            ? "workspace_activity_completed"
+            : "workspace_action_completed"
+          : nextEntryKind === "activity"
+            ? "workspace_activity_updated"
+            : "workspace_action_updated",
       entityType: "opportunity",
       entityId: opportunityId,
-      detail: nextStatus === "done"
-        ? `Actividad realizada: ${nextObjective}`
-        : `Actividad actualizada: ${nextObjective}`,
+      detail:
+        nextStatus === "done"
+          ? nextEntryKind === "activity"
+            ? `Actividad realizada: ${nextObjective}`
+            : `Accion realizada: ${nextObjective}`
+          : nextEntryKind === "activity"
+            ? `Actividad actualizada: ${nextObjective}`
+            : `Accion actualizada: ${nextObjective}`,
       after: {
         actionId: activityId,
+        entryKind: nextEntryKind,
         activityType: nextActivityType,
         objective: nextObjective,
         scheduledAt,
+        dueDate,
         status: nextStatus,
         isPrimaryNextStep: nextIsPrimaryNextStep,
       },
@@ -2810,8 +4243,331 @@ router.patch(
       id: activityId,
       message:
         nextStatus === "done"
-          ? "Actividad marcada como realizada"
-          : "Actividad actualizada",
+          ? nextEntryKind === "activity"
+            ? "Actividad marcada como realizada"
+            : "Accion marcada como realizada"
+          : nextEntryKind === "activity"
+            ? "Actividad actualizada"
+            : "Accion actualizada",
+    });
+  },
+);
+
+router.patch(
+  "/opportunities/:id/activities/:activityId/email-draft",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    const activityId = Number(req.params.activityId);
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(activityId) ||
+      activityId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const context = await loadCommercialSendEmailContext({
+      req,
+      opportunityId,
+      activityId,
+    });
+    if (context.error) {
+      return res
+        .status(context.error.status)
+        .json({ message: context.error.message });
+    }
+
+    if (
+      !COMMERCIAL_ACTION_OPEN_STATUSES.has(
+        String(context.currentActivity.status || ""),
+      )
+    ) {
+      return res.status(409).json({
+        message:
+          "Solo puedes editar el borrador mientras la accion siga abierta",
+      });
+    }
+
+    const nextDetails = normalizeCommercialEmailDraft({
+      ...context.details,
+      ...(req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {}),
+      lastDraftSavedAt: new Date().toISOString(),
+      lastDraftSavedByUserId: Number(req.user.id),
+      lastDraftSavedByUserName: String(
+        req.user.full_name || req.user.name || "",
+      ),
+      lastSendError: "",
+    });
+
+    if (
+      !nextDetails.recipient ||
+      !nextDetails.subject ||
+      !nextDetails.messageBody
+    ) {
+      return res.status(400).json({
+        message: "Destinatario, asunto y mensaje base son obligatorios",
+      });
+    }
+
+    const title = await persistCommercialEmailDraft({
+      opportunity: context.opportunity,
+      currentActivity: context.currentActivity,
+      details: nextDetails,
+      req,
+      status: String(context.currentActivity.status || "pending"),
+    });
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_send_email_draft_saved",
+      entityType: "opportunity",
+      entityId: opportunityId,
+      detail: `Borrador de correo actualizado: ${title}`,
+      after: {
+        actionId: activityId,
+        recipient: nextDetails.recipient,
+        subject: nextDetails.subject,
+      },
+    });
+
+    return res.json({
+      id: activityId,
+      message: "Borrador guardado",
+      details: nextDetails,
+    });
+  },
+);
+
+router.get(
+  "/opportunities/:id/email-attachments/options",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const options = await loadCommercialEmailAttachmentOptions({
+      user: req.user,
+      opportunityId,
+    });
+    const opportunityDocuments = await listOpportunityDocuments({
+      opportunityId,
+    }).catch(() => []);
+
+    return res.json({
+      ...options,
+      opportunityDocuments: opportunityDocuments
+        .filter((document) =>
+          isCommercialEmailAttachmentMimeTypeAllowed(document.mimeType),
+        )
+        .map((document) => ({
+          id: `opportunity:${document.publicId}`,
+          sourceType: "opportunity_document",
+          sourceLabel: "Documento cargado",
+          documentPublicId: document.publicId,
+          fileName: document.originalFileName || "documento",
+          mimeType: document.mimeType || "application/octet-stream",
+          byteSize: Number(document.byteSize || 0),
+          createdAt: document.createdAt,
+        })),
+    });
+  },
+);
+
+router.post(
+  "/opportunities/:id/email-suggestion",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const details = normalizeCommercialEmailDraft(
+      req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {},
+    );
+
+    try {
+      const suggestion = await requestCommercialEmailSuggestionWithAi({
+        opportunity,
+        details,
+      });
+      return res.json(suggestion);
+    } catch {
+      return res.json(
+        buildCommercialEmailSuggestionFallback(opportunity, details),
+      );
+    }
+  },
+);
+
+router.post(
+  "/opportunities/:id/activities/:activityId/send-email",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    const activityId = Number(req.params.activityId);
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(activityId) ||
+      activityId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const context = await loadCommercialSendEmailContext({
+      req,
+      opportunityId,
+      activityId,
+    });
+    if (context.error) {
+      return res
+        .status(context.error.status)
+        .json({ message: context.error.message });
+    }
+
+    if (
+      !COMMERCIAL_ACTION_OPEN_STATUSES.has(
+        String(context.currentActivity.status || ""),
+      )
+    ) {
+      return res.status(409).json({
+        message: "La accion ya no esta abierta para envio",
+      });
+    }
+
+    const nextDetails = normalizeCommercialEmailDraft({
+      ...context.details,
+      ...(req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {}),
+    });
+
+    if (
+      !nextDetails.recipient ||
+      !nextDetails.subject ||
+      !nextDetails.messageBody
+    ) {
+      return res.status(400).json({
+        message: "Destinatario, asunto y mensaje base son obligatorios",
+      });
+    }
+
+    const attachmentValidationError = validateCommercialEmailAttachments(
+      nextDetails.attachments,
+    );
+    if (attachmentValidationError) {
+      return res.status(400).json({ message: attachmentValidationError });
+    }
+
+    const resolvedAttachments = await resolveCommercialEmailAttachments({
+      user: req.user,
+      opportunity: context.opportunity,
+      details: nextDetails,
+    });
+
+    const replyToEmail = String(
+      context.opportunity.seller_user_email || req.user.email || "",
+    ).trim();
+    const mailResult = await sendCommercialActionEmail({
+      to: nextDetails.recipient,
+      cc: splitEmailList(nextDetails.cc),
+      replyTo: replyToEmail,
+      subject: nextDetails.subject,
+      messageBody: nextDetails.messageBody,
+      attachmentsNote: nextDetails.attachmentsNote,
+      attachments: resolvedAttachments,
+      metadataLines: [
+        nextDetails.expectedResponse
+          ? `Respuesta esperada: ${nextDetails.expectedResponse}`
+          : "",
+        nextDetails.responseDueDate
+          ? `Fecha limite de respuesta: ${nextDetails.responseDueDate}`
+          : "",
+      ],
+    });
+
+    if (!mailResult.sent) {
+      return res.status(502).json({
+        message:
+          mailResult.detail || "No fue posible enviar el correo comercial",
+        reason: mailResult.reason || "smtp_send_failed",
+      });
+    }
+
+    const sentAt = new Date().toISOString();
+    nextDetails.sentAt = sentAt;
+    nextDetails.sentByUserId = Number(req.user.id);
+    nextDetails.sentByUserName = String(
+      req.user.full_name || req.user.name || "",
+    );
+    nextDetails.lastSendStatus = "sent";
+    nextDetails.lastSendError = "";
+    nextDetails.lastDraftSavedAt = sentAt;
+    nextDetails.lastDraftSavedByUserId = Number(req.user.id);
+    nextDetails.lastDraftSavedByUserName = String(
+      req.user.full_name || req.user.name || "",
+    );
+    nextDetails.lastRecipientSnapshot = nextDetails.recipient;
+    nextDetails.lastSubjectSnapshot = nextDetails.subject;
+    nextDetails.replyToEmail = replyToEmail;
+
+    const nextStatus = nextDetails.markDoneOnSend ? "done" : "in_progress";
+    const title = await persistCommercialEmailDraft({
+      opportunity: context.opportunity,
+      currentActivity: context.currentActivity,
+      details: nextDetails,
+      req,
+      status: nextStatus,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "opportunities.workspace",
+      action: "workspace_send_email_sent",
+      entityType: "opportunity",
+      entityId: opportunityId,
+      detail: `Correo enviado desde accion: ${title}`,
+      after: {
+        actionId: activityId,
+        recipient: nextDetails.recipient,
+        subject: nextDetails.subject,
+        attachmentCount: nextDetails.attachments.length,
+        status: nextStatus,
+        sentAt,
+      },
+    });
+
+    return res.json({
+      id: activityId,
+      message: "Correo enviado",
+      status: nextStatus,
+      details: nextDetails,
     });
   },
 );

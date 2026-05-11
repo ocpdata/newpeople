@@ -231,6 +231,10 @@ export async function ensureOpportunityWorkspaceSchema() {
         "is_primary_next_step",
         "is_primary_next_step TINYINT(1) NOT NULL DEFAULT 0 AFTER notes",
       );
+      await ensureWorkspaceActionColumn(
+        "details_json",
+        "details_json JSON NULL AFTER is_primary_next_step",
+      );
     })().catch((error) => {
       ensureOpportunityWorkspaceSchemaPromise = undefined;
       throw error;

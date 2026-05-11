@@ -118,6 +118,10 @@ export default function AppShell({
     can("oportunidades_potenciales.read_all");
   const canAccessCommercialPlanning = can("planeacion_comercial.read");
   const canAccessCommercialEnablement =
+    can("enablement_comercial.use") ||
+    can("enablement_comercial.upload") ||
+    can("enablement_comercial.manage") ||
+    can("enablement_comercial.admin") ||
     can("enablement_comercial.read") ||
     can("enablement_comercial.update") ||
     can("enablement_comercial.analytics");
@@ -219,7 +223,10 @@ export default function AppShell({
             )
           }
         />
-        <Route path="/execution-commercial" element={<Navigate to="/commercial-development" replace />} />
+        <Route
+          path="/execution-commercial"
+          element={<Navigate to="/commercial-development" replace />}
+        />
         <Route
           path="/commercial-planning"
           element={

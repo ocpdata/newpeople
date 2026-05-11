@@ -220,11 +220,7 @@ function shouldApplyDocumentField(selectedFieldKeys, selectedMatchKeys, key) {
   return !Array.isArray(selectedMatchKeys);
 }
 
-function shouldApplyDocumentMatch(
-  selectedFieldKeys,
-  selectedMatchKeys,
-  key,
-) {
+function shouldApplyDocumentMatch(selectedFieldKeys, selectedMatchKeys, key) {
   if (Array.isArray(selectedMatchKeys)) {
     return selectedMatchKeys.includes(key);
   }
@@ -1524,7 +1520,9 @@ export function useOpportunitiesPage({
       opportunities.filter((opportunity) => {
         if (opportunityStatusFilter === "all") return true;
         if (opportunityStatusFilter === "pending") {
-          return opportunitiesPendingEnabled && isOpportunityPending(opportunity);
+          return (
+            opportunitiesPendingEnabled && isOpportunityPending(opportunity)
+          );
         }
         if (opportunityStatusFilter === "inactive") {
           return (
@@ -2178,6 +2176,7 @@ export function useOpportunitiesPage({
   async function handleCurrentStageValidation() {
     setError("");
     setSuccess("");
+    setStageValidationResult(null);
     if (hasPendingStageChange) {
       setError("Guarda cambios antes de validar la nueva etapa seleccionada.");
       return;
@@ -2207,22 +2206,35 @@ export function useOpportunitiesPage({
       const validationDecision = String(
         data?.validation?.decision || "",
       ).trim();
-      setStageValidationResult({
-        message:
-          data?.message ||
-          `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-        feedbackMessage: formatStageValidationFeedback(
-          data?.validation,
-          data?.message ||
+      const advancedStageName = String(
+        data?.advancedSalesStage?.name || "",
+      ).trim();
+      if (!data?.autoAdvanced) {
+        setStageValidationResult({
+          message:
+            data?.message ||
             `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-        ),
-        validation: data?.validation || null,
-      });
+          feedbackMessage: formatStageValidationFeedback(
+            data?.validation,
+            data?.message ||
+              `Etapa ${currentCommercialStage?.name || "actual"} validada`,
+          ),
+          validation: data?.validation || null,
+          autoAdvanced: false,
+          advancedSalesStage: null,
+        });
+      }
       if (validationDecision === "not_ready_to_advance") {
         setError("Validacion completada: la etapa no esta lista para avanzar.");
       } else if (validationDecision === "advance_with_caution") {
         setSuccess(
           "Validacion completada: la etapa puede avanzar con reservas.",
+        );
+      } else if (data?.autoAdvanced) {
+        setSuccess(
+          advancedStageName
+            ? `Validacion completada: la oportunidad avanzo a ${advancedStageName}.`
+            : "Validacion completada: la etapa fue validada y la oportunidad avanzo.",
         );
       } else {
         setSuccess("Validacion completada: la etapa esta lista para avanzar.");
@@ -2382,7 +2394,9 @@ export function useOpportunitiesPage({
 
     setSavingOpportunity(true);
     try {
-      const normalizedOpportunityName = normalizeOpportunityNameValue(form.name);
+      const normalizedOpportunityName = normalizeOpportunityNameValue(
+        form.name,
+      );
       setForm((prev) =>
         prev.name === normalizedOpportunityName
           ? prev

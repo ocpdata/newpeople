@@ -33,6 +33,11 @@ function formatValidationErrors(errors) {
   return [...formMessages, ...fieldMessages].join(" | ");
 }
 
+function formatIssueList(issues) {
+  if (!Array.isArray(issues)) return "";
+  return issues.filter(Boolean).join(" | ");
+}
+
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) return fallback;
@@ -42,6 +47,11 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
     return data.message
       ? `${data.message}: ${validationDetail}`
       : validationDetail;
+  }
+
+  const issueDetail = formatIssueList(data.issues);
+  if (issueDetail) {
+    return data.message ? `${data.message}: ${issueDetail}` : issueDetail;
   }
 
   return data.message || fallback;

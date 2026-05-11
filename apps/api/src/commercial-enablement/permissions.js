@@ -14,6 +14,31 @@ const COMMERCIAL_MANAGER_ROLE_NAMES = [
 
 const COMMERCIAL_ENABLEMENT_PERMISSIONS = [
   {
+    code: "enablement_comercial.use",
+    module: "enablement_comercial",
+    action: "use",
+    description: "Buscar, abrir y usar activos de enablement comercial",
+  },
+  {
+    code: "enablement_comercial.upload",
+    module: "enablement_comercial",
+    action: "upload",
+    description: "Cargar y editar activos de enablement comercial",
+  },
+  {
+    code: "enablement_comercial.manage",
+    module: "enablement_comercial",
+    action: "manage",
+    description:
+      "Publicar, obsoletar y gobernar activos de enablement comercial",
+  },
+  {
+    code: "enablement_comercial.admin",
+    module: "enablement_comercial",
+    action: "admin",
+    description: "Administrar catalogos y gobierno del enablement comercial",
+  },
+  {
     code: "enablement_comercial.read",
     module: "enablement_comercial",
     action: "read",
@@ -34,11 +59,14 @@ const COMMERCIAL_ENABLEMENT_PERMISSIONS = [
 ];
 
 const SELLER_PERMISSION_CODES = [
+  "enablement_comercial.use",
   "enablement_comercial.read",
-  "enablement_comercial.update",
 ];
 
 const MANAGER_PERMISSION_CODES = [
+  "enablement_comercial.use",
+  "enablement_comercial.upload",
+  "enablement_comercial.manage",
   "enablement_comercial.read",
   "enablement_comercial.update",
   "enablement_comercial.analytics",

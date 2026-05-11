@@ -2359,7 +2359,9 @@ router.post(
     }
 
     const now = new Date();
-    const creationStatusCode = await resolveOpportunityCreationStatusCode(req.user);
+    const creationStatusCode = await resolveOpportunityCreationStatusCode(
+      req.user,
+    );
     const activationStatusId = creationStatusCode
       ? await getOpportunityActivationStatusId(creationStatusCode)
       : null;
@@ -3203,6 +3205,9 @@ router.post(
     });
 
     const validationNote = String(parsed.data.note || "").trim();
+    let autoAdvanced = false;
+    let advancedSalesStage = null;
+
     await logAuditEvent({
       req,
       module: "oportunidades",
@@ -3229,20 +3234,62 @@ router.post(
       },
     });
 
+    if (validationResult.decision === "ready_to_advance") {
+      const stageResolution = await getAdjacentOpportunityStage({
+        salesStageId: Number(opportunityState.sales_stage_id),
+        direction: "advance",
+      });
+      if (stageResolution.ok) {
+        const targetStage = stageResolution.targetStage;
+        const now = new Date();
+        await query(
+          `UPDATE opportunities
+           SET sales_stage_id = ?, updated_by = ?, updated_at = ?
+           WHERE id = ?`,
+          [Number(targetStage.id), req.user.id, now, id],
+        );
+
+        await logAuditEvent({
+          req,
+          module: "oportunidades",
+          action: "stage_advanced",
+          entityType: "opportunity",
+          entityId: id,
+          detail:
+            "Etapa de oportunidad avanzada automaticamente tras validacion",
+          before: { sales_stage_id: Number(opportunityState.sales_stage_id) },
+          after: { sales_stage_id: Number(targetStage.id) },
+        });
+
+        autoAdvanced = true;
+        advancedSalesStage = {
+          id: Number(targetStage.id),
+          code: String(targetStage.code),
+          name: String(targetStage.name),
+        };
+      }
+    }
+
     await refreshOpportunityRecommendedStrategy({
       opportunityId: id,
-      selectedSalesStageId: Number(opportunityState.sales_stage_id),
+      selectedSalesStageId: Number(
+        advancedSalesStage?.id || opportunityState.sales_stage_id,
+      ),
       userId: Number(req.user.id),
     });
 
     return res.json({
       message:
         validationResult.decision === "ready_to_advance"
-          ? `La etapa ${opportunityState.sales_stage_name} esta lista para avanzar`
+          ? autoAdvanced && advancedSalesStage
+            ? `La etapa ${opportunityState.sales_stage_name} fue validada y la oportunidad avanzo a ${advancedSalesStage.name}`
+            : `La etapa ${opportunityState.sales_stage_name} esta lista para avanzar`
           : validationResult.decision === "advance_with_caution"
             ? `La etapa ${opportunityState.sales_stage_name} puede avanzar con reservas`
             : `La etapa ${opportunityState.sales_stage_name} aun no esta lista para avanzar`,
       validation: validationResult,
+      autoAdvanced,
+      advancedSalesStage,
     });
   },
 );

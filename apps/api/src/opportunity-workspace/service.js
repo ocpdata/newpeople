@@ -2646,7 +2646,7 @@ async function getWorkspaceHistory(opportunityId) {
     .slice(0, 40);
 }
 
-function parseAuditChangedFields(value) {
+function parseJsonValue(value) {
   if (!value) {
     return null;
   }
@@ -2660,6 +2660,10 @@ function parseAuditChangedFields(value) {
   } catch {
     return null;
   }
+}
+
+function parseAuditChangedFields(value) {
+  return parseJsonValue(value);
 }
 
 async function getLatestWorkspaceStageValidations({
@@ -2775,6 +2779,7 @@ export async function buildOpportunityWorkspace({
     successCriteria: row.success_criteria || "",
     notes: row.notes || "",
     isPrimaryNextStep: Boolean(row.is_primary_next_step),
+    details: parseJsonValue(row.details_json),
     stageName: row.stage_name || "",
     weaknessTitle: row.weakness_title || "",
     stakeholderName: row.stakeholder_name || "",
@@ -3214,6 +3219,7 @@ export async function saveOpportunityAction({
       "success_criteria",
       "notes",
       "is_primary_next_step",
+      "details_json",
       "updated_by_user_id",
     ],
     payload: { ...payload, updated_by_user_id: userId },

@@ -22,7 +22,10 @@ export function normalizeEmail(email) {
 }
 
 export function hashOpaqueToken(token) {
-  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(String(token || ""))
+    .digest("hex");
 }
 
 export function createOpaqueToken() {
@@ -52,7 +55,8 @@ function hasMailConfig() {
 function formatInviteExpiration(expiresAt) {
   if (!expiresAt) return null;
 
-  const parsedDate = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  const parsedDate =
+    expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
   if (Number.isNaN(parsedDate.getTime())) return null;
 
   return new Intl.DateTimeFormat("es-MX", {
@@ -105,6 +109,79 @@ function resolveMailFailureReason(error) {
     reason: "smtp_send_failed",
     detail: String(error?.message || error),
   };
+}
+
+function buildCommercialMailHtml(text) {
+  return String(text || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\n", "<br />");
+}
+
+export async function sendCommercialActionEmail({
+  to,
+  cc = [],
+  replyTo = "",
+  subject,
+  messageBody,
+  attachmentsNote = "",
+  attachments = [],
+  metadataLines = [],
+}) {
+  if (!hasMailConfig()) {
+    return {
+      sent: false,
+      reason: "smtp_not_configured",
+      detail: "Falta configurar SMTP_HOST, SMTP_USER o SMTP_PASS",
+    };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: config.mail.host,
+    port: config.mail.port,
+    secure: config.mail.secure,
+    auth: {
+      user: config.mail.user,
+      pass: config.mail.pass,
+    },
+  });
+
+  const lines = [String(messageBody || "").trim()];
+  if (attachmentsNote) {
+    lines.push("", `Documentos referenciados: ${attachmentsNote}`);
+  }
+  if (metadataLines.length) {
+    lines.push("", ...metadataLines.filter(Boolean));
+  }
+
+  const text = lines.join("\n");
+  const html = buildCommercialMailHtml(text);
+
+  try {
+    await transporter.sendMail({
+      from: config.mail.from,
+      to,
+      cc: cc.length ? cc : undefined,
+      replyTo: replyTo || undefined,
+      subject: String(subject || "").trim(),
+      text,
+      html: `<p>${html}</p>`,
+      attachments:
+        Array.isArray(attachments) && attachments.length
+          ? attachments
+          : undefined,
+    });
+
+    return { sent: true };
+  } catch (error) {
+    const failure = resolveMailFailureReason(error);
+    return {
+      sent: false,
+      reason: failure.reason,
+      detail: failure.detail,
+    };
+  }
 }
 
 export async function sendUserInvitationEmail({
