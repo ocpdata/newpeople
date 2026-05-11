@@ -86,6 +86,33 @@ npm test -- --run test/api.integration.test.js -t "cotizaciones genera un PDF in
 - `APP_INVITE_SETUP_URL`
 - `APP_PASSWORD_SETUP_TOKEN_MINUTES`
 - `SMTP_*`
+- `DOCUMENT_STORAGE_PROVIDER`
+- `DOCUMENT_STORAGE_LOCAL_ROOT`
+- `DOCUMENT_STORAGE_S3_BUCKET`
+- `DOCUMENT_STORAGE_S3_REGION`
+- `DOCUMENT_STORAGE_S3_ENDPOINT`
+- `DOCUMENT_STORAGE_S3_FORCE_PATH_STYLE`
+- `DOCUMENT_STORAGE_S3_ACCESS_KEY_ID`
+- `DOCUMENT_STORAGE_S3_SECRET_ACCESS_KEY`
+
+### S3 / almacenamiento documental
+
+Para guardar archivos nuevos en S3-compatible, configura al menos:
+
+- `DOCUMENT_STORAGE_PROVIDER=s3_compatible`
+- `DOCUMENT_STORAGE_S3_BUCKET=<bucket>`
+- `DOCUMENT_STORAGE_S3_REGION=<region>`
+- `DOCUMENT_STORAGE_S3_ACCESS_KEY_ID=<access-key>`
+- `DOCUMENT_STORAGE_S3_SECRET_ACCESS_KEY=<secret-key>`
+
+Opcionales segun proveedor:
+
+- `DOCUMENT_STORAGE_S3_ENDPOINT=` para MinIO, Cloudflare R2, DigitalOcean Spaces u otro endpoint custom.
+- `DOCUMENT_STORAGE_S3_FORCE_PATH_STYLE=false` para AWS S3 normal; `true` suele ser util en MinIO y algunos compatibles.
+
+Nota operativa:
+
+- `DOCUMENT_STORAGE_LOCAL_ROOT` sigue siendo necesario hoy como staging temporal de uploads multipart y procesamiento inicial, aunque el almacenamiento final quede en S3.
 
 ## Documentacion relacionada
 

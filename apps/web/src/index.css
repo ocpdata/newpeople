@@ -1265,12 +1265,64 @@ button:disabled {
   gap: 0.28rem;
 }
 
+.commercial-development-gap-coverage-insight-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
 .commercial-development-gap-coverage-insight span {
   color: #6d7862;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.commercial-development-gap-coverage-ai-trigger {
+  appearance: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  line-height: 0;
+  border: 1px solid rgba(70, 96, 49, 0.14);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.76);
+  color: #466031;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.commercial-development-gap-coverage-ai-trigger svg {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+  overflow: visible;
+}
+
+.commercial-development-gap-coverage-ai-trigger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.32);
+  background: #f3f8ea;
+}
+
+.commercial-development-gap-coverage-ai-trigger:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.commercial-development-gap-coverage-ai-trigger.is-loading svg {
+  animation: interaction-progress-spin 800ms linear infinite;
 }
 
 .commercial-development-gap-coverage-insight p {

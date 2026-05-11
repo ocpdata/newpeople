@@ -938,6 +938,116 @@ async function enrichOpportunityNarratives(items) {
   }
 }
 
+async function buildExecutionNarrativeItem({ user, opportunity }) {
+  const opportunityId = Number(opportunity?.id || 0);
+  if (!opportunityId) {
+    return null;
+  }
+
+  const opportunityState = {
+    ...opportunity,
+    salesStageId: Number(
+      opportunity?.sales_stage_id || opportunity?.salesStageId || 0,
+    ),
+  };
+  const stagesCatalog = await listActiveSalesStages();
+  const stageView = buildStageView(stagesCatalog, opportunityState);
+  const workspace = await buildOpportunityWorkspace({
+    opportunityState,
+    stageView,
+    documents: [],
+  });
+  const dependencyRows = await listOpenDependencies([opportunityId]);
+  const dependencies = dependencyRows.map((row) => mapDependencyRow(row));
+  const lastActivityByOpportunity = await listLastActivityByOpportunity([
+    opportunityId,
+  ]);
+  const nextStep = selectPrimaryNextStep(
+    workspace.actions || [],
+    opportunityState.salesStageId,
+  );
+  const mappedNextStep = mapNextStep(nextStep);
+  const activitySummary = buildCommercialActivitySummary(workspace.actions || []);
+  const lastActivityAt =
+    lastActivityByOpportunity.get(opportunityId) ||
+    (opportunity?.updated_at ? new Date(opportunity.updated_at) : null) ||
+    new Date();
+  const daysSinceActivity = getDiffDays(lastActivityAt);
+  const slaDays = STAGE_SLA_DAYS[opportunity?.sales_stage_code] || 5;
+  const risk = buildRiskSummary({
+    workspace,
+    nextStep: mappedNextStep,
+    dependencies,
+    daysSinceActivity,
+    slaDays,
+  });
+  const executionState = deriveExecutionState({
+    nextStep: mappedNextStep,
+    dependencies,
+    risk,
+    daysSinceActivity,
+    slaDays,
+  });
+
+  return {
+    id: opportunityId,
+    name: opportunity?.name || "",
+    accountName: opportunity?.account_name || "",
+    amountUsd: Number(opportunity?.amount_usd || 0),
+    closeDate: opportunity?.close_date || null,
+    stageId: Number(opportunity?.sales_stage_id || 0),
+    stageCode: opportunity?.sales_stage_code || "",
+    stageName: opportunity?.sales_stage_name || "",
+    sellerUserId:
+      opportunity?.seller_user_id === null || opportunity?.seller_user_id === undefined
+        ? null
+        : Number(opportunity.seller_user_id),
+    sellerUserName: opportunity?.seller_user_name || "Sin vendedor",
+    lastActivityAt,
+    daysSinceActivity,
+    slaDays,
+    currentStageValidated: Boolean(workspace.currentStage?.isValidated),
+    workspaceSummary: workspace.summary || null,
+    scorecardOverallTone: workspace.scorecard?.overallTone || "neutral",
+    scorecardItems: (workspace.scorecard?.items || []).map((scorecardItem) => ({
+      label: scorecardItem.label,
+      tone: scorecardItem.tone,
+      statusLabel: scorecardItem.statusLabel,
+      summary: scorecardItem.summary,
+    })),
+    openWeaknesses: (workspace.weaknesses || [])
+      .filter((weakness) => weakness.status === "open")
+      .slice(0, 3)
+      .map((weakness) => ({
+        title: weakness.title,
+        severity: weakness.severity,
+        detail: weakness.detail || "",
+      })),
+    recommendedHeading: workspace.recommendedStrategy?.heading || "",
+    recommendedRoute: workspace.recommendedStrategy?.route || "",
+    recommendedFinalObjective:
+      workspace.recommendedStrategy?.finalObjective || "",
+    recommendedStrategySteps: (
+      workspace.recommendedStrategy?.steps || []
+    ).slice(0, 3),
+    recommendedNextMove: workspace.recommendedStrategy?.steps?.[0] || "",
+    riskLevel: risk.level,
+    riskReasons: risk.reasons,
+    executionState,
+    dependencies,
+    decisionRiskTone:
+      workspace.scorecard?.signals?.decisionRisk?.tone || "neutral",
+    nextStep: mappedNextStep,
+    nextScheduledActivity: activitySummary.nextScheduledActivity,
+    nextPendingAction: activitySummary.nextPendingAction,
+    lastCompletedActivity: activitySummary.lastCompletedActivity,
+    recentActivities: activitySummary.recentActivities,
+    recentTimeline: activitySummary.recentTimeline,
+    activityCount: activitySummary.activityCount,
+    actionCount: activitySummary.actionCount,
+  };
+}
+
 function buildPriorityItems(items, planningSnapshot) {
   const maxAmount = items.length
     ? Math.max(...items.map((item) => Number(item.amountUsd || 0)), 1)
@@ -3865,9 +3975,12 @@ router.get(
         )
         .map((item) => item.id),
     );
-    const quarterNarratives = await enrichOpportunityNarratives(
-      executionItems.filter((item) => quarterOpportunityIds.has(item.id)),
-    );
+    const quarterNarratives = executionItems
+      .filter((item) => quarterOpportunityIds.has(item.id))
+      .map((item) => ({
+        ...item,
+        ...buildOpportunityNarrativeFallback(item),
+      }));
     const quarterNarrativeById = new Map(
       quarterNarratives.map((item) => [item.id, item]),
     );
@@ -4166,6 +4279,60 @@ router.get(
     });
 
     return res.json(payload);
+  },
+);
+
+router.post(
+  "/opportunities/:id/ai-narrative",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const narrativeItem = await buildExecutionNarrativeItem({
+      user: req.user,
+      opportunity,
+    });
+    if (!narrativeItem) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const fallbackNarrative = buildOpportunityNarrativeFallback(narrativeItem);
+
+    try {
+      const aiInsights = await requestOpportunityNarrativesWithAi([
+        {
+          ...narrativeItem,
+          ...fallbackNarrative,
+        },
+      ]);
+      const aiNarrative = aiInsights.get(opportunityId);
+      return res.json({
+        opportunityId,
+        aiStatusSummary:
+          aiNarrative?.aiStatusSummary || fallbackNarrative.aiStatusSummary,
+        aiNextStepRecommendation:
+          aiNarrative?.aiNextStepRecommendation ||
+          fallbackNarrative.aiNextStepRecommendation,
+        aiNarrativeSource:
+          aiNarrative?.aiNarrativeSource || fallbackNarrative.aiNarrativeSource,
+      });
+    } catch {
+      return res.json({
+        opportunityId,
+        ...fallbackNarrative,
+      });
+    }
   },
 );
 

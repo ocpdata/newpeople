@@ -2274,6 +2274,22 @@ function SparkIcon() {
   );
 }
 
+function InsightAiIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M12 4.5v4.2M12 15.3v4.2M4.5 12h4.2M15.3 12h4.2M7 7l2.9 2.9M14.1 14.1 17 17M17 7l-2.9 2.9M9.9 14.1 7 17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.9"
+      />
+      <circle cx="12" cy="12" r="2.15" fill="currentColor" />
+    </svg>
+  );
+}
+
 function CalendarPlusIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -3407,19 +3423,35 @@ export default function CommercialDevelopmentPage() {
   ] = useState(false);
   const [generatingEmailDraftSuggestion, setGeneratingEmailDraftSuggestion] =
     useState(false);
+  const [gapCoverageAiLoadingByOpportunityId, setGapCoverageAiLoadingByOpportunityId] =
+    useState({});
   const activityEmailSuggestionRef = useRef(null);
   const emailDraftSuggestionRef = useRef(null);
   const emailAttachmentOptionsRef = useRef({});
   const emailAttachmentRequestKeyByOpportunityRef = useRef({});
+  const dashboardRequestIdRef = useRef(0);
+  const dashboardPendingRequestRef = useRef({ key: "", promise: null });
+  const lastLoadedDashboardPeriodKeyRef = useRef("");
 
   useEffect(() => {
     emailAttachmentOptionsRef.current = emailAttachmentOptionsByOpportunityId;
   }, [emailAttachmentOptionsByOpportunityId]);
 
   const loadDashboard = useCallback(async (periodKey = "") => {
-    setLoading(true);
-    setError("");
-    try {
+    const requestKey = String(periodKey || "").trim();
+    if (
+      dashboardPendingRequestRef.current.promise &&
+      dashboardPendingRequestRef.current.key === requestKey
+    ) {
+      return dashboardPendingRequestRef.current.promise;
+    }
+
+    const requestId = dashboardRequestIdRef.current + 1;
+    dashboardRequestIdRef.current = requestId;
+    const requestPromise = (async () => {
+      setLoading(true);
+      setError("");
+      try {
       const params = {};
       if (periodKey) {
         const [year, quarter] = String(periodKey).split("-");
@@ -3434,19 +3466,43 @@ export default function CommercialDevelopmentPage() {
         params: Object.keys(params).length ? params : undefined,
       });
       const nextDashboard = normalizeDashboardResponse(response.data);
+      const nextPeriod = nextDashboard?.development?.period;
+      lastLoadedDashboardPeriodKeyRef.current =
+        nextPeriod?.year && nextPeriod?.quarter
+          ? `${nextPeriod.year}-${nextPeriod.quarter}`
+          : requestKey;
+      if (dashboardRequestIdRef.current !== requestId) {
+        return nextDashboard;
+      }
       setDashboard(nextDashboard);
       return nextDashboard;
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(
-          requestError,
-          "No fue posible cargar la vista de desarrollo comercial",
-        ),
-      );
-      return null;
-    } finally {
-      setLoading(false);
-    }
+      } catch (requestError) {
+        if (dashboardRequestIdRef.current !== requestId) {
+          return null;
+        }
+        setError(
+          getApiErrorMessage(
+            requestError,
+            "No fue posible cargar la vista de desarrollo comercial",
+          ),
+        );
+        return null;
+      } finally {
+        if (dashboardRequestIdRef.current === requestId) {
+          setLoading(false);
+        }
+        if (dashboardPendingRequestRef.current.promise === requestPromise) {
+          dashboardPendingRequestRef.current = { key: "", promise: null };
+        }
+      }
+    })();
+
+    dashboardPendingRequestRef.current = {
+      key: requestKey,
+      promise: requestPromise,
+    };
+
+    return requestPromise;
   }, []);
 
   const requestAiEmailSuggestion = useCallback(async (item, details) => {
@@ -3460,6 +3516,81 @@ export default function CommercialDevelopmentPage() {
       { details },
     );
     return normalizeEmailSuggestionResult(item, details, response.data || null);
+  }, []);
+
+  const requestGapCoverageAiNarrative = useCallback(async (opportunityId) => {
+    const normalizedOpportunityId = Number(opportunityId || 0);
+    if (!normalizedOpportunityId) {
+      return;
+    }
+
+    let shouldRequest = false;
+    setGapCoverageAiLoadingByOpportunityId((current) => {
+      if (current[normalizedOpportunityId]) {
+        return current;
+      }
+      shouldRequest = true;
+      return {
+        ...current,
+        [normalizedOpportunityId]: true,
+      };
+    });
+
+    if (!shouldRequest) {
+      return;
+    }
+
+    try {
+      const response = await api.post(
+        `/api/commercial-development/opportunities/${normalizedOpportunityId}/ai-narrative`,
+        {},
+      );
+      const nextStatusSummary = String(
+        response.data?.aiStatusSummary || "",
+      ).trim();
+      const nextStepRecommendation = String(
+        response.data?.aiNextStepRecommendation || "",
+      ).trim();
+      const nextNarrativeSource = String(
+        response.data?.aiNarrativeSource || "",
+      ).trim();
+
+      setDashboard((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          workboard: asArray(current.workboard).map((item) =>
+            Number(item?.id || 0) === normalizedOpportunityId
+              ? {
+                  ...item,
+                  aiStatusSummary:
+                    nextStatusSummary || item.aiStatusSummary || "",
+                  aiNextStepRecommendation:
+                    nextStepRecommendation ||
+                    item.aiNextStepRecommendation ||
+                    "",
+                  aiNarrativeSource:
+                    nextNarrativeSource || item.aiNarrativeSource || "",
+                }
+              : item,
+          ),
+        };
+      });
+    } catch {
+      return;
+    } finally {
+      setGapCoverageAiLoadingByOpportunityId((current) => {
+        if (!current[normalizedOpportunityId]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[normalizedOpportunityId];
+        return next;
+      });
+    }
   }, []);
 
   const loadEmailAttachmentOptions = useCallback(
@@ -3630,6 +3761,12 @@ export default function CommercialDevelopmentPage() {
   );
 
   useEffect(() => {
+    if (
+      selectedPeriodKey &&
+      selectedPeriodKey === lastLoadedDashboardPeriodKeyRef.current
+    ) {
+      return;
+    }
     loadDashboard(selectedPeriodKey);
   }, [loadDashboard, selectedPeriodKey]);
 
@@ -3720,6 +3857,19 @@ export default function CommercialDevelopmentPage() {
   ).size;
   const periodOptions = development.periods || [];
   const currentPeriod = development.period || null;
+
+  useEffect(() => {
+    if (!currentPeriod?.year || !currentPeriod?.quarter) return;
+
+    const currentPeriodKey = `${currentPeriod.year}-${currentPeriod.quarter}`;
+    const periodExistsInOptions = periodOptions.some(
+      (period) => `${period.year}-${period.quarter}` === selectedPeriodKey,
+    );
+
+    if (!selectedPeriodKey || !periodExistsInOptions) {
+      setSelectedPeriodKey(currentPeriodKey);
+    }
+  }, [currentPeriod?.quarter, currentPeriod?.year, periodOptions, selectedPeriodKey]);
   const funnel = useMemo(
     () => buildCommercialFunnel(development.pipelineByStage),
     [development.pipelineByStage],
@@ -5542,11 +5692,16 @@ export default function CommercialDevelopmentPage() {
 
         {visibleGapClosingCards.length ? (
           <div className="commercial-development-gap-coverage-list">
-            {visibleGapClosingCards.map((item) => (
-              <article
-                key={`gap-coverage-${item.id}`}
-                className="commercial-development-gap-coverage-card"
-              >
+            {visibleGapClosingCards.map((item) => {
+              const isGapCoverageAiLoading = Boolean(
+                gapCoverageAiLoadingByOpportunityId[Number(item.id || 0)],
+              );
+
+              return (
+                <article
+                  key={`gap-coverage-${item.id}`}
+                  className="commercial-development-gap-coverage-card"
+                >
                 <div className="commercial-development-inline-row">
                   <div>
                     <strong>{item.name}</strong>
@@ -5608,14 +5763,46 @@ export default function CommercialDevelopmentPage() {
 
                 <div className="commercial-development-gap-coverage-meta">
                   <div className="commercial-development-gap-coverage-insight">
-                    <span>Lectura actual</span>
+                    <div className="commercial-development-gap-coverage-insight-header">
+                      <span>Lectura actual</span>
+                      <button
+                        type="button"
+                        className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
+                        onClick={() => requestGapCoverageAiNarrative(item.id)}
+                        disabled={isGapCoverageAiLoading}
+                        aria-label={`Generar lectura actual con IA para ${item.name}`}
+                        title={
+                          isGapCoverageAiLoading
+                            ? "Generando lectura actual con IA..."
+                            : "Generar lectura actual con IA"
+                        }
+                      >
+                        <InsightAiIcon />
+                      </button>
+                    </div>
                     <p>
                       {item.aiStatusSummary ||
                         "Sin lectura sugerida disponible."}
                     </p>
                   </div>
                   <div className="commercial-development-gap-coverage-insight is-accent">
-                    <span>Siguiente paso sugerido</span>
+                    <div className="commercial-development-gap-coverage-insight-header">
+                      <span>Siguiente paso sugerido</span>
+                      <button
+                        type="button"
+                        className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
+                        onClick={() => requestGapCoverageAiNarrative(item.id)}
+                        disabled={isGapCoverageAiLoading}
+                        aria-label={`Generar siguiente paso sugerido con IA para ${item.name}`}
+                        title={
+                          isGapCoverageAiLoading
+                            ? "Generando siguiente paso sugerido con IA..."
+                            : "Generar siguiente paso sugerido con IA"
+                        }
+                      >
+                        <InsightAiIcon />
+                      </button>
+                    </div>
                     <p>
                       {item.aiNextStepRecommendation ||
                         "Sin recomendación sugerida."}
@@ -5682,16 +5869,15 @@ export default function CommercialDevelopmentPage() {
                     </div>
                   ) : null}
                 </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         ) : (
           <div className="empty-state">
             {selectedFunnelStageData
               ? `No hay oportunidades visibles en ${selectedFunnelStageData.stageName} para este trimestre.`
-              : gapClosingView.gapAmount > 0
-                ? "No hay oportunidades del trimestre con aporte material a la brecha."
-                : "La cuota ya está cubierta; no hace falta cobertura adicional en este trimestre."}
+              : "La cuota ya está cubierta; no hace falta cobertura adicional en este trimestre."}
           </div>
         )}
       </section>

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { Blob } from "node:buffer";
 import formidable from "formidable";
 import { simpleParser } from "mailparser";
@@ -708,15 +709,33 @@ export function buildStorageKey({
 }
 
 export async function parseMultipartFiles(req) {
-  await mkdir(path.join(config.documents.storage.localRoot, "tmp", "uploads"), {
-    recursive: true,
-  });
+  const configuredUploadDir = path.join(
+    config.documents.storage.localRoot,
+    "tmp",
+    "uploads",
+  );
+  let uploadDir = configuredUploadDir;
+
+  try {
+    await mkdir(uploadDir, {
+      recursive: true,
+    });
+  } catch (error) {
+    if (error?.code !== "EACCES" && error?.code !== "EPERM") {
+      throw error;
+    }
+
+    uploadDir = path.join(tmpdir(), "newpeople", "documents", "tmp", "uploads");
+    await mkdir(uploadDir, {
+      recursive: true,
+    });
+  }
 
   const form = formidable({
     multiples: true,
     maxFiles: config.documents.storage.maxSessionFiles,
     maxTotalFileSize: config.documents.storage.maxSessionBytes,
-    uploadDir: path.join(config.documents.storage.localRoot, "tmp", "uploads"),
+    uploadDir,
     keepExtensions: true,
     allowEmptyFiles: false,
   });
