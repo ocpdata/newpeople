@@ -2429,14 +2429,36 @@ function validateCommercialEmailAttachments(attachments = []) {
   return "";
 }
 
-async function loadCommercialEmailAttachmentOptions({ user, opportunityId }) {
-  const [libraryFiles, quotationVersions] = await Promise.all([
+async function loadCommercialEmailAttachmentOptions({
+  user,
+  opportunityId,
+  libraryFilters = {},
+}) {
+  const [allLibraryFiles, quotationVersions] = await Promise.all([
     listCommercialLibraryFilesForEmail({ user }),
     listCommercialQuotationVersionsForEmail({ opportunityId }),
   ]);
 
+  const libraryCatalogs = buildCommercialLibraryAttachmentCatalogs(
+    allLibraryFiles,
+  );
+  const filteredLibraryFiles = filterCommercialLibraryFiles(
+    allLibraryFiles,
+    libraryFilters,
+  );
+  const sortedLibraryFiles = sortCommercialLibraryFiles(
+    filteredLibraryFiles,
+    libraryFilters.sort,
+  );
+
   return {
-    libraryFiles,
+    libraryFiles: sortedLibraryFiles,
+    libraryCatalogs,
+    appliedLibraryFilters: normalizeCommercialLibraryFilters(libraryFilters),
+    libraryStats: {
+      totalAvailable: allLibraryFiles.length,
+      totalMatching: sortedLibraryFiles.length,
+    },
     quotationVersions,
     constraints: {
       maxFiles: COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES,
@@ -2445,6 +2467,181 @@ async function loadCommercialEmailAttachmentOptions({ user, opportunityId }) {
         COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES,
       ),
     },
+  };
+}
+
+function normalizeCommercialLibraryFilters(filters = {}) {
+  const normalizeArray = (value) => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+    }
+    return String(value || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  };
+
+  return {
+    q: String(filters?.q || "").trim(),
+    manufacturerCodes: normalizeArray(filters?.manufacturerCodes),
+    solutionCodes: normalizeArray(filters?.solutionCodes),
+    industryCodes: normalizeArray(filters?.industryCodes),
+    sort: String(filters?.sort || "updated_desc").trim() || "updated_desc",
+  };
+}
+
+function buildCommercialLibraryAttachmentCatalogs(libraryFiles) {
+  const buildCatalog = (catalogType) => {
+    const byCode = new Map();
+    libraryFiles.forEach((file) => {
+      const info = getCommercialAttachmentCatalogInfo(file, catalogType);
+      info.codes.forEach((code, index) => {
+        const normalizedCode = String(code || "").trim();
+        if (!normalizedCode || byCode.has(normalizedCode)) return;
+        byCode.set(normalizedCode, {
+          code: normalizedCode,
+          label:
+            String(info.labels[index] || normalizedCode).trim() || normalizedCode,
+        });
+      });
+    });
+    return Array.from(byCode.values()).sort((left, right) =>
+      left.label.localeCompare(right.label, "es"),
+    );
+  };
+
+  return {
+    manufacturer: buildCatalog("manufacturer"),
+    solution: buildCatalog("solution"),
+    industry: buildCatalog("industry"),
+  };
+}
+
+function getCommercialAttachmentCatalogInfo(file, catalogType) {
+  if (catalogType === "manufacturer") {
+    return {
+      codes: Array.isArray(file?.manufacturerCodes) ? file.manufacturerCodes : [],
+      labels: Array.isArray(file?.manufacturerLabels)
+        ? file.manufacturerLabels
+        : [],
+    };
+  }
+  if (catalogType === "solution") {
+    return {
+      codes: Array.isArray(file?.solutionCodes) ? file.solutionCodes : [],
+      labels: Array.isArray(file?.solutionLabels) ? file.solutionLabels : [],
+    };
+  }
+  if (catalogType === "industry") {
+    return {
+      codes: Array.isArray(file?.industryCodes) ? file.industryCodes : [],
+      labels: Array.isArray(file?.industryLabels) ? file.industryLabels : [],
+    };
+  }
+  return { codes: [], labels: [] };
+}
+
+function buildCommercialLibraryAttachmentSearchText(file) {
+  return [
+    file?.fileName,
+    file?.title,
+    file?.summary,
+    file?.assetTypeLabel,
+    ...(Array.isArray(file?.manufacturerLabels) ? file.manufacturerLabels : []),
+    ...(Array.isArray(file?.solutionLabels) ? file.solutionLabels : []),
+    ...(Array.isArray(file?.industryLabels) ? file.industryLabels : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filterCommercialLibraryFiles(libraryFiles, rawFilters = {}) {
+  const filters = normalizeCommercialLibraryFilters(rawFilters);
+  const queryText = filters.q.toLowerCase();
+
+  return libraryFiles.filter((file) => {
+    if (
+      queryText &&
+      !buildCommercialLibraryAttachmentSearchText(file).includes(queryText)
+    ) {
+      return false;
+    }
+    if (
+      filters.manufacturerCodes.length &&
+      !filters.manufacturerCodes.some((code) =>
+        getCommercialAttachmentCatalogInfo(file, "manufacturer").codes.includes(
+          code,
+        ),
+      )
+    ) {
+      return false;
+    }
+    if (
+      filters.solutionCodes.length &&
+      !filters.solutionCodes.some((code) =>
+        getCommercialAttachmentCatalogInfo(file, "solution").codes.includes(
+          code,
+        ),
+      )
+    ) {
+      return false;
+    }
+    if (
+      filters.industryCodes.length &&
+      !filters.industryCodes.some((code) =>
+        getCommercialAttachmentCatalogInfo(file, "industry").codes.includes(
+          code,
+        ),
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function sortCommercialLibraryFiles(libraryFiles, sort = "updated_desc") {
+  const normalizedSort = String(sort || "updated_desc").trim() || "updated_desc";
+  const nextFiles = [...libraryFiles];
+
+  if (normalizedSort === "title_asc") {
+    return nextFiles.sort((left, right) =>
+      String(left.fileName || left.title || "").localeCompare(
+        String(right.fileName || right.title || ""),
+        "es",
+      ),
+    );
+  }
+  if (normalizedSort === "title_desc") {
+    return nextFiles.sort((left, right) =>
+      String(right.fileName || right.title || "").localeCompare(
+        String(left.fileName || left.title || ""),
+        "es",
+      ),
+    );
+  }
+  if (normalizedSort === "updated_asc") {
+    return nextFiles.sort((left, right) =>
+      String(left.createdAt || "").localeCompare(String(right.createdAt || "")),
+    );
+  }
+  return nextFiles.sort((left, right) =>
+    String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+  );
+}
+
+function getCommercialAttachmentCatalogMeta(asset, catalogType) {
+  const entries = (Array.isArray(asset?.catalogs) ? asset.catalogs : [])
+    .filter((entry) => String(entry?.catalogType || "") === catalogType)
+    .map((entry) => ({
+      code: String(entry?.code || "").trim(),
+      label: String(entry?.name || "").trim(),
+    }))
+    .filter((entry) => entry.code || entry.label);
+
+  return {
+    codes: entries.map((entry) => entry.code).filter(Boolean),
+    labels: entries.map((entry) => entry.label).filter(Boolean),
   };
 }
 
@@ -2476,22 +2673,38 @@ async function listCommercialLibraryFilesForEmail({ user }) {
           file?.isAvailable !== false &&
           isCommercialEmailAttachmentMimeTypeAllowed(file?.mimeType),
       )
-      .map((file) => ({
-        id: `library:${asset.publicId}:${file.publicId}`,
-        sourceType: "library_file",
-        sourceLabel: "Biblioteca",
-        resourcePublicId: asset.publicId,
-        filePublicId: file.publicId,
-        fileName: file.originalFileName || file.storedFileName || "archivo",
-        mimeType: file.mimeType || "application/octet-stream",
-        byteSize:
-          file.byteSize === null || file.byteSize === undefined
-            ? null
-            : Number(file.byteSize),
-        title: asset.title || "Activo comercial",
-        summary: asset.summary || "",
-        assetTypeLabel: asset.assetTypeLabel || "",
-      })),
+      .map((file) => {
+        const manufacturer = getCommercialAttachmentCatalogMeta(
+          asset,
+          "manufacturer",
+        );
+        const solution = getCommercialAttachmentCatalogMeta(asset, "solution");
+        const industry = getCommercialAttachmentCatalogMeta(asset, "industry");
+
+        return {
+          id: `library:${asset.publicId}:${file.publicId}`,
+          sourceType: "library_file",
+          sourceLabel: "Biblioteca",
+          resourcePublicId: asset.publicId,
+          filePublicId: file.publicId,
+          fileName: file.originalFileName || file.storedFileName || "archivo",
+          mimeType: file.mimeType || "application/octet-stream",
+          byteSize:
+            file.byteSize === null || file.byteSize === undefined
+              ? null
+              : Number(file.byteSize),
+          title: asset.title || "Activo comercial",
+          summary: asset.summary || "",
+          assetTypeLabel: asset.assetTypeLabel || "",
+          manufacturerCodes: manufacturer.codes,
+          manufacturerLabels: manufacturer.labels,
+          solutionCodes: solution.codes,
+          solutionLabels: solution.labels,
+          industryCodes: industry.codes,
+          industryLabels: industry.labels,
+          createdAt: file.createdAt || asset.updatedAt || asset.createdAt || "",
+        };
+      }),
   );
 }
 
@@ -3120,14 +3333,41 @@ function getCommercialEmailSuggestionContextLabel(opportunity) {
   return "la oportunidad";
 }
 
-function buildCommercialEmailSuggestionFallback(opportunity, details = {}) {
+function resolveCommercialRecipientName(details = {}, contacts = []) {
+  const recipient = String(details?.recipient || "")
+    .trim()
+    .toLowerCase();
+  if (!recipient) return "";
+
+  const matchedContact = (Array.isArray(contacts) ? contacts : []).find(
+    (contact) => {
+    const email = String(contact?.email || "")
+      .trim()
+      .toLowerCase();
+      return email && email === recipient;
+    },
+  );
+
+  return buildContactDisplayName(matchedContact);
+}
+
+function buildCommercialRecipientGreeting(recipientName = "") {
+  return recipientName ? `Estimado/a ${recipientName},` : "Buen dia,";
+}
+
+function buildCommercialEmailSuggestionFallback(
+  opportunity,
+  details = {},
+  recipientName = "",
+) {
   const normalizedDetails = normalizeCommercialEmailDraft(details);
   const contextLabel = getCommercialEmailSuggestionContextLabel(opportunity);
+  const greeting = buildCommercialRecipientGreeting(recipientName);
 
   if (normalizedDetails.purpose === "request_information") {
     return {
       subject: `Informacion de ${contextLabel}`,
-      messageBody: `Hola,\n\nComparto la informacion de ${contextLabel} para tu revision. Si necesitas algun dato adicional, con gusto lo revisamos.\n\nSaludos,`,
+      messageBody: `${greeting}\n\nComparto la informacion de ${contextLabel} para su revision. Si requiere algun dato adicional, con gusto lo revisamos.\n\nQuedo atento a sus comentarios.\n\nSaludos cordiales,`,
       source: "fallback",
     };
   }
@@ -3136,14 +3376,14 @@ function buildCommercialEmailSuggestionFallback(opportunity, details = {}) {
     const topic = normalizedDetails.purposeOther || contextLabel;
     return {
       subject: `${topic} - ${contextLabel}`,
-      messageBody: `Hola,\n\nTe comparto este correo sobre ${topic}. Quedo atento a tus comentarios y a cualquier siguiente paso necesario.\n\nSaludos,`,
+      messageBody: `${greeting}\n\nLe comparto este correo sobre ${topic}. Quedo atento a sus comentarios y a cualquier siguiente paso necesario para avanzar ${contextLabel}.\n\nSaludos cordiales,`,
       source: "fallback",
     };
   }
 
   return {
     subject: `Propuesta para ${contextLabel}`,
-    messageBody: `Hola,\n\nComparto la propuesta de ${contextLabel} para tu revision. Quedo atento a tus comentarios y a los siguientes pasos.\n\nSaludos,`,
+    messageBody: `${greeting}\n\nComparto la propuesta de ${contextLabel} para su revision. Quedo atento a sus comentarios y a los siguientes pasos para continuar con la oportunidad.\n\nSaludos cordiales,`,
     source: "fallback",
   };
 }
@@ -3151,8 +3391,13 @@ function buildCommercialEmailSuggestionFallback(opportunity, details = {}) {
 async function requestCommercialEmailSuggestionWithAi({
   opportunity,
   details,
+  recipientName = "",
 }) {
-  const fallback = buildCommercialEmailSuggestionFallback(opportunity, details);
+  const fallback = buildCommercialEmailSuggestionFallback(
+    opportunity,
+    details,
+    recipientName,
+  );
 
   if (!config.openai.apiKey) {
     return fallback;
@@ -3165,7 +3410,7 @@ async function requestCommercialEmailSuggestionWithAi({
       {
         role: "system",
         content:
-          "Eres un redactor comercial B2B. Responde solo con JSON válido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en español, claros, ejecutivos y listos para enviar. El asunto debe ser breve, específico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo simple, cuerpo breve y cierre profesional. Debe sonar comercial, concreto y útil para avanzar la oportunidad según el propósito indicado.",
+          "Eres un redactor comercial B2B. Responde solo con JSON válido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en español, formales, ejecutivos y listos para enviar. El asunto debe ser breve, específico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo profesional, cuerpo breve y cierre cordial. Si existe `recipientName`, úsalo en el saludo de forma natural. Debe sonar comercial, concreto y útil para avanzar la oportunidad según el propósito indicado.",
       },
       {
         role: "user",
@@ -3183,6 +3428,7 @@ async function requestCommercialEmailSuggestionWithAi({
           emailDraft: {
             purpose: normalizedDetails.purpose,
             purposeOther: normalizedDetails.purposeOther,
+            recipientName,
             expectedResponse: normalizedDetails.expectedResponse,
             attachmentsSummary:
               getCommercialEmailAttachmentsSummary(normalizedDetails),
@@ -4363,6 +4609,13 @@ router.get(
     const options = await loadCommercialEmailAttachmentOptions({
       user: req.user,
       opportunityId,
+      libraryFilters: {
+        q: req.query?.q,
+        manufacturerCodes: req.query?.manufacturerCodes,
+        solutionCodes: req.query?.solutionCodes,
+        industryCodes: req.query?.industryCodes,
+        sort: req.query?.sort,
+      },
     });
     const opportunityDocuments = await listOpportunityDocuments({
       opportunityId,
@@ -4410,16 +4663,28 @@ router.post(
         ? req.body.details
         : {},
     );
+    const accountContactsByAccountId = await listContactsByAccountIds([
+      Number(opportunity.account_id),
+    ]);
+    const recipientName = resolveCommercialRecipientName(
+      details,
+      accountContactsByAccountId.get(Number(opportunity.account_id)) || [],
+    );
 
     try {
       const suggestion = await requestCommercialEmailSuggestionWithAi({
         opportunity,
         details,
+        recipientName,
       });
       return res.json(suggestion);
     } catch {
       return res.json(
-        buildCommercialEmailSuggestionFallback(opportunity, details),
+        buildCommercialEmailSuggestionFallback(
+          opportunity,
+          details,
+          recipientName,
+        ),
       );
     }
   },

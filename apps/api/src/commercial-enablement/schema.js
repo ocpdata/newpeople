@@ -19,7 +19,6 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     persona_tags_json JSON NULL,
     need_tags_json JSON NULL,
     recommended_role_tags_json JSON NULL,
-    valid_until DATE NULL,
     owner_user_id BIGINT UNSIGNED NULL,
     usage_count INT UNSIGNED NOT NULL DEFAULT 0,
     helpful_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -34,7 +33,7 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     CONSTRAINT fk_commercial_enablement_resources_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_commercial_enablement_resources_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_commercial_enablement_resources_kind (kind, status),
-    INDEX idx_commercial_enablement_resources_status (status, valid_until),
+    INDEX idx_commercial_enablement_resources_status (status),
     INDEX idx_commercial_enablement_resources_owner (owner_user_id)
   )`,
   `CREATE TABLE IF NOT EXISTS commercial_enablement_assets (
@@ -113,8 +112,6 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     owner_user_id BIGINT UNSIGNED NULL,
     created_by_user_id BIGINT UNSIGNED NULL,
     updated_by_user_id BIGINT UNSIGNED NULL,
-    valid_from DATE NULL,
-    valid_until DATE NULL,
     is_internal TINYINT(1) NOT NULL DEFAULT 0,
     is_downloadable TINYINT(1) NOT NULL DEFAULT 1,
     is_featured TINYINT(1) NOT NULL DEFAULT 0,
@@ -128,7 +125,7 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     CONSTRAINT fk_commercial_enablement_items_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_commercial_enablement_items_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_commercial_enablement_items_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_commercial_enablement_items_status (status, visibility_level, valid_until),
+    INDEX idx_commercial_enablement_items_status (status, visibility_level),
     INDEX idx_commercial_enablement_items_deleted (is_deleted, updated_at),
     INDEX idx_commercial_enablement_items_owner (owner_user_id),
     INDEX idx_commercial_enablement_items_type (asset_type_code, audience_code)
@@ -267,12 +264,51 @@ async function ensureCommercialEnablementItemsColumn(columnName, definition) {
   );
 }
 
+async function dropTableColumnIfExists(tableName, columnName) {
+  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [columnName]);
+  if (rows.length) {
+    await query(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`);
+  }
+}
+
+async function replaceTableIndex(tableName, indexName, definition) {
+  const rows = await query(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [
+    indexName,
+  ]);
+  if (rows.length) {
+    await query(`ALTER TABLE ${tableName} DROP INDEX ${indexName}`);
+  }
+  await query(`ALTER TABLE ${tableName} ADD INDEX ${indexName} ${definition}`);
+}
+
 export async function ensureCommercialEnablementSchema() {
   if (!ensureCommercialEnablementSchemaPromise) {
     ensureCommercialEnablementSchemaPromise = (async () => {
       for (const statement of COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS) {
         await query(statement);
       }
+      await dropTableColumnIfExists(
+        "commercial_enablement_resources",
+        "valid_until",
+      );
+      await dropTableColumnIfExists(
+        "commercial_enablement_items",
+        "valid_from",
+      );
+      await dropTableColumnIfExists(
+        "commercial_enablement_items",
+        "valid_until",
+      );
+      await replaceTableIndex(
+        "commercial_enablement_resources",
+        "idx_commercial_enablement_resources_status",
+        "(status)",
+      );
+      await replaceTableIndex(
+        "commercial_enablement_items",
+        "idx_commercial_enablement_items_status",
+        "(status, visibility_level)",
+      );
       await ensureCommercialEnablementItemsColumn(
         "is_deleted",
         "is_deleted TINYINT(1) NOT NULL DEFAULT 0 AFTER is_featured",

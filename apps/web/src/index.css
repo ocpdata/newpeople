@@ -2506,7 +2506,18 @@ button:disabled {
   box-shadow: 0 28px 70px rgba(34, 49, 32, 0.16);
 }
 
+.modal-dialog.commercial-development-activity-modal.is-compact-action {
+  max-width: 840px;
+  width: min(94vw, 840px);
+  gap: 0.7rem;
+  padding: 0.9rem;
+}
+
 .commercial-development-activity-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
   padding-bottom: 0.7rem;
   border-bottom: 1px solid #ece8dc;
 }
@@ -2537,6 +2548,31 @@ button:disabled {
   color: #5b6852;
   line-height: 1.35;
   font-size: 0.94rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .modal-title {
+  font-size: 1.18rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .section-helper-text,
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-section-heading p,
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-summary,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option p,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item span,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option span,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header p {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-compose-heading
+  > p,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-compose-heading
+  .section-helper-text {
+  display: none;
 }
 
 .commercial-development-activity-context {
@@ -2574,10 +2610,45 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-modal-header {
+  gap: 0.7rem;
+  padding-bottom: 0.55rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-header-copy {
+  gap: 0.12rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-kicker {
+  font-size: 0.66rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context {
+  padding: 0.62rem 0.72rem;
+  border-radius: 14px;
+  gap: 0.2rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context-label {
+  font-size: 0.64rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form {
+  gap: 0.62rem;
+}
+
 .commercial-development-activity-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-grid,
+.commercial-development-activity-modal.is-compact-action .commercial-development-purpose-row,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-filters,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-options,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-list {
+  gap: 0.5rem;
 }
 
 .commercial-development-activity-form-section {
@@ -2589,9 +2660,22 @@ button:disabled {
   background: rgba(251, 252, 247, 0.92);
 }
 
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-section {
+  gap: 0.45rem;
+  padding: 0.62rem 0.72rem;
+  border-radius: 14px;
+}
+
 .commercial-development-activity-section-heading {
   display: grid;
   gap: 0.1rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-section-heading strong,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header strong,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option strong,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item strong {
+  font-size: 0.88rem;
 }
 
 .commercial-development-activity-section-heading strong {
@@ -2610,6 +2694,10 @@ button:disabled {
   gap: 0.28rem;
 }
 
+.commercial-development-activity-modal.is-compact-action .commercial-development-field {
+  gap: 0.2rem;
+}
+
 .commercial-development-field-full-width {
   grid-column: 1 / -1;
 }
@@ -2624,6 +2712,17 @@ button:disabled {
   color: #31402c;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-field > span,
+.commercial-development-activity-modal.is-compact-action .commercial-development-field-header,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-summary,
+.commercial-development-activity-modal.is-compact-action .commercial-development-field-hint {
+  font-size: 0.74rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-field-hint {
+  display: none;
 }
 
 .commercial-development-field-hint {
@@ -2695,6 +2794,15 @@ button:disabled {
     background 160ms ease;
 }
 
+.commercial-development-activity-modal.is-compact-action select,
+.commercial-development-activity-modal.is-compact-action input,
+.commercial-development-activity-modal.is-compact-action textarea {
+  border-radius: 10px;
+  padding: 0.58rem 0.68rem;
+  font-size: 0.83rem;
+  line-height: 1.22;
+}
+
 .commercial-development-activity-modal select:focus,
 .commercial-development-activity-modal input:focus,
 .commercial-development-activity-modal textarea:focus {
@@ -2706,6 +2814,10 @@ button:disabled {
 .commercial-development-activity-modal textarea {
   min-height: 88px;
   resize: vertical;
+}
+
+.commercial-development-activity-modal.is-compact-action textarea {
+  min-height: 72px;
 }
 
 .commercial-development-activity-checkbox {
@@ -2748,6 +2860,10 @@ button:disabled {
   gap: 0.75rem;
 }
 
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-toolbar {
+  gap: 0.5rem;
+}
+
 .commercial-development-activity-list-toolbar strong {
   color: #24301f;
   display: block;
@@ -2769,6 +2885,30 @@ button:disabled {
   color: #466031;
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-badge,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header span,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-toggle,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-filter-chip,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-meta-pill {
+  font-size: 0.7rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-actions
+  > button {
+  flex: 1 1 0;
+  min-height: 2.2rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.79rem;
 }
 
 .commercial-development-activity-inline-actions {
@@ -2851,6 +2991,7 @@ button:disabled {
 }
 
 .commercial-development-activity-icon-button {
+  position: relative;
   width: 2.2rem;
   height: 2.2rem;
   border: 1px solid rgba(58, 73, 49, 0.14);
@@ -2882,6 +3023,61 @@ button:disabled {
   box-shadow: 0 10px 18px rgba(41, 51, 32, 0.08);
 }
 
+.commercial-development-icon-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 9px);
+  transform: translate(-50%, -4px);
+  width: max-content;
+  max-width: 220px;
+  padding: 0.52rem 0.66rem;
+  border-radius: 10px;
+  background: rgba(20, 29, 24, 0.96);
+  color: #f7fbf3;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 8;
+}
+
+.commercial-development-icon-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  width: 10px;
+  height: 10px;
+  background: rgba(20, 29, 24, 0.96);
+  transform: translateX(-50%) rotate(45deg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 7;
+}
+
+.commercial-development-icon-tooltip:hover::after,
+.commercial-development-icon-tooltip:hover::before,
+.commercial-development-icon-tooltip:focus-visible::after,
+.commercial-development-icon-tooltip:focus-visible::before {
+  opacity: 1;
+}
+
+.commercial-development-icon-tooltip:hover::after,
+.commercial-development-icon-tooltip:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+
+.commercial-development-modal-header-action {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
 .commercial-development-field-header {
   display: flex;
   align-items: center;
@@ -2900,10 +3096,41 @@ button:disabled {
   font-weight: 600;
 }
 
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-summary {
+  line-height: 1.2;
+}
+
 .commercial-development-email-attachments-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-toolbar {
+  gap: 0.35rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-toolbar
+  .commercial-development-activity-icon-button {
+  width: 1.9rem;
+  height: 1.9rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-toolbar
+  .commercial-development-activity-icon-button
+  svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.commercial-development-email-attachments-toolbar-button.is-active {
+  border-color: rgba(70, 96, 49, 0.34);
+  background: #eef6e3;
+  box-shadow: 0 10px 18px rgba(41, 51, 32, 0.1);
 }
 
 .commercial-development-email-attachments-input {
@@ -2915,6 +3142,225 @@ button:disabled {
   border-radius: 16px;
   background: #f7faf2;
   padding: 0.8rem;
+}
+
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-panel {
+  border-radius: 14px;
+  padding: 0.48rem;
+}
+
+.commercial-development-email-attachments-library-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin-bottom: 0.8rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-header {
+  gap: 0.55rem;
+  margin-bottom: 0.45rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-header
+  p {
+  display: none;
+}
+
+.commercial-development-email-attachments-library-header strong {
+  color: #223125;
+}
+
+.commercial-development-email-attachments-library-header p {
+  margin: 0.16rem 0 0;
+  color: #5f6f60;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.commercial-development-email-attachments-library-header span {
+  flex-shrink: 0;
+  padding: 0.34rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(70, 96, 49, 0.08);
+  color: #466031;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.commercial-development-email-attachments-library-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0.45rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters
+  .commercial-development-field {
+  gap: 0.12rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters
+  .commercial-development-field
+  > span {
+  font-size: 0.68rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters
+  input,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters
+  select {
+  padding: 0.44rem 0.56rem;
+  font-size: 0.78rem;
+}
+
+.commercial-development-email-attachments-library-filters-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.commercial-development-email-attachments-filters-toggle {
+  border: 1px solid rgba(70, 96, 49, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #41523a;
+  padding: 0.34rem 0.62rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.commercial-development-email-attachments-filters-toggle:hover:not(:disabled) {
+  border-color: rgba(70, 96, 49, 0.28);
+  background: #f5f9ef;
+}
+
+.commercial-development-email-attachments-filters-toggle.is-active {
+  background: #eef6e3;
+  border-color: rgba(70, 96, 49, 0.3);
+  color: #2f4622;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-filters-toggle {
+  padding: 0.28rem 0.54rem;
+  font-size: 0.72rem;
+}
+
+.commercial-development-email-attachments-multiselect-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-multiselect-grid {
+  gap: 0.35rem;
+}
+
+.commercial-development-email-attachments-toggle {
+  border: 1px solid rgba(70, 96, 49, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #41523a;
+  padding: 0.42rem 0.72rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-toggle {
+  padding: 0.24rem 0.48rem;
+}
+
+.commercial-development-email-attachments-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(70, 96, 49, 0.28);
+  box-shadow: 0 10px 18px rgba(41, 51, 32, 0.08);
+}
+
+.commercial-development-email-attachments-toggle.is-selected {
+  background: #eef6e3;
+  border-color: rgba(70, 96, 49, 0.34);
+  color: #2f4622;
+}
+
+.commercial-development-email-attachment-add-button {
+  flex-shrink: 0;
+}
+
+.commercial-development-email-attachment-add-button.is-selected,
+.commercial-development-email-attachment-add-button:disabled {
+  background: #eef6e3;
+  border-color: rgba(70, 96, 49, 0.24);
+  color: #6d8160;
+  box-shadow: none;
+  cursor: default;
+  transform: none;
+}
+
+.commercial-development-email-attachments-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.8rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-filter-chips {
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.commercial-development-email-attachments-filter-chip {
+  border: 1px solid rgba(70, 96, 49, 0.18);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #32452b;
+  padding: 0.42rem 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-filter-chip {
+  padding: 0.24rem 0.48rem;
+}
+
+.commercial-development-email-attachments-filter-chip svg {
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .commercial-development-email-attachments-options,
@@ -2935,10 +3381,51 @@ button:disabled {
   border: 1px solid rgba(94, 120, 84, 0.12);
 }
 
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item,
+.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-empty {
+  border-radius: 12px;
+  padding: 0.46rem 0.56rem;
+}
+
+.commercial-development-email-attachment-option-copy {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option-copy {
+  gap: 0.06rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-options,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-list {
+  gap: 0.42rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item {
+  gap: 0.55rem;
+}
+
 .commercial-development-email-attachment-option strong,
 .commercial-development-email-attachments-selected-item strong {
   display: block;
   color: #223125;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  strong,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item
+  strong {
+  font-size: 0.84rem;
+  line-height: 1.15;
 }
 
 .commercial-development-email-attachment-option p,
@@ -2948,11 +3435,153 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  p,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item
+  span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-summary {
+  margin-top: 0.04rem;
+  font-size: 0.74rem;
+  line-height: 1.18;
+}
+
+.commercial-development-email-cc-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -0.1rem;
+}
+
+.commercial-development-email-cc-toggle {
+  border: 1px solid rgba(70, 96, 49, 0.16);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #41523a;
+  padding: 0.34rem 0.62rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.commercial-development-email-cc-toggle:hover:not(:disabled) {
+  border-color: rgba(70, 96, 49, 0.28);
+  background: #f5f9ef;
+}
+
+.commercial-development-email-cc-toggle.is-active {
+  background: #eef6e3;
+  border-color: rgba(70, 96, 49, 0.3);
+  color: #2f4622;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-cc-toggle {
+  padding: 0.28rem 0.54rem;
+  font-size: 0.72rem;
+}
+
 .commercial-development-email-attachment-option span {
   display: inline-block;
   margin-top: 0.2rem;
   color: #728173;
   font-size: 0.8rem;
+}
+
+.commercial-development-email-attachment-summary {
+  color: #60705f;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.commercial-development-email-attachment-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.18rem;
+}
+
+.commercial-development-email-attachment-meta-row.is-secondary {
+  margin-top: 0.1rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-meta-row {
+  gap: 0.26rem;
+  margin-top: 0.12rem;
+}
+
+.commercial-development-email-attachment-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.7rem;
+  padding: 0.16rem 0.55rem;
+  border-radius: 999px;
+  background: #eef4e8;
+  color: #4e6246;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.commercial-development-email-attachment-meta-pill.is-secondary {
+  background: #f5f8f1;
+  color: #5f705a;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-meta-pill {
+  min-height: 1.36rem;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.67rem;
+}
+
+.commercial-development-email-attachment-meta-toggle,
+.commercial-development-email-attachment-summary-toggle {
+  border: 0;
+  background: transparent;
+  color: #466031;
+  padding: 0.1rem 0.2rem;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.commercial-development-email-attachment-meta-toggle:hover:not(:disabled),
+.commercial-development-email-attachment-summary-toggle:hover:not(:disabled) {
+  color: #2f4622;
+  text-decoration: underline;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-meta-toggle,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-summary-toggle {
+  font-size: 0.68rem;
+  padding: 0.04rem 0.12rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-add-button {
+  width: 1.82rem;
+  height: 1.82rem;
+}
+
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-add-button
+  svg {
+  width: 0.88rem;
+  height: 0.88rem;
 }
 
 .commercial-development-email-attachments-empty {
@@ -2963,14 +3592,15 @@ button:disabled {
   background: rgba(255, 255, 255, 0.7);
 }
 
-.commercial-development-email-attachments-selected-item
-  .commercial-development-activity-icon-button {
-  font-size: 0.95rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
 @media (max-width: 720px) {
+  .commercial-development-email-attachments-library-header {
+    flex-direction: column;
+  }
+
+  .commercial-development-email-attachments-library-filters {
+    grid-template-columns: 1fr;
+  }
+
   .commercial-development-email-attachment-option,
   .commercial-development-email-attachments-selected-item {
     flex-direction: column;
@@ -2984,11 +3614,22 @@ button:disabled {
   }
 }
 
-.commercial-email-draft-modal {
-  max-width: 860px;
-  width: min(96vw, 860px);
+.modal-dialog.commercial-email-draft-modal {
+  max-width: 1040px;
+  width: min(97vw, 1040px);
   display: grid;
   gap: 0.9rem;
+}
+
+.modal-dialog.commercial-email-draft-modal.is-compact-action {
+  max-width: 1040px;
+  width: min(97vw, 1040px);
+}
+
+.commercial-email-draft-modal .commercial-development-send-status,
+.commercial-email-draft-modal .commercial-development-email-confirmation {
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(41, 51, 32, 0.06);
 }
 
 .commercial-development-modal-notice {
@@ -2998,6 +3639,40 @@ button:disabled {
   background: #eef7e7;
   color: #3c6a31;
   font-weight: 600;
+}
+
+.commercial-development-ai-processing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  border-radius: inherit;
+  background: rgba(247, 250, 252, 0.78);
+  backdrop-filter: blur(3px);
+}
+
+.commercial-development-ai-processing-card {
+  width: min(100%, 24rem);
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
+  padding: 1.15rem 1.1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(20, 78, 115, 0.14);
+  background: linear-gradient(180deg, #f7fbff, #eef5ff);
+  box-shadow: 0 20px 40px rgba(20, 78, 115, 0.18);
+  text-align: center;
+}
+
+.commercial-development-ai-processing-card strong {
+  color: #17385d;
+}
+
+.commercial-development-ai-processing-card span {
+  color: #58708d;
+  line-height: 1.45;
 }
 
 .commercial-development-send-status {
@@ -11200,6 +11875,104 @@ td {
   gap: 12px;
 }
 
+.enablement-library-editor {
+  gap: 16px;
+}
+
+.enablement-library-editor-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.enablement-library-editor label {
+  display: grid;
+  gap: 8px;
+  color: #365268;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.enablement-library-editor-section {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #dde8ef;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(247, 250, 252, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+
+.enablement-library-editor-section.is-primary {
+  border-color: #d5e3ee;
+  background:
+    linear-gradient(180deg, rgba(242, 248, 252, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+
+.enablement-library-editor-section.is-accent {
+  border-color: #d7e7e3;
+  background:
+    linear-gradient(180deg, rgba(242, 249, 247, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+
+.enablement-library-editor-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.enablement-library-editor-section-header h3 {
+  margin: 4px 0 0;
+  color: #173853;
+  font-size: 17px;
+}
+
+.enablement-library-editor-section-header p {
+  margin: 6px 0 0;
+  color: #698097;
+  font-size: 13px;
+  max-width: 58ch;
+}
+
+.enablement-library-editor-kicker {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #ebf3f9;
+  color: #4f6880;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.enablement-library-editor-meta-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.enablement-library-editor-copy-grid,
+.enablement-library-editor-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.enablement-library-editor-copy-grid textarea {
+  min-height: 120px;
+}
+
+.enablement-library-field-span-2 {
+  grid-column: span 2;
+}
+
+.enablement-library-editor-actions {
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid #e2ebf2;
+}
+
 .enablement-library-card-list.compact {
   max-height: 780px;
   overflow: auto;
@@ -11749,6 +12522,21 @@ td {
 
   .enablement-library-governance-list-row {
     grid-template-columns: 1fr;
+  }
+
+  .enablement-library-editor-meta-grid,
+  .enablement-library-editor-copy-grid,
+  .enablement-library-editor-context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .enablement-library-field-span-2 {
+    grid-column: span 1;
+  }
+
+  .enablement-library-editor-section-header {
+    grid-template-columns: 1fr;
+    display: grid;
   }
 
   .enablement-library-governance-list-row-menu {

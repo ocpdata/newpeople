@@ -262,20 +262,6 @@ function parseJsonArray(value) {
   }
 }
 
-function parseDateOnly(value) {
-  if (!value) return null;
-  const text = String(value).trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  return text;
-}
-
-function toIsoDate(value) {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
-}
-
 function boolToTinyInt(value) {
   return value ? 1 : 0;
 }
@@ -527,9 +513,9 @@ async function migrateLegacyResourcesIfNeeded() {
           (public_id, title, summary, internal_description, asset_type_code,
            status, source_type, visibility_level, audience_code, language_code,
            owner_user_id, created_by_user_id, updated_by_user_id,
-           valid_from, valid_until, is_internal, is_downloadable, is_featured,
+           is_internal, is_downloadable, is_featured,
            search_text, source_legacy_resource_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'file', ?, ?, 'es', ?, ?, ?, NULL, ?, ?, 1, 0, ?, ?, NOW(3), NOW(3))`,
+         VALUES (?, ?, ?, ?, ?, ?, 'file', ?, ?, 'es', ?, ?, ?, ?, 1, 0, ?, ?, NOW(3), NOW(3))`,
         [
           itemPublicId,
           resource.title,
@@ -542,7 +528,6 @@ async function migrateLegacyResourcesIfNeeded() {
           resource.owner_user_id || null,
           resource.created_by_user_id || null,
           resource.updated_by_user_id || null,
-          resource.valid_until || null,
           boolToTinyInt(visibilityLevel !== "client_safe"),
           normalizeText(
             [
@@ -847,9 +832,6 @@ function assembleEnablementItems(raw, user) {
         (String(row.visibility_level || "") === "restricted" && isOwner);
       const canEdit =
         canManageEnablement(user) || (canUploadEnablement(user) && isOwner);
-      const isExpired =
-        Boolean(row.valid_until) &&
-        String(row.valid_until) < toIsoDate(new Date());
       return {
         id: itemId,
         publicId: row.public_id,
@@ -880,8 +862,6 @@ function assembleEnablementItems(raw, user) {
         updatedByUserId: row.updated_by_user_id
           ? Number(row.updated_by_user_id)
           : null,
-        validFrom: row.valid_from || null,
-        validUntil: row.valid_until || null,
         isInternal: Boolean(row.is_internal),
         isDownloadable: Boolean(row.is_downloadable),
         isFeatured: Boolean(row.is_featured),
@@ -895,7 +875,6 @@ function assembleEnablementItems(raw, user) {
         usageCount: usageEvents.length,
         usageEvents,
         isFavorite: favoriteItemIds.has(itemId),
-        isExpired,
         visible,
         canEdit,
         canPublish: canManageEnablement(user),
@@ -1157,11 +1136,6 @@ export async function getCommercialEnablementBootstrap({ user }) {
         (item) =>
           item.status === "published" && item.visibilityLevel !== "client_safe",
       ).length,
-      expiringSoonAssets: items.filter(
-        (item) =>
-          item.validUntil &&
-          item.validUntil <= toIsoDate(new Date(Date.now() + 30 * 86400000)),
-      ).length,
       favoriteAssets: favorites.length,
       recentAssets: recent.length,
     },
@@ -1233,8 +1207,6 @@ function buildAssetSearchPayload(body = {}) {
       "internal_sales",
     audienceCode: String(body.audienceCode || "seller").trim() || "seller",
     languageCode: String(body.languageCode || "es").trim() || "es",
-    validFrom: parseDateOnly(body.validFrom),
-    validUntil: parseDateOnly(body.validUntil),
     isInternal: Boolean(body.isInternal),
     isDownloadable: body.isDownloadable === false ? false : true,
     isFeatured: Boolean(body.isFeatured),
@@ -1343,10 +1315,10 @@ export async function createCommercialEnablementAsset({ body, user }) {
       `INSERT INTO commercial_enablement_items
         (public_id, title, summary, internal_description, asset_type_code,
          status, source_type, visibility_level, audience_code, language_code,
-         owner_user_id, created_by_user_id, updated_by_user_id, valid_from,
-         valid_until, is_internal, is_downloadable, is_featured, is_deleted, search_text,
+         owner_user_id, created_by_user_id, updated_by_user_id, is_internal,
+         is_downloadable, is_featured, is_deleted, search_text,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(3), NOW(3))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(3), NOW(3))`,
       [
         publicId,
         payload.title,
@@ -1361,8 +1333,6 @@ export async function createCommercialEnablementAsset({ body, user }) {
         payload.ownerUserId || Number(user.id),
         Number(user.id),
         Number(user.id),
-        payload.validFrom,
-        payload.validUntil,
         boolToTinyInt(payload.isInternal),
         boolToTinyInt(payload.isDownloadable),
         boolToTinyInt(payload.isFeatured),
@@ -1442,8 +1412,8 @@ export async function updateCommercialEnablementAsset({
        SET title = ?, summary = ?, internal_description = ?, asset_type_code = ?,
            status = ?, source_type = ?, visibility_level = ?, audience_code = ?,
            language_code = ?, owner_user_id = ?, updated_by_user_id = ?,
-           valid_from = ?, valid_until = ?, is_internal = ?, is_downloadable = ?,
-           is_featured = ?, search_text = ?, updated_at = NOW(3)
+           is_internal = ?, is_downloadable = ?, is_featured = ?, search_text = ?,
+           updated_at = NOW(3)
        WHERE public_id = ?`,
       [
         payload.title,
@@ -1457,8 +1427,6 @@ export async function updateCommercialEnablementAsset({
         payload.languageCode,
         payload.ownerUserId || Number(user.id),
         Number(user.id),
-        payload.validFrom,
-        payload.validUntil,
         boolToTinyInt(payload.isInternal),
         boolToTinyInt(payload.isDownloadable),
         boolToTinyInt(payload.isFeatured),
@@ -1950,10 +1918,10 @@ export async function duplicateCommercialEnablementAsset({
       `INSERT INTO commercial_enablement_items
         (public_id, title, summary, internal_description, asset_type_code,
          status, source_type, visibility_level, audience_code, language_code,
-         owner_user_id, created_by_user_id, updated_by_user_id, valid_from,
-         valid_until, is_internal, is_downloadable, is_featured, search_text,
+         owner_user_id, created_by_user_id, updated_by_user_id, is_internal,
+         is_downloadable, is_featured, search_text,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
       [
         duplicatePublicId,
         `${asset.title} copia`,
@@ -1967,8 +1935,6 @@ export async function duplicateCommercialEnablementAsset({
         asset.ownerUserId || Number(user.id),
         Number(user.id),
         Number(user.id),
-        asset.validFrom,
-        asset.validUntil,
         boolToTinyInt(asset.isInternal),
         boolToTinyInt(asset.isDownloadable),
         boolToTinyInt(asset.isFeatured),
@@ -2488,8 +2454,7 @@ export async function getCommercialEnablementGovernanceOverview({ user }) {
     return (
       !hasManufacturerOrSolution ||
       !hasNeedOrRequirement ||
-      (!item.files.length && !item.links.length) ||
-      item.isExpired
+      (!item.files.length && !item.links.length)
     );
   });
   const duplicates = items.filter(
@@ -2504,7 +2469,6 @@ export async function getCommercialEnablementGovernanceOverview({ user }) {
       totalAssets: items.length,
       draftAssets: items.filter((item) => item.status === "draft").length,
       obsoleteAssets: items.filter((item) => item.status === "obsolete").length,
-      expiredAssets: items.filter((item) => item.isExpired).length,
       qualityIssues: qualityIssues.length,
       duplicateCandidates: duplicates.length,
     },
@@ -2512,7 +2476,6 @@ export async function getCommercialEnablementGovernanceOverview({ user }) {
       publicId: item.publicId,
       title: item.title,
       status: item.status,
-      isExpired: item.isExpired,
       hasFilesOrLinks: Boolean(item.files.length || item.links.length),
       categoriesCount: item.catalogs.length,
     })),

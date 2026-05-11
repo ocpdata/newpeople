@@ -96,10 +96,33 @@ const EMPTY_EMAIL_ATTACHMENT_OPTIONS = {
   status: "idle",
   error: "",
   libraryFiles: [],
+  libraryCatalogs: {
+    manufacturer: [],
+    solution: [],
+    industry: [],
+  },
+  libraryStats: {
+    totalAvailable: 0,
+    totalMatching: 0,
+  },
+  appliedLibraryFilters: {
+    q: "",
+    manufacturerCodes: [],
+    solutionCodes: [],
+    industryCodes: [],
+    sort: "updated_desc",
+  },
   opportunityDocuments: [],
   quotationVersions: [],
   constraints: COMMERCIAL_EMAIL_ATTACHMENT_DEFAULT_CONSTRAINTS,
 };
+
+const EMAIL_ATTACHMENT_LIBRARY_SORT_OPTIONS = [
+  { value: "updated_desc", label: "Mas recientes" },
+  { value: "updated_asc", label: "Mas antiguos" },
+  { value: "title_asc", label: "Nombre A-Z" },
+  { value: "title_desc", label: "Nombre Z-A" },
+];
 
 const CALENDAR_WEEKDAY_HEADERS = [
   "Lunes",
@@ -670,6 +693,24 @@ function normalizeEmailAttachment(attachment = {}) {
     title: String(attachment?.title || "").trim(),
     summary: String(attachment?.summary || "").trim(),
     assetTypeLabel: String(attachment?.assetTypeLabel || "").trim(),
+    manufacturerCodes: asArray(attachment?.manufacturerCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    manufacturerLabels: asArray(attachment?.manufacturerLabels)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    solutionCodes: asArray(attachment?.solutionCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    solutionLabels: asArray(attachment?.solutionLabels)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    industryCodes: asArray(attachment?.industryCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    industryLabels: asArray(attachment?.industryLabels)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
     versionNumber: attachment?.versionNumber
       ? Number(attachment.versionNumber)
       : null,
@@ -722,10 +763,42 @@ function removeEmailAttachment(attachments, attachmentId) {
 }
 
 function normalizeEmailAttachmentOptionsResponse(data = {}) {
+  const normalizeCatalogOptions = (entries) =>
+    asArray(entries)
+      .map((entry) => ({
+        value: String(entry?.code || entry?.value || "").trim(),
+        label: String(entry?.label || entry?.name || entry?.code || "").trim(),
+      }))
+      .filter((entry) => entry.value && entry.label);
+
+  const normalizeLibraryFilters = (filters = {}) => ({
+    q: String(filters?.q || "").trim(),
+    manufacturerCodes: asArray(filters?.manufacturerCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    solutionCodes: asArray(filters?.solutionCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    industryCodes: asArray(filters?.industryCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+    sort: String(filters?.sort || "updated_desc").trim() || "updated_desc",
+  });
+
   return {
     status: "loaded",
     error: "",
     libraryFiles: normalizeEmailAttachments(data?.libraryFiles),
+    libraryCatalogs: {
+      manufacturer: normalizeCatalogOptions(data?.libraryCatalogs?.manufacturer),
+      solution: normalizeCatalogOptions(data?.libraryCatalogs?.solution),
+      industry: normalizeCatalogOptions(data?.libraryCatalogs?.industry),
+    },
+    libraryStats: {
+      totalAvailable: Number(data?.libraryStats?.totalAvailable || 0),
+      totalMatching: Number(data?.libraryStats?.totalMatching || 0),
+    },
+    appliedLibraryFilters: normalizeLibraryFilters(data?.appliedLibraryFilters),
     opportunityDocuments: normalizeEmailAttachments(data?.opportunityDocuments),
     quotationVersions: normalizeEmailAttachments(data?.quotationVersions),
     constraints: {
@@ -752,6 +825,100 @@ function buildOpportunityDocumentEmailAttachment(document = {}) {
   });
 }
 
+function normalizeEmailAttachmentLibraryFilters(filters = {}) {
+  return {
+    q: String(filters?.q || "").trim(),
+    manufacturerCodes: asArray(filters?.manufacturerCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, "es")),
+    solutionCodes: asArray(filters?.solutionCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, "es")),
+    industryCodes: asArray(filters?.industryCodes)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, "es")),
+    sort: String(filters?.sort || "updated_desc").trim() || "updated_desc",
+  };
+}
+
+function areEmailAttachmentLibraryFiltersEqual(left = {}, right = {}) {
+  const normalizedLeft = normalizeEmailAttachmentLibraryFilters(left);
+  const normalizedRight = normalizeEmailAttachmentLibraryFilters(right);
+  return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight);
+}
+
+function toggleEmailAttachmentFilterValue(values, nextValue) {
+  const normalizedValue = String(nextValue || "").trim();
+  if (!normalizedValue) return asArray(values);
+  const currentValues = asArray(values).map((value) => String(value || "").trim());
+  if (currentValues.includes(normalizedValue)) {
+    return currentValues.filter((value) => value !== normalizedValue);
+  }
+  return [...currentValues, normalizedValue].sort((left, right) =>
+    left.localeCompare(right, "es"),
+  );
+}
+
+function getEmailAttachmentCatalogInfo(attachment, catalogType) {
+  if (catalogType === "manufacturer") {
+    return {
+      codes: asArray(attachment?.manufacturerCodes),
+      labels: asArray(attachment?.manufacturerLabels),
+    };
+  }
+  if (catalogType === "solution") {
+    return {
+      codes: asArray(attachment?.solutionCodes),
+      labels: asArray(attachment?.solutionLabels),
+    };
+  }
+  if (catalogType === "industry") {
+    return {
+      codes: asArray(attachment?.industryCodes),
+      labels: asArray(attachment?.industryLabels),
+    };
+  }
+  return { codes: [], labels: [] };
+}
+
+function buildEmailAttachmentCatalogFilterOptions(attachments, catalogType) {
+  const optionsByCode = new Map();
+  asArray(attachments).forEach((attachment) => {
+    const { codes, labels } = getEmailAttachmentCatalogInfo(
+      attachment,
+      catalogType,
+    );
+    codes.forEach((code, index) => {
+      const normalizedCode = String(code || "").trim();
+      if (!normalizedCode || optionsByCode.has(normalizedCode)) return;
+      optionsByCode.set(normalizedCode, {
+        value: normalizedCode,
+        label: String(labels[index] || normalizedCode).trim() || normalizedCode,
+      });
+    });
+  });
+  return Array.from(optionsByCode.values()).sort((left, right) =>
+    left.label.localeCompare(right.label, "es"),
+  );
+}
+
+function buildEmailAttachmentSearchText(attachment) {
+  return [
+    attachment?.fileName,
+    attachment?.title,
+    attachment?.summary,
+    attachment?.assetTypeLabel,
+    ...asArray(attachment?.manufacturerLabels),
+    ...asArray(attachment?.solutionLabels),
+    ...asArray(attachment?.industryLabels),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 function formatFileSize(byteSize) {
   const numericValue = Number(byteSize || 0);
   if (!numericValue) return "Tamano no disponible";
@@ -771,7 +938,6 @@ function validateLocalEmailAttachmentFiles(
 ) {
   const nextFiles = asArray(files);
   if (!nextFiles.length) return "";
-
   const allowedMimeTypes = asArray(constraints?.allowedMimeTypes).length
     ? constraints.allowedMimeTypes
     : COMMERCIAL_EMAIL_ATTACHMENT_DEFAULT_CONSTRAINTS.allowedMimeTypes;
@@ -833,14 +999,42 @@ function getEmailPurposeTopic(details, item) {
   return getEmailSuggestionContext(item);
 }
 
+function resolveSuggestedRecipientName(item, details) {
+  const recipient = String(details?.recipient || "")
+    .trim()
+    .toLowerCase();
+  if (!recipient) return "";
+
+  const matchedContact = asArray(item?.accountContacts).find((contact) => {
+    const email = String(contact?.email || "")
+      .trim()
+      .toLowerCase();
+    return email && email === recipient;
+  });
+
+  return String(
+    matchedContact?.full_name ||
+      matchedContact?.fullName ||
+      [matchedContact?.first_name, matchedContact?.last_name]
+        .filter(Boolean)
+        .join(" "),
+  ).trim();
+}
+
+function buildSuggestedGreeting(item, details) {
+  const recipientName = resolveSuggestedRecipientName(item, details);
+  return recipientName ? `Estimado/a ${recipientName},` : "Buen dia,";
+}
+
 function buildSuggestedEmailContent(item, details) {
   const normalizedDetails = normalizeEmailActionDetails(details);
   const contextLabel = getEmailSuggestionContext(item);
+  const greeting = buildSuggestedGreeting(item, normalizedDetails);
 
   if (normalizedDetails.purpose === "request_information") {
     return {
       subject: `Informacion de ${contextLabel}`,
-      messageBody: `Hola,\n\nComparto la informacion de ${contextLabel} para tu revision. Si necesitas algun dato adicional, con gusto lo revisamos.\n\nSaludos,`,
+      messageBody: `${greeting}\n\nComparto la informacion de ${contextLabel} para su revision. Si requiere algun dato adicional, con gusto lo revisamos.\n\nQuedo atento a sus comentarios.\n\nSaludos cordiales,`,
     };
   }
 
@@ -848,13 +1042,13 @@ function buildSuggestedEmailContent(item, details) {
     const topic = getEmailPurposeTopic(normalizedDetails, item);
     return {
       subject: `${topic} - ${contextLabel}`,
-      messageBody: `Hola,\n\nTe comparto este correo sobre ${topic}. Quedo atento a tus comentarios y a cualquier siguiente paso necesario.\n\nSaludos,`,
+      messageBody: `${greeting}\n\nLe comparto este correo sobre ${topic}. Quedo atento a sus comentarios y a cualquier siguiente paso necesario para avanzar ${contextLabel}.\n\nSaludos cordiales,`,
     };
   }
 
   return {
     subject: `Propuesta para ${contextLabel}`,
-    messageBody: `Hola,\n\nComparto la propuesta de ${contextLabel} para tu revision. Quedo atento a tus comentarios y a los siguientes pasos.\n\nSaludos,`,
+    messageBody: `${greeting}\n\nComparto la propuesta de ${contextLabel} para su revision. Quedo atento a sus comentarios y a los siguientes pasos para continuar con la oportunidad.\n\nSaludos cordiales,`,
   };
 }
 
@@ -1000,7 +1194,7 @@ function isSendEmailAction(activity) {
 }
 
 function buildEmailActionDraft(item, activity) {
-  const details = applySuggestedEmailContent(activity?.details || {}, item);
+  const details = normalizeEmailActionDetails(activity?.details || {});
   const status = String(activity?.status || "pending");
   return {
     actionId: Number(activity?.id || 0),
@@ -1044,6 +1238,15 @@ function EmailAttachmentsField({
   onRefreshOptions,
 }) {
   const [activePanel, setActivePanel] = useState("");
+  const [areLibraryFiltersVisible, setAreLibraryFiltersVisible] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryManufacturerCodes, setLibraryManufacturerCodes] = useState([]);
+  const [librarySolutionCodes, setLibrarySolutionCodes] = useState([]);
+  const [libraryIndustryCodes, setLibraryIndustryCodes] = useState([]);
+  const [librarySort, setLibrarySort] = useState("updated_desc");
+  const [expandedLibraryMetadataIds, setExpandedLibraryMetadataIds] = useState(
+    [],
+  );
   const fileInputRef = useRef(null);
   const normalizedAttachments = useMemo(
     () => normalizeEmailAttachments(attachments),
@@ -1062,9 +1265,138 @@ function EmailAttachmentsField({
   const libraryFiles = asArray(safeOptionsState.libraryFiles);
   const opportunityDocuments = asArray(safeOptionsState.opportunityDocuments);
   const quotationVersions = asArray(safeOptionsState.quotationVersions);
+  const libraryCatalogs = safeOptionsState.libraryCatalogs ||
+    EMPTY_EMAIL_ATTACHMENT_OPTIONS.libraryCatalogs;
+  const normalizedLibraryFilters = useMemo(
+    () =>
+      normalizeEmailAttachmentLibraryFilters({
+        q: libraryQuery,
+        manufacturerCodes: libraryManufacturerCodes,
+        solutionCodes: librarySolutionCodes,
+        industryCodes: libraryIndustryCodes,
+        sort: librarySort,
+      }),
+    [
+      libraryIndustryCodes,
+      libraryManufacturerCodes,
+      libraryQuery,
+      librarySolutionCodes,
+      librarySort,
+    ],
+  );
+
+  const activeLibraryFilterChips = useMemo(() => {
+    const chips = [];
+    if (libraryQuery.trim()) {
+      chips.push({ key: "query", label: `Busqueda: ${libraryQuery.trim()}` });
+    }
+    asArray(libraryCatalogs.manufacturer)
+      .filter((option) => normalizedLibraryFilters.manufacturerCodes.includes(option.value))
+      .forEach((option) => {
+        chips.push({
+          key: `manufacturer:${option.value}`,
+          filterKey: "manufacturer",
+          value: option.value,
+          label: `Fabricante: ${option.label}`,
+        });
+      });
+    asArray(libraryCatalogs.solution)
+      .filter((option) => normalizedLibraryFilters.solutionCodes.includes(option.value))
+      .forEach((option) => {
+        chips.push({
+          key: `solution:${option.value}`,
+          filterKey: "solution",
+          value: option.value,
+          label: `Solucion: ${option.label}`,
+        });
+      });
+    asArray(libraryCatalogs.industry)
+      .filter((option) => normalizedLibraryFilters.industryCodes.includes(option.value))
+      .forEach((option) => {
+        chips.push({
+          key: `industry:${option.value}`,
+          filterKey: "industry",
+          value: option.value,
+          label: `Industria: ${option.label}`,
+        });
+      });
+    const activeSortOption = EMAIL_ATTACHMENT_LIBRARY_SORT_OPTIONS.find(
+      (option) => option.value === normalizedLibraryFilters.sort,
+    );
+    if (activeSortOption && activeSortOption.value !== "updated_desc") {
+      chips.push({
+        key: `sort:${activeSortOption.value}`,
+        filterKey: "sort",
+        value: activeSortOption.value,
+        label: `Orden: ${activeSortOption.label}`,
+      });
+    }
+    return chips;
+  }, [
+    libraryCatalogs.industry,
+    libraryCatalogs.manufacturer,
+    libraryCatalogs.solution,
+    libraryQuery,
+    normalizedLibraryFilters.industryCodes,
+    normalizedLibraryFilters.manufacturerCodes,
+    normalizedLibraryFilters.solutionCodes,
+    normalizedLibraryFilters.sort,
+  ]);
+
+  useEffect(() => {
+    if (activePanel !== "library") return;
+    if (disabled) return;
+    onRefreshOptions({ libraryFilters: normalizedLibraryFilters });
+  }, [activePanel, disabled, normalizedLibraryFilters, onRefreshOptions]);
+
+  useEffect(() => {
+    const appliedFilters = safeOptionsState.appliedLibraryFilters;
+    if (areEmailAttachmentLibraryFiltersEqual(appliedFilters, normalizedLibraryFilters)) {
+      return;
+    }
+    setLibraryQuery(appliedFilters.q || "");
+    setLibraryManufacturerCodes(asArray(appliedFilters.manufacturerCodes));
+    setLibrarySolutionCodes(asArray(appliedFilters.solutionCodes));
+    setLibraryIndustryCodes(asArray(appliedFilters.industryCodes));
+    setLibrarySort(appliedFilters.sort || "updated_desc");
+  }, [normalizedLibraryFilters, safeOptionsState.appliedLibraryFilters]);
+
+  useEffect(() => {
+    if (
+      normalizedLibraryFilters.manufacturerCodes.length ||
+      normalizedLibraryFilters.solutionCodes.length ||
+      normalizedLibraryFilters.industryCodes.length
+    ) {
+      setAreLibraryFiltersVisible(true);
+    }
+  }, [
+    normalizedLibraryFilters.industryCodes.length,
+    normalizedLibraryFilters.manufacturerCodes.length,
+    normalizedLibraryFilters.solutionCodes.length,
+  ]);
 
   function togglePanel(panelKey) {
     setActivePanel((current) => (current === panelKey ? "" : panelKey));
+  }
+
+  function clearLibraryFilter(filterKey, value) {
+    if (filterKey === "query") setLibraryQuery("");
+    if (filterKey === "manufacturer") {
+      setLibraryManufacturerCodes((current) =>
+        asArray(current).filter((entry) => entry !== value),
+      );
+    }
+    if (filterKey === "solution") {
+      setLibrarySolutionCodes((current) =>
+        asArray(current).filter((entry) => entry !== value),
+      );
+    }
+    if (filterKey === "industry") {
+      setLibraryIndustryCodes((current) =>
+        asArray(current).filter((entry) => entry !== value),
+      );
+    }
+    if (filterKey === "sort") setLibrarySort("updated_desc");
   }
 
   function handleFileInputChange(event) {
@@ -1076,7 +1408,16 @@ function EmailAttachmentsField({
     event.target.value = "";
   }
 
-  function renderOptionCards(optionItems, emptyMessage) {
+  function toggleLibraryMetadata(attachmentId) {
+    setExpandedLibraryMetadataIds((current) =>
+      current.includes(attachmentId)
+        ? current.filter((entry) => entry !== attachmentId)
+        : [...current, attachmentId],
+    );
+  }
+
+  function renderOptionCards(optionItems, emptyMessage, options = {}) {
+    const showLibraryMetadata = options.showLibraryMetadata === true;
     if (!optionItems.length) {
       return (
         <div className="commercial-development-email-attachments-empty">
@@ -1089,12 +1430,39 @@ function EmailAttachmentsField({
       <div className="commercial-development-email-attachments-options">
         {optionItems.map((attachment) => {
           const isSelected = selectedAttachmentIds.has(attachment.id);
+          const isMetadataExpanded = expandedLibraryMetadataIds.includes(
+            attachment.id,
+          );
+          const manufacturerLabels = getEmailAttachmentCatalogInfo(
+            attachment,
+            "manufacturer",
+          ).labels;
+          const solutionLabels = getEmailAttachmentCatalogInfo(
+            attachment,
+            "solution",
+          ).labels;
+          const industryLabels = getEmailAttachmentCatalogInfo(
+            attachment,
+            "industry",
+          ).labels;
+          const metadataPills = [
+            attachment.assetTypeLabel,
+            manufacturerLabels.length
+              ? `Fabricante: ${manufacturerLabels.join(", ")}`
+              : "",
+            solutionLabels.length ? `Solucion: ${solutionLabels.join(", ")}` : "",
+            industryLabels.length ? `Industria: ${industryLabels.join(", ")}` : "",
+            attachment.byteSize ? formatFileSize(attachment.byteSize) : "",
+            attachment.createdAt ? formatDate(attachment.createdAt) : "",
+          ].filter(Boolean);
+          const visibleMetadataPills = metadataPills.slice(0, 3);
+          const extraMetadataPills = metadataPills.slice(3);
           return (
             <article
               key={attachment.id}
               className="commercial-development-email-attachment-option"
             >
-              <div>
+              <div className="commercial-development-email-attachment-option-copy">
                 <strong>{attachment.fileName}</strong>
                 <p>
                   {attachment.title ||
@@ -1102,20 +1470,75 @@ function EmailAttachmentsField({
                     attachment.statusName ||
                     attachment.sourceLabel}
                 </p>
-                <span>
-                  {attachment.versionNumber
-                    ? `Version ${attachment.versionNumber}`
-                    : attachment.assetTypeLabel ||
-                      formatFileSize(attachment.byteSize)}
-                </span>
+                {showLibraryMetadata && attachment.summary ? (
+                  <p className="commercial-development-email-attachment-summary">
+                    {attachment.summary}
+                  </p>
+                ) : null}
+                <div className="commercial-development-email-attachment-meta-row">
+                  {visibleMetadataPills.map((label) => (
+                    <span
+                      key={`${attachment.id}-${label}`}
+                      className="commercial-development-email-attachment-meta-pill"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                  {showLibraryMetadata && extraMetadataPills.length ? (
+                    <button
+                      type="button"
+                      className="commercial-development-email-attachment-meta-toggle"
+                      onClick={() => toggleLibraryMetadata(attachment.id)}
+                      disabled={disabled}
+                      aria-expanded={isMetadataExpanded}
+                    >
+                      {isMetadataExpanded ? "Menos" : `Mas ${extraMetadataPills.length}`}
+                    </button>
+                  ) : null}
+                </div>
+                {showLibraryMetadata && isMetadataExpanded && extraMetadataPills.length ? (
+                  <div className="commercial-development-email-attachment-meta-row is-secondary">
+                    {extraMetadataPills.map((label) => (
+                      <span
+                        key={`${attachment.id}-extra-${label}`}
+                        className="commercial-development-email-attachment-meta-pill is-secondary"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                    {attachment.versionNumber ? (
+                      <span className="commercial-development-email-attachment-meta-pill is-secondary">
+                        Version {attachment.versionNumber}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {showLibraryMetadata && !isMetadataExpanded && attachment.summary ? (
+                  <button
+                    type="button"
+                    className="commercial-development-email-attachment-summary-toggle"
+                    onClick={() => toggleLibraryMetadata(attachment.id)}
+                    disabled={disabled}
+                  >
+                    Ver mas
+                  </button>
+                ) : null}
               </div>
               <button
                 type="button"
-                className="secondary-button"
+                className={`commercial-development-activity-icon-button commercial-development-icon-tooltip commercial-development-email-attachment-add-button${
+                  isSelected ? " is-selected" : ""
+                }`}
                 disabled={disabled || isSelected}
                 onClick={() => onAddAttachment(attachment)}
+                aria-label={
+                  isSelected ? "Documento agregado" : "Agregar documento"
+                }
+                data-tooltip={
+                  isSelected ? "Documento agregado" : "Agregar documento"
+                }
               >
-                {isSelected ? "Agregado" : "Agregar"}
+                <AddAttachmentIcon />
               </button>
             </article>
           );
@@ -1136,37 +1559,60 @@ function EmailAttachmentsField({
       <div className="commercial-development-email-attachments-toolbar">
         <button
           type="button"
-          className="secondary-button"
+          className={`commercial-development-activity-icon-button commercial-development-email-attachments-toolbar-button commercial-development-icon-tooltip${
+            activePanel === "library" ? " is-active" : ""
+          }`}
           onClick={() => togglePanel("library")}
           disabled={disabled}
+          aria-label="Biblioteca"
+          aria-pressed={activePanel === "library"}
+          data-tooltip="Biblioteca"
         >
-          Biblioteca
+          <LibraryDocumentsIcon />
         </button>
         <button
           type="button"
-          className="secondary-button"
+          className="commercial-development-activity-icon-button commercial-development-email-attachments-toolbar-button commercial-development-icon-tooltip"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || uploadState?.loading}
+          aria-label="Archivo local"
+          data-tooltip={
+            uploadState?.loading ? "Cargando archivo..." : "Archivo local"
+          }
         >
-          {uploadState?.loading ? "Cargando archivo..." : "Archivo local"}
+          <UploadLocalFileIcon />
         </button>
         <button
           type="button"
-          className="secondary-button"
+          className={`commercial-development-activity-icon-button commercial-development-email-attachments-toolbar-button commercial-development-icon-tooltip${
+            activePanel === "proposal" ? " is-active" : ""
+          }`}
           onClick={() => togglePanel("proposal")}
           disabled={disabled}
+          aria-label="Propuesta"
+          aria-pressed={activePanel === "proposal"}
+          data-tooltip="Propuesta"
         >
-          Propuesta
+          <ProposalDocumentIcon />
         </button>
         <button
           type="button"
-          className="secondary-button"
-          onClick={onRefreshOptions}
+          className="commercial-development-activity-icon-button commercial-development-email-attachments-toolbar-button commercial-development-icon-tooltip"
+          onClick={() =>
+            onRefreshOptions({
+              force: true,
+              libraryFilters: normalizedLibraryFilters,
+            })
+          }
           disabled={disabled || safeOptionsState.status === "loading"}
+          aria-label="Recargar documentos"
+          data-tooltip={
+            safeOptionsState.status === "loading"
+              ? "Recargando documentos..."
+              : "Recargar documentos"
+          }
         >
-          {safeOptionsState.status === "loading"
-            ? "Actualizando..."
-            : "Actualizar"}
+          <RefreshDocumentsIcon />
         </button>
         <input
           ref={fileInputRef}
@@ -1187,9 +1633,170 @@ function EmailAttachmentsField({
 
       {activePanel === "library" ? (
         <div className="commercial-development-email-attachments-panel">
+          <div className="commercial-development-email-attachments-library-header">
+            <div>
+              <strong>Biblioteca documental</strong>
+              <p>
+                Busca por nombre del archivo o filtra por fabricante,
+                solucion e industria.
+              </p>
+            </div>
+            <span>
+              {Number(safeOptionsState.libraryStats?.totalMatching || 0)} de {Number(safeOptionsState.libraryStats?.totalAvailable || 0)} documento(s)
+            </span>
+          </div>
+
+          <div className="commercial-development-email-attachments-library-filters">
+            <label className="commercial-development-field">
+              <span>Buscar documento</span>
+              <input
+                value={libraryQuery}
+                onChange={(event) => setLibraryQuery(event.target.value)}
+                placeholder="Nombre, titulo, fabricante o industria"
+                disabled={disabled}
+              />
+            </label>
+
+            <label className="commercial-development-field">
+              <span>Ordenar por</span>
+              <select
+                value={librarySort}
+                onChange={(event) => setLibrarySort(event.target.value)}
+                disabled={disabled}
+              >
+                {EMAIL_ATTACHMENT_LIBRARY_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="commercial-development-email-attachments-library-filters-toggle-row commercial-development-field-full-width">
+              <button
+                type="button"
+                className={`commercial-development-email-attachments-filters-toggle${
+                  areLibraryFiltersVisible ? " is-active" : ""
+                }`}
+                onClick={() =>
+                  setAreLibraryFiltersVisible((current) => !current)
+                }
+                disabled={disabled}
+                aria-expanded={areLibraryFiltersVisible}
+              >
+                {areLibraryFiltersVisible ? "Ocultar mas filtros" : "Mas filtros"}
+              </button>
+            </div>
+
+            {areLibraryFiltersVisible ? (
+              <>
+                <div className="commercial-development-field commercial-development-field-full-width">
+                  <span>Fabricante</span>
+                  <div className="commercial-development-email-attachments-multiselect-grid">
+                    {asArray(libraryCatalogs.manufacturer).map((option) => {
+                      const isSelected = normalizedLibraryFilters.manufacturerCodes.includes(
+                        option.value,
+                      );
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
+                          onClick={() =>
+                            setLibraryManufacturerCodes((current) =>
+                              toggleEmailAttachmentFilterValue(current, option.value),
+                            )
+                          }
+                          disabled={disabled}
+                          aria-pressed={isSelected}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="commercial-development-field commercial-development-field-full-width">
+                  <span>Solucion</span>
+                  <div className="commercial-development-email-attachments-multiselect-grid">
+                    {asArray(libraryCatalogs.solution).map((option) => {
+                      const isSelected = normalizedLibraryFilters.solutionCodes.includes(
+                        option.value,
+                      );
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
+                          onClick={() =>
+                            setLibrarySolutionCodes((current) =>
+                              toggleEmailAttachmentFilterValue(current, option.value),
+                            )
+                          }
+                          disabled={disabled}
+                          aria-pressed={isSelected}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="commercial-development-field commercial-development-field-full-width">
+                  <span>Industria</span>
+                  <div className="commercial-development-email-attachments-multiselect-grid">
+                    {asArray(libraryCatalogs.industry).map((option) => {
+                      const isSelected = normalizedLibraryFilters.industryCodes.includes(
+                        option.value,
+                      );
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
+                          onClick={() =>
+                            setLibraryIndustryCodes((current) =>
+                              toggleEmailAttachmentFilterValue(current, option.value),
+                            )
+                          }
+                          disabled={disabled}
+                          aria-pressed={isSelected}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          {activeLibraryFilterChips.length ? (
+            <div className="commercial-development-email-attachments-filter-chips">
+              {activeLibraryFilterChips.map((chip) => (
+                <button
+                  key={chip.key}
+                  type="button"
+                  className="commercial-development-email-attachments-filter-chip"
+                  onClick={() => clearLibraryFilter(chip.filterKey || chip.key, chip.value)}
+                  disabled={disabled}
+                >
+                  <span>{chip.label}</span>
+                  <RemoveAttachmentIcon />
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {renderOptionCards(
             libraryFiles,
-            "No hay documentos de biblioteca disponibles para adjuntar.",
+            Number(safeOptionsState.libraryStats?.totalAvailable || 0)
+              ? "No hay documentos que coincidan con los filtros seleccionados."
+              : "No hay documentos de biblioteca disponibles para adjuntar.",
+            { showLibraryMetadata: true },
           )}
         </div>
       ) : null}
@@ -1231,12 +1838,12 @@ function EmailAttachmentsField({
               {!disabled ? (
                 <button
                   type="button"
-                  className="commercial-development-activity-icon-button"
+                  className="commercial-development-activity-icon-button commercial-development-icon-tooltip"
                   onClick={() => onRemoveAttachment(attachment.id)}
                   aria-label={`Quitar ${attachment.fileName}`}
-                  title="Quitar adjunto"
+                  data-tooltip="Quitar adjunto"
                 >
-                  x
+                  <RemoveAttachmentIcon />
                 </button>
               ) : null}
             </div>
@@ -1278,7 +1885,7 @@ function buildActivityDraft(item, activity = null) {
     const entryKind = activity.entryKind || getEntryKind(activity.activityType);
     const details =
       entryKind === "action"
-        ? applySuggestedEmailContent(activity.details || {}, item)
+        ? normalizeEmailActionDetails(activity.details || {})
         : emptyActionDetails();
     return {
       id: Number(activity.id),
@@ -1682,12 +2289,118 @@ function CalendarPlusIcon() {
   );
 }
 
+function LibraryDocumentsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M5.75 6.5a1.75 1.75 0 0 1 1.75-1.75h8.1a1.75 1.75 0 0 1 1.75 1.75v10.75a2 2 0 0 1-2 2H7.5a1.75 1.75 0 0 1-1.75-1.75V6.5Zm3 1.75h5.5M8.75 11h5.5M8.75 13.75h3.5M17.35 7.25h1.15a1.75 1.75 0 0 1 1.75 1.75v8.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function UploadLocalFileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M13.5 4.75H8a2.25 2.25 0 0 0-2.25 2.25v10A2.25 2.25 0 0 0 8 19.25h8A2.25 2.25 0 0 0 18.25 17V9.5l-4.75-4.75Zm0 0V9.5h4.75M12 16.25v-5m0 0-2 2m2-2 2 2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function ProposalDocumentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M6.25 5.75A2 2 0 0 1 8.25 3.75h7.5l3 3v11.5a2 2 0 0 1-2 2h-8.5a2 2 0 0 1-2-2V5.75Zm8.5-2v3h3M8.75 11h6.5M8.75 14h6.5M8.75 17h4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function RefreshDocumentsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M18.25 8.75A6.75 6.75 0 1 0 19 12m-.75-6.25v4h-4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function RemoveAttachmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M8 8l8 8M16 8l-8 8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.9"
+      />
+    </svg>
+  );
+}
+
+function AddAttachmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M12 5.5v13M5.5 12h13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.9"
+      />
+    </svg>
+  );
+}
+
+function BackToHistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M14.5 6.5 9 12l5.5 5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function CommercialActivityModal({
   item,
   draft,
   setDraft,
   saving,
   error,
+  notice,
   isGeneratingEmailSuggestion,
   onRegenerateEmailSuggestion,
   attachmentOptions,
@@ -1698,12 +2411,12 @@ function CommercialActivityModal({
   onUploadAttachments,
   onClose,
   onSubmit,
+  onExecute,
   onMarkDone,
   viewMode,
   onShowCreate,
   onShowCreateAction,
   onShowList,
-  onSelectActivity,
   onOpenEmailDraft,
   recipientOptions,
   recipientOptionsLoading,
@@ -1725,6 +2438,8 @@ function CommercialActivityModal({
   const isHistoryView = viewMode === "list";
   const entryKind = draft?.entryKind || "activity";
   const isActionForm = entryKind === "action";
+  const isCompactActionView = !isHistoryView && isActionForm;
+  const ccVisibilityKey = `${item?.id || "new"}:${draft?.id || "new"}:${draft?.activityType || ""}`;
   const typeOptions = isActionForm
     ? ACTION_TYPE_OPTIONS
     : ACTIVITY_TYPE_OPTIONS;
@@ -1739,35 +2454,63 @@ function CommercialActivityModal({
         : "Actualizar actividad"
       : isActionForm
         ? "Crear accion"
-        : "Programar actividad";
+        : "Crear actividad";
   const helperText = isHistoryView
     ? "Revisa el historial y crea una nueva actividad o una nueva accion desde esta misma vista."
     : isActionForm
-      ? "Registra trabajo ejecutable como enviar correo, preparar propuesta o coordinar seguimiento."
+      ? "Define el siguiente paso comercial con enfoque en resultado, fecha y contexto para el equipo."
       : "Programa una interaccion comercial y manten visible el siguiente paso de la oportunidad.";
+  const isModalLocked = saving || isGeneratingEmailSuggestion;
   const emailDetails = {
     ...emptyActionDetails(),
     ...(draft?.details || {}),
   };
+  const hasCcValue = Boolean(String(emailDetails.cc || "").trim());
+  const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
+
+  useEffect(() => {
+    setIsCcVisible(hasCcValue);
+  }, [ccVisibilityKey]);
 
   return (
     <div
       className="modal-overlay"
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) {
+        if (event.target === event.currentTarget && !isModalLocked) {
           onClose();
         }
       }}
     >
-      <div className="modal-dialog commercial-development-activity-modal">
+      <div
+        className={`modal-dialog commercial-development-activity-modal${
+          isCompactActionView ? " is-compact-action" : ""
+        }`}
+        aria-busy={isGeneratingEmailSuggestion}
+      >
         <div className="modal-header commercial-development-activity-modal-header">
           <div className="commercial-development-activity-header-copy">
-            <span className="commercial-development-activity-kicker">
-              {isHistoryView ? "Seguimiento comercial" : "Captura operativa"}
-            </span>
+            {!isCompactActionView ? (
+              <span className="commercial-development-activity-kicker">
+                {isHistoryView ? "Seguimiento comercial" : "Captura operativa"}
+              </span>
+            ) : null}
             <h3 className="modal-title">{title}</h3>
-            <p className="section-helper-text">{helperText}</p>
+            {!isCompactActionView ? (
+              <p className="section-helper-text">{helperText}</p>
+            ) : null}
           </div>
+          {!isHistoryView ? (
+            <button
+              type="button"
+              className="commercial-development-activity-icon-button commercial-development-modal-header-action"
+              onClick={onShowList}
+              disabled={isModalLocked}
+              aria-label="Volver al historial"
+              title="Volver al historial"
+            >
+              <BackToHistoryIcon />
+            </button>
+          ) : null}
         </div>
 
         <div className="commercial-development-activity-context">
@@ -1776,33 +2519,31 @@ function CommercialActivityModal({
               Oportunidad
             </span>
             <strong>{item.name}</strong>
-          </div>
-          <div className="commercial-development-inline-row">
             <span>{item.accountName || "Sin cuenta"}</span>
-            <span>
-              Proxima actividad:{" "}
-              {item.nextScheduledActivity
-                ? `${getEntryTypeLabel("activity", item.nextScheduledActivity.activityType)} · ${formatDateTime(item.nextScheduledActivity.scheduledAt)}`
-                : "Sin actividad programada"}
-            </span>
-          </div>
-          <div className="commercial-development-inline-row">
-            <span>
-              Proxima accion:{" "}
-              {item.nextPendingAction
-                ? `${getEntryTypeLabel("action", item.nextPendingAction.activityType)} · ${item.nextPendingAction.dueDate ? formatDate(item.nextPendingAction.dueDate) : "Sin fecha"}`
-                : "Sin accion pendiente"}
-            </span>
-            <span>
-              Siguiente paso principal:{" "}
-              {item.nextStep?.title
-                ? `${getEntryTypeLabel(getEntryKind(item.nextStep.actionType), item.nextStep.actionType)}: ${item.nextStep.title}`
-                : "Sin definir"}
-            </span>
           </div>
         </div>
 
         {error ? <p className="form-error">{error}</p> : null}
+        {notice ? (
+          <p className="commercial-development-modal-notice">{notice}</p>
+        ) : null}
+
+        {isGeneratingEmailSuggestion ? (
+          <div className="commercial-development-ai-processing-overlay">
+            <div
+              className="commercial-development-ai-processing-card"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="interaction-progress-spinner" aria-hidden="true" />
+              <strong>La IA esta procesando el mensaje del correo</strong>
+              <span>
+                Espera un momento mientras se genera el asunto y el mensaje
+                base.
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         {isHistoryView ? (
           <div className="commercial-development-activity-list-view">
@@ -1816,7 +2557,7 @@ function CommercialActivityModal({
                   type="button"
                   className="btn-secondary"
                   onClick={onShowCreateAction}
-                  disabled={saving}
+                  disabled={isModalLocked}
                 >
                   Nueva accion
                 </button>
@@ -1824,7 +2565,7 @@ function CommercialActivityModal({
                   type="button"
                   className="btn-primary"
                   onClick={onShowCreate}
-                  disabled={saving}
+                  disabled={isModalLocked}
                 >
                   Nueva actividad
                 </button>
@@ -1842,7 +2583,7 @@ function CommercialActivityModal({
                       type="button"
                       className="commercial-development-activity-history-item commercial-development-activity-history-button"
                       onClick={() => onSelectActivity(activity)}
-                      disabled={saving}
+                      disabled={isModalLocked}
                     >
                       <div className="commercial-development-inline-row">
                         <strong>
@@ -1879,7 +2620,7 @@ function CommercialActivityModal({
                         type="button"
                         className="commercial-development-activity-icon-button commercial-development-history-secondary-action"
                         onClick={() => onOpenEmailDraft(activity)}
-                        disabled={saving}
+                        disabled={isModalLocked}
                         aria-label={
                           activity.status === "done"
                             ? `Ver correo enviado de ${item.name}`
@@ -1908,7 +2649,7 @@ function CommercialActivityModal({
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
-                disabled={saving}
+                disabled={isModalLocked}
               >
                 Cerrar
               </button>
@@ -1920,14 +2661,6 @@ function CommercialActivityModal({
             onSubmit={onSubmit}
           >
             <div className="commercial-development-activity-form-toolbar">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={onShowList}
-                disabled={saving}
-              >
-                Volver al historial
-              </button>
               <span className="commercial-development-activity-form-badge">
                 {hasEditableActivity
                   ? `${getEntryKindLabel(entryKind)} en edicion`
@@ -1952,19 +2685,16 @@ function CommercialActivityModal({
                   </span>
                   <select
                     value={draft.activityType}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     onChange={(event) =>
                       setDraft((current) => {
                         const nextActivityType = event.target.value;
                         const nextDetails =
                           nextActivityType === "send_email"
-                            ? applySuggestedEmailContent(
-                                {
-                                  ...emptyActionDetails(),
-                                  ...(current.details || {}),
-                                },
-                                item,
-                              )
+                            ? normalizeEmailActionDetails({
+                                ...emptyActionDetails(),
+                                ...(current.details || {}),
+                              })
                             : current.details;
 
                         return {
@@ -1989,7 +2719,7 @@ function CommercialActivityModal({
                     <input
                       type="datetime-local"
                       value={draft.scheduledAt}
-                      disabled={saving}
+                      disabled={isModalLocked}
                       onChange={(event) =>
                         setDraft((current) => ({
                           ...current,
@@ -2005,7 +2735,7 @@ function CommercialActivityModal({
                     <span>Estado</span>
                     <select
                       value={draft.status}
-                      disabled={saving}
+                      disabled={isModalLocked}
                       onChange={(event) =>
                         setDraft((current) => ({
                           ...current,
@@ -2023,12 +2753,6 @@ function CommercialActivityModal({
                 ) : null}
               </div>
 
-              {isActionForm ? (
-                <p className="section-helper-text">
-                  La accion se identifica por su tipo y, en correos, por el
-                  asunto configurado.
-                </p>
-              ) : null}
             </div>
 
             {!isActionForm ? (
@@ -2044,7 +2768,7 @@ function CommercialActivityModal({
                   <span>Objetivo</span>
                   <input
                     value={draft.objective}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     onChange={(event) =>
                       setDraft((current) => ({
                         ...current,
@@ -2060,7 +2784,7 @@ function CommercialActivityModal({
                   <textarea
                     rows="3"
                     value={draft.note}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     onChange={(event) =>
                       setDraft((current) => ({
                         ...current,
@@ -2075,7 +2799,7 @@ function CommercialActivityModal({
 
             {isActionForm && draft.activityType === "send_email" ? (
               <div className="commercial-development-activity-form-section">
-                <div className="commercial-development-activity-section-heading">
+                <div className="commercial-development-activity-section-heading commercial-development-email-compose-heading">
                   <strong>Correo a ejecutar</strong>
                   <p>
                     Registra el contenido operativo del correo y la respuesta
@@ -2094,29 +2818,20 @@ function CommercialActivityModal({
                       <span>Proposito del correo</span>
                       <select
                         value={emailDetails.purpose}
-                        disabled={saving}
+                        disabled={isModalLocked}
                         onChange={(event) =>
                           setDraft((current) => {
-                            const previousDetails = {
-                              ...emptyActionDetails(),
-                              ...(current.details || {}),
-                            };
-                            const nextDetails = applySuggestedEmailContent(
-                              {
-                                ...previousDetails,
+                            return {
+                              ...current,
+                              details: {
+                                ...emptyActionDetails(),
+                                ...(current.details || {}),
                                 purpose: event.target.value,
                                 purposeOther:
                                   event.target.value === "other"
-                                    ? previousDetails.purposeOther || ""
+                                    ? current.details?.purposeOther || ""
                                     : "",
                               },
-                              item,
-                              previousDetails,
-                            );
-
-                            return {
-                              ...current,
-                              details: nextDetails,
                             };
                           })
                         }
@@ -2134,25 +2849,16 @@ function CommercialActivityModal({
                         <span>Especifica el proposito</span>
                         <input
                           value={emailDetails.purposeOther}
-                          disabled={saving}
+                          disabled={isModalLocked}
                           onChange={(event) =>
                             setDraft((current) => {
-                              const previousDetails = {
-                                ...emptyActionDetails(),
-                                ...(current.details || {}),
-                              };
-                              const nextDetails = applySuggestedEmailContent(
-                                {
-                                  ...previousDetails,
-                                  purposeOther: event.target.value,
-                                },
-                                item,
-                                previousDetails,
-                              );
-
                               return {
                                 ...current,
-                                details: nextDetails,
+                                details: {
+                                  ...emptyActionDetails(),
+                                  ...(current.details || {}),
+                                  purposeOther: event.target.value,
+                                },
                               };
                             })
                           }
@@ -2164,7 +2870,7 @@ function CommercialActivityModal({
 
                   <EmailRecipientCombobox
                     value={emailDetails.recipient}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     onChange={(value) =>
                       setDraft((current) => ({
                         ...current,
@@ -2180,29 +2886,11 @@ function CommercialActivityModal({
                     loadError={recipientOptionsError}
                   />
 
-                  <EmailCcCombobox
-                    value={emailDetails.cc}
-                    disabled={saving}
-                    onChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        details: {
-                          ...emptyActionDetails(),
-                          ...(current.details || {}),
-                          cc: value,
-                        },
-                      }))
-                    }
-                    options={recipientOptions}
-                    loading={recipientOptionsLoading}
-                    loadError={recipientOptionsError}
-                  />
-
                   <label className="commercial-development-field">
                     <span>Asunto</span>
                     <input
                       value={emailDetails.subject}
-                      disabled={saving}
+                      disabled={isModalLocked}
                       onChange={(event) =>
                         setDraft((current) => ({
                           ...current,
@@ -2216,6 +2904,40 @@ function CommercialActivityModal({
                       placeholder="Propuesta ajustada para revision"
                     />
                   </label>
+
+                  <div className="commercial-development-email-cc-toggle-row commercial-development-field-full-width">
+                    <button
+                      type="button"
+                      className={`commercial-development-email-cc-toggle${
+                        isCcVisible || hasCcValue ? " is-active" : ""
+                      }`}
+                      onClick={() => setIsCcVisible((current) => !current)}
+                      disabled={isModalLocked}
+                      aria-expanded={isCcVisible || hasCcValue}
+                    >
+                      {isCcVisible || hasCcValue ? "Ocultar CC" : "Agregar CC"}
+                    </button>
+                  </div>
+
+                  {isCcVisible || hasCcValue ? (
+                    <EmailCcCombobox
+                      value={emailDetails.cc}
+                      disabled={isModalLocked}
+                      onChange={(value) =>
+                        setDraft((current) => ({
+                          ...current,
+                          details: {
+                            ...emptyActionDetails(),
+                            ...(current.details || {}),
+                            cc: value,
+                          },
+                        }))
+                      }
+                      options={recipientOptions}
+                      loading={recipientOptionsLoading}
+                      loadError={recipientOptionsError}
+                    />
+                  ) : null}
                 </div>
 
                 <label className="commercial-development-field">
@@ -2225,7 +2947,7 @@ function CommercialActivityModal({
                       type="button"
                       className="commercial-development-activity-icon-button"
                       onClick={onRegenerateEmailSuggestion}
-                      disabled={saving || isGeneratingEmailSuggestion}
+                      disabled={isModalLocked}
                       aria-label="Regenerar mensaje base con IA"
                       title="Regenerar con IA"
                     >
@@ -2235,7 +2957,7 @@ function CommercialActivityModal({
                   <textarea
                     rows="4"
                     value={emailDetails.messageBody}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     onChange={(event) =>
                       setDraft((current) => ({
                         ...current,
@@ -2253,7 +2975,7 @@ function CommercialActivityModal({
                 <div className="commercial-development-activity-form-grid">
                   <EmailAttachmentsField
                     attachments={emailDetails.attachments}
-                    disabled={saving}
+                    disabled={isModalLocked}
                     optionsState={attachmentOptions}
                     uploadState={attachmentUploadState}
                     onRefreshOptions={onRefreshAttachmentOptions}
@@ -2261,82 +2983,9 @@ function CommercialActivityModal({
                     onRemoveAttachment={onRemoveAttachment}
                     onUploadFiles={onUploadAttachments}
                   />
-
-                  <label className="commercial-development-field">
-                    <span>Respuesta esperada</span>
-                    <input
-                      value={emailDetails.expectedResponse}
-                      disabled={saving}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          successCriteria: event.target.value,
-                          details: {
-                            ...emptyActionDetails(),
-                            ...(current.details || {}),
-                            expectedResponse: event.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="Ej. confirmar visto bueno antes del viernes"
-                    />
-                  </label>
-
-                  <label className="commercial-development-field">
-                    <span>Fecha limite de respuesta</span>
-                    <input
-                      type="date"
-                      value={emailDetails.responseDueDate}
-                      disabled={saving}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          details: {
-                            ...emptyActionDetails(),
-                            ...(current.details || {}),
-                            responseDueDate: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                  </label>
                 </div>
-
-                <label className="commercial-development-activity-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={emailDetails.markDoneOnSend}
-                    disabled={saving}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        details: {
-                          ...emptyActionDetails(),
-                          ...(current.details || {}),
-                          markDoneOnSend: event.target.checked,
-                        },
-                      }))
-                    }
-                  />
-                  <span>Marcar como realizada al enviar</span>
-                </label>
               </div>
             ) : null}
-
-            <label className="commercial-development-activity-checkbox">
-              <input
-                type="checkbox"
-                checked={draft.isPrimaryNextStep}
-                disabled={saving}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    isPrimaryNextStep: event.target.checked,
-                  }))
-                }
-              />
-              <span>Marcar como siguiente paso principal</span>
-            </label>
 
             {hasEditableActivity ? (
               <div className="commercial-development-activity-inline-actions">
@@ -2363,21 +3012,35 @@ function CommercialActivityModal({
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
-                disabled={saving}
+                disabled={isModalLocked}
               >
                 Cancelar
               </button>
-              <button type="submit" className="btn-primary" disabled={saving}>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={isModalLocked}
+              >
                 {saving
                   ? hasEditableActivity
                     ? "Actualizando..."
                     : "Guardando..."
-                  : hasEditableActivity
-                    ? "Guardar cambios"
-                    : isActionForm
-                      ? "Guardar accion"
+                  : isActionForm
+                    ? "Guardar"
+                    : hasEditableActivity
+                      ? "Guardar cambios"
                       : "Guardar actividad"}
               </button>
+              {isActionForm && draft.activityType === "send_email" ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onExecute}
+                  disabled={isModalLocked}
+                >
+                  {saving ? "Ejecutando..." : "Ejecutar"}
+                </button>
+              ) : null}
             </div>
           </form>
         )}
@@ -2420,45 +3083,24 @@ function CommercialEmailDraftModal({
   const isReadOnly = draft.isReadOnly;
   const sendStatusTone = sendFeedback?.tone || "";
   const sendStatusMessage = sendFeedback?.message || "";
+  const ccVisibilityKey = `${draft.opportunityId || "new"}:${draft.actionId || "new"}:${draft.status || ""}`;
+  const hasCcValue = Boolean(String(emailDetails.cc || "").trim());
+  const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
+
+  useEffect(() => {
+    setIsCcVisible(hasCcValue);
+  }, [ccVisibilityKey, hasCcValue]);
 
   function handleEmailPurposeChange(nextPurpose) {
-    const nextDetails = applySuggestedEmailContent(
-      {
-        ...emailDetails,
-        purpose: nextPurpose,
-        purposeOther: nextPurpose === "other" ? emailDetails.purposeOther : "",
-      },
-      item,
-      emailDetails,
+    onChange("purpose", nextPurpose);
+    onChange(
+      "purposeOther",
+      nextPurpose === "other" ? emailDetails.purposeOther : "",
     );
-
-    onChange("purpose", nextDetails.purpose);
-    onChange("purposeOther", nextDetails.purposeOther);
-    if (nextDetails.subject !== emailDetails.subject) {
-      onChange("subject", nextDetails.subject);
-    }
-    if (nextDetails.messageBody !== emailDetails.messageBody) {
-      onChange("messageBody", nextDetails.messageBody);
-    }
   }
 
   function handleEmailPurposeOtherChange(nextPurposeOther) {
-    const nextDetails = applySuggestedEmailContent(
-      {
-        ...emailDetails,
-        purposeOther: nextPurposeOther,
-      },
-      item,
-      emailDetails,
-    );
-
-    onChange("purposeOther", nextDetails.purposeOther);
-    if (nextDetails.subject !== emailDetails.subject) {
-      onChange("subject", nextDetails.subject);
-    }
-    if (nextDetails.messageBody !== emailDetails.messageBody) {
-      onChange("messageBody", nextDetails.messageBody);
-    }
+    onChange("purposeOther", nextPurposeOther);
   }
 
   return (
@@ -2470,7 +3112,7 @@ function CommercialEmailDraftModal({
         }
       }}
     >
-      <div className="modal-dialog commercial-email-draft-modal">
+      <div className="modal-dialog commercial-email-draft-modal commercial-development-activity-modal is-compact-action">
         <div className="modal-header commercial-development-activity-modal-header">
           <div className="commercial-development-activity-header-copy">
             <span className="commercial-development-activity-kicker">
@@ -2586,15 +3228,6 @@ function CommercialEmailDraftModal({
               loadError={recipientOptionsError}
             />
 
-            <EmailCcCombobox
-              value={emailDetails.cc}
-              disabled={saving || isReadOnly}
-              onChange={(value) => onChange("cc", value)}
-              options={recipientOptions}
-              loading={recipientOptionsLoading}
-              loadError={recipientOptionsError}
-            />
-
             <label className="commercial-development-field">
               <span>Asunto</span>
               <input
@@ -2603,6 +3236,31 @@ function CommercialEmailDraftModal({
                 onChange={(event) => onChange("subject", event.target.value)}
               />
             </label>
+
+            <div className="commercial-development-email-cc-toggle-row commercial-development-field-full-width">
+              <button
+                type="button"
+                className={`commercial-development-email-cc-toggle${
+                  isCcVisible || hasCcValue ? " is-active" : ""
+                }`}
+                onClick={() => setIsCcVisible((current) => !current)}
+                disabled={saving || isReadOnly}
+                aria-expanded={isCcVisible || hasCcValue}
+              >
+                {isCcVisible || hasCcValue ? "Ocultar CC" : "Agregar CC"}
+              </button>
+            </div>
+
+            {isCcVisible || hasCcValue ? (
+              <EmailCcCombobox
+                value={emailDetails.cc}
+                disabled={saving || isReadOnly}
+                onChange={(value) => onChange("cc", value)}
+                options={recipientOptions}
+                loading={recipientOptionsLoading}
+                loadError={recipientOptionsError}
+              />
+            ) : null}
           </div>
 
           <label className="commercial-development-field">
@@ -2640,42 +3298,8 @@ function CommercialEmailDraftModal({
               onRemoveAttachment={onRemoveAttachment}
               onUploadFiles={onUploadAttachments}
             />
-
-            <label className="commercial-development-field">
-              <span>Respuesta esperada</span>
-              <input
-                value={emailDetails.expectedResponse}
-                disabled={saving || isReadOnly}
-                onChange={(event) =>
-                  onChange("expectedResponse", event.target.value)
-                }
-              />
-            </label>
-
-            <label className="commercial-development-field">
-              <span>Fecha limite de respuesta</span>
-              <input
-                type="date"
-                value={emailDetails.responseDueDate}
-                disabled={saving || isReadOnly}
-                onChange={(event) =>
-                  onChange("responseDueDate", event.target.value)
-                }
-              />
-            </label>
           </div>
 
-          <label className="commercial-development-activity-checkbox">
-            <input
-              type="checkbox"
-              checked={Boolean(emailDetails.markDoneOnSend)}
-              disabled={saving || isReadOnly}
-              onChange={(event) =>
-                onChange("markDoneOnSend", event.target.checked)
-              }
-            />
-            <span>Marcar la accion como realizada al enviar</span>
-          </label>
         </div>
 
         {isConfirmingSend && !isReadOnly ? (
@@ -2758,6 +3382,7 @@ export default function CommercialDevelopmentPage() {
   const [activityModalItem, setActivityModalItem] = useState(null);
   const [activityDraft, setActivityDraft] = useState(buildActivityDraft(null));
   const [activityError, setActivityError] = useState("");
+  const [activityNotice, setActivityNotice] = useState("");
   const [savingActivity, setSavingActivity] = useState(false);
   const [activityViewMode, setActivityViewMode] = useState("list");
   const [emailDraftModalItem, setEmailDraftModalItem] = useState(null);
@@ -2784,13 +3409,29 @@ export default function CommercialDevelopmentPage() {
     useState(false);
   const activityEmailSuggestionRef = useRef(null);
   const emailDraftSuggestionRef = useRef(null);
+  const emailAttachmentOptionsRef = useRef({});
+  const emailAttachmentRequestKeyByOpportunityRef = useRef({});
+
+  useEffect(() => {
+    emailAttachmentOptionsRef.current = emailAttachmentOptionsByOpportunityId;
+  }, [emailAttachmentOptionsByOpportunityId]);
 
   const loadDashboard = useCallback(async (periodKey = "") => {
     setLoading(true);
     setError("");
     try {
+      const params = {};
+      if (periodKey) {
+        const [year, quarter] = String(periodKey).split("-");
+        if (year) {
+          params.year = Number(year);
+        }
+        if (quarter) {
+          params.quarter = Number(quarter);
+        }
+      }
       const response = await api.get("/api/commercial-development/dashboard", {
-        params: periodKey ? { period: periodKey } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       });
       const nextDashboard = normalizeDashboardResponse(response.data);
       setDashboard(nextDashboard);
@@ -2822,20 +3463,44 @@ export default function CommercialDevelopmentPage() {
   }, []);
 
   const loadEmailAttachmentOptions = useCallback(
-    async (opportunityId, { force = false } = {}) => {
+    async (opportunityId, { force = false, libraryFilters = {} } = {}) => {
       const normalizedOpportunityId = Number(opportunityId || 0);
       if (!normalizedOpportunityId) {
         return EMPTY_EMAIL_ATTACHMENT_OPTIONS;
       }
 
+      const normalizedLibraryFilters =
+        normalizeEmailAttachmentLibraryFilters(libraryFilters);
+      const requestKey = JSON.stringify({
+        opportunityId: normalizedOpportunityId,
+        filters: normalizedLibraryFilters,
+      });
+
       const existingState =
-        emailAttachmentOptionsByOpportunityId[normalizedOpportunityId];
-      if (!force && existingState?.status === "loaded") {
+        emailAttachmentOptionsRef.current[normalizedOpportunityId];
+      if (
+        !force &&
+        existingState?.status === "loaded" &&
+        areEmailAttachmentLibraryFiltersEqual(
+          existingState?.appliedLibraryFilters,
+          normalizedLibraryFilters,
+        )
+      ) {
         return existingState;
       }
-      if (!force && existingState?.status === "loading") {
+      if (
+        !force &&
+        existingState?.status === "loading" &&
+        areEmailAttachmentLibraryFiltersEqual(
+          existingState?.appliedLibraryFilters,
+          normalizedLibraryFilters,
+        )
+      ) {
         return existingState;
       }
+
+      emailAttachmentRequestKeyByOpportunityRef.current[normalizedOpportunityId] =
+        requestKey;
 
       setEmailAttachmentOptionsByOpportunityId((current) => ({
         ...current,
@@ -2844,16 +3509,45 @@ export default function CommercialDevelopmentPage() {
             EMPTY_EMAIL_ATTACHMENT_OPTIONS),
           status: "loading",
           error: "",
+          appliedLibraryFilters: normalizedLibraryFilters,
         },
       }));
 
       try {
         const response = await api.get(
           `/api/commercial-development/opportunities/${normalizedOpportunityId}/email-attachments/options`,
+          {
+            params: {
+              q: normalizedLibraryFilters.q || undefined,
+              manufacturerCodes:
+                normalizedLibraryFilters.manufacturerCodes.length > 0
+                  ? normalizedLibraryFilters.manufacturerCodes
+                  : undefined,
+              solutionCodes:
+                normalizedLibraryFilters.solutionCodes.length > 0
+                  ? normalizedLibraryFilters.solutionCodes
+                  : undefined,
+              industryCodes:
+                normalizedLibraryFilters.industryCodes.length > 0
+                  ? normalizedLibraryFilters.industryCodes
+                  : undefined,
+              sort:
+                normalizedLibraryFilters.sort !== "updated_desc"
+                  ? normalizedLibraryFilters.sort
+                  : undefined,
+            },
+          },
         );
         const nextState = normalizeEmailAttachmentOptionsResponse(
           response.data || {},
         );
+        if (
+          emailAttachmentRequestKeyByOpportunityRef.current[
+            normalizedOpportunityId
+          ] !== requestKey
+        ) {
+          return emailAttachmentOptionsRef.current[normalizedOpportunityId] || nextState;
+        }
         setEmailAttachmentOptionsByOpportunityId((current) => ({
           ...current,
           [normalizedOpportunityId]: nextState,
@@ -2868,6 +3562,13 @@ export default function CommercialDevelopmentPage() {
             "No fue posible cargar los documentos disponibles para el correo.",
           ),
         };
+        if (
+          emailAttachmentRequestKeyByOpportunityRef.current[
+            normalizedOpportunityId
+          ] !== requestKey
+        ) {
+          return emailAttachmentOptionsRef.current[normalizedOpportunityId] || nextState;
+        }
         setEmailAttachmentOptionsByOpportunityId((current) => ({
           ...current,
           [normalizedOpportunityId]: nextState,
@@ -2875,7 +3576,7 @@ export default function CommercialDevelopmentPage() {
         return nextState;
       }
     },
-    [emailAttachmentOptionsByOpportunityId],
+    [],
   );
 
   const mergeUploadedOpportunityDocuments = useCallback(
@@ -3121,152 +3822,6 @@ export default function CommercialDevelopmentPage() {
       loadEmailAttachmentOptions(draftAttachmentOpportunityId);
     }
   }, [draftAttachmentOpportunityId, loadEmailAttachmentOptions]);
-
-  useEffect(() => {
-    if (
-      !activityModalItem ||
-      activityDraft.entryKind !== "action" ||
-      activityDraft.activityType !== "send_email"
-    ) {
-      activityEmailSuggestionRef.current = null;
-      setGeneratingActivityEmailSuggestion(false);
-      return undefined;
-    }
-
-    const requestKey = buildEmailSuggestionKey(
-      activityModalItem,
-      activityDraft.details,
-    );
-    let isCancelled = false;
-    const timeoutId = window.setTimeout(
-      async () => {
-        setGeneratingActivityEmailSuggestion(true);
-        try {
-          const suggestion = await requestAiEmailSuggestion(
-            activityModalItem,
-            activityDraft.details,
-          );
-          if (isCancelled) return;
-          setActivityDraft((current) => {
-            if (
-              !current ||
-              current.entryKind !== "action" ||
-              current.activityType !== "send_email" ||
-              buildEmailSuggestionKey(activityModalItem, current.details) !==
-                requestKey
-            ) {
-              return current;
-            }
-
-            const nextDetails = mergeGeneratedEmailSuggestion(
-              current.details || {},
-              activityModalItem,
-              suggestion,
-              activityEmailSuggestionRef.current,
-            );
-            return {
-              ...current,
-              details: nextDetails,
-            };
-          });
-          activityEmailSuggestionRef.current = suggestion;
-        } catch {
-          if (!isCancelled) {
-            activityEmailSuggestionRef.current = null;
-          }
-        } finally {
-          if (!isCancelled) {
-            setGeneratingActivityEmailSuggestion(false);
-          }
-        }
-      },
-      activityDraft.details?.purpose === "other" ? 500 : 250,
-    );
-
-    return () => {
-      isCancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    activityDraft.activityType,
-    activityDraft.entryKind,
-    activityDraft.details?.purpose,
-    activityDraft.details?.purposeOther,
-    activityModalItem,
-    requestAiEmailSuggestion,
-  ]);
-
-  useEffect(() => {
-    if (
-      !emailDraftModalItem ||
-      !emailDraftState ||
-      emailDraftState.isReadOnly
-    ) {
-      emailDraftSuggestionRef.current = null;
-      setGeneratingEmailDraftSuggestion(false);
-      return undefined;
-    }
-
-    const requestKey = buildEmailSuggestionKey(
-      emailDraftModalItem,
-      emailDraftState.details,
-    );
-    let isCancelled = false;
-    const timeoutId = window.setTimeout(
-      async () => {
-        setGeneratingEmailDraftSuggestion(true);
-        try {
-          const suggestion = await requestAiEmailSuggestion(
-            emailDraftModalItem,
-            emailDraftState.details,
-          );
-          if (isCancelled) return;
-          setEmailDraftState((current) => {
-            if (
-              !current ||
-              current.isReadOnly ||
-              buildEmailSuggestionKey(emailDraftModalItem, current.details) !==
-                requestKey
-            ) {
-              return current;
-            }
-
-            const nextDetails = mergeGeneratedEmailSuggestion(
-              current.details || {},
-              emailDraftModalItem,
-              suggestion,
-              emailDraftSuggestionRef.current,
-            );
-            return {
-              ...current,
-              details: nextDetails,
-            };
-          });
-          emailDraftSuggestionRef.current = suggestion;
-        } catch {
-          if (!isCancelled) {
-            emailDraftSuggestionRef.current = null;
-          }
-        } finally {
-          if (!isCancelled) {
-            setGeneratingEmailDraftSuggestion(false);
-          }
-        }
-      },
-      emailDraftState.details?.purpose === "other" ? 500 : 250,
-    );
-
-    return () => {
-      isCancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    emailDraftModalItem,
-    emailDraftState?.details?.purpose,
-    emailDraftState?.details?.purposeOther,
-    emailDraftState?.isReadOnly,
-    requestAiEmailSuggestion,
-  ]);
 
   const loadCalendar = useCallback(async () => {
     setCalendarLoading(true);
@@ -3518,6 +4073,7 @@ export default function CommercialDevelopmentPage() {
     setActivityModalItem(nextItem);
     setActivityDraft(buildActivityDraft(nextItem));
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode(viewMode);
   }
 
@@ -3527,6 +4083,7 @@ export default function CommercialDevelopmentPage() {
     setActivityModalItem(nextItem);
     setActivityDraft(buildActivityDraft(nextItem, activity));
     setActivityError("");
+    setActivityNotice("");
     const nextViewMode =
       viewMode ||
       ((activity?.entryKind || getEntryKind(activity?.activityType)) ===
@@ -3545,6 +4102,7 @@ export default function CommercialDevelopmentPage() {
       scheduledAt: buildDateTimeInputForDay(dateValue),
     });
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode("activity-form");
   }
 
@@ -3560,6 +4118,7 @@ export default function CommercialDevelopmentPage() {
       activityType: "call",
     });
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode("activity-form");
   }
 
@@ -3574,17 +4133,16 @@ export default function CommercialDevelopmentPage() {
       scheduledAt: "",
       priority: "medium",
       successCriteria: "",
-      details: applySuggestedEmailContent(
-        emptyActionDetails(),
-        activityModalItem,
-      ),
+      details: emptyActionDetails(),
     });
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode("action-form");
   }
 
   function showActivityList() {
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode("list");
   }
 
@@ -3592,6 +4150,7 @@ export default function CommercialDevelopmentPage() {
     if (!activityModalItem) return;
     setActivityDraft(buildActivityDraft(activityModalItem, activity));
     setActivityError("");
+    setActivityNotice("");
     setActivityViewMode(
       (activity?.entryKind || getEntryKind(activity?.activityType)) === "action"
         ? "action-form"
@@ -3605,6 +4164,7 @@ export default function CommercialDevelopmentPage() {
     setActivityModalItem(null);
     setActivityDraft(buildActivityDraft(null));
     setActivityError("");
+    setActivityNotice("");
     setActivityAttachmentUploadState({ loading: false, error: "" });
     setActivityViewMode("list");
   }
@@ -3892,6 +4452,7 @@ export default function CommercialDevelopmentPage() {
 
     setGeneratingActivityEmailSuggestion(true);
     setActivityError("");
+    setActivityNotice("");
     try {
       const suggestion = await requestAiEmailSuggestion(
         activityModalItem,
@@ -3916,6 +4477,7 @@ export default function CommercialDevelopmentPage() {
           },
         };
       });
+      setActivityNotice("Correo regenerado con IA.");
     } catch (requestError) {
       setActivityError(
         getApiErrorMessage(
@@ -4042,9 +4604,13 @@ export default function CommercialDevelopmentPage() {
     setEmailDraftNotice("");
     setEmailSendFeedback(null);
     try {
+      const nextDetails = {
+        ...emailDraftState.details,
+        markDoneOnSend: true,
+      };
       const response = await api.post(
         `/api/commercial-development/opportunities/${emailDraftState.opportunityId}/activities/${emailDraftState.actionId}/send-email`,
-        { details: emailDraftState.details },
+        { details: nextDetails },
       );
       setEmailDraftState((current) =>
         current
@@ -4088,9 +4654,8 @@ export default function CommercialDevelopmentPage() {
     }
   }
 
-  async function handleSaveActivity(event) {
-    event.preventDefault();
-    if (!activityModalItem?.id) return;
+  async function persistActivityDraft({ executeEmail = false } = {}) {
+    if (!activityModalItem?.id) return null;
 
     const isActionForm = activityDraft.entryKind === "action";
     const actionObjective = isActionForm
@@ -4107,14 +4672,14 @@ export default function CommercialDevelopmentPage() {
           ? "Completa el tipo de accion para continuar."
           : "Completa tipo, fecha/hora y objetivo para guardar la actividad.",
       );
-      return;
+      return null;
     }
 
     if (!isActionForm && !activityDraft.scheduledAt) {
       setActivityError(
         "Completa tipo, fecha/hora y objetivo para guardar la actividad.",
       );
-      return;
+      return null;
     }
 
     if (activityDraft.activityType === "send_email") {
@@ -4128,14 +4693,17 @@ export default function CommercialDevelopmentPage() {
         !details.messageBody.trim()
       ) {
         setActivityError(
-          "Completa destinatario, asunto y mensaje base para guardar la accion de correo.",
+          executeEmail
+            ? "Completa destinatario, asunto y mensaje base para ejecutar la accion de correo."
+            : "Completa destinatario, asunto y mensaje base para guardar la accion de correo.",
         );
-        return;
+        return null;
       }
     }
 
     setSavingActivity(true);
     setActivityError("");
+
     try {
       const actionDetails =
         activityDraft.entryKind === "action"
@@ -4171,31 +4739,79 @@ export default function CommercialDevelopmentPage() {
         isPrimaryNextStep: activityDraft.isPrimaryNextStep,
       };
 
+      let savedActivityId = Number(activityDraft.id || 0);
       if (activityDraft.id) {
-        await api.patch(
+        const response = await api.patch(
           `/api/commercial-development/opportunities/${activityModalItem.id}/activities/${activityDraft.id}`,
           payload,
         );
+        savedActivityId = Number(response.data?.id || activityDraft.id || 0);
       } else {
-        await api.post(
+        const response = await api.post(
           `/api/commercial-development/opportunities/${activityModalItem.id}/activities`,
           payload,
         );
+        savedActivityId = Number(response.data?.id || 0);
       }
-      await loadDashboard(selectedPeriodKey);
+
+      if (
+        executeEmail &&
+        activityDraft.entryKind === "action" &&
+        activityDraft.activityType === "send_email" &&
+        savedActivityId > 0
+      ) {
+        const response = await api.post(
+          `/api/commercial-development/opportunities/${activityModalItem.id}/activities/${savedActivityId}/send-email`,
+          {
+            details: {
+              ...actionDetails,
+              markDoneOnSend: true,
+            },
+          },
+        );
+
+        const nextDashboard = await loadDashboard(selectedPeriodKey);
+        syncActivityModalFromDashboard(
+          nextDashboard,
+          activityModalItem.id,
+          savedActivityId,
+        );
+        closeActivityModal();
+        return response.data || { id: savedActivityId };
+      }
+
+      const nextDashboard = await loadDashboard(selectedPeriodKey);
+      syncActivityModalFromDashboard(
+        nextDashboard,
+        activityModalItem.id,
+        savedActivityId,
+      );
       closeActivityModal();
+      return { id: savedActivityId };
     } catch (requestError) {
       setActivityError(
         getApiErrorMessage(
           requestError,
-          activityDraft.entryKind === "action"
-            ? "No fue posible guardar la accion."
-            : "No fue posible guardar la actividad.",
+          executeEmail
+            ? "No fue posible ejecutar la accion."
+            : activityDraft.entryKind === "action"
+              ? "No fue posible guardar la accion."
+              : "No fue posible guardar la actividad.",
         ),
       );
+      return null;
     } finally {
       setSavingActivity(false);
     }
+  }
+
+  async function handleSaveActivity(event) {
+    event.preventDefault();
+    await persistActivityDraft();
+  }
+
+  async function handleExecuteActivity() {
+    await persistActivityDraft({ executeEmail: true });
   }
 
   async function handleCompleteActivity() {
@@ -4339,7 +4955,12 @@ export default function CommercialDevelopmentPage() {
                   {period.label}
                 </option>
               ))}
-              {!periodOptions.length && development.period ? (
+              {development.period &&
+              !periodOptions.some(
+                (period) =>
+                  `${period.year}-${period.quarter}` ===
+                  `${development.period.year}-${development.period.quarter}`,
+              ) ? (
                 <option
                   value={`${development.period.year}-${development.period.quarter}`}
                 >
@@ -5081,20 +5702,20 @@ export default function CommercialDevelopmentPage() {
         setDraft={setActivityDraft}
         saving={savingActivity}
         error={activityError}
+        notice={activityNotice}
         isGeneratingEmailSuggestion={generatingActivityEmailSuggestion}
         onRegenerateEmailSuggestion={handleRegenerateActivityEmailSuggestion}
         attachmentOptions={activeAttachmentOptions}
         attachmentUploadState={activityAttachmentUploadState}
-        onRefreshAttachmentOptions={() =>
-          loadEmailAttachmentOptions(activeAttachmentOpportunityId, {
-            force: true,
-          })
+        onRefreshAttachmentOptions={(options = {}) =>
+          loadEmailAttachmentOptions(activeAttachmentOpportunityId, options)
         }
         onAddAttachment={handleAddActivityAttachment}
         onRemoveAttachment={handleRemoveActivityAttachment}
         onUploadAttachments={handleUploadActivityAttachments}
         onClose={closeActivityModal}
         onSubmit={handleSaveActivity}
+        onExecute={handleExecuteActivity}
         onMarkDone={handleCompleteActivity}
         viewMode={activityViewMode}
         onShowCreate={showCreateActivityForm}
@@ -5120,10 +5741,8 @@ export default function CommercialDevelopmentPage() {
         onRegenerateEmailSuggestion={handleRegenerateEmailDraftSuggestion}
         attachmentOptions={draftAttachmentOptions}
         attachmentUploadState={emailDraftAttachmentUploadState}
-        onRefreshAttachmentOptions={() =>
-          loadEmailAttachmentOptions(draftAttachmentOpportunityId, {
-            force: true,
-          })
+        onRefreshAttachmentOptions={(options = {}) =>
+          loadEmailAttachmentOptions(draftAttachmentOpportunityId, options)
         }
         onAddAttachment={handleAddEmailDraftAttachment}
         onRemoveAttachment={handleRemoveEmailDraftAttachment}

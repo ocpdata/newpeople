@@ -101,16 +101,6 @@ const assetSchema = z.object({
   themeTags: stringArraySchema.optional().default([]),
   personaTags: stringArraySchema.optional().default([]),
   recommendedRoleTags: stringArraySchema.optional().default([]),
-  validFrom: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional()
-    .nullable(),
-  validUntil: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional()
-    .nullable(),
   isInternal: z.boolean().optional().default(false),
   isDownloadable: z.boolean().optional().default(true),
   isFeatured: z.boolean().optional().default(false),

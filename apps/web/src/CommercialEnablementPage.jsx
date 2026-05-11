@@ -17,6 +17,7 @@ const TABS = [
 const CATALOG_ADMIN_TYPES = [
   { type: "manufacturer", label: "Fabricantes" },
   { type: "solution", label: "Soluciones" },
+  { type: "industry", label: "Industrias" },
 ];
 
 const EMPTY_BOOTSTRAP = {
@@ -30,7 +31,6 @@ const EMPTY_BOOTSTRAP = {
     totalVisibleAssets: 0,
     clientSafeAssets: 0,
     internalAssets: 0,
-    expiringSoonAssets: 0,
     recentAssets: 0,
   },
   catalogs: {},
@@ -60,7 +60,6 @@ const EMPTY_GOVERNANCE = {
     totalAssets: 0,
     draftAssets: 0,
     obsoleteAssets: 0,
-    expiredAssets: 0,
     qualityIssues: 0,
     duplicateCandidates: 0,
   },
@@ -81,6 +80,16 @@ const ASSET_FIELD_MESSAGES = {
   title: "Titulo requerido",
   summary: "Resumen requerido",
 };
+
+function emptyLinkDraft() {
+  return {
+    url: "",
+    linkType: "external",
+    label: "",
+    description: "",
+    isPrimary: false,
+  };
+}
 
 function emptyDraft() {
   return {
@@ -103,8 +112,6 @@ function emptyDraft() {
     themeTags: [],
     personaTags: [],
     recommendedRoleTags: [],
-    validFrom: "",
-    validUntil: "",
     isInternal: true,
     isDownloadable: true,
   };
@@ -205,11 +212,96 @@ function buildDraftFromAsset(asset) {
     themeTags: getTagCodes(asset, "theme"),
     personaTags: getTagCodes(asset, "persona"),
     recommendedRoleTags: getTagCodes(asset, "recommended_role"),
-    validFrom: asset.validFrom || "",
-    validUntil: asset.validUntil || "",
     isInternal: Boolean(asset.isInternal),
     isDownloadable: asset.isDownloadable !== false,
   };
+}
+
+function buildAssetPayload(draftValue) {
+  return {
+    ...draftValue,
+    title: String(draftValue?.title || "").trim(),
+    summary: String(draftValue?.summary || "").trim(),
+    internalDescription: String(draftValue?.internalDescription || "").trim(),
+    manufacturerCodes: uniqueStrings(draftValue?.manufacturerCodes),
+    solutionCodes: uniqueStrings(draftValue?.solutionCodes),
+    needCodes: uniqueStrings(draftValue?.needCodes),
+    requirementCodes: uniqueStrings(draftValue?.requirementCodes),
+    competitorCodes: uniqueStrings(draftValue?.competitorCodes),
+    industryCodes: uniqueStrings(draftValue?.industryCodes),
+    stageCodes: uniqueStrings(draftValue?.stageCodes),
+    themeTags: uniqueStrings(draftValue?.themeTags),
+    personaTags: uniqueStrings(draftValue?.personaTags),
+    recommendedRoleTags: uniqueStrings(draftValue?.recommendedRoleTags),
+    isInternal: draftValue?.visibilityLevel !== "client_safe",
+  };
+}
+
+function normalizeDraftTitleCandidate(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deriveDraftTitle({ draftValue, files, linkValue }) {
+  const explicitTitle = normalizeDraftTitleCandidate(draftValue?.title);
+  if (explicitTitle.length >= 3) {
+    return explicitTitle;
+  }
+
+  const firstFileTitle = normalizeDraftTitleCandidate(files?.[0]?.name);
+  if (firstFileTitle.length >= 3) {
+    return firstFileTitle;
+  }
+
+  const explicitLinkLabel = normalizeDraftTitleCandidate(linkValue?.label);
+  if (explicitLinkLabel.length >= 3) {
+    return explicitLinkLabel;
+  }
+
+  const linkUrl = String(linkValue?.url || "").trim();
+  if (linkUrl) {
+    try {
+      const parsedUrl = new URL(linkUrl);
+      const pathTitle = normalizeDraftTitleCandidate(
+        decodeURIComponent(
+          parsedUrl.pathname.split("/").filter(Boolean).pop() || "",
+        ),
+      );
+      if (pathTitle.length >= 3) {
+        return pathTitle;
+      }
+      const hostTitle = normalizeDraftTitleCandidate(
+        parsedUrl.hostname.replace(/^www\./i, ""),
+      );
+      if (hostTitle.length >= 3) {
+        return hostTitle;
+      }
+    } catch {
+      // The URL field will be validated before creating a draft from a link.
+    }
+  }
+
+  return "Nuevo activo";
+}
+
+function buildPendingFileId(file) {
+  return [file?.name || "archivo", file?.size || 0, file?.lastModified || 0].join(
+    "::",
+  );
+}
+
+function deriveSourceType(baseSourceType, fileCount, linkCount) {
+  const hasFiles = Number(fileCount) > 0;
+  const hasLinks = Number(linkCount) > 0;
+
+  if (hasFiles && hasLinks) return "mixed";
+  if (hasFiles) return "file";
+  if (hasLinks) return "url";
+  return baseSourceType || "mixed";
 }
 
 function buildFiltersForApi(filters, activeTab) {
@@ -424,11 +516,6 @@ function AssetListCard({ asset, isSelected, onSelect }) {
           ))}
         </div>
       ) : null}
-      {asset.isExpired ? (
-        <div className="enablement-library-card-tags">
-          <span>Vencido</span>
-        </div>
-      ) : null}
       <div className="enablement-library-card-actions">
         <small>{asset.usageCount} uso(s)</small>
       </div>
@@ -591,13 +678,9 @@ export default function CommercialEnablementPage({ currentUser }) {
     useState("active");
   const [openCatalogAdminMenuId, setOpenCatalogAdminMenuId] = useState(null);
   const [openGovernanceMenuId, setOpenGovernanceMenuId] = useState(null);
-  const [linkDraft, setLinkDraft] = useState({
-    url: "",
-    linkType: "external",
-    label: "",
-    description: "",
-    isPrimary: false,
-  });
+  const [linkDraft, setLinkDraft] = useState(emptyLinkDraft);
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [pendingLinks, setPendingLinks] = useState([]);
   const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
   const [governance, setGovernance] = useState(EMPTY_GOVERNANCE);
   const [publishSectionErrors, setPublishSectionErrors] = useState(
@@ -832,30 +915,11 @@ export default function CommercialEnablementPage({ currentUser }) {
   }, [openCatalogAdminMenuId]);
 
   useEffect(() => {
-    const formElement = assetEditorFormRef.current;
-    if (!formElement) return undefined;
-
-    function handleNativeAssetSubmit(event) {
-      event.preventDefault();
-      void handleSaveAsset();
-    }
-
-    formElement.addEventListener("submit", handleNativeAssetSubmit);
-    return () => {
-      formElement.removeEventListener("submit", handleNativeAssetSubmit);
-    };
-  });
-
-  useEffect(() => {
     setDraft(buildDraftFromAsset(selectedAsset));
     setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
-    setLinkDraft({
-      url: "",
-      linkType: "external",
-      label: "",
-      description: "",
-      isPrimary: false,
-    });
+    setLinkDraft(emptyLinkDraft());
+    setPendingFiles([]);
+    setPendingLinks([]);
   }, [selectedAsset]);
 
   useEffect(() => {
@@ -1065,22 +1129,24 @@ export default function CommercialEnablementPage({ currentUser }) {
   async function handleSaveAsset(event) {
     event?.preventDefault?.();
     setAssetSaveFeedback(null);
-    const payload = {
+    const isCreating = !selectedAsset?.publicId;
+    const pendingFilesToUpload = isCreating ? pendingFiles : [];
+    const pendingLinksToCreate = isCreating ? pendingLinks : [];
+    const payload = buildAssetPayload({
       ...draft,
-      isInternal: draft.visibilityLevel !== "client_safe",
-      themeTags: uniqueStrings(draft.themeTags),
-      personaTags: uniqueStrings(draft.personaTags),
-      recommendedRoleTags: uniqueStrings(draft.recommendedRoleTags),
-      validFrom: draft.validFrom || null,
-      validUntil: draft.validUntil || null,
-    };
+      sourceType: deriveSourceType(
+        draft.sourceType,
+        pendingFilesToUpload.length,
+        pendingLinksToCreate.length,
+      ),
+    });
 
     const nextPublishSectionErrors =
       payload.status === "published"
         ? getPublishSectionErrors(payload)
         : EMPTY_PUBLISH_SECTION_ERRORS;
 
-    if (!payload.title) {
+    if (!payload.title || payload.title.length < 3) {
       setSuccess("");
       setError(ASSET_FIELD_MESSAGES.title);
       setAssetSaveFeedback({
@@ -1094,7 +1160,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       return;
     }
 
-    if (!payload.summary) {
+    if (payload.status === "published" && !payload.summary) {
       setSuccess("");
       setError(ASSET_FIELD_MESSAGES.summary);
       setAssetSaveFeedback({
@@ -1150,11 +1216,116 @@ export default function CommercialEnablementPage({ currentUser }) {
     if (saved?.publicId) {
       setSelectedAssetPublicId(saved.publicId);
     }
+
+    if (!saved?.publicId || !isCreating) {
+      return;
+    }
+
+    if (!pendingFilesToUpload.length && !pendingLinksToCreate.length) {
+      return;
+    }
+
+    setWorking(true);
+
+    const failedFiles = [];
+    const failedLinks = [];
+
+    try {
+      for (const pendingFile of pendingFilesToUpload) {
+        const formData = new FormData();
+        formData.append("files", pendingFile.file);
+
+        try {
+          await api.post(
+            `/api/commercial-enablement/assets/${saved.publicId}/files`,
+            formData,
+            {
+              headers: { "Content-Type": "multipart/form-data" },
+            },
+          );
+        } catch {
+          failedFiles.push(pendingFile);
+        }
+      }
+
+      for (const pendingLink of pendingLinksToCreate) {
+        try {
+          await api.post(
+            `/api/commercial-enablement/assets/${saved.publicId}/links`,
+            {
+              url: pendingLink.url,
+              linkType: pendingLink.linkType,
+              label: pendingLink.label,
+              description: pendingLink.description,
+              isPrimary: pendingLink.isPrimary,
+            },
+          );
+        } catch {
+          failedLinks.push(pendingLink);
+        }
+      }
+
+      await Promise.all([
+        loadBootstrap(),
+        loadAssets(activeTab, activeFilters),
+        loadAssetDetail(saved.publicId),
+        activeTab === "governance" ? loadGovernance() : Promise.resolve(),
+      ]);
+
+      setPendingFiles(failedFiles);
+      setPendingLinks(failedLinks);
+      setLinkDraft(emptyLinkDraft());
+
+      const attachedCount =
+        pendingFilesToUpload.length +
+        pendingLinksToCreate.length -
+        failedFiles.length -
+        failedLinks.length;
+
+      if (!failedFiles.length && !failedLinks.length) {
+        setAssetSaveFeedback({
+          tone: "success",
+          message:
+            attachedCount > 0
+              ? `Activo creado con ${attachedCount} recurso(s) adjuntos`
+              : "Activo creado",
+        });
+        return;
+      }
+
+      setAssetSaveFeedback({
+        tone: "error",
+        message:
+          attachedCount > 0
+            ? `Activo creado y ${attachedCount} recurso(s) adjuntos, pero ${failedFiles.length + failedLinks.length} quedaron pendientes`
+            : `Activo creado, pero ${failedFiles.length + failedLinks.length} recurso(s) quedaron pendientes`,
+      });
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function handleUploadFiles(event) {
+    const inputElement = event.target;
     const files = Array.from(event.target.files || []);
-    if (!files.length || !selectedAsset?.publicId) return;
+    if (!files.length) return;
+
+    if (!selectedAsset?.publicId) {
+      setPendingFiles((current) => [
+        ...current,
+        ...files.map((file) => ({
+          id: buildPendingFileId(file),
+          file,
+        })),
+      ]);
+      inputElement.value = "";
+      setAssetSaveFeedback({
+        tone: "success",
+        message: `${files.length} archivo(s) listo(s) para guardarse con el activo`,
+      });
+      return;
+    }
+
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
     await runAssetMutation(
@@ -1168,16 +1339,54 @@ export default function CommercialEnablementPage({ currentUser }) {
         ),
       "Archivos cargados",
     );
-    event.target.value = "";
+    inputElement.value = "";
   }
 
   async function handleCreateLink(event) {
-    event.preventDefault();
-    if (!selectedAsset?.publicId) return;
+    event?.preventDefault?.();
+    const normalizedUrl = String(linkDraft.url || "").trim();
+    if (!normalizedUrl) {
+      setError("Debes indicar una URL valida");
+      setAssetSaveFeedback({
+        tone: "error",
+        message: "Debes indicar una URL valida",
+      });
+      return;
+    }
+
+    try {
+      new URL(normalizedUrl);
+    } catch {
+      setError("Debes indicar una URL valida");
+      setAssetSaveFeedback({
+        tone: "error",
+        message: "Debes indicar una URL valida",
+      });
+      return;
+    }
+
     const payload = {
       ...linkDraft,
-      label: linkDraft.label || linkDraft.url,
+      url: normalizedUrl,
+      label: linkDraft.label || normalizedUrl,
     };
+
+    if (!selectedAsset?.publicId) {
+      setPendingLinks((current) => [
+        ...current,
+        {
+          id: `${Date.now()}-${current.length}`,
+          ...payload,
+        },
+      ]);
+      setLinkDraft(emptyLinkDraft());
+      setAssetSaveFeedback({
+        tone: "success",
+        message: "URL lista para guardarse con el activo",
+      });
+      return;
+    }
+
     const result = await runAssetMutation(
       () =>
         api.post(
@@ -1187,14 +1396,20 @@ export default function CommercialEnablementPage({ currentUser }) {
       "URL agregada",
     );
     if (result) {
-      setLinkDraft({
-        url: "",
-        linkType: "external",
-        label: "",
-        description: "",
-        isPrimary: false,
-      });
+      setLinkDraft(emptyLinkDraft());
     }
+  }
+
+  function handleRemovePendingFile(fileId) {
+    setPendingFiles((current) =>
+      current.filter((pendingFile) => pendingFile.id !== fileId),
+    );
+  }
+
+  function handleRemovePendingLink(linkId) {
+    setPendingLinks((current) =>
+      current.filter((pendingLink) => pendingLink.id !== linkId),
+    );
   }
 
   async function handleCreateCatalogEntry(event, catalogType) {
@@ -1557,6 +1772,13 @@ export default function CommercialEnablementPage({ currentUser }) {
       : activeTab === "manage"
         ? [primaryMetric, ...usageMetrics]
         : usageMetrics;
+  const displayedFiles = selectedAsset?.publicId
+    ? selectedAsset.files || []
+    : pendingFiles;
+  const displayedLinks = selectedAsset?.publicId
+    ? selectedAsset.links || []
+    : pendingLinks;
+  const pendingResourceCount = pendingFiles.length + pendingLinks.length;
 
   return (
     <div className="enablement-library-page">
@@ -1851,6 +2073,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                       setDraft(emptyDraft());
                       setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
                       setAssetSaveFeedback(null);
+                      setPendingFiles([]);
+                      setPendingLinks([]);
+                      setLinkDraft(emptyLinkDraft());
                       setSuccess("");
                       setError("");
                     }}
@@ -1913,237 +2138,441 @@ export default function CommercialEnablementPage({ currentUser }) {
               <form
                 ref={assetEditorFormRef}
                 className="enablement-library-editor"
+                onSubmit={handleSaveAsset}
               >
-                <div className="enablement-library-form-grid">
-                  <label>
-                    Titulo
-                    <input
-                      ref={titleInputRef}
-                      required
-                      minLength={3}
-                      value={draft.title}
-                      onChange={(event) =>
-                        updateDraftField("title", event.target.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Tipo de activo
-                    <select
-                      value={draft.assetTypeCode}
-                      onChange={(event) =>
-                        updateDraftField("assetTypeCode", event.target.value)
-                      }
-                    >
-                      {(catalogs.asset_type || []).map((option) => (
-                        <option key={option.code} value={option.code}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Visibilidad
-                    <select
-                      value={draft.visibilityLevel}
-                      onChange={(event) =>
-                        updateDraftField("visibilityLevel", event.target.value)
-                      }
-                    >
-                      {(catalogs.visibility || []).map((option) => (
-                        <option key={option.code} value={option.code}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Audiencia
-                    <select
-                      value={draft.audienceCode}
-                      onChange={(event) =>
-                        updateDraftField("audienceCode", event.target.value)
-                      }
-                    >
-                      {(catalogs.audience || []).map((option) => (
-                        <option key={option.code} value={option.code}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Estado
-                    <select
-                      value={draft.status}
-                      onChange={(event) =>
-                        updateDraftField("status", event.target.value)
-                      }
-                    >
-                      <option value="draft">Borrador</option>
-                      <option value="published">Vigente</option>
-                      <option value="obsolete">Obsoleto</option>
-                      <option value="archived">Archivado</option>
-                    </select>
-                  </label>
-                  <label>
-                    Idioma
-                    <select
-                      value={draft.languageCode}
-                      onChange={(event) =>
-                        updateDraftField("languageCode", event.target.value)
-                      }
-                    >
-                      {(
-                        catalogs.language || [{ code: "es", name: "Espanol" }]
-                      ).map((option) => (
-                        <option key={option.code} value={option.code}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Vigente desde
-                    <input
-                      type="date"
-                      value={draft.validFrom}
-                      onChange={(event) =>
-                        updateDraftField("validFrom", event.target.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Vigente hasta
-                    <input
-                      type="date"
-                      value={draft.validUntil}
-                      onChange={(event) =>
-                        updateDraftField("validUntil", event.target.value)
-                      }
-                    />
-                  </label>
-                </div>
-                <label>
-                  Resumen comercial
-                  <textarea
-                    ref={summaryInputRef}
-                    rows={3}
-                    value={draft.summary}
-                    onChange={(event) =>
-                      updateDraftField("summary", event.target.value)
-                    }
-                  />
-                </label>
-                <label>
-                  Indicaciones internas
-                  <textarea
-                    rows={5}
-                    value={draft.internalDescription}
-                    onChange={(event) =>
-                      updateDraftField(
-                        "internalDescription",
-                        event.target.value,
-                      )
-                    }
-                  />
-                </label>
-                <OptionPicker
-                  title="Fabricante"
-                  sectionRef={manufacturerSectionRef}
-                  options={catalogs.manufacturer}
-                  values={draft.manufacturerCodes}
-                  onToggle={(value) =>
-                    toggleDraftValue("manufacturerCodes", value)
-                  }
-                  requirementHint={catalogRequirementHint}
-                  invalidMessage={
-                    publishSectionErrors.catalogContext
-                      ? PUBLISH_SECTION_MESSAGES.catalogContext
-                      : ""
-                  }
-                />
-                <OptionPicker
-                  title="Solucion"
-                  options={catalogs.solution}
-                  values={draft.solutionCodes}
-                  onToggle={(value) => toggleDraftValue("solutionCodes", value)}
-                  requirementHint={catalogRequirementHint}
-                  invalidMessage={
-                    publishSectionErrors.catalogContext
-                      ? PUBLISH_SECTION_MESSAGES.catalogContext
-                      : ""
-                  }
-                />
-                <OptionPicker
-                  title="Industria"
-                  options={catalogs.industry}
-                  values={draft.industryCodes}
-                  onToggle={(value) => toggleDraftValue("industryCodes", value)}
-                />
-                <label>
-                  Etapas relacionadas
-                  <input
-                    value={joinCommaValues(draft.stageCodes)}
-                    onChange={(event) =>
-                      updateDraftField(
-                        "stageCodes",
-                        splitCommaValues(event.target.value),
-                      )
-                    }
-                    placeholder="contacto_inicial, desarrollo, cotizacion"
-                  />
-                </label>
-                <label>
-                  Temas
-                  <input
-                    value={joinCommaValues(draft.themeTags)}
-                    onChange={(event) =>
-                      updateDraftField(
-                        "themeTags",
-                        splitCommaValues(event.target.value),
-                      )
-                    }
-                    placeholder="presentacion, diferenciacion, discovery"
-                  />
-                </label>
-                <label>
-                  Personas / roles
-                  <input
-                    value={joinCommaValues(draft.personaTags)}
-                    onChange={(event) =>
-                      updateDraftField(
-                        "personaTags",
-                        splitCommaValues(event.target.value),
-                      )
-                    }
-                    placeholder="cfo, ti, operaciones"
-                  />
-                </label>
-                <label>
-                  Roles recomendados
-                  <input
-                    value={joinCommaValues(draft.recommendedRoleTags)}
-                    onChange={(event) =>
-                      updateDraftField(
-                        "recommendedRoleTags",
-                        splitCommaValues(event.target.value),
-                      )
-                    }
-                    placeholder="seller, manager, presales"
-                  />
-                </label>
-                <div className="enablement-library-check-grid">
-                  <label className="enablement-library-check">
-                    <input
-                      type="checkbox"
-                      checked={draft.isDownloadable}
-                      onChange={(event) =>
-                        updateDraftField("isDownloadable", event.target.checked)
-                      }
-                    />
-                    Permitir descarga
-                  </label>
+                <div className="enablement-library-editor-shell">
+                  <section className="enablement-library-editor-section is-primary">
+                    <div className="enablement-library-editor-section-header">
+                      <div>
+                        <span className="enablement-library-editor-kicker">
+                          Base
+                        </span>
+                        <h3>Informacion principal</h3>
+                        <p>
+                          Define el material, su estado y a quien va dirigido.
+                        </p>
+                      </div>
+                      <div className="enablement-library-card-topline">
+                        <span>{draft.status || "draft"}</span>
+                        <span>{draft.visibilityLevel || "internal_sales"}</span>
+                        <span>{draft.audienceCode || "seller"}</span>
+                      </div>
+                    </div>
+                    <div className="enablement-library-form-grid enablement-library-editor-meta-grid">
+                      <label className="enablement-library-field-span-2">
+                        Titulo
+                        <input
+                          ref={titleInputRef}
+                          required
+                          minLength={3}
+                          value={draft.title}
+                          onChange={(event) =>
+                            updateDraftField("title", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Tipo de activo
+                        <select
+                          value={draft.assetTypeCode}
+                          onChange={(event) =>
+                            updateDraftField("assetTypeCode", event.target.value)
+                          }
+                        >
+                          {(catalogs.asset_type || []).map((option) => (
+                            <option key={option.code} value={option.code}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Estado
+                        <select
+                          value={draft.status}
+                          onChange={(event) =>
+                            updateDraftField("status", event.target.value)
+                          }
+                        >
+                          <option value="draft">Borrador</option>
+                          <option value="published">Vigente</option>
+                          <option value="obsolete">Obsoleto</option>
+                          <option value="archived">Archivado</option>
+                        </select>
+                      </label>
+                      <label>
+                        Visibilidad
+                        <select
+                          value={draft.visibilityLevel}
+                          onChange={(event) =>
+                            updateDraftField("visibilityLevel", event.target.value)
+                          }
+                        >
+                          {(catalogs.visibility || []).map((option) => (
+                            <option key={option.code} value={option.code}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Audiencia
+                        <select
+                          value={draft.audienceCode}
+                          onChange={(event) =>
+                            updateDraftField("audienceCode", event.target.value)
+                          }
+                        >
+                          {(catalogs.audience || []).map((option) => (
+                            <option key={option.code} value={option.code}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Idioma
+                        <select
+                          value={draft.languageCode}
+                          onChange={(event) =>
+                            updateDraftField("languageCode", event.target.value)
+                          }
+                        >
+                          {(
+                            catalogs.language || [{ code: "es", name: "Espanol" }]
+                          ).map((option) => (
+                            <option key={option.code} value={option.code}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="enablement-library-editor-section">
+                    <div className="enablement-library-editor-section-header">
+                      <div>
+                        <span className="enablement-library-editor-kicker">
+                          Mensaje
+                        </span>
+                        <h3>Contenido del activo</h3>
+                        <p>
+                          Resume el valor comercial y agrega notas internas para el equipo.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="enablement-library-form-grid enablement-library-editor-copy-grid">
+                      <label>
+                        Resumen comercial
+                        <textarea
+                          ref={summaryInputRef}
+                          rows={4}
+                          value={draft.summary}
+                          onChange={(event) =>
+                            updateDraftField("summary", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Indicaciones internas
+                        <textarea
+                          rows={6}
+                          value={draft.internalDescription}
+                          onChange={(event) =>
+                            updateDraftField(
+                              "internalDescription",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="enablement-library-editor-section">
+                    <div className="enablement-library-editor-section-header">
+                      <div>
+                        <span className="enablement-library-editor-kicker">
+                          Contexto
+                        </span>
+                        <h3>Clasificacion comercial</h3>
+                        <p>
+                          Relaciona el material con fabricantes, soluciones, industrias y momentos de uso.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="enablement-library-editor-context-grid">
+                      <OptionPicker
+                        title="Fabricante"
+                        sectionRef={manufacturerSectionRef}
+                        options={catalogs.manufacturer}
+                        values={draft.manufacturerCodes}
+                        onToggle={(value) =>
+                          toggleDraftValue("manufacturerCodes", value)
+                        }
+                        requirementHint={catalogRequirementHint}
+                        invalidMessage={
+                          publishSectionErrors.catalogContext
+                            ? PUBLISH_SECTION_MESSAGES.catalogContext
+                            : ""
+                        }
+                      />
+                      <OptionPicker
+                        title="Solucion"
+                        options={catalogs.solution}
+                        values={draft.solutionCodes}
+                        onToggle={(value) =>
+                          toggleDraftValue("solutionCodes", value)
+                        }
+                        requirementHint={catalogRequirementHint}
+                        invalidMessage={
+                          publishSectionErrors.catalogContext
+                            ? PUBLISH_SECTION_MESSAGES.catalogContext
+                            : ""
+                        }
+                      />
+                      <OptionPicker
+                        title="Industria"
+                        options={catalogs.industry}
+                        values={draft.industryCodes}
+                        onToggle={(value) =>
+                          toggleDraftValue("industryCodes", value)
+                        }
+                      />
+                    </div>
+                    <div className="enablement-library-form-grid">
+                      <label>
+                        Etapas relacionadas
+                        <input
+                          value={joinCommaValues(draft.stageCodes)}
+                          onChange={(event) =>
+                            updateDraftField(
+                              "stageCodes",
+                              splitCommaValues(event.target.value),
+                            )
+                          }
+                          placeholder="contacto_inicial, desarrollo, cotizacion"
+                        />
+                      </label>
+                      <label>
+                        Temas
+                        <input
+                          value={joinCommaValues(draft.themeTags)}
+                          onChange={(event) =>
+                            updateDraftField(
+                              "themeTags",
+                              splitCommaValues(event.target.value),
+                            )
+                          }
+                          placeholder="presentacion, diferenciacion, discovery"
+                        />
+                      </label>
+                      <label>
+                        Personas / roles
+                        <input
+                          value={joinCommaValues(draft.personaTags)}
+                          onChange={(event) =>
+                            updateDraftField(
+                              "personaTags",
+                              splitCommaValues(event.target.value),
+                            )
+                          }
+                          placeholder="cfo, ti, operaciones"
+                        />
+                      </label>
+                      <label>
+                        Roles recomendados
+                        <input
+                          value={joinCommaValues(draft.recommendedRoleTags)}
+                          onChange={(event) =>
+                            updateDraftField(
+                              "recommendedRoleTags",
+                              splitCommaValues(event.target.value),
+                            )
+                          }
+                          placeholder="seller, manager, presales"
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="enablement-library-editor-section is-accent">
+                    <div className="enablement-library-editor-section-header">
+                      <div>
+                        <span className="enablement-library-editor-kicker">
+                          Entrega
+                        </span>
+                        <h3>Distribucion y recursos</h3>
+                        <p>
+                          Define si el material es descargable y agrega archivos o URLs desde este mismo bloque.
+                        </p>
+                      </div>
+                      <div className="enablement-library-card-topline">
+                        <span>
+                          {selectedAsset?.title || "Se guardaran junto con el activo"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="enablement-library-check-grid">
+                      <label className="enablement-library-check">
+                        <input
+                          type="checkbox"
+                          checked={draft.isDownloadable}
+                          onChange={(event) =>
+                            updateDraftField("isDownloadable", event.target.checked)
+                          }
+                        />
+                        Permitir descarga
+                      </label>
+                    </div>
+                    {!selectedAsset ? (
+                      <p className="enablement-library-muted">
+                        Agrega archivos y URLs al mismo formulario. Cuando guardes,
+                        el activo se creara y estos recursos se registraran en la misma accion.
+                      </p>
+                    ) : null}
+                    <div className="enablement-library-stack">
+                      <label className="enablement-library-upload-field">
+                        <span>Subir archivos</span>
+                        <input type="file" multiple onChange={handleUploadFiles} />
+                      </label>
+                      <div className="enablement-library-mini-list">
+                        {displayedFiles.length ? (
+                          displayedFiles.map((file) => (
+                            <div
+                              key={file.publicId || file.id}
+                              className="enablement-library-resource-row"
+                            >
+                              <div>
+                                <strong>
+                                  {file.originalFileName || file.file?.name}
+                                </strong>
+                                <span>
+                                  {file.mimeType || file.file?.type || "Pendiente"}
+                                </span>
+                              </div>
+                              <div className="enablement-library-inline-actions">
+                                {selectedAsset ? (
+                                  <button
+                                    type="button"
+                                    className="enablement-library-inline-button"
+                                    disabled={file.isAvailable === false}
+                                    onClick={() =>
+                                      selectedAsset &&
+                                      handleOpenFile(selectedAsset.publicId, file)
+                                    }
+                                  >
+                                    {file.isAvailable === false
+                                      ? "No disponible"
+                                      : "Abrir"}
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={() =>
+                                    selectedAsset
+                                      ? handleDeleteFile(file.publicId)
+                                      : handleRemovePendingFile(file.id)
+                                  }
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="enablement-library-muted">
+                            Sin archivos cargados.
+                          </p>
+                        )}
+                      </div>
+                      <div className="enablement-library-link-form">
+                        <input
+                          value={linkDraft.url}
+                          onChange={(event) =>
+                            setLinkDraft((current) => ({
+                              ...current,
+                              url: event.target.value,
+                            }))
+                          }
+                          placeholder="https://..."
+                        />
+                        <input
+                          value={linkDraft.label}
+                          onChange={(event) =>
+                            setLinkDraft((current) => ({
+                              ...current,
+                              label: event.target.value,
+                            }))
+                          }
+                          placeholder="Etiqueta visible"
+                        />
+                        <input
+                          value={linkDraft.description}
+                          onChange={(event) =>
+                            setLinkDraft((current) => ({
+                              ...current,
+                              description: event.target.value,
+                            }))
+                          }
+                          placeholder="Descripcion corta"
+                        />
+                        <button
+                          type="button"
+                          className="enablement-library-action subtle"
+                          onClick={handleCreateLink}
+                        >
+                          {selectedAsset ? "Agregar URL" : "Preparar URL"}
+                        </button>
+                      </div>
+                      <div className="enablement-library-mini-list">
+                        {displayedLinks.length ? (
+                          displayedLinks.map((link) => (
+                            <div
+                              key={link.publicId || link.id}
+                              className="enablement-library-resource-row"
+                            >
+                              <div>
+                                <strong>{link.label}</strong>
+                                <span>{link.url}</span>
+                              </div>
+                              <div className="enablement-library-inline-actions">
+                                {selectedAsset ? (
+                                  <button
+                                    type="button"
+                                    className="enablement-library-inline-button"
+                                    onClick={() =>
+                                      selectedAsset &&
+                                      handleOpenLink(selectedAsset.publicId, link)
+                                    }
+                                  >
+                                    Abrir URL
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={() =>
+                                    selectedAsset
+                                      ? handleDeleteLink(link.publicId)
+                                      : handleRemovePendingLink(link.id)
+                                  }
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="enablement-library-muted">
+                            Sin URLs registradas.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </section>
                 </div>
                 <div className="enablement-library-editor-actions">
                   <button
@@ -2155,132 +2584,13 @@ export default function CommercialEnablementPage({ currentUser }) {
                       ? "Guardando..."
                       : selectedAsset
                         ? "Guardar cambios"
-                        : "Crear activo"}
+                        : pendingResourceCount > 0
+                          ? `Crear activo con ${pendingResourceCount} recurso(s)`
+                          : "Crear activo"}
                   </button>
                 </div>
               </form>
             </section>
-
-            {selectedAsset ? (
-              <section className="enablement-library-panel">
-                <div className="enablement-library-panel-header">
-                  <h2>Archivos y URLs</h2>
-                  <span>{selectedAsset.title}</span>
-                </div>
-                <div className="enablement-library-stack">
-                  <label className="enablement-library-upload-field">
-                    <span>Subir archivos</span>
-                    <input type="file" multiple onChange={handleUploadFiles} />
-                  </label>
-                  <div className="enablement-library-mini-list">
-                    {selectedAsset.files.map((file) => (
-                      <div
-                        key={file.publicId}
-                        className="enablement-library-resource-row"
-                      >
-                        <div>
-                          <strong>{file.originalFileName}</strong>
-                          <span>{file.mimeType}</span>
-                        </div>
-                        <div className="enablement-library-inline-actions">
-                          <button
-                            type="button"
-                            className="enablement-library-inline-button"
-                            disabled={file.isAvailable === false}
-                            onClick={() =>
-                              handleOpenFile(selectedAsset.publicId, file)
-                            }
-                          >
-                            {file.isAvailable === false
-                              ? "No disponible"
-                              : "Abrir"}
-                          </button>
-                          <button
-                            type="button"
-                            className="enablement-library-inline-button"
-                            onClick={() => handleDeleteFile(file.publicId)}
-                          >
-                            Quitar
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <form
-                    className="enablement-library-link-form"
-                    onSubmit={handleCreateLink}
-                  >
-                    <input
-                      value={linkDraft.url}
-                      onChange={(event) =>
-                        setLinkDraft((current) => ({
-                          ...current,
-                          url: event.target.value,
-                        }))
-                      }
-                      placeholder="https://..."
-                    />
-                    <input
-                      value={linkDraft.label}
-                      onChange={(event) =>
-                        setLinkDraft((current) => ({
-                          ...current,
-                          label: event.target.value,
-                        }))
-                      }
-                      placeholder="Etiqueta visible"
-                    />
-                    <input
-                      value={linkDraft.description}
-                      onChange={(event) =>
-                        setLinkDraft((current) => ({
-                          ...current,
-                          description: event.target.value,
-                        }))
-                      }
-                      placeholder="Descripcion corta"
-                    />
-                    <button
-                      type="submit"
-                      className="enablement-library-action subtle"
-                    >
-                      Agregar URL
-                    </button>
-                  </form>
-                  <div className="enablement-library-mini-list">
-                    {selectedAsset.links.map((link) => (
-                      <div
-                        key={link.publicId}
-                        className="enablement-library-resource-row"
-                      >
-                        <div>
-                          <strong>{link.label}</strong>
-                          <span>{link.url}</span>
-                        </div>
-                        <div className="enablement-library-inline-actions">
-                          <button
-                            type="button"
-                            className="enablement-library-inline-button"
-                            onClick={() =>
-                              handleOpenLink(selectedAsset.publicId, link)
-                            }
-                          >
-                            Abrir
-                          </button>
-                          <button
-                            type="button"
-                            className="enablement-library-inline-button"
-                            onClick={() => handleDeleteLink(link.publicId)}
-                          >
-                            Quitar
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-            ) : null}
           </section>
         </div>
       ) : null}
@@ -2326,7 +2636,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <div className="enablement-library-panel-header">
                   <h2>Catalogos administrables</h2>
                   <div className="enablement-library-stack">
-                    <span>Crea opciones para Fabricante y Solucion</span>
+                    <span>Crea opciones para Fabricante, Solucion e Industria</span>
                     <div className="enablement-library-inline-actions">
                       <button
                         type="button"
