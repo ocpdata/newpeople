@@ -3,6 +3,7 @@ import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
 const PROPOSE_ANSWERS_TIMEOUT_MS = 60000;
+const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 
 function normalizeText(value) {
   return String(value || "")
@@ -1929,6 +1930,48 @@ export function useOpportunitiesPage({
     await load();
   }
 
+  function resolveStageChangeTarget({ mode, targetStageId = null }) {
+    const orderedStages = [...(commercialContext?.stages || [])].sort(
+      (left, right) => Number(left.order || 0) - Number(right.order || 0),
+    );
+    const currentStageIndex = orderedStages.findIndex(
+      (stage) => Number(stage.id) === Number(currentCommercialStage?.id),
+    );
+    if (currentStageIndex === -1) {
+      setError("No fue posible determinar la etapa actual");
+      return { ok: false, targetStage: null };
+    }
+
+    const targetStage =
+      mode === "advance" || mode === "bypass"
+        ? orderedStages[currentStageIndex + 1] || null
+        : targetStageId
+          ? orderedStages.find(
+              (stage) => Number(stage.id) === Number(targetStageId),
+            ) || null
+          : orderedStages[currentStageIndex - 1] || null;
+
+    if (!targetStage) {
+      setError(
+        mode === "retreat"
+          ? "La oportunidad ya esta en la primera etapa operativa"
+          : "La oportunidad ya esta en la ultima etapa operativa",
+      );
+      return { ok: false, targetStage: null };
+    }
+
+    if (
+      mode === "retreat" &&
+      Number(targetStage.order || 0) >=
+        Number(currentCommercialStage?.order || 0)
+    ) {
+      setError("Selecciona una etapa anterior para regresar la oportunidad");
+      return { ok: false, targetStage: null };
+    }
+
+    return { ok: true, targetStage };
+  }
+
   async function handleCommercialStageSelect(salesStageId) {
     const nextStageId = String(salesStageId || "");
     if (!editingOpportunityId || !nextStageId) return;
@@ -1990,43 +2033,11 @@ export function useOpportunitiesPage({
     reason = null,
     targetStageId = null,
   }) {
-    const orderedStages = [...(commercialContext?.stages || [])].sort(
-      (left, right) => Number(left.order || 0) - Number(right.order || 0),
-    );
-    const currentStageIndex = orderedStages.findIndex(
-      (stage) => Number(stage.id) === Number(currentCommercialStage?.id),
-    );
-    if (currentStageIndex === -1) {
-      setError("No fue posible determinar la etapa actual");
+    const stageResolution = resolveStageChangeTarget({ mode, targetStageId });
+    if (!stageResolution.ok) {
       return false;
     }
-
-    const targetStage =
-      mode === "advance" || mode === "bypass"
-        ? orderedStages[currentStageIndex + 1] || null
-        : targetStageId
-          ? orderedStages.find(
-              (stage) => Number(stage.id) === Number(targetStageId),
-            ) || null
-          : orderedStages[currentStageIndex - 1] || null;
-
-    if (!targetStage) {
-      setError(
-        mode === "retreat"
-          ? "La oportunidad ya esta en la primera etapa operativa"
-          : "La oportunidad ya esta en la ultima etapa operativa",
-      );
-      return false;
-    }
-
-    if (
-      mode === "retreat" &&
-      Number(targetStage.order || 0) >=
-        Number(currentCommercialStage?.order || 0)
-    ) {
-      setError("Selecciona una etapa anterior para regresar la oportunidad");
-      return false;
-    }
+    const { targetStage } = stageResolution;
 
     const nextStageId = String(targetStage.id);
     const cachedStageView = commercialStageViewsById[nextStageId];
@@ -2200,6 +2211,7 @@ export function useOpportunitiesPage({
       const { data } = await api.post(
         `/api/opportunities/${editingOpportunityId}/validate-current-stage`,
         {},
+        { timeout: VALIDATE_STAGE_TIMEOUT_MS },
       );
 
       await refreshOpportunityCommercialView();
@@ -2209,21 +2221,19 @@ export function useOpportunitiesPage({
       const advancedStageName = String(
         data?.advancedSalesStage?.name || "",
       ).trim();
-      if (!data?.autoAdvanced) {
-        setStageValidationResult({
-          message:
-            data?.message ||
+      setStageValidationResult({
+        message:
+          data?.message ||
+          `Etapa ${currentCommercialStage?.name || "actual"} validada`,
+        feedbackMessage: formatStageValidationFeedback(
+          data?.validation,
+          data?.message ||
             `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-          feedbackMessage: formatStageValidationFeedback(
-            data?.validation,
-            data?.message ||
-              `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-          ),
-          validation: data?.validation || null,
-          autoAdvanced: false,
-          advancedSalesStage: null,
-        });
-      }
+        ),
+        validation: data?.validation || null,
+        autoAdvanced: Boolean(data?.autoAdvanced),
+        advancedSalesStage: data?.advancedSalesStage || null,
+      });
       if (validationDecision === "not_ready_to_advance") {
         setError("Validacion completada: la etapa no esta lista para avanzar.");
       } else if (validationDecision === "advance_with_caution") {
@@ -2242,6 +2252,87 @@ export function useOpportunitiesPage({
     } catch (err) {
       setError(
         getApiErrorMessage(err, "No fue posible validar la etapa actual"),
+      );
+    } finally {
+      setSavingCommercialAction("");
+    }
+  }
+
+  async function confirmValidatedStageAdvance() {
+    if (!editingOpportunityId || !commercialContext?.isSelectedStageCurrent) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setSavingCommercialAction("advance");
+    try {
+      const saved = await saveCommercialAnswers({
+        silentSuccess: true,
+        requireAnswers: false,
+      });
+      if (!saved) return;
+
+      const isWaitingStage =
+        String(
+          currentCommercialStage?.code || currentCommercialStage?.name || "",
+        )
+          .trim()
+          .toLowerCase() === "waiting";
+
+      if (isWaitingStage) {
+        const { data } = await api.post(
+          `/api/opportunities/${editingOpportunityId}/commercial-close`,
+          { statusCode: "ganada", reason: null },
+        );
+
+        setStageValidationResult(null);
+        await refreshOpportunityCommercialView();
+        setSuccess(data?.message || "Oportunidad marcada como ganada");
+        return;
+      }
+
+      const stageResolution = resolveStageChangeTarget({ mode: "advance" });
+      if (!stageResolution.ok) return;
+
+      const { targetStage } = stageResolution;
+      const normalizedOpportunityName = normalizeOpportunityNameValue(
+        form.name,
+      );
+      setForm((prev) =>
+        prev.name === normalizedOpportunityName
+          ? prev
+          : { ...prev, name: normalizedOpportunityName },
+      );
+
+      const payload = {
+        name: normalizedOpportunityName,
+        amountUsd: parseOpportunityAmountInput(form.amountUsd),
+        accountId: Number(form.accountId),
+        closeDate: form.closeDate,
+        contactId: Number(form.contactId),
+        salesStageId: Number(targetStage.id),
+        businessLineId: Number(form.businessLineId),
+        sellerUserId: Number(form.sellerUserId),
+        presalesUserId: form.presalesUserId
+          ? Number(form.presalesUserId)
+          : null,
+        activationStatusId: Number(form.activationStatusId),
+        stageChangeMode: "advance",
+        stageChangeReason: null,
+      };
+
+      const { data } = await api.put(
+        `/api/opportunities/${editingOpportunityId}`,
+        payload,
+      );
+
+      setStageValidationResult(null);
+      await refreshOpportunityCommercialView();
+      setSuccess(data?.message || "Oportunidad actualizada correctamente");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible confirmar el avance de etapa"),
       );
     } finally {
       setSavingCommercialAction("");
@@ -2776,6 +2867,7 @@ export function useOpportunitiesPage({
     refreshOpportunityCommercialView,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
+    confirmValidatedStageAdvance,
     handleStageBypass,
     closeStageBypassModal,
     confirmStageBypass,

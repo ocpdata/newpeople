@@ -19,6 +19,7 @@ import {
 } from "./QuotationCommercialFields";
 import { buildQuotationPrintModel } from "./quotationPrintModel";
 import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
+import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
 
@@ -30,6 +31,39 @@ function updateDraftEntry(setter, entryId, currentValue, field, value) {
       [field]: value,
     },
   }));
+}
+
+function formatQuotationDocumentSize(byteSize) {
+  const numericValue = Number(byteSize || 0);
+  if (!numericValue) return "0 KB";
+  if (numericValue >= 1024 * 1024) {
+    return `${(numericValue / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(numericValue / 1024))} KB`;
+}
+
+function formatQuotationDocumentDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("es-MX", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatSuggestedExchangeRate(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return "1.0000";
+  }
+
+  return numericValue.toFixed(4);
 }
 
 function buildBundleDraftComponents(product, providerOptions) {
@@ -731,6 +765,8 @@ function QuotationEditorContent({
   allowedActions,
   handleSaveVersion,
   handleSaveAsNewVersion,
+  handleUploadQuotationDocuments,
+  handleDownloadQuotationDocument,
   handleAction,
   sectionDraft,
   setSectionDraft,
@@ -755,6 +791,7 @@ function QuotationEditorContent({
   handleCopyEditSectionItems,
   handlePasteEditSectionItems,
   hasEditCopiedItems,
+  canCreateProviderPrices,
 }) {
   const [isSummaryDiscountInputFocused, setIsSummaryDiscountInputFocused] =
     useState(false);
@@ -773,7 +810,18 @@ function QuotationEditorContent({
     sectionId: null,
     itemId: null,
     providerId: "",
+    priceListId: "",
+    activeLists: [],
+    loadingLists: false,
     query: "",
+    isCreateMode: false,
+    creating: false,
+    createError: "",
+    createForm: {
+      code: "",
+      description: "",
+      price: "",
+    },
     loading: false,
     error: "",
     results: [],
@@ -788,7 +836,14 @@ function QuotationEditorContent({
     itemId: null,
   });
   const [isPrintPreviewModalOpen, setIsPrintPreviewModalOpen] = useState(false);
+  const [documentViewMode, setDocumentViewMode] = useState("current");
+  const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
+  const [exchangeRateFeedback, setExchangeRateFeedback] = useState("");
+  const [exchangeRateError, setExchangeRateError] = useState("");
   const newItemCodeInputRefs = useRef({});
+  const quotationDocumentsInputRef = useRef(null);
+  const exchangeRateRequestSequenceRef = useRef(0);
+  const exchangeRateManualOverrideRef = useRef(0);
   const selectedVersionSections = selectedVersion?.sections || [];
   const summaryDiscountMode =
     versionForm.summaryDiscountMode === "amount" ? "amount" : "percentage";
@@ -1093,6 +1148,15 @@ function QuotationEditorContent({
   const canCreateNewVersion = Array.isArray(allowedActions)
     ? allowedActions.some((action) => action.code === "crear_version")
     : false;
+  const currentVersionDocuments = Array.isArray(selectedVersion?.documents)
+    ? selectedVersion.documents
+    : [];
+  const allQuotationDocuments = Array.isArray(selectedVersion?.allDocuments)
+    ? selectedVersion.allDocuments
+    : [];
+  const visibleDocuments =
+    documentViewMode === "all" ? allQuotationDocuments : currentVersionDocuments;
+  const isUploadingDocuments = busyAction === "upload-quotation-documents";
 
   useEffect(() => {
     setSelectedItemIdsBySection({});
@@ -1105,7 +1169,133 @@ function QuotationEditorContent({
       sectionId: null,
       parentLocalId: "",
     });
+    setDocumentViewMode("current");
+    setIsExchangeRateLoading(false);
+    setExchangeRateFeedback("");
+    setExchangeRateError("");
+    exchangeRateRequestSequenceRef.current = 0;
+    exchangeRateManualOverrideRef.current = 0;
   }, [selectedVersion?.id]);
+
+  async function handleCommercialConditionFieldChange(field, value) {
+    if (field === "exchangeRate") {
+      exchangeRateManualOverrideRef.current =
+        exchangeRateRequestSequenceRef.current;
+      setIsExchangeRateLoading(false);
+      setExchangeRateError("");
+      setExchangeRateFeedback("");
+      setVersionForm((prev) => ({
+        ...prev,
+        exchangeRate: value,
+      }));
+      return;
+    }
+
+    if (field !== "currencyCode") {
+      setVersionForm((prev) => ({
+        ...prev,
+        [field]: value,
+      }));
+      return;
+    }
+
+    const nextCurrencyCode = String(value || "")
+      .trim()
+      .toUpperCase();
+
+    setVersionForm((prev) => ({
+      ...prev,
+      currencyCode: nextCurrencyCode,
+    }));
+    setExchangeRateError("");
+    setExchangeRateFeedback("");
+
+    const requestId = exchangeRateRequestSequenceRef.current + 1;
+    exchangeRateRequestSequenceRef.current = requestId;
+    exchangeRateManualOverrideRef.current = 0;
+
+    if (!nextCurrencyCode || nextCurrencyCode === "USD") {
+      setIsExchangeRateLoading(false);
+      setVersionForm((prev) => {
+        if (
+          String(prev.currencyCode || "")
+            .trim()
+            .toUpperCase() !== nextCurrencyCode
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          exchangeRate: "1.0000",
+        };
+      });
+      setExchangeRateFeedback("Tipo sugerido automaticamente con base USD.");
+      return;
+    }
+
+    setIsExchangeRateLoading(true);
+
+    try {
+      const { data } = await api.get("/api/quotation-exchange-rate", {
+        params: {
+          currency: nextCurrencyCode,
+        },
+      });
+
+      if (requestId !== exchangeRateRequestSequenceRef.current) {
+        return;
+      }
+      if (exchangeRateManualOverrideRef.current === requestId) {
+        return;
+      }
+
+      setVersionForm((prev) => {
+        if (
+          String(prev.currencyCode || "")
+            .trim()
+            .toUpperCase() !== nextCurrencyCode
+        ) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          exchangeRate: formatSuggestedExchangeRate(data?.exchangeRate),
+        };
+      });
+      setExchangeRateFeedback(
+        `Tipo sugerido desde Frankfurter (${data?.baseCurrency || "USD"} -> ${data?.targetCurrency || nextCurrencyCode}).`,
+      );
+      setExchangeRateError("");
+    } catch (error) {
+      if (requestId !== exchangeRateRequestSequenceRef.current) {
+        return;
+      }
+
+      setExchangeRateFeedback("");
+      setExchangeRateError(
+        getApiErrorMessage(
+          error,
+          "No fue posible obtener el tipo de cambio sugerido. Puedes capturarlo manualmente.",
+        ),
+      );
+    } finally {
+      if (requestId === exchangeRateRequestSequenceRef.current) {
+        setIsExchangeRateLoading(false);
+      }
+    }
+  }
+
+  async function handleQuotationDocumentsInputChange(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      return;
+    }
+
+    await handleUploadQuotationDocuments(files);
+    event.target.value = "";
+  }
 
   function buildSectionDisplayItems(section) {
     return [...(section?.items || [])]
@@ -1348,7 +1538,18 @@ function QuotationEditorContent({
       sectionId,
       itemId,
       providerId: String(providerId || ""),
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
       query: String(query || "").trim(),
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
       loading: false,
       error: "",
       results: [],
@@ -1362,7 +1563,18 @@ function QuotationEditorContent({
       sectionId: null,
       itemId: null,
       providerId: "",
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
       query: "",
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
       loading: false,
       error: "",
       results: [],
@@ -1495,6 +1707,75 @@ function QuotationEditorContent({
     if (!productPickerState.providerId) {
       setProductPickerState((prev) => ({
         ...prev,
+        loadingLists: false,
+        priceListId: "",
+        activeLists: [],
+        loading: false,
+        error: "",
+        results: [],
+        isCreateMode: false,
+        createError: "",
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setProductPickerState((prev) => ({
+        ...prev,
+        loadingLists: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-product-lists", {
+          params: {
+            providerId: productPickerState.providerId,
+          },
+        });
+
+        if (cancelled) return;
+        setProductPickerState((prev) => ({
+          ...prev,
+          loadingLists: false,
+          activeLists: Array.isArray(data) ? data : [],
+          priceListId:
+            Array.isArray(data) && data.length
+              ? String(data[0].id)
+              : "",
+          results: Array.isArray(data) && data.length ? prev.results : [],
+          isCreateMode: Array.isArray(data) && data.length ? prev.isCreateMode : false,
+        }));
+      } catch (error) {
+        if (cancelled) return;
+        setProductPickerState((prev) => ({
+          ...prev,
+          loadingLists: false,
+          error: getApiErrorMessage(
+            error,
+            "No fue posible cargar las listas activas del proveedor",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    productPickerState.isOpen,
+    productPickerState.providerId,
+  ]);
+
+  useEffect(() => {
+    if (!productPickerState.isOpen || productPickerState.isCreateMode) {
+      return undefined;
+    }
+
+    if (!productPickerState.providerId || !productPickerState.priceListId) {
+      setProductPickerState((prev) => ({
+        ...prev,
         loading: false,
         error: "",
         results: [],
@@ -1514,6 +1795,7 @@ function QuotationEditorContent({
         const { data } = await api.get("/api/quotation-products/search", {
           params: {
             providerId: productPickerState.providerId,
+            priceListId: productPickerState.priceListId,
             q: productPickerState.query,
             limit: 25,
           },
@@ -1544,9 +1826,100 @@ function QuotationEditorContent({
     };
   }, [
     productPickerState.isOpen,
+    productPickerState.isCreateMode,
     productPickerState.providerId,
+    productPickerState.priceListId,
     productPickerState.query,
   ]);
+
+  function handleProductPickerProviderChange(providerId) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      providerId: String(providerId || ""),
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
+      query: "",
+      isCreateMode: false,
+      createError: "",
+      error: "",
+      results: [],
+    }));
+  }
+
+  function handleProductPickerQueryChange(queryValue) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      query: queryValue,
+    }));
+  }
+
+  function openQuickCreateProduct() {
+    setProductPickerState((prev) => ({
+      ...prev,
+      isCreateMode: true,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
+    }));
+  }
+
+  function cancelQuickCreateProduct() {
+    setProductPickerState((prev) => ({
+      ...prev,
+      isCreateMode: false,
+      createError: "",
+    }));
+  }
+
+  function handleQuickCreateFieldChange(field, value) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      createForm: {
+        ...prev.createForm,
+        [field]: value,
+      },
+    }));
+  }
+
+  async function handleQuickCreateSubmit(event) {
+    event.preventDefault();
+
+    setProductPickerState((prev) => ({
+      ...prev,
+      creating: true,
+      createError: "",
+    }));
+
+    try {
+      const { data } = await api.post("/api/quotation-products", {
+        providerId: Number(productPickerState.providerId),
+        priceListId: Number(productPickerState.priceListId),
+        code: String(productPickerState.createForm.code || "").trim(),
+        description: String(productPickerState.createForm.description || ""),
+        price: Number(productPickerState.createForm.price),
+      });
+
+      if (!data?.product) {
+        throw new Error("El producto creado no fue devuelto por la API");
+      }
+
+      await handleSelectProduct(data.product);
+    } catch (error) {
+      setProductPickerState((prev) => ({
+        ...prev,
+        creating: false,
+        createError: getApiErrorMessage(
+          error,
+          "No fue posible crear el producto",
+        ),
+      }));
+      return;
+    }
+  }
 
   const activeManualBundleSection = manualBundlePickerState.sectionId
     ? selectedVersionSections.find(
@@ -1850,7 +2223,9 @@ function QuotationEditorContent({
           <div>
             <h4>Secciones iniciales</h4>
             <p className="field-hint">
-              Se enviaran junto con la creacion de la cotizacion.
+              "Precio Lista M.O." conserva la base original del proveedor y
+              "Precio de lista" muestra el valor convertido en la moneda de la
+              cotizacion.
             </p>
           </div>
           <div className="quotation-action-groups">
@@ -3205,14 +3580,97 @@ function QuotationEditorContent({
           idPrefix="edit-quotation"
           values={versionForm}
           catalogs={catalogs}
-          onFieldChange={(field, value) =>
-            setVersionForm((prev) => ({
-              ...prev,
-              [field]: value,
-            }))
-          }
+          onFieldChange={handleCommercialConditionFieldChange}
           notesRows={7}
+          showPricingHelperText={false}
+          exchangeRateLoading={isExchangeRateLoading}
+          exchangeRateFeedback={exchangeRateFeedback}
+          exchangeRateError={exchangeRateError}
         />
+      </section>
+
+      <section className="account-form-section opportunity-sales-management-section quotation-documents-section">
+        <div className="quotation-proposal-section-header quotation-documents-header">
+          <div>
+            <h4>Documentacion</h4>
+            <p className="field-hint quotation-documents-hint">
+              Adjunta documentos de soporte para esta version de la cotizacion.
+            </p>
+          </div>
+          <div className="quotation-documents-toolbar">
+            <div className="quotation-documents-view-toggle" role="tablist" aria-label="Vista de documentos">
+              <button
+                type="button"
+                className={`btn-secondary quotation-documents-view-button${documentViewMode === "current" ? " is-active" : ""}`}
+                onClick={() => setDocumentViewMode("current")}
+              >
+                Esta version
+              </button>
+              <button
+                type="button"
+                className={`btn-secondary quotation-documents-view-button${documentViewMode === "all" ? " is-active" : ""}`}
+                onClick={() => setDocumentViewMode("all")}
+              >
+                Todas las versiones
+              </button>
+            </div>
+            <input
+              ref={quotationDocumentsInputRef}
+              type="file"
+              multiple
+              className="quotation-documents-input"
+              onChange={handleQuotationDocumentsInputChange}
+            />
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={isUploadingDocuments}
+              onClick={() => quotationDocumentsInputRef.current?.click()}
+            >
+              {isUploadingDocuments ? "Cargando..." : "Agregar documentos"}
+            </button>
+          </div>
+        </div>
+
+        {visibleDocuments.length ? (
+          <div className="quotation-documents-list">
+            {visibleDocuments.map((document) => (
+              <div key={`${documentViewMode}-${document.id}`} className="quotation-document-card">
+                <div className="quotation-document-main">
+                  <div className="quotation-document-title-row">
+                    <strong>{document.originalFileName || "Documento"}</strong>
+                    {documentViewMode === "all" ? (
+                      <span className="record-id-badge">V{document.versionNumber}</span>
+                    ) : null}
+                  </div>
+                  <div className="quotation-document-meta">
+                    <span>{formatQuotationDocumentSize(document.byteSize)}</span>
+                    {document.uploadedByUserName ? (
+                      <span>{document.uploadedByUserName}</span>
+                    ) : null}
+                    {document.createdAt ? (
+                      <span>{formatQuotationDocumentDate(document.createdAt)}</span>
+                    ) : null}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={busyAction === `download-quotation-document-${document.id}`}
+                  onClick={() => handleDownloadQuotationDocument(document)}
+                >
+                  Descargar
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="quotation-documents-empty">
+            {documentViewMode === "all"
+              ? "Esta cotizacion aun no tiene documentos adjuntos."
+              : "Esta version aun no tiene documentos adjuntos."}
+          </div>
+        )}
       </section>
 
       <div className="quotation-edit-actions">
@@ -3266,138 +3724,21 @@ function QuotationEditorContent({
         </div>
       </div>
 
-      {productPickerState.isOpen ? (
-        <div className="modal-overlay" onClick={closeProductPicker}>
-          <div
-            className="modal-dialog modal-dialog-account quotation-product-picker-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="quotation-product-picker-header">
-              <div>
-                <h3 className="modal-title">Seleccionar producto</h3>
-                <p className="field-hint opportunity-modal-subtitle">
-                  Elige un proveedor activo y luego selecciona un producto para
-                  precargar la fila.
-                </p>
-              </div>
-            </div>
-
-            <div className="quotation-product-picker-filters">
-              <div className="field-group quotation-product-picker-provider">
-                <label>Proveedor</label>
-                <select
-                  value={productPickerState.providerId}
-                  onChange={(event) =>
-                    setProductPickerState((prev) => ({
-                      ...prev,
-                      providerId: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Selecciona proveedor</option>
-                  {catalogs.providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="field-group quotation-product-picker-search">
-                <label>Buscar producto</label>
-                <input
-                  autoFocus
-                  disabled={!productPickerState.providerId}
-                  placeholder={
-                    productPickerState.providerId
-                      ? "Codigo, descripcion o lista de precios"
-                      : "Selecciona primero un proveedor"
-                  }
-                  value={productPickerState.query}
-                  onChange={(event) =>
-                    setProductPickerState((prev) => ({
-                      ...prev,
-                      query: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            {productPickerState.error ? (
-              <p className="field-hint quotation-product-picker-error">
-                {productPickerState.error}
-              </p>
-            ) : null}
-
-            <div className="quotation-product-picker-results">
-              <table className="quotation-product-picker-table">
-                <thead>
-                  <tr>
-                    <th>Codigo</th>
-                    <th>Descripcion</th>
-                    <th>Fabricante</th>
-                    <th>Precio</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {!productPickerState.providerId ? (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        Selecciona un proveedor activo para ver sus productos.
-                      </td>
-                    </tr>
-                  ) : productPickerState.loading ? (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        Cargando productos...
-                      </td>
-                    </tr>
-                  ) : productPickerState.results.length ? (
-                    productPickerState.results.map((product) => (
-                      <tr key={product.id}>
-                        <td>{product.code}</td>
-                        <td>{product.description}</td>
-                        <td>{product.providerName}</td>
-                        <td>
-                          {product.currencySymbol || "$"}
-                          {formatQuotationAmount(product.price)}
-                        </td>
-                        <td>
-                          <QuotationIconButton
-                            title="Seleccionar producto"
-                            onClick={() => handleSelectProduct(product)}
-                          >
-                            <CheckIcon />
-                          </QuotationIconButton>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        No hay productos activos en la lista activa del
-                        proveedor que coincidan con la busqueda.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="modal-buttons">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={closeProductPicker}
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <QuotationProductPickerModal
+        isOpen={productPickerState.isOpen}
+        state={productPickerState}
+        catalogs={catalogs}
+        canCreateQuickProduct={canCreateProviderPrices}
+        onClose={closeProductPicker}
+        onProviderChange={handleProductPickerProviderChange}
+        onQueryChange={handleProductPickerQueryChange}
+        onSelectProduct={handleSelectProduct}
+        onOpenQuickCreate={openQuickCreateProduct}
+        onCancelQuickCreate={cancelQuickCreateProduct}
+        onQuickCreateFieldChange={handleQuickCreateFieldChange}
+        onQuickCreateSubmit={handleQuickCreateSubmit}
+        formatQuotationAmount={formatQuotationAmount}
+      />
 
       <QuotationPrintPreviewModal
         isOpen={isPrintPreviewModalOpen}

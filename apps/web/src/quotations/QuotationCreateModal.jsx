@@ -20,6 +20,7 @@ import {
   QuotationCommercialConditionsCard,
   QuotationInternalNotesField,
 } from "./QuotationCommercialFields";
+import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
 
 function QuotationIconButton({
@@ -494,6 +495,7 @@ function QuotationCreateModal({
   busyAction,
   canSubmitCreateQuotation,
   hasCreateCommercialContext,
+  canCreateProviderPrices,
 }) {
   const [summaryDiscountMode, setSummaryDiscountMode] = useState("percentage");
   const [summaryDiscountValue, setSummaryDiscountValue] = useState("0");
@@ -635,7 +637,18 @@ function QuotationCreateModal({
     sectionIndex: -1,
     itemIndex: -1,
     providerId: "",
+    priceListId: "",
+    activeLists: [],
+    loadingLists: false,
     query: "",
+    isCreateMode: false,
+    creating: false,
+    createError: "",
+    createForm: {
+      code: "",
+      description: "",
+      price: "",
+    },
     loading: false,
     error: "",
     results: [],
@@ -1021,6 +1034,75 @@ function QuotationCreateModal({
     if (!productPickerState.providerId) {
       setProductPickerState((prev) => ({
         ...prev,
+        loadingLists: false,
+        priceListId: "",
+        activeLists: [],
+        loading: false,
+        error: "",
+        results: [],
+        isCreateMode: false,
+        createError: "",
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setProductPickerState((prev) => ({
+        ...prev,
+        loadingLists: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-product-lists", {
+          params: {
+            providerId: productPickerState.providerId,
+          },
+        });
+
+        if (cancelled) return;
+        setProductPickerState((prev) => ({
+          ...prev,
+          loadingLists: false,
+          activeLists: Array.isArray(data) ? data : [],
+          priceListId:
+            Array.isArray(data) && data.length
+              ? String(data[0].id)
+              : "",
+          results: Array.isArray(data) && data.length ? prev.results : [],
+          isCreateMode: Array.isArray(data) && data.length ? prev.isCreateMode : false,
+        }));
+      } catch (error) {
+        if (cancelled) return;
+        setProductPickerState((prev) => ({
+          ...prev,
+          loadingLists: false,
+          error: getApiErrorMessage(
+            error,
+            "No fue posible cargar las listas activas del proveedor",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    productPickerState.isOpen,
+    productPickerState.providerId,
+  ]);
+
+  useEffect(() => {
+    if (!productPickerState.isOpen || productPickerState.isCreateMode) {
+      return undefined;
+    }
+
+    if (!productPickerState.providerId || !productPickerState.priceListId) {
+      setProductPickerState((prev) => ({
+        ...prev,
         loading: false,
         error: "",
         results: [],
@@ -1040,6 +1122,7 @@ function QuotationCreateModal({
         const { data } = await api.get("/api/quotation-products/search", {
           params: {
             providerId: productPickerState.providerId,
+            priceListId: productPickerState.priceListId,
             q: productPickerState.query,
             limit: 25,
           },
@@ -1070,7 +1153,9 @@ function QuotationCreateModal({
     };
   }, [
     productPickerState.isOpen,
+    productPickerState.isCreateMode,
     productPickerState.providerId,
+    productPickerState.priceListId,
     productPickerState.query,
   ]);
 
@@ -1332,7 +1417,18 @@ function QuotationCreateModal({
       sectionIndex,
       itemIndex,
       providerId: String(currentProviderId || ""),
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
       query: String(currentCode || "").trim(),
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
       loading: false,
       error: "",
       results: [],
@@ -1345,20 +1441,120 @@ function QuotationCreateModal({
       sectionIndex: -1,
       itemIndex: -1,
       providerId: "",
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
       query: "",
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
       loading: false,
       error: "",
       results: [],
     });
   }
 
-  function handleSelectProduct(product) {
+  async function handleSelectProduct(product) {
     handleApplyCreateSectionItemProduct(
       productPickerState.sectionIndex,
       productPickerState.itemIndex,
       product,
     );
     closeProductPicker();
+  }
+
+  function handleProductPickerProviderChange(providerId) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      providerId: String(providerId || ""),
+      priceListId: "",
+      activeLists: [],
+      loadingLists: false,
+      query: "",
+      isCreateMode: false,
+      createError: "",
+      error: "",
+      results: [],
+    }));
+  }
+
+  function handleProductPickerQueryChange(queryValue) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      query: queryValue,
+    }));
+  }
+
+  function openQuickCreateProduct() {
+    setProductPickerState((prev) => ({
+      ...prev,
+      isCreateMode: true,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
+    }));
+  }
+
+  function cancelQuickCreateProduct() {
+    setProductPickerState((prev) => ({
+      ...prev,
+      isCreateMode: false,
+      createError: "",
+    }));
+  }
+
+  function handleQuickCreateFieldChange(field, value) {
+    setProductPickerState((prev) => ({
+      ...prev,
+      createForm: {
+        ...prev.createForm,
+        [field]: value,
+      },
+    }));
+  }
+
+  async function handleQuickCreateSubmit(event) {
+    event.preventDefault();
+
+    setProductPickerState((prev) => ({
+      ...prev,
+      creating: true,
+      createError: "",
+    }));
+
+    try {
+      const { data } = await api.post("/api/quotation-products", {
+        providerId: Number(productPickerState.providerId),
+        priceListId: Number(productPickerState.priceListId),
+        code: String(productPickerState.createForm.code || "").trim(),
+        description: String(productPickerState.createForm.description || ""),
+        price: Number(productPickerState.createForm.price),
+      });
+
+      if (!data?.product) {
+        throw new Error("El producto creado no fue devuelto por la API");
+      }
+
+      await handleSelectProduct(data.product);
+    } catch (error) {
+      setProductPickerState((prev) => ({
+        ...prev,
+        creating: false,
+        createError: getApiErrorMessage(
+          error,
+          "No fue posible crear el producto",
+        ),
+      }));
+      return;
+    }
   }
 
   const currentCreateSnapshot = useMemo(
@@ -3010,138 +3206,21 @@ function QuotationCreateModal({
         </div>
       </div>
 
-      {productPickerState.isOpen ? (
-        <div className="modal-overlay" onClick={closeProductPicker}>
-          <div
-            className="modal-dialog modal-dialog-account quotation-product-picker-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="quotation-product-picker-header">
-              <div>
-                <h3 className="modal-title">Seleccionar producto</h3>
-                <p className="field-hint opportunity-modal-subtitle">
-                  Elige un proveedor activo y luego selecciona un producto para
-                  precargar la fila.
-                </p>
-              </div>
-            </div>
-
-            <div className="quotation-product-picker-filters">
-              <div className="field-group quotation-product-picker-provider">
-                <label>Proveedor</label>
-                <select
-                  value={productPickerState.providerId}
-                  onChange={(event) =>
-                    setProductPickerState((prev) => ({
-                      ...prev,
-                      providerId: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Selecciona proveedor</option>
-                  {catalogs.providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="field-group quotation-product-picker-search">
-                <label>Buscar producto</label>
-                <input
-                  autoFocus
-                  disabled={!productPickerState.providerId}
-                  placeholder={
-                    productPickerState.providerId
-                      ? "Codigo, descripcion o lista de precios"
-                      : "Selecciona primero un proveedor"
-                  }
-                  value={productPickerState.query}
-                  onChange={(event) =>
-                    setProductPickerState((prev) => ({
-                      ...prev,
-                      query: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            {productPickerState.error ? (
-              <p className="field-hint quotation-product-picker-error">
-                {productPickerState.error}
-              </p>
-            ) : null}
-
-            <div className="quotation-product-picker-results">
-              <table className="quotation-product-picker-table">
-                <thead>
-                  <tr>
-                    <th>Codigo</th>
-                    <th>Descripcion</th>
-                    <th>Fabricante</th>
-                    <th>Precio</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {!productPickerState.providerId ? (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        Selecciona un proveedor activo para ver sus productos.
-                      </td>
-                    </tr>
-                  ) : productPickerState.loading ? (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        Cargando productos...
-                      </td>
-                    </tr>
-                  ) : productPickerState.results.length ? (
-                    productPickerState.results.map((product) => (
-                      <tr key={product.id}>
-                        <td>{product.code}</td>
-                        <td>{product.description}</td>
-                        <td>{product.providerName}</td>
-                        <td>
-                          {product.currencySymbol || "$"}
-                          {formatQuotationAmount(product.price)}
-                        </td>
-                        <td>
-                          <QuotationIconButton
-                            title="Seleccionar producto"
-                            onClick={() => handleSelectProduct(product)}
-                          >
-                            <CheckIcon />
-                          </QuotationIconButton>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        No hay productos activos en la lista activa del
-                        proveedor que coincidan con la busqueda.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="modal-buttons">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={closeProductPicker}
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <QuotationProductPickerModal
+        isOpen={productPickerState.isOpen}
+        state={productPickerState}
+        catalogs={catalogs}
+        canCreateQuickProduct={canCreateProviderPrices}
+        onClose={closeProductPicker}
+        onProviderChange={handleProductPickerProviderChange}
+        onQueryChange={handleProductPickerQueryChange}
+        onSelectProduct={handleSelectProduct}
+        onOpenQuickCreate={openQuickCreateProduct}
+        onCancelQuickCreate={cancelQuickCreateProduct}
+        onQuickCreateFieldChange={handleQuickCreateFieldChange}
+        onQuickCreateSubmit={handleQuickCreateSubmit}
+        formatQuotationAmount={formatQuotationAmount}
+      />
     </>
   );
 }

@@ -1000,7 +1000,7 @@ async function getLatestOpportunityStageBypass({
      WHERE entity_type = 'opportunity'
        AND entity_id = ?
        AND action = 'stage_bypassed'
-       AND JSON_EXTRACT(changed_fields, '$.sales_stage_id.after') = CAST(? AS JSON)
+       AND JSON_EXTRACT(changed_fields, '$.sales_stage_id.before') = CAST(? AS JSON)
      ORDER BY id DESC
      LIMIT 1`,
     [opportunityId, Number(salesStageId)],

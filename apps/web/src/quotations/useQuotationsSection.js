@@ -180,6 +180,20 @@ function cloneCreateSectionItems(items, buildLocalId) {
   }));
 }
 
+function mergeVersionDocuments(version, documents, allDocuments) {
+  if (!version) {
+    return version;
+  }
+
+  return {
+    ...version,
+    documents: Array.isArray(documents) ? documents : version.documents || [],
+    allDocuments: Array.isArray(allDocuments)
+      ? allDocuments
+      : version.allDocuments || [],
+  };
+}
+
 function buildEditablePersistedSectionItems(section, itemEdits) {
   return [...(section?.items || [])]
     .map((item, index) => {
@@ -1264,6 +1278,9 @@ export function useQuotationsSection({
   const canCreateQuotation =
     quotationPermissions.has("cotizaciones.operacion") ||
     quotationPermissions.has("cotizaciones.administracion");
+  const canCreateProviderPrices = quotationPermissions.has(
+    "proveedores_precios.create",
+  );
   const isOpportunityActive =
     normalizeText(opportunityActivationStatus) === "activada";
   const selectedCreateOpportunity = useMemo(
@@ -3241,6 +3258,74 @@ export function useQuotationsSection({
     }
   }, [persistCurrentVersion, refreshQuotations, selectedQuotationId]);
 
+  const handleUploadQuotationDocuments = useCallback(
+    async (files) => {
+      if (!selectedVersionId || !Array.isArray(files) || !files.length) {
+        return false;
+      }
+
+      setError("");
+      setSuccess("");
+      try {
+        setBusyAction("upload-quotation-documents");
+        const formData = new FormData();
+        files.forEach((file) => {
+          formData.append("files", file);
+        });
+
+        const { data } = await api.post(
+          `/api/quotation-versions/${selectedVersionId}/documents`,
+          formData,
+          {
+            headers: { "Content-Type": "multipart/form-data" },
+          },
+        );
+
+        setSelectedVersion((prev) =>
+          mergeVersionDocuments(prev, data.documents, data.allDocuments),
+        );
+        setSuccess(data.message || "Documentos cargados");
+        return true;
+      } catch (err) {
+        setError(getApiErrorMessage(err, "No fue posible cargar documentos"));
+        return false;
+      } finally {
+        setBusyAction("");
+      }
+    },
+    [selectedVersionId],
+  );
+
+  const handleDownloadQuotationDocument = useCallback(async (document) => {
+    if (!document?.id) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    try {
+      setBusyAction(`download-quotation-document-${document.id}`);
+      const response = await api.get(
+        `/api/quotation-version-documents/${document.id}/download`,
+        { responseType: "blob" },
+      );
+      const objectUrl = window.URL.createObjectURL(response.data);
+      const link = window.document.createElement("a");
+      link.href = objectUrl;
+      link.download = document.originalFileName || "documento";
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible descargar el documento"),
+      );
+    } finally {
+      setBusyAction("");
+    }
+  }, []);
+
   const handleAction = useCallback(
     async (actionCode) => {
       if (!selectedVersionId) return;
@@ -4310,6 +4395,7 @@ export function useQuotationsSection({
       busyAction,
       canSubmitCreateQuotation,
       hasCreateCommercialContext,
+      canCreateProviderPrices,
     },
     editModalProps: {
       isOpen: showEditQuotationModal,
@@ -4330,6 +4416,8 @@ export function useQuotationsSection({
         allowedActions,
         handleSaveVersion,
         handleSaveAsNewVersion,
+        handleUploadQuotationDocuments,
+        handleDownloadQuotationDocument,
         handleAction,
         sectionDraft,
         setSectionDraft,
@@ -4354,6 +4442,7 @@ export function useQuotationsSection({
         handleCopyEditSectionItems,
         handlePasteEditSectionItems,
         hasEditCopiedItems: editCopiedItems.length > 0,
+        canCreateProviderPrices,
       },
     },
     listPanelProps: {
@@ -4402,6 +4491,8 @@ export function useQuotationsSection({
       busyAction,
       allowedActions,
       handleSaveVersion,
+      handleUploadQuotationDocuments,
+      handleDownloadQuotationDocument,
       handleAction,
       sectionDraft,
       setSectionDraft,
@@ -4426,6 +4517,7 @@ export function useQuotationsSection({
       handleCopyEditSectionItems,
       handlePasteEditSectionItems,
       hasEditCopiedItems: editCopiedItems.length > 0,
+      canCreateProviderPrices,
     },
   };
 }

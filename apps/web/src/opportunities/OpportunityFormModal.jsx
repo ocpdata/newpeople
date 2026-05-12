@@ -75,6 +75,7 @@ function OpportunityFormModal({
   closeStageValidationResult,
   closeOpportunityModal,
   saveOpportunity,
+  confirmValidatedStageAdvance,
   savingOpportunity,
   documentUploadSession,
   opportunityDocuments,
@@ -176,19 +177,28 @@ function OpportunityFormModal({
       : stageValidationDecision === "advance_with_caution"
         ? "Con reservas"
         : "Lista para avanzar";
+  const isWaitingCurrentStage =
+    String(currentCommercialStage?.code || currentCommercialStage?.name || "")
+      .trim()
+      .toLowerCase() === "waiting";
+  const canMarkWonFromValidationResult =
+    isWaitingCurrentStage &&
+    (stageValidationDecision === "ready_to_advance" ||
+      stageValidationDecision === "advance_with_caution") &&
+    !Boolean(savingCommercialAction) &&
+    !isCommercialFlowClosed &&
+    Boolean(commercialContext?.isSelectedStageCurrent) &&
+    !hasPendingStageChange &&
+    !hasPendingCommercialClose;
   const canAdvanceFromValidationResult =
-    stageValidationDecision === "advance_with_caution" &&
+    (stageValidationDecision === "advance_with_caution" ||
+      canMarkWonFromValidationResult) &&
     !Boolean(savingCommercialAction) &&
     !isCommercialFlowClosed &&
     Boolean(commercialContext?.isSelectedStageCurrent) &&
     !hasPendingStageChange &&
     !hasPendingCommercialClose &&
-    canBypassCurrentStage;
-
-  const isWaitingCurrentStage =
-    String(currentCommercialStage?.code || currentCommercialStage?.name || "")
-      .trim()
-      .toLowerCase() === "waiting";
+    (canBypassCurrentStage || canMarkWonFromValidationResult);
   const isCommercialSuggestionFeatureEnabled =
     commercialContext?.features?.documentAnswerSuggestionsEnabled !== false;
   const stageAnswerSuggestions =
@@ -242,9 +252,9 @@ function OpportunityFormModal({
     closeOpportunityModal();
   }
 
-  function handleAdvanceFromValidationResult() {
+  async function handleAdvanceFromValidationResult() {
     closeStageValidationResult();
-    handleStageTransition("advance");
+    await confirmValidatedStageAdvance();
   }
 
   return (
@@ -1162,7 +1172,9 @@ function OpportunityFormModal({
                   >
                     {savingCommercialAction === "advance"
                       ? "Preparando confirmacion..."
-                      : "Confirmar avance"}
+                      : canMarkWonFromValidationResult
+                        ? "Declarar ganada"
+                        : "Confirmar avance"}
                   </button>
                 ) : null}
                 <button

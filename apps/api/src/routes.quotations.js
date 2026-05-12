@@ -1,12 +1,28 @@
 import express from "express";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
 import { getCompanyDocumentBranding } from "./settings.js";
+import { config } from "./config.js";
+import {
+  ensureProductTypesCatalog,
+  getProductTypeByCode,
+  getProductTypeIdByCode,
+} from "./productTypes.js";
+import {
+  cleanupTempFiles,
+  getDocumentContentStream,
+  parseMultipartFiles,
+} from "./opportunity-documents/service.js";
+import { createDocumentStorage } from "./opportunity-documents/storage.js";
 
 const router = express.Router();
+const documentStorage = createDocumentStorage();
 
 const quotationPermissionCodes = [
   "cotizaciones.operacion",
@@ -139,6 +155,22 @@ const quotationPdfRenderSchema = z.object({
     .optional()
     .default({}),
   notes: z.string().trim().max(50000).optional().default(""),
+});
+
+const quotationExchangeRateQuerySchema = z.object({
+  currency: z.string().trim().regex(/^[A-Za-z]{3}$/),
+});
+
+const quotationProductListsQuerySchema = z.object({
+  providerId: z.coerce.number().int().positive(),
+});
+
+const quotationQuickCreateProductSchema = z.object({
+  providerId: z.number().int().positive(),
+  priceListId: z.number().int().positive(),
+  code: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(10000).optional().default(""),
+  price: z.number().nonnegative(),
 });
 
 const sectionSchema = z.object({
@@ -307,6 +339,7 @@ function buildQuotationVersionEffectiveTotalSql({
 let ensureQuotationSectionItemsSchemaPromise;
 let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
+let ensureQuotationVersionDocumentsSchemaPromise;
 
 async function ensureQuotationStatusesSchema() {
   if (!ensureQuotationStatusesSchemaPromise) {
@@ -498,6 +531,91 @@ async function ensureQuotationVersionsSchema() {
   await ensureQuotationVersionsSchemaPromise;
 }
 
+async function ensureQuotationVersionDocumentsSchema() {
+  if (!ensureQuotationVersionDocumentsSchemaPromise) {
+    ensureQuotationVersionDocumentsSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_version_documents (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          document_id BIGINT UNSIGNED NOT NULL,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_qv_documents_version_document UNIQUE (quotation_version_id, document_id),
+          CONSTRAINT fk_qv_documents_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qv_documents_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qv_documents_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          INDEX idx_qv_documents_version (quotation_version_id, created_at),
+          INDEX idx_qv_documents_document (document_id)
+        )`,
+      );
+    })().catch((error) => {
+      ensureQuotationVersionDocumentsSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationVersionDocumentsSchemaPromise;
+}
+
+async function fetchFrankfurterExchangeRate({ targetCurrency }) {
+  const baseCurrency = String(config.exchangeRates.baseCurrency || "USD")
+    .trim()
+    .toUpperCase();
+  const normalizedTargetCurrency = String(targetCurrency || "")
+    .trim()
+    .toUpperCase();
+
+  if (!normalizedTargetCurrency) {
+    throw new Error("Moneda objetivo invalida");
+  }
+  if (normalizedTargetCurrency === baseCurrency) {
+    return {
+      baseCurrency,
+      targetCurrency: normalizedTargetCurrency,
+      exchangeRate: 1,
+      provider: "frankfurter",
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), config.exchangeRates.timeoutMs);
+
+  try {
+    const response = await fetch(
+      `${config.exchangeRates.frankfurterBaseUrl.replace(/\/$/, "")}/latest?from=${encodeURIComponent(baseCurrency)}&to=${encodeURIComponent(normalizedTargetCurrency)}`,
+      {
+        method: "GET",
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        `Frankfurter request failed: ${response.status} ${errorText}`.trim(),
+      );
+    }
+
+    const payload = await response.json();
+    const exchangeRate = Number(payload?.rates?.[normalizedTargetCurrency]);
+    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+      throw new Error("Frankfurter request failed: invalid exchange rate payload");
+    }
+
+    return {
+      baseCurrency,
+      targetCurrency: normalizedTargetCurrency,
+      exchangeRate,
+      provider: "frankfurter",
+      fetchedAt: new Date().toISOString(),
+    };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 async function ensureQuotationSectionItemsColumn(columnName, ddl) {
   const rows = await query(
     `SELECT 1
@@ -512,6 +630,217 @@ async function ensureQuotationSectionItemsColumn(columnName, ddl) {
   if (!rows.length) {
     await query(ddl);
   }
+}
+
+function buildQuotationDocumentStorageKey({ quotationId, versionId, sha256, fileName }) {
+  const safeFileName = String(fileName || "documento")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+
+  return path.posix.join(
+    "quotations",
+    String(quotationId),
+    "versions",
+    String(versionId),
+    `${sha256}__${safeFileName || "documento"}`,
+  );
+}
+
+function buildQuotationVersionDocumentPayload(row) {
+  return {
+    id: Number(row.link_id),
+    documentId: Number(row.document_id),
+    publicId: String(row.document_public_id || ""),
+    quotationVersionId: Number(row.quotation_version_id),
+    quotationId: Number(row.quotation_id),
+    versionNumber: Number(row.version_number),
+    originalFileName: row.original_file_name || "documento",
+    storedFileName: row.stored_file_name || null,
+    mimeType: row.mime_type || "application/octet-stream",
+    fileExtension: row.file_extension || null,
+    byteSize: Number(row.byte_size || 0),
+    createdAt: row.link_created_at,
+    uploadedAt: row.document_created_at,
+    uploadedByUserId: row.uploaded_by_user_id
+      ? Number(row.uploaded_by_user_id)
+      : null,
+    uploadedByUserName: row.uploaded_by_user_name || null,
+  };
+}
+
+async function listQuotationVersionDocuments({ versionId }) {
+  await ensureQuotationVersionDocumentsSchema();
+  const rows = await query(
+    `SELECT qvd.id AS link_id,
+            qvd.quotation_version_id,
+            qvd.created_at AS link_created_at,
+            qv.quotation_id,
+            qv.version_number,
+            d.id AS document_id,
+            d.public_id AS document_public_id,
+            d.original_file_name,
+            d.stored_file_name,
+            d.mime_type,
+            d.file_extension,
+            d.byte_size,
+            d.created_at AS document_created_at,
+            d.uploaded_by_user_id,
+            uploader.full_name AS uploaded_by_user_name
+     FROM quotation_version_documents qvd
+     INNER JOIN quotation_versions qv ON qv.id = qvd.quotation_version_id
+     INNER JOIN documents d ON d.id = qvd.document_id
+     LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+     WHERE qvd.quotation_version_id = ?
+       AND COALESCE(d.is_deleted, 0) = 0
+     ORDER BY qvd.created_at DESC, qvd.id DESC`,
+    [Number(versionId)],
+  );
+
+  return rows.map(buildQuotationVersionDocumentPayload);
+}
+
+async function listQuotationDocuments({ quotationId }) {
+  await ensureQuotationVersionDocumentsSchema();
+  const rows = await query(
+    `SELECT qvd.id AS link_id,
+            qvd.quotation_version_id,
+            qvd.created_at AS link_created_at,
+            qv.quotation_id,
+            qv.version_number,
+            d.id AS document_id,
+            d.public_id AS document_public_id,
+            d.original_file_name,
+            d.stored_file_name,
+            d.mime_type,
+            d.file_extension,
+            d.byte_size,
+            d.created_at AS document_created_at,
+            d.uploaded_by_user_id,
+            uploader.full_name AS uploaded_by_user_name
+     FROM quotation_version_documents qvd
+     INNER JOIN quotation_versions qv ON qv.id = qvd.quotation_version_id
+     INNER JOIN documents d ON d.id = qvd.document_id
+     LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+     WHERE qv.quotation_id = ?
+       AND COALESCE(d.is_deleted, 0) = 0
+     ORDER BY qv.version_number DESC, qvd.created_at DESC, qvd.id DESC`,
+    [Number(quotationId)],
+  );
+
+  return rows.map(buildQuotationVersionDocumentPayload);
+}
+
+async function copyQuotationVersionDocuments(conn, {
+  sourceVersionId,
+  targetVersionId,
+  createdByUserId,
+  createdAt,
+}) {
+  await conn.query(
+    `INSERT INTO quotation_version_documents
+      (quotation_version_id, document_id, created_by_user_id, created_at)
+     SELECT ?, qvd.document_id, ?, ?
+     FROM quotation_version_documents qvd
+     WHERE qvd.quotation_version_id = ?`,
+    [
+      Number(targetVersionId),
+      Number(createdByUserId),
+      createdAt,
+      Number(sourceVersionId),
+    ],
+  );
+}
+
+async function getQuotationVersionDocumentLink({ linkId }) {
+  await ensureQuotationVersionDocumentsSchema();
+  const rows = await query(
+    `SELECT qvd.id AS link_id,
+            qvd.quotation_version_id,
+            qvd.document_id,
+            qv.quotation_id,
+            qv.version_number,
+            d.public_id AS document_public_id,
+            d.original_file_name,
+            d.mime_type
+     FROM quotation_version_documents qvd
+     INNER JOIN quotation_versions qv ON qv.id = qvd.quotation_version_id
+     INNER JOIN documents d ON d.id = qvd.document_id
+     WHERE qvd.id = ?
+       AND COALESCE(d.is_deleted, 0) = 0
+     LIMIT 1`,
+    [Number(linkId)],
+  );
+
+  return rows[0] || null;
+}
+
+async function createQuotationVersionDocuments(conn, {
+  files,
+  quotationId,
+  versionId,
+  userId,
+}) {
+  const createdDocuments = [];
+
+  for (const file of files) {
+    const originalFileName = String(
+      file.originalFilename || file.newFilename || "documento",
+    ).trim() || "documento";
+    const mimeType =
+      String(file.mimetype || "application/octet-stream").trim() ||
+      "application/octet-stream";
+    const extension = path.extname(originalFileName || "").slice(1) || null;
+    const buffer = await readFile(file.filepath);
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    const storageKey = buildQuotationDocumentStorageKey({
+      quotationId,
+      versionId,
+      sha256,
+      fileName: originalFileName,
+    });
+    const stored = await documentStorage.save({ buffer, storageKey });
+    const now = new Date();
+    const publicId = `doc_${randomUUID().replace(/-/g, "")}`;
+    const [insertResult] = await conn.query(
+      `INSERT INTO documents
+         (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+          storage_bucket, storage_key, original_file_name, stored_file_name,
+          mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+          processing_status, processing_error, duration_seconds, is_deleted,
+          uploaded_by_user_id, created_at, updated_at)
+       VALUES (?, NULL, 'quotation_version', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, ?, ?)`,
+      [
+        publicId,
+        Number(versionId),
+        stored.storageProvider,
+        stored.storageBucket,
+        stored.storageKey,
+        originalFileName,
+        stored.storedFileName,
+        mimeType,
+        extension,
+        Number(file.size || buffer.length || 0),
+        sha256,
+        "quotation_attachment",
+        "Adjunto de cotizacion",
+        Number(userId),
+        now,
+        now,
+      ],
+    );
+    const documentId = Number(insertResult.insertId);
+    await conn.query(
+      `INSERT INTO quotation_version_documents
+         (quotation_version_id, document_id, created_by_user_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+      [Number(versionId), documentId, Number(userId), now],
+    );
+    createdDocuments.push(documentId);
+  }
+
+  return createdDocuments;
 }
 
 async function ensureQuotationSectionItemsIndex(indexName, ddl) {
@@ -1246,6 +1575,17 @@ function hasAnyQuotationPermission(user) {
   );
 }
 
+function hasProviderPriceCreatePermission(user) {
+  return user?.permissionSet?.has("proveedores_precios.create");
+}
+
+function isUniqueViolation(error, constraintName) {
+  const message = String(error?.message || "");
+  return (
+    message.includes(constraintName) || message.includes("Duplicate entry")
+  );
+}
+
 function applyOwnedAccountScope({ user, accountExpression, params }) {
   if (hasQuotationAdministration(user)) return "";
   params.push(Number(user.id));
@@ -1437,6 +1777,118 @@ async function validateProvider(providerId) {
     [Number(providerId)],
   );
   return rows.length > 0;
+}
+
+async function getActiveQuotationProductLists(providerId) {
+  return query(
+    `SELECT ppl.id, ppl.provider_id, ppl.name, ppl.currency_id, ppl.item_type,
+            curr.code AS currency_code, curr.name AS currency_name,
+            curr.symbol AS currency_symbol,
+            p.name AS provider_name
+     FROM provider_price_lists ppl
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+     INNER JOIN currencies curr ON curr.id = ppl.currency_id
+     WHERE ppl.provider_id = ?
+       AND ppl.is_active = 1
+       AND pas.code = 'activado'
+     ORDER BY ppl.name, ppl.id`,
+    [Number(providerId)],
+  );
+}
+
+async function getActiveQuotationProductList({ providerId, listId }) {
+  const rows = await query(
+    `SELECT ppl.id, ppl.provider_id, ppl.name, ppl.currency_id, ppl.item_type,
+            curr.code AS currency_code, curr.name AS currency_name,
+            curr.symbol AS currency_symbol,
+            p.name AS provider_name
+     FROM provider_price_lists ppl
+     INNER JOIN providers p ON p.id = ppl.provider_id
+     INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+     INNER JOIN currencies curr ON curr.id = ppl.currency_id
+     WHERE ppl.provider_id = ?
+       AND ppl.id = ?
+       AND ppl.is_active = 1
+       AND pas.code = 'activado'
+     LIMIT 1`,
+    [Number(providerId), Number(listId)],
+  );
+
+  return rows.length ? rows[0] : null;
+}
+
+async function getProviderPriceItemActiveStatusId() {
+  const row = await getCatalogRowByCode(
+    "provider_price_list_item_statuses",
+    "activo",
+  );
+  return row ? Number(row.id) : null;
+}
+
+function mapQuotationProductRow(row, componentMap = new Map()) {
+  return {
+    id: Number(row.id),
+    providerId: Number(row.provider_id),
+    priceListId: Number(row.price_list_id),
+    code: row.code || "",
+    description: row.description || "",
+    itemType: row.item_type || "",
+    price:
+      row.price === null || row.price === undefined ? 0 : Number(row.price),
+    currencyId: Number(row.currency_id),
+    currencyCode: row.currency_code || "",
+    currencyName: row.currency_name || "",
+    currencySymbol: row.currency_symbol || "",
+    providerName: row.provider_name || "",
+    priceListName: row.price_list_name || "",
+    components: componentMap.get(Number(row.id)) || [],
+  };
+}
+
+async function getQuotationProductRows({ providerId, priceListId, searchQuery, limit }) {
+  const params = [];
+  let whereClause = "";
+
+  if (providerId) {
+    whereClause += " AND ppli.provider_id = ?";
+    params.push(Number(providerId));
+  }
+
+  if (priceListId) {
+    whereClause += " AND ppli.price_list_id = ?";
+    params.push(Number(priceListId));
+  }
+
+  if (searchQuery) {
+    whereClause +=
+      " AND (ppli.code LIKE ? OR ppli.description LIKE ? OR p.name LIKE ? OR ppl.name LIKE ?)";
+    const likeValue = `%${searchQuery}%`;
+    params.push(likeValue, likeValue, likeValue, likeValue);
+  }
+
+  const rows = await query(
+    `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.code,
+            ppli.description, ppli.item_type, ppli.price, ppli.currency_id,
+            curr.code AS currency_code, curr.name AS currency_name,
+            curr.symbol AS currency_symbol, p.name AS provider_name,
+            ppl.name AS price_list_name
+     FROM provider_price_list_items ppli
+     INNER JOIN provider_price_list_item_statuses pils ON pils.id = ppli.activation_status_id
+     INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id
+     INNER JOIN providers p ON p.id = ppli.provider_id
+     INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+     INNER JOIN currencies curr ON curr.id = ppli.currency_id
+     WHERE pas.code = 'activado'
+       AND ppl.is_active = 1
+       AND pils.code = 'activo'
+       AND ppli.item_type IN ('producto', 'servicio_propio', 'grupo_productos')${whereClause}
+     ORDER BY ppli.code ASC, ppli.id DESC
+     LIMIT ?`,
+    [...params, limit],
+  );
+
+  return rows;
 }
 
 async function getQuotationProductComponents(groupItemIds) {
@@ -1974,6 +2426,37 @@ router.get(
 );
 
 router.get(
+  "/quotation-product-lists",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const parsed = quotationProductListsQuerySchema.safeParse(req.query || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Proveedor invalido",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const lists = await getActiveQuotationProductLists(parsed.data.providerId);
+    return res.json(
+      lists.map((row) => ({
+        id: Number(row.id),
+        providerId: Number(row.provider_id),
+        providerName: row.provider_name || "",
+        name: row.name || "",
+        itemType: row.item_type || "",
+        currencyId: Number(row.currency_id),
+        currencyCode: row.currency_code || "",
+        currencyName: row.currency_name || "",
+        currencySymbol: row.currency_symbol || "",
+      })),
+    );
+  },
+);
+
+router.get(
   "/quotation-products/search",
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
@@ -1981,42 +2464,14 @@ router.get(
 
     const searchQuery = String(req.query.q || "").trim();
     const providerId = Number(req.query.providerId || 0);
+    const priceListId = Number(req.query.priceListId || 0);
     const limit = Math.min(50, Math.max(1, Number(req.query.limit || 20)));
-    const params = [];
-    let whereClause = "";
-
-    if (providerId) {
-      whereClause += " AND ppli.provider_id = ?";
-      params.push(providerId);
-    }
-
-    if (searchQuery) {
-      whereClause +=
-        " AND (ppli.code LIKE ? OR ppli.description LIKE ? OR p.name LIKE ? OR ppl.name LIKE ?)";
-      const likeValue = `%${searchQuery}%`;
-      params.push(likeValue, likeValue, likeValue, likeValue);
-    }
-
-    const rows = await query(
-      `SELECT ppli.id, ppli.provider_id, ppli.price_list_id, ppli.code,
-              ppli.description, ppli.item_type, ppli.price, ppli.currency_id,
-              curr.code AS currency_code, curr.name AS currency_name,
-              curr.symbol AS currency_symbol, p.name AS provider_name,
-              ppl.name AS price_list_name
-       FROM provider_price_list_items ppli
-       INNER JOIN provider_price_list_item_statuses pils ON pils.id = ppli.activation_status_id
-       INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id
-       INNER JOIN providers p ON p.id = ppli.provider_id
-       INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
-       INNER JOIN currencies curr ON curr.id = ppli.currency_id
-       WHERE pas.code = 'activado'
-         AND ppl.is_active = 1
-         AND pils.code = 'activo'
-         AND ppli.item_type IN ('producto', 'servicio_propio', 'grupo_productos')${whereClause}
-       ORDER BY ppli.code ASC, ppli.id DESC
-       LIMIT ?`,
-      [...params, limit],
-    );
+    const rows = await getQuotationProductRows({
+      providerId,
+      priceListId,
+      searchQuery,
+      limit,
+    });
 
     const componentMap = await getQuotationProductComponents(
       rows
@@ -2024,25 +2479,120 @@ router.get(
         .map((row) => Number(row.id)),
     );
 
-    return res.json(
-      rows.map((row) => ({
-        id: Number(row.id),
-        providerId: Number(row.provider_id),
-        priceListId: Number(row.price_list_id),
-        code: row.code || "",
-        description: row.description || "",
-        itemType: row.item_type || "",
-        price:
-          row.price === null || row.price === undefined ? 0 : Number(row.price),
-        currencyId: Number(row.currency_id),
-        currencyCode: row.currency_code || "",
-        currencyName: row.currency_name || "",
-        currencySymbol: row.currency_symbol || "",
-        providerName: row.provider_name || "",
-        priceListName: row.price_list_name || "",
-        components: componentMap.get(Number(row.id)) || [],
-      })),
-    );
+    return res.json(rows.map((row) => mapQuotationProductRow(row, componentMap)));
+  },
+);
+
+router.post(
+  "/quotation-products",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (!hasProviderPriceCreatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para crear productos" });
+    }
+
+    const parsed = quotationQuickCreateProductSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const activeList = await getActiveQuotationProductList({
+      providerId: parsed.data.providerId,
+      listId: parsed.data.priceListId,
+    });
+    if (!activeList) {
+      return res.status(404).json({ message: "Lista activa no encontrada" });
+    }
+    if (String(activeList.item_type) === "grupo_productos") {
+      return res.status(409).json({
+        message: "Desde este modal no se pueden crear bundles",
+      });
+    }
+
+    await ensureProductTypesCatalog();
+    const productTypeId = await getProductTypeIdByCode(activeList.item_type);
+    const productType = await getProductTypeByCode(activeList.item_type);
+    const activeStatusId = await getProviderPriceItemActiveStatusId();
+    if (
+      !productTypeId ||
+      !productType ||
+      Number(productType.is_active) !== 1 ||
+      !activeStatusId
+    ) {
+      return res.status(400).json({ message: "No fue posible resolver la configuracion de la lista" });
+    }
+
+    const now = new Date();
+    let createdId = null;
+    try {
+      const insertResult = await query(
+        `INSERT INTO provider_price_list_items
+          (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
+           created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          Number(parsed.data.providerId),
+          Number(parsed.data.priceListId),
+          parsed.data.code,
+          parsed.data.description || null,
+          Number(productTypeId),
+          activeList.item_type,
+          Number(parsed.data.price),
+          Number(activeList.currency_id),
+          Number(activeStatusId),
+          Number(req.user.id),
+          now,
+          Number(req.user.id),
+          now,
+        ],
+      );
+      createdId = Number(insertResult.insertId);
+    } catch (error) {
+      if (
+        isUniqueViolation(error, "uq_provider_price_list_items_provider_code") ||
+        isUniqueViolation(error, "uq_provider_price_list_items_list_code")
+      ) {
+        return res.status(409).json({
+          message: "Ya existe un producto con ese codigo en la lista",
+        });
+      }
+      throw error;
+    }
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_product_created",
+      entityType: "provider_price_list_item",
+      entityId: createdId,
+      detail: "Producto creado desde el selector de cotizaciones",
+      after: {
+        provider_id: Number(parsed.data.providerId),
+        price_list_id: Number(parsed.data.priceListId),
+        code: parsed.data.code,
+        description: parsed.data.description || null,
+        item_type: activeList.item_type,
+        currency_id: Number(activeList.currency_id),
+        activation_status_code: "activo",
+      },
+    });
+
+    const rows = await getQuotationProductRows({
+      providerId: parsed.data.providerId,
+      priceListId: parsed.data.priceListId,
+      searchQuery: parsed.data.code,
+      limit: 5,
+    });
+    const createdRow = rows.find((row) => Number(row.id) === Number(createdId));
+
+    return res.status(201).json({
+      message: "Producto creado correctamente",
+      product: createdRow ? mapQuotationProductRow(createdRow) : null,
+    });
   },
 );
 
@@ -2645,6 +3195,7 @@ router.post(
 
     const now = new Date();
     const sections = await getQuotationVersionSections(latestVersion.id);
+    await ensureQuotationVersionDocumentsSchema();
     const newVersionNumber = Number(latestVersion.version_number) + 1;
 
     const result = await withTransaction(async (conn) => {
@@ -2738,6 +3289,13 @@ router.post(
         });
       }
 
+      await copyQuotationVersionDocuments(conn, {
+        sourceVersionId: latestVersion.id,
+        targetVersionId: newVersionId,
+        createdByUserId: req.user.id,
+        createdAt: now,
+      });
+
       await conn.query(
         `UPDATE quotations
          SET latest_version_id = ?, updated_at = ?, updated_by_user_id = ?
@@ -2785,6 +3343,10 @@ router.get(
     }
 
     const sections = await getQuotationVersionSections(versionId);
+    const documents = await listQuotationVersionDocuments({ versionId });
+    const allDocuments = await listQuotationDocuments({
+      quotationId: version.quotation_id,
+    });
     const actions = await getAllowedQuotationActionsPayload({
       user: req.user,
       versionRow: version,
@@ -2835,6 +3397,8 @@ router.get(
       createdByUserId: Number(version.created_by_user_id),
       updatedByUserId: Number(version.updated_by_user_id),
       sections,
+      documents,
+      allDocuments,
       actions,
       isLatestVersion: Number(version.id) === Number(version.latest_version_id),
     });
@@ -3288,6 +3852,10 @@ router.put(
       versionId,
     });
     const sections = await getQuotationVersionSections(versionId);
+    const documents = await listQuotationVersionDocuments({ versionId });
+    const allDocuments = await listQuotationDocuments({
+      quotationId: refreshedVersion.quotation_id,
+    });
     const actions = await getAllowedQuotationActionsPayload({
       user: req.user,
       versionRow: refreshedVersion,
@@ -3337,12 +3905,208 @@ router.put(
       createdByUserId: Number(refreshedVersion.created_by_user_id),
       updatedByUserId: Number(refreshedVersion.updated_by_user_id),
       sections,
+      documents,
+      allDocuments,
       actions,
       isLatestVersion:
         Number(refreshedVersion.id) ===
         Number(refreshedVersion.latest_version_id),
       message: "Version actualizada",
     });
+  },
+);
+
+router.get(
+  "/quotation-versions/:versionId/documents",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    return res.json(await listQuotationVersionDocuments({ versionId }));
+  },
+);
+
+router.get(
+  "/quotations/:quotationId/documents",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    return res.json(await listQuotationDocuments({ quotationId }));
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/documents",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const canModify = await canExecuteQuotationAction({
+      user: req.user,
+      versionRow: version,
+      actionCode: "modificar",
+    });
+    if (!canModify && !hasQuotationAdministration(req.user)) {
+      return res
+        .status(403)
+        .json({ message: "No autorizado para adjuntar documentos en la version" });
+    }
+
+    const { files } = await parseMultipartFiles(req);
+    if (!files.length) {
+      return res.status(400).json({ message: "Selecciona al menos un archivo" });
+    }
+
+    const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
+    const invalidFile = files.find((file) => {
+      const mimeType = String(file.mimetype || "").trim();
+      return !mimeType || !allowedMimeTypes.has(mimeType);
+    });
+    if (invalidFile) {
+      await cleanupTempFiles(files);
+      return res.status(400).json({
+        message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}`,
+      });
+    }
+
+    try {
+      await ensureQuotationVersionDocumentsSchema();
+      await withTransaction(async (conn) => {
+        await createQuotationVersionDocuments(conn, {
+          files,
+          quotationId: version.quotation_id,
+          versionId,
+          userId: req.user.id,
+        });
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "documents_uploaded",
+      entityType: "quotation_version",
+      entityId: versionId,
+      detail: "Documentos adjuntos cargados en la version de cotizacion",
+    });
+
+    return res.status(201).json({
+      message: "Documentos cargados",
+      documents: await listQuotationVersionDocuments({ versionId }),
+      allDocuments: await listQuotationDocuments({
+        quotationId: version.quotation_id,
+      }),
+    });
+  },
+);
+
+router.get(
+  "/quotation-exchange-rate",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const parsed = quotationExchangeRateQuerySchema.safeParse(req.query || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Moneda invalida",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const rate = await fetchFrankfurterExchangeRate({
+        targetCurrency: parsed.data.currency,
+      });
+      return res.json(rate);
+    } catch (error) {
+      return res.status(502).json({
+        message:
+          "No fue posible obtener el tipo de cambio sugerido en este momento",
+        detail: String(error?.message || "").trim() || undefined,
+      });
+    }
+  },
+);
+
+router.get(
+  "/quotation-version-documents/:linkId/download",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const linkId = Number(req.params.linkId);
+    if (!Number.isInteger(linkId) || linkId <= 0) {
+      return res.status(400).json({ message: "Id de documento invalido" });
+    }
+
+    const link = await getQuotationVersionDocumentLink({ linkId });
+    if (!link) {
+      return res.status(404).json({ message: "Documento no encontrado" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: link.quotation_version_id,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Documento no disponible" });
+    }
+
+    const { document, stream } = await getDocumentContentStream({
+      documentPublicId: link.document_public_id,
+    });
+
+    res.setHeader(
+      "Content-Type",
+      document.mime_type || link.mime_type || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(document.original_file_name || link.original_file_name || "documento")}"`,
+    );
+    stream.on("error", (error) => {
+      res.destroy(error);
+    });
+    stream.pipe(res);
   },
 );
 

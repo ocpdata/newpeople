@@ -131,6 +131,16 @@ export const config = {
       },
     },
   },
+  exchangeRates: {
+    provider: process.env.EXCHANGE_RATE_PROVIDER || "frankfurter",
+    baseCurrency: (
+      process.env.EXCHANGE_RATE_BASE_CURRENCY || "USD"
+    ).toUpperCase(),
+    frankfurterBaseUrl:
+      process.env.EXCHANGE_RATE_FRANKFURTER_BASE_URL ||
+      "https://api.frankfurter.app",
+    timeoutMs: Number(process.env.EXCHANGE_RATE_TIMEOUT_MS || 5000),
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",

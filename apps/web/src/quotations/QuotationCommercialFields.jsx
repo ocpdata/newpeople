@@ -49,6 +49,9 @@ export function QuotationCommercialConditionsCard({
   onFieldChange,
   notesRows = 7,
   showPricingHelperText = true,
+  exchangeRateLoading = false,
+  exchangeRateFeedback = "",
+  exchangeRateError = "",
 }) {
   return (
     <div className="quotation-commercial-conditions-card">
@@ -166,6 +169,21 @@ export function QuotationCommercialConditionsCard({
                 onFieldChange("exchangeRate", event.target.value)
               }
             />
+            {exchangeRateLoading ? (
+              <p className="field-hint quotation-commercial-conditions-exchange-rate-status">
+                Consultando tipo de cambio sugerido...
+              </p>
+            ) : null}
+            {!exchangeRateLoading && exchangeRateError ? (
+              <p className="field-hint quotation-commercial-conditions-exchange-rate-status is-error">
+                {exchangeRateError}
+              </p>
+            ) : null}
+            {!exchangeRateLoading && !exchangeRateError && exchangeRateFeedback ? (
+              <p className="field-hint quotation-commercial-conditions-exchange-rate-status">
+                {exchangeRateFeedback}
+              </p>
+            ) : null}
           </div>
         </div>
 

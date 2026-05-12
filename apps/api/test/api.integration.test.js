@@ -9266,7 +9266,7 @@ describe("API integration baseline", () => {
     }
   });
 
-  test("oportunidades.commercial-context expone motivo de bypass para la etapa destino del bypass", async () => {
+  test("oportunidades.stage-view expone motivo de bypass solo para la etapa bypaseada", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_bypass_reason_context`,
     );
@@ -9278,21 +9278,36 @@ describe("API integration baseline", () => {
 
     expect(bypassResponse.status).toBe(200);
 
-    const contextResponse = await request(app)
+    const skippedStageResponse = await request(app)
+      .get(`/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    const destinationStageResponse = await request(app)
       .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
       .set("Authorization", `Bearer ${fixture.token}`);
 
-    expect(contextResponse.status).toBe(200);
-    expect(contextResponse.body.salesStage.code).toBe(
+    expect(skippedStageResponse.status).toBe(200);
+    expect(skippedStageResponse.body.salesStage.code).toBe("contacto_inicial");
+    expect(skippedStageResponse.body.currentSalesStage.code).toBe(
       "identificacion_oportunidad",
     );
-    expect(contextResponse.body.currentSalesStage.code).toBe(
-      "identificacion_oportunidad",
-    );
-    expect(contextResponse.body.bypassInfo).toEqual({
+    expect(skippedStageResponse.body.bypassInfo).toEqual({
       isBypassed: true,
       reason: "Se omitio por criterio externo de preventa",
     });
+
+    expect(destinationStageResponse.status).toBe(200);
+    expect(destinationStageResponse.body.salesStage.code).toBe(
+      "identificacion_oportunidad",
+    );
+    expect(destinationStageResponse.body.currentSalesStage.code).toBe(
+      "identificacion_oportunidad",
+    );
+    expect(destinationStageResponse.body.bypassInfo).toEqual({
+      isBypassed: false,
+      reason: null,
+    });
+    expect(destinationStageResponse.body.answers.length).toBeGreaterThan(0);
   });
 
   test("oportunidades.stage-answers guarda historico y commercial-context expone la ultima respuesta", async () => {
@@ -10648,6 +10663,142 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("cotizaciones expone listas activas y permite crear productos simples desde el picker", async () => {
+    const suffix = `${TEST_PREFIX}_quote_quick_create_product`;
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const priceListId = await createDirectProviderPriceList({
+      providerId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix,
+      itemType: "producto",
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(priceListId);
+
+    const bundleProviderId = await createDirectProvider({
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_provider`,
+    });
+    cleanup.providerIds.push(bundleProviderId);
+
+    const bundlePriceListId = await createDirectProviderPriceList({
+      providerId: bundleProviderId,
+      actorUserId: ctx.quotationOperationUserId,
+      suffix: `${suffix}_bundle_list`,
+      itemType: "grupo_productos",
+      isActive: true,
+    });
+    cleanup.providerPriceListIds.push(bundlePriceListId);
+
+    const quickCreateUserId = await createUser({
+      fullName: "API Quote Quick Create",
+      email: `${TEST_PREFIX}.quotes.quick.create@example.com`,
+      roleIds: [ctx.quotationOperationRoleId, ctx.providerManagerRoleId],
+    });
+    cleanup.userIds.push(quickCreateUserId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.quick.create@example.com`,
+    );
+
+    const listsResponse = await request(app)
+      .get("/api/quotation-product-lists")
+      .query({ providerId })
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(listsResponse.status).toBe(200);
+    expect(listsResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: priceListId,
+          providerId,
+          itemType: "producto",
+        }),
+      ]),
+    );
+
+    const createResponse = await request(app)
+      .post("/api/quotation-products")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        providerId,
+        priceListId,
+        code: `PRICE-${suffix}-NEW`,
+        description: "Producto creado desde picker",
+        price: 987.65,
+      });
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.product).toEqual(
+      expect.objectContaining({
+        providerId,
+        priceListId,
+        code: `PRICE-${suffix}-NEW`,
+        description: "Producto creado desde picker",
+        itemType: "producto",
+        price: 987.65,
+      }),
+    );
+    cleanup.providerPriceItemIds.push(Number(createResponse.body.product.id));
+
+    const searchResponse = await request(app)
+      .get("/api/quotation-products/search")
+      .query({
+        providerId,
+        priceListId,
+        q: `PRICE-${suffix}-NEW`,
+      })
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(searchResponse.status).toBe(200);
+    expect(searchResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `PRICE-${suffix}-NEW`,
+          priceListId,
+        }),
+      ]),
+    );
+
+    const duplicateResponse = await request(app)
+      .post("/api/quotation-products")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        providerId,
+        priceListId,
+        code: `PRICE-${suffix}-NEW`,
+        description: "Duplicado",
+        price: 100,
+      });
+
+    expect(duplicateResponse.status).toBe(409);
+    expect(duplicateResponse.body.message).toBe(
+      "Ya existe un producto con ese codigo en la lista",
+    );
+
+    const bundleBlockedResponse = await request(app)
+      .post("/api/quotation-products")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        providerId: bundleProviderId,
+        priceListId: bundlePriceListId,
+        code: `PRICE-${suffix}-BUNDLE`,
+        description: "No permitido",
+        price: 100,
+      });
+
+    expect(bundleBlockedResponse.status).toBe(409);
+    expect(bundleBlockedResponse.body.message).toBe(
+      "Desde este modal no se pueden crear bundles",
+    );
+  });
+
   test("cotizaciones.create crea desde oportunidad activa y aplica defaults de version", async () => {
     const fixture = await createOwnedQuoteOpportunityFixture(
       `${TEST_PREFIX}_quote_create`,
@@ -10892,6 +11043,68 @@ describe("API integration baseline", () => {
 
     expect(createdQuotation).toBeTruthy();
     expect(createdQuotation.latestTotalSaleAmount).toBeCloseTo(174, 6);
+  });
+
+  test("cotizaciones.exchange-rate usa Frankfurter con base USD y devuelve 1 para USD", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_exchange_rate`,
+    );
+    const originalFetch = global.fetch;
+
+    try {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          amount: 1,
+          base: "USD",
+          date: "2026-05-12",
+          rates: {
+            MXN: 17.245,
+          },
+        }),
+      });
+
+      const usdResponse = await request(app)
+        .get("/api/quotation-exchange-rate?currency=USD")
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(usdResponse.status).toBe(200);
+      expect(usdResponse.body).toEqual(
+        expect.objectContaining({
+          baseCurrency: "USD",
+          targetCurrency: "USD",
+          exchangeRate: 1,
+          provider: "frankfurter",
+        }),
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+
+      const mxnResponse = await request(app)
+        .get("/api/quotation-exchange-rate?currency=MXN")
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(mxnResponse.status).toBe(200);
+      expect(mxnResponse.body).toEqual(
+        expect.objectContaining({
+          baseCurrency: "USD",
+          targetCurrency: "MXN",
+          exchangeRate: 17.245,
+          provider: "frankfurter",
+        }),
+      );
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "https://api.frankfurter.app/latest?from=USD&to=MXN",
+        ),
+        expect.objectContaining({
+          method: "GET",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   test("cotizaciones genera un PDF inline desde cambios no guardados", async () => {
@@ -11180,6 +11393,88 @@ describe("API integration baseline", () => {
     expect(clonedManualBundleChild.bundleParentItemId).toBe(
       clonedManualBundleParent.id,
     );
+  });
+
+  test("cotizaciones.documents permite cargar, listar, descargar y heredar adjuntos por version", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_quote_documents`,
+    );
+
+    const uploadResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/documents`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .attach("files", Buffer.from("Documento de respaldo de propuesta", "utf8"), {
+        filename: "respaldo-propuesta.txt",
+        contentType: "text/plain",
+      });
+
+    expect(uploadResponse.status).toBe(201);
+    expect(uploadResponse.body.documents).toHaveLength(1);
+    expect(uploadResponse.body.allDocuments).toHaveLength(1);
+    expect(uploadResponse.body.documents[0]).toEqual(
+      expect.objectContaining({
+        originalFileName: "respaldo-propuesta.txt",
+        versionNumber: 1,
+      }),
+    );
+
+    const versionResponse = await request(app)
+      .get(`/api/quotation-versions/${fixture.latestVersionId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(versionResponse.status).toBe(200);
+    expect(versionResponse.body.documents).toHaveLength(1);
+    expect(versionResponse.body.allDocuments).toHaveLength(1);
+
+    const aggregateResponse = await request(app)
+      .get(`/api/quotations/${fixture.quotationId}/documents`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(aggregateResponse.status).toBe(200);
+    expect(aggregateResponse.body).toHaveLength(1);
+
+    const downloadResponse = await request(app)
+      .get(
+        `/api/quotation-version-documents/${versionResponse.body.documents[0].id}/download`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .buffer(true)
+      .parse(binaryParser);
+
+    expect(downloadResponse.status).toBe(200);
+    expect(downloadResponse.headers["content-disposition"]).toContain(
+      "attachment;",
+    );
+    expect(downloadResponse.body instanceof Buffer).toBe(true);
+    expect(downloadResponse.body.toString("utf8")).toContain(
+      "Documento de respaldo de propuesta",
+    );
+
+    const cloneResponse = await request(app)
+      .post(`/api/quotations/${fixture.quotationId}/versions`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(cloneResponse.status).toBe(201);
+
+    const clonedVersionResponse = await request(app)
+      .get(`/api/quotation-versions/${cloneResponse.body.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(clonedVersionResponse.status).toBe(200);
+    expect(clonedVersionResponse.body.documents).toHaveLength(1);
+    expect(clonedVersionResponse.body.documents[0]).toEqual(
+      expect.objectContaining({
+        originalFileName: "respaldo-propuesta.txt",
+        versionNumber: 2,
+      }),
+    );
+    expect(clonedVersionResponse.body.allDocuments).toHaveLength(2);
+    expect(
+      clonedVersionResponse.body.allDocuments.map((document) =>
+        Number(document.versionNumber),
+      ),
+    ).toEqual(expect.arrayContaining([1, 2]));
   });
 
   test("cotizaciones.create bloquea oportunidad inactiva y contacto de otra cuenta", async () => {

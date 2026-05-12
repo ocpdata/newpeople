@@ -104,6 +104,7 @@ function OpportunitiesPage({ currentUser }) {
     refreshOpportunityCommercialView,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
+    confirmValidatedStageAdvance,
     handleStageBypass,
     closeStageBypassModal,
     confirmStageBypass,
@@ -206,6 +207,7 @@ function OpportunitiesPage({ currentUser }) {
         closeStageValidationResult={closeStageValidationResult}
         handleCommercialStageSelect={handleCommercialStageSelect}
         handleCurrentStageValidation={handleCurrentStageValidation}
+        confirmValidatedStageAdvance={confirmValidatedStageAdvance}
         handleStageBypass={handleStageBypass}
         handleStageTransition={handleStageTransition}
         handleCommercialClose={handleCommercialClose}

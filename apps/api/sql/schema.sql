@@ -2162,6 +2162,20 @@ CREATE TABLE IF NOT EXISTS documents (
   INDEX idx_documents_sha (sha256)
 );
 
+CREATE TABLE IF NOT EXISTS quotation_version_documents (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_version_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_version_documents_version_document UNIQUE (quotation_version_id, document_id),
+  CONSTRAINT fk_quotation_version_documents_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_documents_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_documents_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_version_documents_version (quotation_version_id, created_at),
+  INDEX idx_quotation_version_documents_document (document_id)
+);
+
 CREATE TABLE IF NOT EXISTS document_contents (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   document_id BIGINT UNSIGNED NOT NULL,
