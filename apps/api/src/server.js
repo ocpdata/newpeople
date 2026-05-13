@@ -11,6 +11,7 @@ import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema
 import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
+import { ensureProcessCommercialConfigPermissions } from "./process-commercial-config/permissions.js";
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
 import { ensureCorePermissions } from "./permissions.js";
@@ -20,6 +21,7 @@ export async function startServer() {
   await ensureInteractionPermissions();
   await ensureCommercialEnablementPermissions();
   await ensureCommercialPlanningPermissions();
+  await ensureProcessCommercialConfigPermissions();
   await ensureAccountInteractionsSchema();
   await ensureInteractionSchema();
   await ensureOpportunityDocumentSchema();

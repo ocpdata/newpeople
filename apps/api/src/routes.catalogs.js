@@ -941,7 +941,7 @@ router.get(
 
 router.get(
   "/opportunity-stage-questions-admin",
-  requirePermission("oportunidades.update"),
+  requirePermission("proceso_comercial_config.read"),
   async (req, res) => {
     const salesStageId = Number(req.query.salesStageId);
     if (!Number.isInteger(salesStageId) || salesStageId <= 0) {
@@ -968,7 +968,7 @@ router.get(
 
 router.post(
   "/opportunity-stage-questions",
-  requirePermission("oportunidades.update"),
+  requirePermission("proceso_comercial_config.update"),
   async (req, res) => {
     const parsed = validateOpportunityStageQuestionPayload(req.body);
     if (!parsed.ok) {
@@ -1017,7 +1017,7 @@ router.post(
 
 router.put(
   "/opportunity-stage-questions/:id",
-  requirePermission("oportunidades.update"),
+  requirePermission("proceso_comercial_config.update"),
   async (req, res) => {
     const questionId = Number(req.params.id);
     if (!Number.isInteger(questionId) || questionId <= 0) {
@@ -1127,7 +1127,7 @@ router.put(
 
 router.patch(
   "/opportunity-stage-questions/:id/status",
-  requirePermission("oportunidades.update"),
+  requirePermission("proceso_comercial_config.update"),
   async (req, res) => {
     const questionId = Number(req.params.id);
     if (!Number.isInteger(questionId) || questionId <= 0) {
@@ -1163,7 +1163,7 @@ router.patch(
 
 router.post(
   "/opportunity-stage-questions/reorder",
-  requirePermission("oportunidades.update"),
+  requirePermission("proceso_comercial_config.update"),
   async (req, res) => {
     const salesStageId = Number(req.body?.salesStageId);
     const questionIds = Array.isArray(req.body?.questionIds)

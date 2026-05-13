@@ -116,7 +116,13 @@ describe("API integration baseline", () => {
         "oportunidades.read",
         "oportunidades.create",
         "oportunidades.update",
+        "proceso_comercial_config.read",
+        "proceso_comercial_config.update",
       ],
+    });
+    ctx.processCommercialConfigReadRoleId = await createRole({
+      name: `${TEST_PREFIX}_process_commercial_config_read`,
+      permissionCodes: ["proceso_comercial_config.read"],
     });
     ctx.opportunityGlobalScopeRoleId = await createRole({
       name: `${TEST_PREFIX}_opps_global_scope`,
@@ -10336,6 +10342,46 @@ describe("API integration baseline", () => {
     expect(response.status).toBe(400);
     expect(response.body.message).toBe(
       "La pregunta debe tener al menos 5 caracteres",
+    );
+  });
+
+  test("catalogos.opportunity-stage-questions-admin permite lectura con proceso_comercial_config.read y bloquea escritura sin update", async () => {
+    const userId = await createUser({
+      fullName: `${TEST_PREFIX} Process Config Readonly`,
+      email: `${TEST_PREFIX}.process.config.readonly@example.com`,
+      roleIds: [ctx.processCommercialConfigReadRoleId],
+    });
+    cleanup.userIds.push(userId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.process.config.readonly@example.com`,
+    );
+    const token = loginResponse.body.token;
+    const salesStageId = ctx.catalogIds.salesStageWaitingId;
+
+    const readResponse = await request(app)
+      .get("/api/catalogs/opportunity-stage-questions-admin")
+      .query({ salesStageId })
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(readResponse.status).toBe(200);
+    expect(Array.isArray(readResponse.body.questions)).toBe(true);
+
+    const writeResponse = await request(app)
+      .post("/api/catalogs/opportunity-stage-questions")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        salesStageId,
+        prompt: "¿Quién valida la decisión final?",
+        responseType: "long_text",
+        displayOrder: 2,
+        isRequired: true,
+      });
+
+    expect(writeResponse.status).toBe(403);
+    expect(writeResponse.body.requiredPermission).toBe(
+      "proceso_comercial_config.update",
     );
   });
 

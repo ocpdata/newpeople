@@ -7,6 +7,7 @@ export default function OpportunityQuestionAdminLayout({
   questions,
   loading,
   saving,
+  canUpdate,
   onCreateQuestion,
   onEditQuestion,
   onToggleQuestionStatus,
@@ -17,7 +18,7 @@ export default function OpportunityQuestionAdminLayout({
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Preguntas comerciales</h2>
+            <h2>Configuración del proceso comercial</h2>
             <span
               className="module-title-icon module-title-icon-opportunities"
               aria-hidden="true"
@@ -29,13 +30,19 @@ export default function OpportunityQuestionAdminLayout({
             </span>
           </div>
           <p className="roles-subtitle">
-            Administra las preguntas activas por etapa sin tocar código ni
-            reiniciar la aplicación.
+            Administra la configuración de preguntas por etapa del proceso
+            comercial sin tocar código ni reiniciar la aplicación.
           </p>
         </div>
-        <button type="button" className="btn-primary" onClick={onCreateQuestion}>
-          + Nueva pregunta
-        </button>
+        {canUpdate ? (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onCreateQuestion}
+          >
+            + Nueva pregunta
+          </button>
+        ) : null}
       </div>
 
       <div className="question-admin-stage-strip">
@@ -86,7 +93,7 @@ export default function OpportunityQuestionAdminLayout({
                 <th>Tipo</th>
                 <th>Obligatoria</th>
                 <th>Estado</th>
-                <th>Acciones</th>
+                {canUpdate ? <th>Acciones</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -124,42 +131,46 @@ export default function OpportunityQuestionAdminLayout({
                       {Number(question.is_active) === 1 ? "Activa" : "Inactiva"}
                     </span>
                   </td>
-                  <td>
-                    <div className="question-admin-table-actions">
-                      <button
-                        type="button"
-                        className="btn-secondary question-admin-order-btn"
-                        disabled={saving || index === 0}
-                        onClick={() => onMoveQuestion(question, "up")}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary question-admin-order-btn"
-                        disabled={saving || index === questions.length - 1}
-                        onClick={() => onMoveQuestion(question, "down")}
-                      >
-                        ↓
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={saving}
-                        onClick={() => onEditQuestion(question)}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={saving}
-                        onClick={() => onToggleQuestionStatus(question)}
-                      >
-                        {Number(question.is_active) === 1 ? "Desactivar" : "Activar"}
-                      </button>
-                    </div>
-                  </td>
+                  {canUpdate ? (
+                    <td>
+                      <div className="question-admin-table-actions">
+                        <button
+                          type="button"
+                          className="btn-secondary question-admin-order-btn"
+                          disabled={saving || index === 0}
+                          onClick={() => onMoveQuestion(question, "up")}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary question-admin-order-btn"
+                          disabled={saving || index === questions.length - 1}
+                          onClick={() => onMoveQuestion(question, "down")}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={saving}
+                          onClick={() => onEditQuestion(question)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={saving}
+                          onClick={() => onToggleQuestionStatus(question)}
+                        >
+                          {Number(question.is_active) === 1
+                            ? "Desactivar"
+                            : "Activar"}
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -167,8 +178,9 @@ export default function OpportunityQuestionAdminLayout({
         </div>
       ) : (
         <div className="empty-state">
-          No hay preguntas configuradas para esta etapa. Crea la primera desde
-          aquí.
+          {canUpdate
+            ? "No hay preguntas configuradas para esta etapa. Crea la primera desde aquí."
+            : "No hay preguntas configuradas para esta etapa."}
         </div>
       )}
     </>

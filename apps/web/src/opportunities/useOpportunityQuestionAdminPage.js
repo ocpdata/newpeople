@@ -9,7 +9,7 @@ const DEFAULT_FORM = {
   isRequired: true,
 };
 
-export function useOpportunityQuestionAdminPage() {
+export function useOpportunityQuestionAdminPage({ canUpdate = false } = {}) {
   const [stages, setStages] = useState([]);
   const [selectedStageId, setSelectedStageId] = useState("");
   const [questions, setQuestions] = useState([]);
@@ -152,6 +152,7 @@ export function useOpportunityQuestionAdminPage() {
   }
 
   function openCreateModal() {
+    if (!canUpdate) return;
     setEditingQuestion(null);
     setForm({
       salesStageId: String(selectedStageId || ""),
@@ -164,6 +165,7 @@ export function useOpportunityQuestionAdminPage() {
   }
 
   function openEditModal(question) {
+    if (!canUpdate) return;
     setEditingQuestion(question);
     setForm({
       salesStageId: String(question.sales_stage_id),
@@ -186,6 +188,7 @@ export function useOpportunityQuestionAdminPage() {
 
   async function submitQuestion(event) {
     event.preventDefault();
+    if (!canUpdate) return;
     setError("");
     setSuccess("");
     setSaving(true);
@@ -228,6 +231,7 @@ export function useOpportunityQuestionAdminPage() {
   }
 
   async function toggleQuestionStatus(question) {
+    if (!canUpdate) return;
     setError("");
     setSuccess("");
     setSaving(true);
@@ -256,6 +260,7 @@ export function useOpportunityQuestionAdminPage() {
   }
 
   async function moveQuestion(question, direction) {
+    if (!canUpdate) return;
     const currentIndex = questions.findIndex(
       (row) => Number(row.id) === Number(question.id),
     );

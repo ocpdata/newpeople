@@ -116,6 +116,9 @@ export default function AppShell({
   const canAccessPotentialOpportunities =
     can("oportunidades_potenciales.read") ||
     can("oportunidades_potenciales.read_all");
+  const canAccessProcessCommercialConfig =
+    can("proceso_comercial_config.read") ||
+    can("proceso_comercial_config.update");
   const canAccessCommercialPlanning = can("planeacion_comercial.read");
   const canAccessCommercialEnablement =
     can("enablement_comercial.use") ||
@@ -196,8 +199,10 @@ export default function AppShell({
         <Route
           path="/opportunities/questions"
           element={
-            can("oportunidades.update") ? (
-              <OpportunityQuestionAdminPage />
+            canAccessProcessCommercialConfig ? (
+              <OpportunityQuestionAdminPage
+                canUpdate={can("proceso_comercial_config.update")}
+              />
             ) : (
               <Navigate to="/" />
             )
@@ -397,7 +402,7 @@ export default function AppShell({
             </SidebarNavGroup>
           )}
 
-          {(can("proveedores.read") || can("oportunidades.update")) && (
+          {can("proveedores.read") && (
             <SidebarNavGroup title="Operacion comercial">
               {can("proveedores.read") && (
                 <GuardedNavLink
@@ -407,19 +412,12 @@ export default function AppShell({
                   Proveedores
                 </GuardedNavLink>
               )}
-              {can("oportunidades.update") && (
-                <GuardedNavLink
-                  to="/opportunities/questions"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Preguntas comerciales
-                </GuardedNavLink>
-              )}
             </SidebarNavGroup>
           )}
 
           {(can("usuarios.read") ||
             can("roles.read") ||
+            canAccessProcessCommercialConfig ||
             can("configuracion.read")) && (
             <SidebarNavGroup title="Administracion">
               {can("usuarios.read") && (
@@ -436,6 +434,14 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Roles
+                </GuardedNavLink>
+              )}
+              {canAccessProcessCommercialConfig && (
+                <GuardedNavLink
+                  to="/opportunities/questions"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Configuración del proceso comercial
                 </GuardedNavLink>
               )}
               {can("configuracion.read") && (

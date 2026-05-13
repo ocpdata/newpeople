@@ -53,6 +53,12 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - Cada pregunta define tipo de respuesta, orden y si es obligatoria.
 - Activar o desactivar una pregunta afecta la captura futura de oportunidades que consulten nuevamente el catalogo de su etapa.
 
+### Configuracion del proceso comercial
+
+- El modulo administrativo se expone como `Configuracion del proceso comercial`.
+- `proceso_comercial_config.read` permite consultar la configuracion de preguntas por etapa.
+- `proceso_comercial_config.update` permite crear, editar, reordenar, activar y desactivar preguntas.
+
 ### Alcance de acceso
 
 - `oportunidades.read_all`: ve y opera todas las oportunidades y habilita cuentas/contactos ajenos en catalogos relacionados.

@@ -2449,6 +2449,8 @@ VALUES
   ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
   ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
   ('oportunidades.update', 'oportunidades', 'update', 'Actualizar oportunidades', NOW(3), NOW(3)),
+  ('proceso_comercial_config.read', 'proceso_comercial_config', 'read', 'Ver la configuracion del proceso comercial', NOW(3), NOW(3)),
+  ('proceso_comercial_config.update', 'proceso_comercial_config', 'update', 'Actualizar la configuracion del proceso comercial', NOW(3), NOW(3)),
   ('oportunidades_potenciales.read', 'oportunidades_potenciales', 'read', 'Ver oportunidades potenciales', NOW(3), NOW(3)),
   ('oportunidades_potenciales.read_all', 'oportunidades_potenciales', 'read_all', 'Ver todas las oportunidades potenciales', NOW(3), NOW(3)),
   ('oportunidades_potenciales.review', 'oportunidades_potenciales', 'review', 'Revisar y detectar oportunidades potenciales', NOW(3), NOW(3)),

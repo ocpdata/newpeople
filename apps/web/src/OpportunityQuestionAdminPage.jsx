@@ -3,7 +3,7 @@ import OpportunityQuestionFormModal from "./opportunities/OpportunityQuestionFor
 import { useOpportunityQuestionAdminPage } from "./opportunities/useOpportunityQuestionAdminPage";
 import "./opportunities/opportunity-question-admin.css";
 
-export default function OpportunityQuestionAdminPage() {
+export default function OpportunityQuestionAdminPage({ canUpdate = false }) {
   const {
     stages,
     selectedStageId,
@@ -26,7 +26,7 @@ export default function OpportunityQuestionAdminPage() {
     submitQuestion,
     toggleQuestionStatus,
     moveQuestion,
-  } = useOpportunityQuestionAdminPage();
+  } = useOpportunityQuestionAdminPage({ canUpdate });
 
   return (
     <section className="panel">
@@ -39,6 +39,7 @@ export default function OpportunityQuestionAdminPage() {
         questions={questions}
         loading={loading}
         saving={saving}
+        canUpdate={canUpdate}
         onCreateQuestion={openCreateModal}
         onEditQuestion={openEditModal}
         onToggleQuestionStatus={toggleQuestionStatus}
@@ -49,7 +50,7 @@ export default function OpportunityQuestionAdminPage() {
       {success && <div className="toast toast-success">{success}</div>}
 
       <OpportunityQuestionFormModal
-        isOpen={showModal}
+        isOpen={canUpdate && showModal}
         editingQuestion={editingQuestion}
         saving={saving}
         form={form}
