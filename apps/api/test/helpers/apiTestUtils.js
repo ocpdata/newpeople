@@ -343,6 +343,26 @@ export async function cleanupArtifacts({
   userIds = [],
   roleIds = [],
 }) {
+  const normalizeIds = (values) =>
+    Array.from(
+      new Set(
+        (Array.isArray(values) ? values : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    );
+
+  stageQuestionIds = normalizeIds(stageQuestionIds);
+  quotationIds = normalizeIds(quotationIds);
+  opportunityIds = normalizeIds(opportunityIds);
+  contactIds = normalizeIds(contactIds);
+  accountIds = normalizeIds(accountIds);
+  providerPriceItemIds = normalizeIds(providerPriceItemIds);
+  providerPriceListIds = normalizeIds(providerPriceListIds);
+  providerIds = normalizeIds(providerIds);
+  userIds = normalizeIds(userIds);
+  roleIds = normalizeIds(roleIds);
+
   if (userIds.length) {
     await query(
       `DELETE FROM documents WHERE uploaded_by_user_id IN (${placeholders(userIds.length)})`,

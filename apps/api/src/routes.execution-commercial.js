@@ -1,6 +1,6 @@
 import { buffer as streamToBuffer } from "node:stream/consumers";
 import express from "express";
-import { requirePermission } from "./auth.js";
+import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import {
   getCommercialEnablementAssetDetail,
@@ -393,6 +393,10 @@ function isRealWonStage(stageCode) {
   return stageCode === "cierre";
 }
 
+function isRealWonOpportunity(item = {}) {
+  return item.commercialStatusCode === "ganada" || isRealWonStage(item.stageCode);
+}
+
 async function listDevelopmentPeriods() {
   const rows = await query(
     `SELECT p.id, p.plan_year, p.plan_quarter, p.status,
@@ -417,7 +421,7 @@ async function listDevelopmentPeriods() {
   }));
 }
 
-async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
+async function loadPlanningSnapshot({ user, year, quarter, planningItems }) {
   const periodRows = await query(
     `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status, p.notes,
             v.id AS version_id, v.version_number, v.status AS version_status, v.label AS version_label
@@ -466,15 +470,15 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
     : [];
 
   const { startDate, endDate } = getQuarterDateRange(year, quarter);
-  const stageOrderValues = openItems.map((item) => Number(item.stageId || 0));
+  const stageOrderValues = planningItems.map((item) => Number(item.stageId || 0));
   const maxStageOrder = stageOrderValues.length
     ? Math.max(...stageOrderValues)
     : 6;
-  const openItemsInQuarter = openItems.filter((item) =>
+  const itemsInQuarter = planningItems.filter((item) =>
     isDateWithinQuarter(item.closeDate, year, quarter),
   );
-  const actualBySellerId = openItemsInQuarter.reduce((accumulator, item) => {
-    if (!isRealWonStage(item.stageCode)) {
+  const actualBySellerId = itemsInQuarter.reduce((accumulator, item) => {
+    if (!isRealWonOpportunity(item)) {
       return accumulator;
     }
     const key = item.sellerUserId || null;
@@ -487,8 +491,8 @@ async function loadPlanningSnapshot({ user, year, quarter, openItems }) {
     accumulator.set(key, current);
     return accumulator;
   }, new Map());
-  const openBySellerId = openItemsInQuarter.reduce((accumulator, item) => {
-    if (isRealWonStage(item.stageCode)) {
+  const openBySellerId = itemsInQuarter.reduce((accumulator, item) => {
+    if (isRealWonOpportunity(item)) {
       return accumulator;
     }
     const key = item.sellerUserId || null;
@@ -1425,6 +1429,40 @@ async function listAccessibleOpportunities(user) {
      INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      LEFT JOIN users su ON su.id = o.seller_user_id
      WHERE ocs.code NOT IN ('ganada', 'perdida', 'cancelada')
+       AND oas.code = 'activada'
+       ${hasGlobalOpportunityScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ?)"}
+     ORDER BY o.updated_at DESC, o.id DESC`,
+    params,
+  );
+}
+
+async function listAccessiblePlanningOpportunities(user) {
+  const params = [];
+  const ownershipJoin = buildOwnershipJoin(user, params);
+  if (!hasGlobalOpportunityScope(user)) {
+    params.push(Number(user.id));
+  }
+
+  return query(
+    `SELECT o.id, o.account_id, o.name, o.amount_usd, o.close_date, o.sales_stage_id,
+            o.commercial_status_id, o.seller_user_id, o.updated_at,
+            a.name AS account_name,
+            oas.code AS activation_status_code,
+            oss.code AS sales_stage_code,
+            oss.name AS sales_stage_name,
+            oss.stage_order,
+            ocs.code AS commercial_status_code,
+            ocs.name AS commercial_status_name,
+          su.full_name AS seller_user_name,
+          su.email AS seller_user_email
+     FROM opportunities o
+     ${ownershipJoin}
+     INNER JOIN accounts a ON a.id = o.account_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
+     WHERE ocs.code NOT IN ('perdida', 'cancelada')
        AND oas.code = 'activada'
        ${hasGlobalOpportunityScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ?)"}
      ORDER BY o.updated_at DESC, o.id DESC`,
@@ -3798,12 +3836,19 @@ async function listCommercialCalendarActivities({
 
 router.get(
   "/dashboard",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
     const quarterSelection = resolveQuarterSelection(req.query || {});
     const developmentPeriods = await listDevelopmentPeriods();
     const stagesCatalog = await listActiveSalesStages();
     const opportunityRows = await listAccessibleOpportunities(req.user);
+    const planningOpportunityRows = await listAccessiblePlanningOpportunities(
+      req.user,
+    );
     const opportunityIds = opportunityRows.map((row) => Number(row.id));
     const accountContactsByAccountId = await listContactsByAccountIds(
       opportunityRows.map((row) => row.account_id),
@@ -4062,7 +4107,17 @@ router.get(
       user: req.user,
       year: quarterSelection.year,
       quarter: quarterSelection.quarter,
-      openItems: executionItems,
+      planningItems: planningOpportunityRows.map((row) => ({
+        amountUsd: Number(row.amount_usd || 0),
+        closeDate: row.close_date || null,
+        commercialStatusCode: row.commercial_status_code || "",
+        sellerUserId:
+          row.seller_user_id === null || row.seller_user_id === undefined
+            ? null
+            : Number(row.seller_user_id),
+        stageCode: row.sales_stage_code || "",
+        stageId: Number(row.sales_stage_id || 0),
+      })),
     });
 
     const sellerStats = Array.from(
@@ -4253,6 +4308,10 @@ router.get(
 
 router.get(
   "/calendar",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
     const view = String(req.query?.view || "week").trim();
@@ -4284,6 +4343,10 @@ router.get(
 
 router.post(
   "/opportunities/:id/ai-narrative",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4338,6 +4401,7 @@ router.post(
 
 router.post(
   "/opportunities/:id/activities",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4465,6 +4529,7 @@ router.post(
 
 router.patch(
   "/opportunities/:id/activities/:activityId",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4668,6 +4733,7 @@ router.patch(
 
 router.patch(
   "/opportunities/:id/activities/:activityId/email-draft",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4758,6 +4824,7 @@ router.patch(
 
 router.get(
   "/opportunities/:id/email-attachments/options",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4810,6 +4877,7 @@ router.get(
 
 router.post(
   "/opportunities/:id/email-suggestion",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -4859,6 +4927,7 @@ router.post(
 
 router.post(
   "/opportunities/:id/activities/:activityId/send-email",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -5006,6 +5075,7 @@ router.post(
 
 router.post(
   "/opportunities/:id/next-step",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -5069,6 +5139,7 @@ router.post(
 
 router.post(
   "/opportunities/:id/dependencies",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.params.id);
@@ -5125,6 +5196,7 @@ router.post(
 
 router.patch(
   "/dependencies/:id",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const dependencyId = Number(req.params.id);
@@ -5194,6 +5266,7 @@ router.patch(
 
 router.post(
   "/cadences",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const opportunityId = Number(req.body?.opportunityId);
@@ -5241,6 +5314,7 @@ router.post(
 
 router.patch(
   "/cadences/:id",
+  requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
     const cadenceId = Number(req.params.id);

@@ -1193,7 +1193,8 @@ function isSendEmailAction(activity) {
   );
 }
 
-function buildEmailActionDraft(item, activity) {
+function buildEmailActionDraft(item, activity, options = {}) {
+  const { forceReadOnly = false } = options;
   const details = normalizeEmailActionDetails(activity?.details || {});
   const status = String(activity?.status || "pending");
   return {
@@ -1203,7 +1204,8 @@ function buildEmailActionDraft(item, activity) {
     accountName: item?.accountName || "Sin cuenta",
     sellerUserName: item?.sellerUserName || "Sin vendedor",
     status,
-    isReadOnly: status === "done" || status === "cancelled",
+    isReadOnly:
+      forceReadOnly || status === "done" || status === "cancelled",
     details,
   };
 }
@@ -2414,6 +2416,7 @@ function CommercialActivityModal({
   item,
   draft,
   setDraft,
+  canUpdate,
   saving,
   error,
   notice,
@@ -2573,7 +2576,7 @@ function CommercialActivityModal({
                   type="button"
                   className="btn-secondary"
                   onClick={onShowCreateAction}
-                  disabled={isModalLocked}
+                  disabled={isModalLocked || !canUpdate}
                 >
                   Nueva accion
                 </button>
@@ -2581,7 +2584,7 @@ function CommercialActivityModal({
                   type="button"
                   className="btn-primary"
                   onClick={onShowCreate}
-                  disabled={isModalLocked}
+                  disabled={isModalLocked || !canUpdate}
                 >
                   Nueva actividad
                 </button>
@@ -2599,7 +2602,7 @@ function CommercialActivityModal({
                       type="button"
                       className="commercial-development-activity-history-item commercial-development-activity-history-button"
                       onClick={() => onSelectActivity(activity)}
-                      disabled={isModalLocked}
+                      disabled={isModalLocked || !canUpdate}
                     >
                       <div className="commercial-development-inline-row">
                         <strong>
@@ -3381,8 +3384,15 @@ function CommercialEmailDraftModal({
   );
 }
 
-export default function CommercialDevelopmentPage() {
+export default function CommercialDevelopmentPage({ currentUser }) {
   const navigate = useNavigate();
+  const permissionSet = useMemo(
+    () => new Set(currentUser?.permissions || []),
+    [currentUser],
+  );
+  const canUpdateCommercialDevelopment =
+    permissionSet.has("desarrollo_comercial.update") &&
+    permissionSet.has("oportunidades.update");
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4220,14 +4230,19 @@ export default function CommercialDevelopmentPage() {
   function openActivityModal(item, options = {}) {
     const { viewMode = "activity-form" } = options;
     const nextItem = resolveModalOpportunityItem(item);
+    const nextViewMode = canUpdateCommercialDevelopment ? viewMode : "list";
     setActivityModalItem(nextItem);
     setActivityDraft(buildActivityDraft(nextItem));
     setActivityError("");
     setActivityNotice("");
-    setActivityViewMode(viewMode);
+    setActivityViewMode(nextViewMode);
   }
 
   function openEditActivityModal(item, activity, options = {}) {
+    if (!canUpdateCommercialDevelopment) {
+      openActivityModal(item, { viewMode: "list" });
+      return;
+    }
     const { viewMode = null } = options;
     const nextItem = resolveModalOpportunityItem(item);
     setActivityModalItem(nextItem);
@@ -4244,6 +4259,7 @@ export default function CommercialDevelopmentPage() {
   }
 
   function openCreateActivityForDate(item, dateValue) {
+    if (!canUpdateCommercialDevelopment) return;
     const nextItem = resolveModalOpportunityItem(item);
     setActivityModalItem(nextItem);
     setActivityDraft({
@@ -4261,7 +4277,7 @@ export default function CommercialDevelopmentPage() {
   }
 
   function showCreateActivityForm() {
-    if (!activityModalItem) return;
+    if (!activityModalItem || !canUpdateCommercialDevelopment) return;
     setActivityDraft({
       ...buildActivityDraft(activityModalItem),
       entryKind: "activity",
@@ -4273,7 +4289,7 @@ export default function CommercialDevelopmentPage() {
   }
 
   function showCreateActionForm() {
-    if (!activityModalItem) return;
+    if (!activityModalItem || !canUpdateCommercialDevelopment) return;
     activityEmailSuggestionRef.current = null;
     setActivityDraft({
       ...buildActivityDraft(activityModalItem),
@@ -4297,7 +4313,7 @@ export default function CommercialDevelopmentPage() {
   }
 
   function selectActivityFromList(activity) {
-    if (!activityModalItem) return;
+    if (!activityModalItem || !canUpdateCommercialDevelopment) return;
     setActivityDraft(buildActivityDraft(activityModalItem, activity));
     setActivityError("");
     setActivityNotice("");
@@ -4361,7 +4377,11 @@ export default function CommercialDevelopmentPage() {
     const nextItem = resolveModalOpportunityItem(item);
     emailDraftSuggestionRef.current = null;
     setEmailDraftModalItem(nextItem);
-    setEmailDraftState(buildEmailActionDraft(nextItem, activity));
+    setEmailDraftState(
+      buildEmailActionDraft(nextItem, activity, {
+        forceReadOnly: !canUpdateCommercialDevelopment,
+      }),
+    );
     setEmailDraftError("");
     setEmailDraftNotice("");
     setEmailSendFeedback(
@@ -5088,6 +5108,12 @@ export default function CommercialDevelopmentPage() {
             Prioriza cobertura contra cuota, concentra decisiones del trimestre
             y permite ejecutar el siguiente movimiento desde la misma vista.
           </p>
+          {!canUpdateCommercialDevelopment ? (
+            <p className="section-helper-text">
+              Acceso en modo lectura: puedes consultar el cockpit, pero no
+              operar actividades ni acciones desde este modulo.
+            </p>
+          ) : null}
         </div>
 
         <div className="commercial-development-toolbar">
@@ -5886,6 +5912,7 @@ export default function CommercialDevelopmentPage() {
         item={activityModalItem}
         draft={activityDraft}
         setDraft={setActivityDraft}
+        canUpdate={canUpdateCommercialDevelopment}
         saving={savingActivity}
         error={activityError}
         notice={activityNotice}

@@ -113,12 +113,27 @@ describe("API integration baseline", () => {
     ctx.opportunityFlowRoleId = await createRole({
       name: `${TEST_PREFIX}_opps_flow`,
       permissionCodes: [
+        "desarrollo_comercial.read",
+        "desarrollo_comercial.update",
         "oportunidades.read",
         "oportunidades.create",
         "oportunidades.update",
         "proceso_comercial_config.read",
         "proceso_comercial_config.update",
       ],
+    });
+    ctx.commercialDevelopmentReadOnlyRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_development_readonly`,
+      permissionCodes: [
+        "desarrollo_comercial.read",
+        "oportunidades.read",
+        "oportunidades.create",
+        "oportunidades.update",
+      ],
+    });
+    ctx.opportunityReadOnlyRoleId = await createRole({
+      name: `${TEST_PREFIX}_opportunity_readonly`,
+      permissionCodes: ["oportunidades.read"],
     });
     ctx.processCommercialConfigReadRoleId = await createRole({
       name: `${TEST_PREFIX}_process_commercial_config_read`,
@@ -127,6 +142,8 @@ describe("API integration baseline", () => {
     ctx.opportunityGlobalScopeRoleId = await createRole({
       name: `${TEST_PREFIX}_opps_global_scope`,
       permissionCodes: [
+        "desarrollo_comercial.read",
+        "desarrollo_comercial.update",
         "oportunidades.read",
         "oportunidades.read_all",
         "oportunidades.request",
@@ -3144,43 +3161,26 @@ describe("API integration baseline", () => {
     ]);
   });
 
-  test("cuentas.put permite editar sin cambiar estado y bloquea cambio de estado sin cuentas.create", async () => {
+  test("cuentas.put permite editar una cuenta sin cambiar su estado de activacion", async () => {
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+      suffix: `${TEST_PREFIX}_account_put_same_status`,
+    });
+    cleanup.accountIds.push(accountId);
+
     const loginResponse = await login(
       request(app),
-      `${TEST_PREFIX}.accounts.request@example.com`,
+      `${TEST_PREFIX}.accounts.create@example.com`,
     );
 
-    const createResponse = await request(app)
-      .post("/api/accounts")
-      .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({
-        name: `Quartz Edit ${TEST_PREFIX}`,
-        accountTypeId: ctx.catalogIds.accountTypeId,
-        registrationCode: `PUT-${TEST_PREFIX}`,
-        phone: "5550003333",
-        economicSectorId: ctx.catalogIds.economicSectorId,
-        website: "https://put.example.com",
-        city: "CDMX",
-        stateRegion: "CDMX",
-        countryId: ctx.catalogIds.countryMxId,
-        description: "Cuenta para validar PUT",
-        addressLine: "Direccion put",
-        postalCode: "01003",
-        activationStatusId: ctx.catalogIds.accountActiveStatusId,
-        ownerUserIds: [ctx.accountRequestUserId],
-      });
-
-    expect(createResponse.status).toBe(201);
-
-    cleanup.accountIds.push(Number(createResponse.body.id));
-
     const sameStatusPut = await request(app)
-      .put(`/api/accounts/${createResponse.body.id}`)
+      .put(`/api/accounts/${accountId}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
         name: `Quartz Edit ${TEST_PREFIX} revisada`,
         accountTypeId: ctx.catalogIds.accountTypeId,
-        registrationCode: `PUT-${TEST_PREFIX}`,
+        registrationCode: `FIX-${TEST_PREFIX}_account_put_same_status`,
         phone: "5550003334",
         economicSectorId: ctx.catalogIds.economicSectorId,
         website: "https://put-edited.example.com",
@@ -3190,20 +3190,44 @@ describe("API integration baseline", () => {
         description: "Cuenta para validar PUT sin cambiar estado",
         addressLine: "Direccion put",
         postalCode: "01003",
-        activationStatusId: ctx.catalogIds.accountPendingStatusId,
-        ownerUserIds: [ctx.accountRequestUserId],
+        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        ownerUserIds: [ctx.accountCreateUserId],
       });
 
     expect(sameStatusPut.status).toBe(200);
     expect(sameStatusPut.body.message).toBe("Cuenta actualizada");
 
+    const statusCode = await getStatusCodeById("accounts", accountId, {
+      table: "account_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activada");
+  });
+
+  test("cuentas.put bloquea cambiar el estado de activacion sin cuentas.create", async () => {
+    const accountInactiveStatusId = await getCatalogId(
+      "account_activation_statuses",
+      "desactivada",
+    );
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.accountRequestUserId,
+      actorUserId: ctx.accountRequestUserId,
+      suffix: `${TEST_PREFIX}_account_put_blocked_status`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.request@example.com`,
+    );
+
     const blockedStatusPut = await request(app)
-      .put(`/api/accounts/${createResponse.body.id}`)
+      .put(`/api/accounts/${accountId}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
         name: `Quartz Edit ${TEST_PREFIX} activacion`,
         accountTypeId: ctx.catalogIds.accountTypeId,
-        registrationCode: `PUT-${TEST_PREFIX}`,
+        registrationCode: `FIX-${TEST_PREFIX}_account_put_blocked_status`,
         phone: "5550003335",
         economicSectorId: ctx.catalogIds.economicSectorId,
         website: "https://put-blocked.example.com",
@@ -3213,7 +3237,7 @@ describe("API integration baseline", () => {
         description: "Cuenta para validar bloqueo de activacion",
         addressLine: "Direccion put",
         postalCode: "01003",
-        activationStatusId: ctx.catalogIds.accountActiveStatusId,
+        activationStatusId: accountInactiveStatusId,
         ownerUserIds: [ctx.accountRequestUserId],
       });
 
@@ -5055,54 +5079,33 @@ describe("API integration baseline", () => {
     expect(Number(detailResponse.body.account_id)).toBe(foreignAccountId);
   });
 
-  test("contactos.put permite editar sin cambiar estado y bloquea cambio de estado sin contactos.create", async () => {
-    const contactOwnedAccountId = await createDirectAccount({
-      ownerUserId: ctx.contactRequestUserId,
-      actorUserId: ctx.contactRequestUserId,
-      suffix: `${TEST_PREFIX}_contact_put`,
+  test("contactos.put permite editar un contacto sin cambiar su estado de activacion", async () => {
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_put_same_status`,
     });
-    cleanup.accountIds.push(contactOwnedAccountId);
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_put_same_status`,
+    });
+    cleanup.contactIds.push(contactId);
 
     const loginResponse = await login(
       request(app),
-      `${TEST_PREFIX}.contacts.request@example.com`,
+      `${TEST_PREFIX}.contacts.create@example.com`,
     );
 
-    const createResponse = await request(app)
-      .post("/api/contacts")
-      .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({
-        firstName: "Contacto",
-        lastName: `PUT ${TEST_PREFIX}`,
-        accountId: contactOwnedAccountId,
-        positionTitle: "Analista",
-        phone: "5552020202",
-        phoneExtension: "202",
-        mobile: `552${String(Date.now()).slice(-7)}`,
-        email: `${TEST_PREFIX}.contact.put@example.com`,
-        department: "Compras",
-        countryId: ctx.catalogIds.countryMxId,
-        stateRegion: "CDMX",
-        city: "Ciudad de Mexico",
-        addressLine: "Direccion put contacto",
-        postalCode: "01004",
-        purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
-        relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
-        employmentStatusId: ctx.catalogIds.employmentStatusId,
-        activationStatusId: ctx.catalogIds.contactActiveStatusId,
-        managerContactId: null,
-        influencesContactId: null,
-      });
-
-    cleanup.contactIds.push(Number(createResponse.body.id));
-
     const sameStatusPut = await request(app)
-      .put(`/api/contacts/${createResponse.body.id}`)
+      .put(`/api/contacts/${contactId}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
         firstName: "Contacto",
         lastName: `PUT ${TEST_PREFIX} editado`,
-        accountId: contactOwnedAccountId,
+        accountId,
         positionTitle: "Analista Senior",
         phone: "5552020203",
         phoneExtension: "203",
@@ -5117,7 +5120,7 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
-        activationStatusId: ctx.catalogIds.contactPendingStatusId,
+        activationStatusId: ctx.catalogIds.contactActiveStatusId,
         managerContactId: null,
         influencesContactId: null,
       });
@@ -5125,13 +5128,40 @@ describe("API integration baseline", () => {
     expect(sameStatusPut.status).toBe(200);
     expect(sameStatusPut.body.message).toBe("Contacto actualizado");
 
+    const statusCode = await getStatusCodeById("contacts", contactId, {
+      table: "contact_activation_statuses",
+      column: "activation_status_id",
+    });
+    expect(statusCode).toBe("activado");
+  });
+
+  test("contactos.put bloquea cambiar el estado de activacion sin contactos.create", async () => {
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.contactRequestUserId,
+      actorUserId: ctx.contactRequestUserId,
+      suffix: `${TEST_PREFIX}_contact_put_blocked_status`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.contactRequestUserId,
+      suffix: `${TEST_PREFIX}_contact_put_blocked_status`,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.contacts.request@example.com`,
+    );
+
     const blockedStatusPut = await request(app)
-      .put(`/api/contacts/${createResponse.body.id}`)
+      .put(`/api/contacts/${contactId}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
         firstName: "Contacto",
         lastName: `PUT ${TEST_PREFIX} activacion`,
-        accountId: contactOwnedAccountId,
+        accountId,
         positionTitle: "Analista Senior",
         phone: "5552020204",
         phoneExtension: "204",
@@ -5146,7 +5176,7 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
-        activationStatusId: ctx.catalogIds.contactActiveStatusId,
+        activationStatusId: ctx.catalogIds.contactInactiveStatusId,
         managerContactId: null,
         influencesContactId: null,
       });
@@ -6485,35 +6515,20 @@ describe("API integration baseline", () => {
     );
   });
 
-  test("oportunidades.put permite editar sin cambiar estado y bloquea cambio de estado sin oportunidades.create", async () => {
-    const opportunityOwnedAccountId = await createDirectAccount({
-      ownerUserId: ctx.opportunityRequestUserId,
-      actorUserId: ctx.opportunityRequestUserId,
-      suffix: `${TEST_PREFIX}_opportunity_put`,
-    });
-    cleanup.accountIds.push(opportunityOwnedAccountId);
-
-    const opportunityOwnedContactId = await createDirectContact({
-      accountId: opportunityOwnedAccountId,
-      actorUserId: ctx.opportunityRequestUserId,
-      suffix: `${TEST_PREFIX}_opportunity_put`,
-    });
-    cleanup.contactIds.push(opportunityOwnedContactId);
-
-    const loginResponse = await login(
-      request(app),
-      `${TEST_PREFIX}.opps.request@example.com`,
+  test("oportunidades.put permite editar una oportunidad sin cambiar su estado de activacion", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_opportunity_put_same_status`,
     );
 
-    const createResponse = await request(app)
-      .post("/api/opportunities")
-      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+    const sameStatusPut = await request(app)
+      .put(`/api/opportunities/${fixture.opportunityId}`)
+      .set("Authorization", `Bearer ${fixture.token}`)
       .send({
-        name: `Oportunidad PUT ${TEST_PREFIX}`,
-        amountUsd: 33000,
-        accountId: opportunityOwnedAccountId,
-        closeDate: "2026-11-30",
-        contactId: opportunityOwnedContactId,
+        name: `Oportunidad PUT ${TEST_PREFIX} editada`,
+        amountUsd: 34000,
+        accountId: fixture.accountId,
+        closeDate: "2026-12-15",
+        contactId: fixture.contactId,
         salesStageId: ctx.catalogIds.salesStageInitialId,
         businessLineId: ctx.catalogIds.businessLineId,
         sellerUserId: ctx.sellerUserId,
@@ -6521,29 +6536,70 @@ describe("API integration baseline", () => {
         activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
       });
 
-    cleanup.opportunityIds.push(Number(createResponse.body.id));
-
-    const sameStatusPut = await request(app)
-      .put(`/api/opportunities/${createResponse.body.id}`)
-      .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({
-        name: `Oportunidad PUT ${TEST_PREFIX} editada`,
-        amountUsd: 34000,
-        accountId: opportunityOwnedAccountId,
-        closeDate: "2026-12-15",
-        contactId: opportunityOwnedContactId,
-        salesStageId: ctx.catalogIds.salesStageInitialId,
-        businessLineId: ctx.catalogIds.businessLineId,
-        sellerUserId: ctx.sellerUserId,
-        presalesUserId: null,
-        activationStatusId: ctx.catalogIds.opportunityPendingStatusId,
-      });
-
     expect(sameStatusPut.status).toBe(200);
     expect(sameStatusPut.body.message).toBe("Oportunidad actualizada");
 
+    const statusCode = await getStatusCodeById(
+      "opportunities",
+      fixture.opportunityId,
+      {
+        table: "opportunity_activation_statuses",
+        column: "activation_status_id",
+      },
+    );
+    expect(statusCode).toBe("activada");
+  });
+
+  test("oportunidades.put bloquea cambiar el estado de activacion sin oportunidades.create", async () => {
+    const opportunityOwnedAccountId = await createDirectAccount({
+      ownerUserId: ctx.opportunityRequestUserId,
+      actorUserId: ctx.opportunityRequestUserId,
+      suffix: `${TEST_PREFIX}_opportunity_put_blocked_status`,
+    });
+    cleanup.accountIds.push(opportunityOwnedAccountId);
+
+    const opportunityOwnedContactId = await createDirectContact({
+      accountId: opportunityOwnedAccountId,
+      actorUserId: ctx.opportunityRequestUserId,
+      suffix: `${TEST_PREFIX}_opportunity_put_blocked_status`,
+    });
+    cleanup.contactIds.push(opportunityOwnedContactId);
+
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad PUT bloqueada ${TEST_PREFIX}`,
+        33000,
+        opportunityOwnedAccountId,
+        "2026-11-30",
+        opportunityOwnedContactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        ctx.opportunityRequestUserId,
+        now,
+        ctx.opportunityRequestUserId,
+        now,
+      ],
+    );
+    const opportunityId = Number(insertResult.insertId);
+    cleanup.opportunityIds.push(opportunityId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.request@example.com`,
+    );
+
     const blockedStatusPut = await request(app)
-      .put(`/api/opportunities/${createResponse.body.id}`)
+      .put(`/api/opportunities/${opportunityId}`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
         name: `Oportunidad PUT ${TEST_PREFIX} activacion`,
@@ -6555,7 +6611,7 @@ describe("API integration baseline", () => {
         businessLineId: ctx.catalogIds.businessLineId,
         sellerUserId: ctx.sellerUserId,
         presalesUserId: null,
-        activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
+        activationStatusId: ctx.catalogIds.opportunityInactiveStatusId,
       });
 
     expect(blockedStatusPut.status).toBe(403);
@@ -7364,6 +7420,100 @@ describe("API integration baseline", () => {
           title: expect.any(String),
         }),
       ]),
+    );
+  });
+
+  test("desarrollo comercial exige desarrollo_comercial.read ademas de oportunidades.read", async () => {
+    const userId = await createUser({
+      fullName: `${TEST_PREFIX} Opportunity Readonly`,
+      email: `${TEST_PREFIX}.opportunity.readonly@example.com`,
+      roleIds: [ctx.opportunityReadOnlyRoleId],
+    });
+    cleanup.userIds.push(userId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opportunity.readonly@example.com`,
+    );
+
+    const response = await request(app)
+      .get("/api/commercial-development/dashboard")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.requiredAnyPermission).toEqual([
+      "desarrollo_comercial.read",
+      "desarrollo_comercial.update",
+    ]);
+  });
+
+  test("desarrollo comercial permite lectura con desarrollo_comercial.read y bloquea escritura sin desarrollo_comercial.update", async () => {
+    const userId = await createUser({
+      fullName: `${TEST_PREFIX} Commercial Development Readonly`,
+      email: `${TEST_PREFIX}.commercial.development.readonly@example.com`,
+      roleIds: [ctx.commercialDevelopmentReadOnlyRoleId],
+    });
+    cleanup.userIds.push(userId);
+
+    const accountId = await createDirectAccount({
+      ownerUserId: userId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_commercial_development_readonly`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_commercial_development_readonly`,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.development.readonly@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createOpportunityResponse = await request(app)
+      .post("/api/opportunities")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: `Oportunidad lectura ${TEST_PREFIX}`,
+        amountUsd: 25000,
+        accountId,
+        closeDate: "2026-11-30",
+        contactId,
+        salesStageId: ctx.catalogIds.salesStageWaitingId,
+        businessLineId: ctx.catalogIds.businessLineId,
+        sellerUserId: ctx.sellerUserId,
+        presalesUserId: null,
+        activationStatusId: ctx.catalogIds.opportunityActiveStatusId,
+      });
+
+    expect(createOpportunityResponse.status).toBe(201);
+    const opportunityId = Number(createOpportunityResponse.body.id);
+    cleanup.opportunityIds.push(opportunityId);
+
+    const dashboardResponse = await request(app)
+      .get("/api/commercial-development/dashboard")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(dashboardResponse.status).toBe(200);
+
+    const createActivityResponse = await request(app)
+      .post(`/api/commercial-development/opportunities/${opportunityId}/activities`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        activityType: "call",
+        scheduledAt: "2026-08-12T16:30:00.000Z",
+        objective: "Intento de actividad sin permiso de modulo.",
+        note: "No deberia permitirse.",
+      });
+
+    expect(createActivityResponse.status).toBe(403);
+    expect(createActivityResponse.body.requiredPermission).toBe(
+      "desarrollo_comercial.update",
     );
   });
 

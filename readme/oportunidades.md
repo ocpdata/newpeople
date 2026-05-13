@@ -59,6 +59,11 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - `proceso_comercial_config.read` permite consultar la configuracion de preguntas por etapa.
 - `proceso_comercial_config.update` permite crear, editar, reordenar, activar y desactivar preguntas.
 
+### Desarrollo comercial
+
+- `desarrollo_comercial.read` habilita el acceso al modulo de Desarrollo Comercial, siempre junto con `oportunidades.read`.
+- `desarrollo_comercial.update` habilita la operacion del modulo, siempre junto con `oportunidades.update`.
+
 ### Alcance de acceso
 
 - `oportunidades.read_all`: ve y opera todas las oportunidades y habilita cuentas/contactos ajenos en catalogos relacionados.

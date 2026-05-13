@@ -8,6 +8,7 @@ import { startAuditRetentionJob } from "./audit.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
+import { ensureCommercialDevelopmentPermissions } from "./commercial-development/permissions.js";
 import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
@@ -19,6 +20,7 @@ import { ensureCorePermissions } from "./permissions.js";
 export async function startServer() {
   await ensureCorePermissions();
   await ensureInteractionPermissions();
+  await ensureCommercialDevelopmentPermissions();
   await ensureCommercialEnablementPermissions();
   await ensureCommercialPlanningPermissions();
   await ensureProcessCommercialConfigPermissions();

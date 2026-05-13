@@ -116,6 +116,10 @@ export default function AppShell({
   const canAccessPotentialOpportunities =
     can("oportunidades_potenciales.read") ||
     can("oportunidades_potenciales.read_all");
+  const canAccessCommercialDevelopment =
+    (can("desarrollo_comercial.read") ||
+      can("desarrollo_comercial.update")) &&
+    can("oportunidades.read");
   const canAccessProcessCommercialConfig =
     can("proceso_comercial_config.read") ||
     can("proceso_comercial_config.update");
@@ -221,7 +225,7 @@ export default function AppShell({
         <Route
           path="/commercial-development"
           element={
-            can("oportunidades.read") ? (
+            canAccessCommercialDevelopment ? (
               <CommercialDevelopmentPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -373,7 +377,9 @@ export default function AppShell({
             </SidebarNavGroup>
           )}
 
-          {(can("oportunidades.read") || canOpenCommercialEnablementShell) && (
+          {(canAccessCommercialDevelopment ||
+            canAccessCommercialPlanning ||
+            canOpenCommercialEnablementShell) && (
             <SidebarNavGroup title="Desarrollo">
               {canAccessCommercialPlanning ? (
                 <GuardedNavLink
@@ -383,7 +389,7 @@ export default function AppShell({
                   Planeación Comercial
                 </GuardedNavLink>
               ) : null}
-              {can("oportunidades.read") ? (
+              {canAccessCommercialDevelopment ? (
                 <GuardedNavLink
                   to="/commercial-development"
                   onBeforeNavigate={confirmRouteChange}
