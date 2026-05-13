@@ -132,8 +132,6 @@ export default function AppShell({
     can("enablement_comercial.read") ||
     can("enablement_comercial.update") ||
     can("enablement_comercial.analytics");
-  const canOpenCommercialEnablementShell =
-    canAccessCommercialEnablement || can("oportunidades.read");
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
 
@@ -249,7 +247,7 @@ export default function AppShell({
         <Route
           path="/commercial-enablement"
           element={
-            canOpenCommercialEnablementShell ? (
+            canAccessCommercialEnablement ? (
               <CommercialEnablementPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -379,7 +377,7 @@ export default function AppShell({
 
           {(canAccessCommercialDevelopment ||
             canAccessCommercialPlanning ||
-            canOpenCommercialEnablementShell) && (
+            canAccessCommercialEnablement) && (
             <SidebarNavGroup title="Desarrollo">
               {canAccessCommercialPlanning ? (
                 <GuardedNavLink
@@ -397,7 +395,7 @@ export default function AppShell({
                   Desarrollo Comercial
                 </GuardedNavLink>
               ) : null}
-              {canOpenCommercialEnablementShell ? (
+              {canAccessCommercialEnablement ? (
                 <GuardedNavLink
                   to="/commercial-enablement"
                   onBeforeNavigate={confirmRouteChange}
