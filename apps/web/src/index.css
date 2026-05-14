@@ -9465,6 +9465,21 @@ td {
   overflow: hidden;
 }
 
+.modal-dialog-with-scroll-shell {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.modal-dialog-scroll-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px;
+}
+
 .modal-dialog-blocking-overlay {
   position: absolute;
   inset: 0;

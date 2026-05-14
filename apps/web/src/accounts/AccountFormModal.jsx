@@ -660,7 +660,7 @@ function AccountFormModal({
   return (
     <div className="modal-overlay" onClick={handleClose}>
       <div
-        className={`modal-dialog modal-dialog-account${isDraftAnalysisLocked ? " modal-dialog-busy" : ""}`}
+        className={`modal-dialog modal-dialog-account modal-dialog-with-scroll-shell${isDraftAnalysisLocked ? " modal-dialog-busy" : ""}`}
         aria-busy={isModalLocked || isDraftAnalysisLocked}
         onClick={(event) => event.stopPropagation()}
       >
@@ -694,6 +694,7 @@ function AccountFormModal({
           onConfirm={onConfirmDuplicateOverride}
           onOpenCandidate={onOpenDuplicateCandidateAccount}
         />
+        <div className="modal-dialog-scroll-shell">
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
             <div className="account-modal-help-shell" ref={createHelpRef}>
@@ -1107,6 +1108,7 @@ function AccountFormModal({
             </div>
           </form>
         </fieldset>
+        </div>
 
         {isDraftAnalysisLocked ? (
           <div

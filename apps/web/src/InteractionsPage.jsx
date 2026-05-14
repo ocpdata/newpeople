@@ -489,9 +489,10 @@ function CreateInteractionModal({
       }}
     >
       <div
-        className="modal-dialog modal-dialog-wide interaction-modal"
+        className={`modal-dialog modal-dialog-wide interaction-modal modal-dialog-with-scroll-shell${creating ? " modal-dialog-busy" : ""}`}
         aria-busy={creating}
       >
+        <div className="modal-dialog-scroll-shell">
         <div className="modal-header">
           <div className="interaction-create-header">
             <div className="interaction-create-heading">
@@ -719,13 +720,14 @@ function CreateInteractionModal({
             </div>
           </form>
         </fieldset>
+        </div>
         {creating ? (
           <div
-            className="interaction-progress-overlay"
+            className="modal-dialog-blocking-overlay"
             role="status"
             aria-live="polite"
           >
-            <div className="interaction-progress-card">
+            <div className="modal-dialog-blocking-card">
               <span
                 className="interaction-progress-spinner"
                 aria-hidden="true"
@@ -841,9 +843,10 @@ function InteractionDetailModal({
       }}
     >
       <div
-        className="modal-dialog modal-dialog-wide interaction-modal interaction-detail-modal"
+        className={`modal-dialog modal-dialog-wide interaction-modal interaction-detail-modal modal-dialog-with-scroll-shell${isAnalysisLocked ? " modal-dialog-busy" : ""}`}
         aria-busy={isAnalysisLocked}
       >
+        <div className="modal-dialog-scroll-shell">
         <div className="modal-header">
           <div className="interaction-detail-header-copy">
             <h3 className="modal-title">{detail.title}</h3>
@@ -1714,13 +1717,14 @@ function InteractionDetailModal({
             ) : null}
           </div>
         </fieldset>
+        </div>
         {isAnalysisLocked ? (
           <div
-            className="interaction-progress-overlay"
+            className="modal-dialog-blocking-overlay"
             role="status"
             aria-live="polite"
           >
-            <div className="interaction-progress-card">
+            <div className="modal-dialog-blocking-card">
               <span
                 className="interaction-progress-spinner"
                 aria-hidden="true"

@@ -261,10 +261,11 @@ function OpportunityFormModal({
     <>
       <div className="modal-overlay" onClick={handleClose}>
         <div
-          className={`modal-dialog modal-dialog-account opportunity-edit-modal${isModalLocked ? " modal-dialog-busy" : ""}`}
+          className={`modal-dialog modal-dialog-account opportunity-edit-modal modal-dialog-with-scroll-shell${isModalLocked ? " modal-dialog-busy" : ""}`}
           aria-busy={isModalLocked || isStageValidationBlocking}
           onClick={(event) => event.stopPropagation()}
         >
+          <div className="modal-dialog-scroll-shell">
           <div className="modal-header">
             <div className="opportunity-modal-header-copy">
               <div className="account-modal-help-shell" ref={createHelpRef}>
@@ -1060,6 +1061,7 @@ function OpportunityFormModal({
               </div>
             </form>
           </fieldset>
+          </div>
 
           {isModalLocked ? (
             <div
