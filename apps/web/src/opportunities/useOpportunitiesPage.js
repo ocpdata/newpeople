@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
-const PROPOSE_ANSWERS_TIMEOUT_MS = 90000;
+const PROPOSE_ANSWERS_TIMEOUT_MS = 120000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 
 function normalizeText(value) {
