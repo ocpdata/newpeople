@@ -261,7 +261,7 @@ function OpportunityFormModal({
     <>
       <div className="modal-overlay" onClick={handleClose}>
         <div
-          className="modal-dialog modal-dialog-account opportunity-edit-modal"
+          className={`modal-dialog modal-dialog-account opportunity-edit-modal${isModalLocked ? " modal-dialog-busy" : ""}`}
           aria-busy={isModalLocked || isStageValidationBlocking}
           onClick={(event) => event.stopPropagation()}
         >
@@ -1063,11 +1063,11 @@ function OpportunityFormModal({
 
           {isModalLocked ? (
             <div
-              className="interaction-progress-overlay"
+              className="modal-dialog-blocking-overlay"
               role="status"
               aria-live="polite"
             >
-              <div className="interaction-progress-card">
+              <div className="modal-dialog-blocking-card">
                 <span
                   className="interaction-progress-spinner"
                   aria-hidden="true"

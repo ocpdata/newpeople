@@ -660,8 +660,8 @@ function AccountFormModal({
   return (
     <div className="modal-overlay" onClick={handleClose}>
       <div
-        className="modal-dialog modal-dialog-account"
-        aria-busy={isModalLocked}
+        className={`modal-dialog modal-dialog-account${isDraftAnalysisLocked ? " modal-dialog-busy" : ""}`}
+        aria-busy={isModalLocked || isDraftAnalysisLocked}
         onClick={(event) => event.stopPropagation()}
       >
         <ConfirmationModal
@@ -1110,11 +1110,11 @@ function AccountFormModal({
 
         {isDraftAnalysisLocked ? (
           <div
-            className="interaction-progress-overlay"
+            className="modal-dialog-blocking-overlay"
             role="status"
             aria-live="polite"
           >
-            <div className="interaction-progress-card">
+            <div className="modal-dialog-blocking-card">
               <span
                 className="interaction-progress-spinner"
                 aria-hidden="true"
