@@ -1,6 +1,5 @@
 import { withTransaction } from "../db.js";
 
-const SELLER_ROLE_NAMES = ["vendedor"];
 const COMMERCIAL_MANAGER_ROLE_NAMES = [
   "gerente comercial",
   "gerente de ventas",
@@ -48,11 +47,6 @@ const POTENTIAL_OPPORTUNITY_PERMISSIONS = [
     action: "analytics",
     description: "Consultar analitica de oportunidades potenciales",
   },
-];
-
-const SELLER_PERMISSION_CODES = [
-  "oportunidades_potenciales.read",
-  "oportunidades_potenciales.convert",
 ];
 
 const COMMERCIAL_MANAGER_PERMISSION_CODES = [
@@ -125,31 +119,6 @@ export async function ensurePotentialOpportunityPermissions() {
     );
 
     await assignPermissionsToRoles(conn, adminRoles, permissionRows, now);
-
-    const sellerPlaceholders = SELLER_ROLE_NAMES.map(() => "?").join(", ");
-    const [sellerRoles] = await conn.query(
-      `SELECT id
-       FROM roles
-       WHERE LOWER(TRIM(name)) IN (${sellerPlaceholders})`,
-      SELLER_ROLE_NAMES,
-    );
-    if (sellerRoles.length) {
-      const sellerPermissionPlaceholders = SELLER_PERMISSION_CODES.map(
-        () => "?",
-      ).join(", ");
-      const [sellerPermissionRows] = await conn.query(
-        `SELECT id
-         FROM permissions
-         WHERE code IN (${sellerPermissionPlaceholders})`,
-        SELLER_PERMISSION_CODES,
-      );
-      await assignPermissionsToRoles(
-        conn,
-        sellerRoles,
-        sellerPermissionRows,
-        now,
-      );
-    }
 
     const managerPlaceholders = COMMERCIAL_MANAGER_ROLE_NAMES.map(
       () => "?",

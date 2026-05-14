@@ -90,7 +90,9 @@ export async function ensureCommercialDevelopmentPermissions() {
       `SELECT DISTINCT rp.role_id AS id
        FROM role_permissions rp
        INNER JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code IN ('oportunidades.read', 'oportunidades.read_all')`,
+       INNER JOIN roles r ON r.id = rp.role_id
+       WHERE p.code IN ('oportunidades.read', 'oportunidades.read_all')
+         AND LOWER(TRIM(r.name)) <> 'vendedor'`,
     );
     await assignPermissionToRoles(
       conn,
@@ -103,7 +105,9 @@ export async function ensureCommercialDevelopmentPermissions() {
       `SELECT DISTINCT rp.role_id AS id
        FROM role_permissions rp
        INNER JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code = 'oportunidades.update'`,
+       INNER JOIN roles r ON r.id = rp.role_id
+       WHERE p.code = 'oportunidades.update'
+         AND LOWER(TRIM(r.name)) <> 'vendedor'`,
     );
     await assignPermissionToRoles(
       conn,
