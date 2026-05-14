@@ -101,6 +101,10 @@ function formatHttpStatusFallback(error) {
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) {
+    if (String(error?.message || "").trim() === "Network Error") {
+      return "No se recibio respuesta del servidor. La conexion pudo haberse interrumpido o algun proxy/API corto la solicitud antes de responder.";
+    }
+
     if (error?.code === "ECONNABORTED") {
       return String(error?.message || "La solicitud excedio el tiempo de espera");
     }
