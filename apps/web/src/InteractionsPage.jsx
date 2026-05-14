@@ -745,6 +745,38 @@ function CreateInteractionModal({
   );
 }
 
+function InteractionInfoModal({ message, onClose }) {
+  if (!message) return null;
+
+  return (
+    <div
+      className="modal-overlay"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="modal-dialog interaction-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Información de interacción"
+      >
+        <div className="modal-header">
+          <h3 className="modal-title">Información</h3>
+        </div>
+        <div className="account-form-section account-modal-section">
+          <p>{message}</p>
+        </div>
+        <div className="modal-buttons">
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Entendido
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InteractionDetailModal({
   isOpen,
   onClose,
@@ -1899,6 +1931,7 @@ function InteractionsPage({ can, currentUser }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createInfoMessage, setCreateInfoMessage] = useState("");
   const [creating, setCreating] = useState(false);
   const [createFiles, setCreateFiles] = useState([]);
   const [createPastedTextName, setCreatePastedTextName] = useState("");
@@ -1951,11 +1984,24 @@ function InteractionsPage({ can, currentUser }) {
     );
   }
 
-  async function loadInteractions() {
+  async function loadInteractions(overrides = {}) {
+    const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
+    const effectivePageSize = Math.min(
+      50,
+      Math.max(1, Number(overrides.pageSize ?? pageSize) || 10),
+    );
+    const effectiveQuery = String(overrides.query ?? query);
+    const effectiveStatus = String(overrides.status ?? statusFilter);
+
     setLoading(true);
     try {
       const { data } = await api.get("/api/interactions", {
-        params: { page, pageSize, query, status: statusFilter },
+        params: {
+          page: effectivePage,
+          pageSize: effectivePageSize,
+          query: effectiveQuery,
+          status: effectiveStatus,
+        },
       });
       setItems(Array.isArray(data?.items) ? data.items : []);
       setTotal(Number(data?.total || 0));
@@ -2047,6 +2093,7 @@ function InteractionsPage({ can, currentUser }) {
     if (!createFiles.length && !trimmedPastedText) return;
     setCreating(true);
     setError("");
+    setCreateInfoMessage("");
     try {
       const formData = new FormData();
       const filesToUpload = [...createFiles];
@@ -2059,15 +2106,19 @@ function InteractionsPage({ can, currentUser }) {
         );
       }
       filesToUpload.forEach((file) => formData.append("files", file));
-      const { data } = await api.post("/api/interactions", formData, {
+      await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       resetCreateForm();
+      setPage(1);
+      setQuery("");
+      setStatusFilter("all");
       setSuccess("Interacción creada y analizada");
-      await loadInteractions();
-      await openDetail(data.id);
+      await loadInteractions({ page: 1, query: "", status: "all" });
     } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible crear la interacción"));
+      setCreateInfoMessage(
+        getApiErrorMessage(err, "No fue posible crear la interacción"),
+      );
     } finally {
       setCreating(false);
     }
@@ -2309,6 +2360,11 @@ function InteractionsPage({ can, currentUser }) {
 
   return (
     <section className="panel">
+      <InteractionInfoModal
+        message={createInfoMessage}
+        onClose={() => setCreateInfoMessage("")}
+      />
+
       <CreateInteractionModal
         isOpen={showCreateModal}
         onClose={resetCreateForm}
