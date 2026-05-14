@@ -50,6 +50,19 @@ import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
 
+function getSanitizedInternalErrorDetail(error) {
+  const message = String(error?.message || "")
+    .split(/\r?\n/, 1)[0]
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!message) {
+    return null;
+  }
+
+  return message.slice(0, 500);
+}
+
 const opportunityBaseSchema = z.object({
   name: z.string().min(2).max(180),
   amountUsd: z.number().nonnegative(),
@@ -2325,9 +2338,11 @@ router.post(
         meta: result.meta,
       });
     } catch (error) {
+      const detail = getSanitizedInternalErrorDetail(error);
       return res.status(500).json({
         message:
           "No fue posible proponer respuestas documentales para la etapa seleccionada",
+        ...(detail ? { detail } : {}),
       });
     }
   },

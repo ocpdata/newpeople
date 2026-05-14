@@ -39,6 +39,35 @@ function formatIssueList(issues) {
   return issues.filter(Boolean).join(" | ");
 }
 
+function formatExtraErrorDetail(data) {
+  if (!data || typeof data !== "object") return "";
+
+  const detailCandidates = [
+    data.detail,
+    data.error,
+    data.reason,
+    data.cause,
+    typeof data.details === "string" ? data.details : "",
+  ];
+
+  const detail = detailCandidates
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean);
+
+  if (detail) {
+    return detail;
+  }
+
+  if (Array.isArray(data.details)) {
+    return data.details
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  return "";
+}
+
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) {
@@ -63,6 +92,13 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
   const issueDetail = formatIssueList(data.issues);
   if (issueDetail) {
     return data.message ? `${data.message}: ${issueDetail}` : issueDetail;
+  }
+
+  const extraDetail = formatExtraErrorDetail(data);
+  if (extraDetail) {
+    return data.message && data.message !== extraDetail
+      ? `${data.message}: ${extraDetail}`
+      : extraDetail;
   }
 
   return data.message || fallback;
