@@ -68,6 +68,36 @@ function formatExtraErrorDetail(data) {
   return "";
 }
 
+function formatRawErrorBody(data) {
+  if (typeof data !== "string") return "";
+
+  const normalized = data
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.slice(0, 500);
+}
+
+function formatHttpStatusFallback(error) {
+  const status = Number(error?.response?.status);
+  const statusText = String(error?.response?.statusText || "").trim();
+
+  if (!Number.isFinite(status) || status <= 0) {
+    return "";
+  }
+
+  return statusText ? `HTTP ${status}: ${statusText}` : `HTTP ${status}`;
+}
+
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) {
@@ -80,6 +110,11 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
     }
 
     return fallback;
+  }
+
+  const rawBodyDetail = formatRawErrorBody(data);
+  if (rawBodyDetail) {
+    return rawBodyDetail;
   }
 
   const validationDetail = formatValidationErrors(data.errors);
@@ -99,6 +134,11 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
     return data.message && data.message !== extraDetail
       ? `${data.message}: ${extraDetail}`
       : extraDetail;
+  }
+
+  const httpStatusFallback = formatHttpStatusFallback(error);
+  if (httpStatusFallback) {
+    return httpStatusFallback;
   }
 
   return data.message || fallback;
