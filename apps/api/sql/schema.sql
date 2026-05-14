@@ -2977,15 +2977,15 @@ JOIN permissions p
 WHERE r.name = 'Administrador'
 ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
 
-INSERT INTO role_permissions (role_id, permission_id, created_at)
-SELECT r.id, p.id, NOW(3)
-FROM roles r
-JOIN permissions p ON p.code IN (
-  'oportunidades_potenciales.read',
-  'oportunidades_potenciales.convert'
-)
+DELETE rp
+FROM role_permissions rp
+INNER JOIN roles r ON r.id = rp.role_id
+INNER JOIN permissions p ON p.id = rp.permission_id
 WHERE LOWER(TRIM(r.name)) = 'vendedor'
-ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
+  AND p.code IN (
+    'oportunidades_potenciales.read',
+    'oportunidades_potenciales.convert'
+  );
 
 INSERT INTO role_permissions (role_id, permission_id, created_at)
 SELECT r.id, p.id, NOW(3)

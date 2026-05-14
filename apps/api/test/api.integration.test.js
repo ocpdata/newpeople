@@ -4049,7 +4049,7 @@ describe("API integration baseline", () => {
     );
   });
 
-  test("oportunidades potenciales asigna acceso operativo a vendedor y control a gerencia comercial", async () => {
+  test("oportunidades potenciales asigna control por defecto solo a gerencia comercial", async () => {
     const sellerRole = await ensureNamedRole("Vendedor");
     if (sellerRole.created) {
       cleanup.roleIds.push(sellerRole.roleId);
@@ -4082,10 +4082,7 @@ describe("API integration baseline", () => {
       permissionsByRole.get(roleName).add(String(row.code));
     }
 
-    expect(Array.from(permissionsByRole.get("Vendedor") || [])).toEqual([
-      "oportunidades_potenciales.convert",
-      "oportunidades_potenciales.read",
-    ]);
+    expect(Array.from(permissionsByRole.get("Vendedor") || [])).toEqual([]);
     expect(
       Array.from(permissionsByRole.get("Gerente Comercial") || []),
     ).toEqual([
