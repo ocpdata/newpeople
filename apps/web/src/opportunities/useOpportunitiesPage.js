@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
-const PROPOSE_ANSWERS_TIMEOUT_MS = 60000;
+const PROPOSE_ANSWERS_TIMEOUT_MS = 90000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 
 function normalizeText(value) {
@@ -331,6 +331,8 @@ export function useOpportunitiesPage({
   const [savingCommercialAction, setSavingCommercialAction] = useState("");
   const [analyzingCommercialSuggestions, setAnalyzingCommercialSuggestions] =
     useState(false);
+  const [commercialSuggestionFeedback, setCommercialSuggestionFeedback] =
+    useState(null);
   const [documentUploadSession, setDocumentUploadSession] = useState(null);
   const [opportunityDocuments, setOpportunityDocuments] = useState([]);
   const [documentReview, setDocumentReview] = useState(null);
@@ -949,6 +951,7 @@ export function useOpportunitiesPage({
     setStageBypassReason("");
     setLinkingAnswerSourceId("");
     setAnswerDocumentSelections({});
+    setCommercialSuggestionFeedback(null);
   }
 
   function resetOpportunityDocumentState() {
@@ -1296,18 +1299,27 @@ export function useOpportunitiesPage({
   }
 
   async function deleteDraftOpportunityDocument(documentPublicId) {
-    if (!documentUploadSession?.publicId || !documentPublicId) return;
+    if (!documentPublicId) return;
 
     setError("");
     setSuccess("");
     setDeletingOpportunityDocumentId(documentPublicId);
 
     try {
-      const { data } = await api.delete(
-        `/api/opportunities/document-upload-sessions/${documentUploadSession.publicId}/files/${documentPublicId}`,
-      );
-      hydrateDocumentSessionState(data);
-      setSuccess("Documento eliminado del borrador");
+      if (editingOpportunityId) {
+        await api.delete(
+          `/api/opportunities/${editingOpportunityId}/documents/${documentPublicId}`,
+        );
+        await loadExistingOpportunityDocuments(editingOpportunityId);
+        setSuccess("Documento eliminado de la oportunidad");
+      } else {
+        if (!documentUploadSession?.publicId) return;
+        const { data } = await api.delete(
+          `/api/opportunities/document-upload-sessions/${documentUploadSession.publicId}/files/${documentPublicId}`,
+        );
+        hydrateDocumentSessionState(data);
+        setSuccess("Documento eliminado del borrador");
+      }
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible eliminar el documento"));
     } finally {
@@ -1390,6 +1402,11 @@ export function useOpportunitiesPage({
     setCommercialCloseModalState({ statusCode: "", reason: "" });
     setShowStageBypassModal(false);
     setStageBypassReason("");
+    setCommercialSuggestionFeedback(null);
+  }
+
+  function closeCommercialSuggestionFeedback() {
+    setCommercialSuggestionFeedback(null);
   }
 
   function openCreateOpportunityModal() {
@@ -1465,6 +1482,7 @@ export function useOpportunitiesPage({
       setCommercialCloseModalState({ statusCode: "", reason: "" });
       setShowStageBypassModal(false);
       setStageBypassReason("");
+      setCommercialSuggestionFeedback(null);
       setEditingOpportunityId(Number(opportunityId));
       setShowOpportunityModal(true);
     },
@@ -1504,6 +1522,7 @@ export function useOpportunitiesPage({
   function closeOpportunityModal() {
     if (savingOpportunity || savingCommercialAction) return;
     setError("");
+    setCommercialSuggestionFeedback(null);
     setShowOpportunityModal(false);
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
@@ -1824,6 +1843,7 @@ export function useOpportunitiesPage({
 
     setError("");
     setSuccess("");
+  setCommercialSuggestionFeedback(null);
     setAnalyzingCommercialSuggestions(true);
 
     try {
@@ -1850,18 +1870,24 @@ export function useOpportunitiesPage({
       const proposedCount = Number(data?.summary?.proposedCount || 0);
       const ambiguousCount = Number(data?.summary?.ambiguousCount || 0);
       const insufficientCount = Number(data?.summary?.insufficientCount || 0);
-      setSuccess(
-        proposedCount
+      setCommercialSuggestionFeedback({
+        tone: proposedCount ? "success" : "warning",
+        title: proposedCount
+          ? "Sugerencias generadas"
+          : "No hubo sugerencias confiables",
+        message: proposedCount
           ? `Se generaron ${proposedCount} propuestas documentales para la etapa seleccionada. ${ambiguousCount} quedaron ambiguas y ${insufficientCount} sin evidencia suficiente.`
-          : "No se encontraron respuestas documentales confiables para esta etapa",
-      );
+          : "No se encontraron respuestas documentales confiables para esta etapa.",
+      });
     } catch (err) {
-      setError(
-        getApiErrorMessage(
+      setCommercialSuggestionFeedback({
+        tone: "danger",
+        title: "No fue posible generar sugerencias",
+        message: getApiErrorMessage(
           err,
           "No fue posible analizar los documentos para proponer respuestas",
         ),
-      );
+      });
     } finally {
       setAnalyzingCommercialSuggestions(false);
     }
@@ -2799,6 +2825,7 @@ export function useOpportunitiesPage({
     savingOpportunity,
     savingCommercialAction,
     analyzingCommercialSuggestions,
+    commercialSuggestionFeedback,
     documentUploadSession,
     opportunityDocuments,
     documentReview,
@@ -2861,6 +2888,7 @@ export function useOpportunitiesPage({
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
     closeCommercialStatusReasonModal,
+    closeCommercialSuggestionFeedback,
     updateCommercialAnswer,
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,

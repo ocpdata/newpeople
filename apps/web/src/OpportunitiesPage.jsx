@@ -38,6 +38,7 @@ function OpportunitiesPage({ currentUser }) {
     savingCommercialAction,
     documentUploadSession,
     analyzingCommercialSuggestions,
+    commercialSuggestionFeedback,
     opportunityDocuments,
     documentReview,
     documentReviewOverrides,
@@ -98,6 +99,7 @@ function OpportunitiesPage({ currentUser }) {
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
     closeCommercialStatusReasonModal,
+    closeCommercialSuggestionFeedback,
     updateCommercialAnswer,
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,
@@ -247,8 +249,10 @@ function OpportunitiesPage({ currentUser }) {
         }
         linkOpportunityDocumentToAnswer={linkOpportunityDocumentToAnswer}
         analyzingCommercialSuggestions={analyzingCommercialSuggestions}
+        commercialSuggestionFeedback={commercialSuggestionFeedback}
         analyzeCommercialStageAnswers={analyzeCommercialStageAnswers}
         applyCommercialAnswerSuggestion={applyCommercialAnswerSuggestion}
+        closeCommercialSuggestionFeedback={closeCommercialSuggestionFeedback}
         refreshOpportunityCommercialView={refreshOpportunityCommercialView}
       />
 

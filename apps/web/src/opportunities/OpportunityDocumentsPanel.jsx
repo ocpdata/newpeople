@@ -218,6 +218,18 @@ function OpportunityDocumentsPanel({
     }
   }
 
+  function handleDeleteDocument(document) {
+    if (
+      !window.confirm(
+        `Se eliminara el documento ${document.originalFileName}. ¿Continuar?`,
+      )
+    ) {
+      return;
+    }
+
+    onDeleteDocument(document.publicId);
+  }
+
   const isCreateMode = !editingOpportunityId;
   const suggestedFields = documentReview?.suggestedFields || null;
   const preview = buildDocumentPreview(previewDocument);
@@ -518,11 +530,11 @@ function OpportunityDocumentsPanel({
                           >
                             i
                           </button>
-                          {isCreateMode ? (
+                          {onDeleteDocument ? (
                             <button
                               type="button"
                               className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button danger"
-                              onClick={() => onDeleteDocument(document.publicId)}
+                              onClick={() => handleDeleteDocument(document)}
                               disabled={
                                 deletingOpportunityDocumentId ===
                                 document.publicId

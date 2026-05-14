@@ -2018,6 +2018,41 @@ export async function listOpportunityDocuments({ opportunityId }) {
   return rows.map((row) => serializeDocumentRow(row));
 }
 
+export async function deleteOpportunityDocument({
+  opportunityId,
+  documentPublicId,
+}) {
+  const documents = await query(
+    `SELECT d.id, d.public_id, d.original_file_name, d.storage_bucket, d.storage_key
+     FROM opportunity_document_links odl
+     INNER JOIN documents d ON d.id = odl.document_id
+     WHERE odl.opportunity_id = ?
+       AND d.public_id = ?
+       AND d.is_deleted = 0
+     LIMIT 1`,
+    [opportunityId, documentPublicId],
+  );
+
+  const document = documents[0] || null;
+  if (!document) {
+    const error = new Error("Documento no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  await storage.delete({
+    storageKey: document.storage_key,
+    storageBucket: document.storage_bucket,
+  });
+
+  await query(`DELETE FROM documents WHERE id = ?`, [document.id]);
+
+  return {
+    publicId: document.public_id,
+    originalFileName: document.original_file_name,
+  };
+}
+
 export async function uploadDocumentsToOpportunity({
   req,
   opportunityId,

@@ -68,9 +68,11 @@ function OpportunityFormModal({
   hasImmediatePreviousStage,
   savingCommercialAction,
   analyzingCommercialSuggestions,
+  commercialSuggestionFeedback,
   updateCommercialAnswer,
   analyzeCommercialStageAnswers,
   applyCommercialAnswerSuggestion,
+  closeCommercialSuggestionFeedback,
   refreshOpportunityCommercialView,
   closeStageValidationResult,
   closeOpportunityModal,
@@ -205,12 +207,20 @@ function OpportunityFormModal({
     commercialAnswerSuggestionsByStageId?.[selectedCommercialStageId] || {};
   const isStageValidationInProgress =
     savingCommercialAction === "validate-current-stage";
+  const isCommercialSuggestionsInProgress = analyzingCommercialSuggestions;
   const isStageValidationBlocking =
     isStageValidationInProgress || Boolean(stageValidationResult);
-  const isModalLocked = isDocumentUploadLocked || savingOpportunity;
+  const isCommercialSuggestionBlocking =
+    isCommercialSuggestionsInProgress || Boolean(commercialSuggestionFeedback);
+  const isModalLocked =
+    isDocumentUploadLocked ||
+    savingOpportunity ||
+    isCommercialSuggestionsInProgress;
 
   const progressOverlayTitle = isStageValidationInProgress
     ? "Estamos validando las respuestas"
+    : isCommercialSuggestionsInProgress
+      ? "Estamos analizando las sugerencias"
     : isDocumentUploadLocked
       ? "Estamos preparando un borrador mas completo"
       : editingOpportunityId
@@ -218,6 +228,8 @@ function OpportunityFormModal({
         : "Estamos registrando la oportunidad";
   const progressOverlayMessage = isStageValidationInProgress
     ? "La ventana queda bloqueada hasta recibir el resultado de la validacion y que cierres ese mensaje para retomar el control."
+    : isCommercialSuggestionsInProgress
+      ? "Estamos revisando la evidencia documental para proponer respuestas para la etapa actual. La ventana seguira bloqueada hasta mostrar el resultado."
     : isDocumentUploadLocked
       ? "Estamos cargando y analizando la evidencia para enriquecer la oportunidad con mejores sugerencias antes de continuar."
       : editingOpportunityId
@@ -248,7 +260,13 @@ function OpportunityFormModal({
   );
 
   function handleClose() {
-    if (isModalLocked || isStageValidationBlocking) return;
+    if (
+      isModalLocked ||
+      isStageValidationBlocking ||
+      isCommercialSuggestionBlocking
+    ) {
+      return;
+    }
     closeOpportunityModal();
   }
 
@@ -262,7 +280,11 @@ function OpportunityFormModal({
       <div className="modal-overlay" onClick={handleClose}>
         <div
           className={`modal-dialog modal-dialog-account opportunity-edit-modal modal-dialog-with-scroll-shell${isModalLocked ? " modal-dialog-busy" : ""}`}
-          aria-busy={isModalLocked || isStageValidationBlocking}
+          aria-busy={
+            isModalLocked ||
+            isStageValidationBlocking ||
+            isCommercialSuggestionBlocking
+          }
           onClick={(event) => event.stopPropagation()}
         >
           <div className="modal-dialog-scroll-shell">
@@ -1041,14 +1063,20 @@ function OpportunityFormModal({
                   type="button"
                   className="btn-secondary"
                   onClick={handleClose}
-                  disabled={isDocumentUploadLocked}
+                  disabled={
+                    isDocumentUploadLocked || isCommercialSuggestionsInProgress
+                  }
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   className="btn-primary"
-                  disabled={savingOpportunity || isDocumentUploadLocked}
+                  disabled={
+                    savingOpportunity ||
+                    isDocumentUploadLocked ||
+                    isCommercialSuggestionsInProgress
+                  }
                 >
                   {savingOpportunity
                     ? editingOpportunityId
@@ -1081,6 +1109,73 @@ function OpportunityFormModal({
           ) : null}
         </div>
       </div>
+
+      {commercialSuggestionFeedback ? (
+        <div className="modal-overlay modal-overlay-elevated">
+          <div
+            className={`modal-dialog modal-dialog-account opportunity-document-preview-modal opportunity-stage-validation-modal is-${commercialSuggestionFeedback.tone}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="opportunity-modal-header-copy">
+                <h3 className="modal-title">
+                  {commercialSuggestionFeedback.title}
+                </h3>
+                <p className="field-hint opportunity-modal-subtitle">
+                  Resultado del analisis de sugerencias documentales.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="opportunity-documents-apply-icon-button"
+                onClick={closeCommercialSuggestionFeedback}
+                aria-label="Cerrar resultado de sugerencias"
+                title="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="opportunity-document-preview-body">
+              <div className="opportunity-document-preview-meta">
+                <span className="record-id-badge opportunity-stage-validation-badge">
+                  Sugerencias IA
+                </span>
+                <span
+                  className={`record-id-badge opportunity-stage-validation-badge is-${commercialSuggestionFeedback.tone}`}
+                >
+                  {commercialSuggestionFeedback.tone === "success"
+                    ? "Exito"
+                    : commercialSuggestionFeedback.tone === "warning"
+                      ? "Sin propuestas"
+                      : "Error"}
+                </span>
+              </div>
+
+              <div className="field-group opportunity-stage-question">
+                <label>Resultado</label>
+                <textarea
+                  aria-label="Resultado de sugerencias documentales"
+                  rows={5}
+                  value={commercialSuggestionFeedback.message}
+                  disabled
+                  readOnly
+                />
+              </div>
+
+              <div className="modal-buttons">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={closeCommercialSuggestionFeedback}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {stageValidationResult ? (
         <div className="modal-overlay modal-overlay-elevated">

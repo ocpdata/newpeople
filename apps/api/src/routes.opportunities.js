@@ -7,6 +7,7 @@ import { logAuditEvent } from "./audit.js";
 import {
   applyUploadSessionToDraft,
   createUploadSession,
+  deleteOpportunityDocument,
   deleteSessionDocument,
   getDocumentContentStream,
   getDocumentPreviewText,
@@ -808,6 +809,56 @@ router.post(
           error.status && error.status < 500
             ? error.message
             : "No fue posible adjuntar documentos a la oportunidad",
+      });
+    }
+  },
+);
+
+router.delete(
+  "/:id/documents/:documentPublicId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    try {
+      await ensureOpportunityDocumentSchema();
+      const deletedDocument = await deleteOpportunityDocument({
+        opportunityId: id,
+        documentPublicId: req.params.documentPublicId,
+      });
+      await logAuditEvent({
+        req,
+        module: "opportunities.workspace",
+        action: "opportunity_document_deleted",
+        entityType: "opportunity",
+        entityId: id,
+        detail: `Documento eliminado: ${deletedDocument.originalFileName}`,
+        after: {
+          documentPublicId: deletedDocument.publicId,
+          originalFileName: deletedDocument.originalFileName,
+        },
+      });
+      return res.json({ message: "Documento eliminado correctamente" });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible eliminar el documento de la oportunidad",
       });
     }
   },

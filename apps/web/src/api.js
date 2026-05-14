@@ -41,7 +41,17 @@ function formatIssueList(issues) {
 
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
-  if (!data) return fallback;
+  if (!data) {
+    if (error?.code === "ECONNABORTED") {
+      return String(error?.message || "La solicitud excedio el tiempo de espera");
+    }
+
+    if (String(error?.message || "").trim()) {
+      return String(error.message).trim();
+    }
+
+    return fallback;
+  }
 
   const validationDetail = formatValidationErrors(data.errors);
   if (validationDetail) {
