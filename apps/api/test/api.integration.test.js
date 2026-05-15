@@ -9,8 +9,6 @@ import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
-import { ensurePotentialOpportunityPermissions } from "../src/potential-opportunities/permissions.js";
-import { ensurePotentialOpportunitySchema } from "../src/potential-opportunities/schema.js";
 import {
   TEST_PREFIX,
   cleanupArtifacts,
@@ -49,8 +47,6 @@ describe("API integration baseline", () => {
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
     await ensureCommercialExecutionSchema();
-    await ensurePotentialOpportunityPermissions();
-    await ensurePotentialOpportunitySchema();
 
     const sellerRole = await ensureNamedRole("Vendedor");
     if (sellerRole.created) {
@@ -3703,7 +3699,8 @@ describe("API integration baseline", () => {
       );
 
     expect(createResponse.status).toBe(201);
-    expect(createResponse.body.analysisStatus).toBe("analyzed");
+    expect(createResponse.body.analysisStatus).toBe("created");
+    expect(createResponse.body.processingStatus).toBe("analyzed");
     expect(createResponse.body.documents).toHaveLength(1);
 
     const interactionId = Number(createResponse.body.id);
@@ -3766,7 +3763,8 @@ describe("API integration baseline", () => {
       );
 
     expect(createResponse.status).toBe(201);
-    expect(createResponse.body.analysisStatus).toBe("analyzed");
+    expect(createResponse.body.analysisStatus).toBe("created");
+    expect(createResponse.body.processingStatus).toBe("analyzed");
     expect(createResponse.body.documents).toHaveLength(1);
 
     const interactionId = Number(createResponse.body.id);
@@ -3843,441 +3841,208 @@ describe("API integration baseline", () => {
     expect(detailResponse.body.documents).toHaveLength(0);
   });
 
-  test("oportunidades potenciales exige vendedor asignado antes de convertir el caso", async () => {
-    const sellerRole = await ensureNamedRole("Vendedor");
-    if (sellerRole.created) {
-      cleanup.roleIds.push(sellerRole.roleId);
-    }
-
-    const roleId = await createRole({
-      name: `${TEST_PREFIX}_potential_opportunities`,
-      permissionCodes: [
-        "oportunidades_potenciales.read",
-        "oportunidades_potenciales.review",
-        "oportunidades_potenciales.assign",
-        "oportunidades_potenciales.convert",
-        "oportunidades.create",
-      ],
-    });
-    cleanup.roleIds.push(roleId);
-
-    const email = `${TEST_PREFIX}.potential.opps@example.com`;
-    const userId = await createUser({
-      fullName: "Potential Opps User",
-      email,
-      roleIds: [roleId, sellerRole.roleId],
-    });
-    cleanup.userIds.push(userId);
-
-    const accountId = await createDirectAccount({
-      ownerUserId: userId,
-      actorUserId: userId,
-      suffix: `${TEST_PREFIX}_potopp`,
-    });
-    cleanup.accountIds.push(accountId);
-
-    const contactId = await createDirectContact({
-      accountId,
-      actorUserId: userId,
-      suffix: `${TEST_PREFIX}_potopp`,
-    });
-    cleanup.contactIds.push(contactId);
-
-    const now = new Date();
-    const interactionPublicId = `int_${TEST_PREFIX}_potential`;
-    const interactionRows = await query(
-      `INSERT INTO interactions
-         (public_id, title, source_notes, summary, analysis_status,
-          topics_json, actions_taken_json, next_steps_json,
-          suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
-          account_id, analyzed_at, created_by, updated_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'analyzed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        interactionPublicId,
-        `Interaccion potencial ${TEST_PREFIX}`,
-        "Cliente solicita propuesta para renovacion de plataforma y reunion de seguimiento.",
-        "Se detecta renovacion de plataforma con interes claro y necesidad de propuesta ejecutiva.",
-        JSON.stringify(["Renovacion plataforma", "Propuesta ejecutiva"]),
-        JSON.stringify(["Discovery comercial", "Revision de alcance"]),
-        JSON.stringify([
-          "Agendar reunion con compras",
-          "Enviar propuesta ejecutiva",
-        ]),
-        JSON.stringify({
-          name: `Cuenta fixture ${TEST_PREFIX}_potopp`,
-          confidence: "high",
-        }),
-        JSON.stringify([
-          {
-            fullName: `Contacto Fixture ${TEST_PREFIX}_potopp`,
-            confidence: "high",
-          },
-        ]),
-        JSON.stringify([
-          {
-            name: `Renovacion plataforma ${TEST_PREFIX}`,
-            summary:
-              "Renovacion de plataforma ya validada con siguiente paso comercial.",
-            confidence: "high",
-            reason: "Existe necesidad documentada y propuesta solicitada.",
-          },
-        ]),
-        accountId,
-        now,
-        userId,
-        userId,
-        now,
-        now,
-      ],
-    );
-    const interactionId = Number(interactionRows.insertId);
-    await query(
-      `INSERT INTO interaction_contact_links (interaction_id, contact_id, created_at)
-       VALUES (?, ?, ?)`,
-      [interactionId, contactId, now],
-    );
-
-    const loginResponse = await login(request(app), email);
-    const token = loginResponse.body.token;
-
-    const detectionResponse = await request(app)
-      .post("/api/potential-opportunities/run-detection")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sourceEntityIds: [interactionId] });
-
-    expect(detectionResponse.status).toBe(200);
-    expect(detectionResponse.body.created).toBe(1);
-
-    const listResponse = await request(app)
-      .get("/api/potential-opportunities")
-      .set("Authorization", `Bearer ${token}`);
-    expect(listResponse.status).toBe(200);
-    expect(listResponse.body.items.length).toBeGreaterThan(0);
-    const createdCase = listResponse.body.items.find(
-      (item) => item.account.id === accountId,
-    );
-    expect(createdCase).toBeTruthy();
-    expect(createdCase.caseType).toBe("reactivacion");
-    expect(createdCase.owner).toBeNull();
-    expect(createdCase.accountOwners).toEqual([
-      {
-        id: userId,
-        fullName: "Potential Opps User",
-      },
-    ]);
-
-    const summaryResponse = await request(app)
-      .get("/api/potential-opportunities/summary")
-      .set("Authorization", `Bearer ${token}`);
-    expect(summaryResponse.status).toBe(200);
-    expect(summaryResponse.body.kpis.withoutOwnerCount).toBeGreaterThanOrEqual(
-      1,
-    );
-
-    const detailResponse = await request(app)
-      .get(`/api/potential-opportunities/${createdCase.publicId}`)
-      .set("Authorization", `Bearer ${token}`);
-    expect(detailResponse.status).toBe(200);
-    expect(detailResponse.body.signals).toHaveLength(1);
-    expect(detailResponse.body.account.id).toBe(accountId);
-    expect(detailResponse.body.owner).toBeNull();
-    expect(detailResponse.body.accountOwners).toEqual([
-      {
-        id: userId,
-        fullName: "Potential Opps User",
-      },
-    ]);
-
-    const blockedConvertResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/convert`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        name: `Renovacion plataforma ${TEST_PREFIX}`,
-        amountUsd: 25000,
-        closeDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .slice(0, 10),
-        primaryContactId: contactId,
-        ownerUserId: userId,
-        businessLineId: ctx.catalogIds.businessLineId,
-      });
-
-    expect(blockedConvertResponse.status).toBe(409);
-    expect(blockedConvertResponse.body.message).toContain(
-      "sin un vendedor asignado",
-    );
-
-    const acceptResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/accept`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({});
-    expect(acceptResponse.status).toBe(200);
-
-    const assignResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({ ownerUserId: userId });
-    expect(assignResponse.status).toBe(200);
-
-    const convertResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/convert`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        name: `Renovacion plataforma ${TEST_PREFIX}`,
-        amountUsd: 25000,
-        closeDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .slice(0, 10),
-        primaryContactId: contactId,
-        ownerUserId: userId,
-        businessLineId: ctx.catalogIds.businessLineId,
-      });
-
-    expect(convertResponse.status).toBe(201);
-    expect(Number(convertResponse.body.opportunityId)).toBeGreaterThan(0);
-    cleanup.opportunityIds.push(Number(convertResponse.body.opportunityId));
-    const convertedDetailResponse = await request(app)
-      .get(`/api/potential-opportunities/${createdCase.publicId}`)
-      .set("Authorization", `Bearer ${token}`);
-    expect(convertedDetailResponse.status).toBe(200);
-    expect(convertedDetailResponse.body.state).toBe("converted");
-    expect(convertedDetailResponse.body.owner).toEqual({
-      id: userId,
-      fullName: "Potential Opps User",
-      isSeller: true,
-    });
-    expect(convertedDetailResponse.body.convertedOpportunity.id).toBe(
-      Number(convertResponse.body.opportunityId),
-    );
-  });
-
-  test("oportunidades potenciales asigna control por defecto solo a gerencia comercial", async () => {
-    const sellerRole = await ensureNamedRole("Vendedor");
-    if (sellerRole.created) {
-      cleanup.roleIds.push(sellerRole.roleId);
-    }
-
-    const managerRole = await ensureNamedRole("Gerente Comercial");
-    if (managerRole.created) {
-      cleanup.roleIds.push(managerRole.roleId);
-    }
-
-    await ensurePotentialOpportunityPermissions();
-
-    const permissionRows = await query(
-      `SELECT r.name, p.code
-       FROM role_permissions rp
-       JOIN roles r ON r.id = rp.role_id
-       JOIN permissions p ON p.id = rp.permission_id
-       WHERE r.id IN (?, ?)
-         AND p.code LIKE 'oportunidades_potenciales.%'
-       ORDER BY r.name ASC, p.code ASC`,
-      [sellerRole.roleId, managerRole.roleId],
-    );
-
-    const permissionsByRole = new Map();
-    for (const row of permissionRows) {
-      const roleName = String(row.name);
-      if (!permissionsByRole.has(roleName)) {
-        permissionsByRole.set(roleName, new Set());
-      }
-      permissionsByRole.get(roleName).add(String(row.code));
-    }
-
-    expect(Array.from(permissionsByRole.get("Vendedor") || [])).toEqual([]);
-    expect(
-      Array.from(permissionsByRole.get("Gerente Comercial") || []),
-    ).toEqual([
-      "oportunidades_potenciales.analytics",
-      "oportunidades_potenciales.assign",
-      "oportunidades_potenciales.convert",
-      "oportunidades_potenciales.read",
-      "oportunidades_potenciales.read_all",
-      "oportunidades_potenciales.review",
-    ]);
-  });
-
-  test("oportunidades potenciales solo permite asignar despues de aprobacion gerencial y restringe asignados a owners de cuenta", async () => {
-    const sellerRole = await ensureNamedRole("Vendedor");
-    if (sellerRole.created) {
-      cleanup.roleIds.push(sellerRole.roleId);
-    }
-
-    const managerRole = await ensureNamedRole("Gerente Comercial");
-    if (managerRole.created) {
-      cleanup.roleIds.push(managerRole.roleId);
-    }
-
-    await ensurePotentialOpportunityPermissions();
-
-    const sellerOwnerEmail = `${TEST_PREFIX}.potential.owner@example.com`;
-    const sellerOwnerUserId = await createUser({
-      fullName: "Potential Owner Seller",
-      email: sellerOwnerEmail,
-      roleIds: [sellerRole.roleId],
-    });
-    cleanup.userIds.push(sellerOwnerUserId);
-
-    const sellerAltEmail = `${TEST_PREFIX}.potential.alt@example.com`;
+  test("interacciones solo permite asignar un vendedor owner de la cuenta", async () => {
+    const sellerAltEmail = `${TEST_PREFIX}.lead.alt.owner@example.com`;
     const sellerAltUserId = await createUser({
-      fullName: "Potential Alt Seller",
+      fullName: "Lead Alt Seller",
       email: sellerAltEmail,
-      roleIds: [sellerRole.roleId],
+      roleIds: [ctx.sellerRoleId],
     });
     cleanup.userIds.push(sellerAltUserId);
 
-    const managerEmail = `${TEST_PREFIX}.potential.manager@example.com`;
-    const managerUserId = await createUser({
-      fullName: "Potential Manager",
-      email: managerEmail,
-      roleIds: [managerRole.roleId],
-    });
-    cleanup.userIds.push(managerUserId);
-
     const accountId = await createDirectAccount({
-      ownerUserId: sellerOwnerUserId,
-      actorUserId: sellerOwnerUserId,
-      suffix: `${TEST_PREFIX}_potassign`,
+      ownerUserId: ctx.sellerUserId,
+      actorUserId: ctx.sellerUserId,
+      suffix: `${TEST_PREFIX}_lead_owner_scope`,
     });
     cleanup.accountIds.push(accountId);
 
     const contactId = await createDirectContact({
       accountId,
-      actorUserId: sellerOwnerUserId,
-      suffix: `${TEST_PREFIX}_potassign`,
+      actorUserId: ctx.sellerUserId,
+      suffix: `${TEST_PREFIX}_lead_owner_scope`,
     });
     cleanup.contactIds.push(contactId);
 
-    const now = new Date();
-    const interactionPublicId = `int_${TEST_PREFIX}_potential_assign`;
-    const interactionRows = await query(
-      `INSERT INTO interactions
-         (public_id, title, source_notes, summary, analysis_status,
-          topics_json, actions_taken_json, next_steps_json,
-          suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
-          account_id, analyzed_at, created_by, updated_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'analyzed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        interactionPublicId,
-        `Interaccion potencial asignacion ${TEST_PREFIX}`,
-        "Cliente solicita reunion de seguimiento para validar renovacion.",
-        "Se detecta necesidad validable con interes comercial claro.",
-        JSON.stringify(["Renovacion", "Seguimiento"]),
-        JSON.stringify(["Discovery comercial"]),
-        JSON.stringify(["Agendar revision gerencial"]),
-        JSON.stringify({
-          name: `Cuenta fixture ${TEST_PREFIX}_potassign`,
-          confidence: "high",
-        }),
-        JSON.stringify([
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead owner scope ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            `Cuenta: Cuenta ${TEST_PREFIX}_lead_owner_scope`,
+            "Contacto: Laura Perez",
+            "Tema: Seguimiento comercial",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_owner_scope_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+
+    const suggestion = createResponse.body.suggestedContacts[0];
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${createResponse.body.id}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: sellerAltUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId,
+        },
+        contactResolutions: [
           {
-            fullName: `Contacto Fixture ${TEST_PREFIX}_potassign`,
-            confidence: "high",
+            suggestionId: suggestion.suggestionId,
+            mode: "link_existing",
+            contactId,
           },
-        ]),
-        JSON.stringify([
-          {
-            name: `Renovacion servicio ${TEST_PREFIX}`,
-            summary: "Caso con suficiente contexto para evaluacion gerencial.",
-            confidence: "high",
-            reason: "La interaccion ya documenta necesidad y siguiente paso.",
-          },
-        ]),
-        accountId,
-        now,
-        managerUserId,
-        managerUserId,
-        now,
-        now,
-      ],
-    );
-    const interactionId = Number(interactionRows.insertId);
-    await query(
-      `INSERT INTO interaction_contact_links (interaction_id, contact_id, created_at)
-       VALUES (?, ?, ?)`,
-      [interactionId, contactId, now],
-    );
+        ],
+        opportunityResolutions: [],
+      });
 
-    const managerLoginResponse = await login(request(app), managerEmail);
-    const managerToken = managerLoginResponse.body.token;
+    expect(resolveResponse.status).toBe(400);
+    expect(resolveResponse.body.message).toContain("owners vendedores");
+  });
 
-    const detectionResponse = await request(app)
-      .post("/api/potential-opportunities/run-detection")
-      .set("Authorization", `Bearer ${managerToken}`)
-      .send({ sourceEntityIds: [interactionId] });
-
-    expect(detectionResponse.status).toBe(200);
-    expect(detectionResponse.body.created).toBe(1);
-
-    const listResponse = await request(app)
-      .get("/api/potential-opportunities")
-      .set("Authorization", `Bearer ${managerToken}`);
-    expect(listResponse.status).toBe(200);
-    const createdCase = listResponse.body.items.find(
-      (item) => item.account.id === accountId,
-    );
-    expect(createdCase).toBeTruthy();
-
-    const blockedOptionsResponse = await request(app)
-      .get(
-        `/api/potential-opportunities/${createdCase.publicId}/assignment-options`,
-      )
-      .set("Authorization", `Bearer ${managerToken}`);
-    expect(blockedOptionsResponse.status).toBe(200);
-    expect(blockedOptionsResponse.body.assignmentAllowed).toBe(false);
-    expect(blockedOptionsResponse.body.items).toEqual([]);
-
-    const blockedAssignResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
-      .set("Authorization", `Bearer ${managerToken}`)
-      .send({ ownerUserId: sellerOwnerUserId });
-    expect(blockedAssignResponse.status).toBe(409);
-
-    const acceptResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/accept`)
-      .set("Authorization", `Bearer ${managerToken}`)
-      .send({});
-    expect(acceptResponse.status).toBe(200);
-
-    const allowedOptionsResponse = await request(app)
-      .get(
-        `/api/potential-opportunities/${createdCase.publicId}/assignment-options`,
-      )
-      .set("Authorization", `Bearer ${managerToken}`);
-    expect(allowedOptionsResponse.status).toBe(200);
-    expect(allowedOptionsResponse.body.assignmentAllowed).toBe(true);
-    expect(allowedOptionsResponse.body.selectionMode).toBe("account_owners");
-    expect(allowedOptionsResponse.body.items).toEqual([
-      {
-        id: sellerOwnerUserId,
-        fullName: "Potential Owner Seller",
-        email: sellerOwnerEmail,
-        roles: "Vendedor",
-      },
-    ]);
-
-    const invalidAssignResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
-      .set("Authorization", `Bearer ${managerToken}`)
-      .send({ ownerUserId: sellerAltUserId });
-    expect(invalidAssignResponse.status).toBe(400);
-
-    const validAssignResponse = await request(app)
-      .post(`/api/potential-opportunities/${createdCase.publicId}/assign-owner`)
-      .set("Authorization", `Bearer ${managerToken}`)
-      .send({ ownerUserId: sellerOwnerUserId });
-    expect(validAssignResponse.status).toBe(200);
-
-    const detailResponse = await request(app)
-      .get(`/api/potential-opportunities/${createdCase.publicId}`)
-      .set("Authorization", `Bearer ${managerToken}`);
-    expect(detailResponse.status).toBe(200);
-    expect(detailResponse.body.state).toBe("accepted");
-    expect(detailResponse.body.owner).toEqual({
-      id: sellerOwnerUserId,
-      fullName: "Potential Owner Seller",
-      isSeller: true,
+  test("interacciones permite autoasignar al vendedor editor cuando la cuenta no tiene owners vendedores", async () => {
+    const sellerResolverUserId = await createUser({
+      fullName: "API Lead Seller Resolver",
+      email: `${TEST_PREFIX}.lead.seller.resolver@example.com`,
+      roleIds: [ctx.sellerRoleId, ctx.interactionsManagerRoleId],
     });
+    const sellerResolverAccountId = await createDirectAccount({
+      name: `Cuenta ${TEST_PREFIX}_lead_self_assign`,
+      ownerUserId: ctx.accountCreateUserId,
+      actorUserId: ctx.accountCreateUserId,
+    });
+    cleanup.accountIds.push(sellerResolverAccountId);
+    await query(`DELETE FROM account_owners WHERE account_id = ?`, [
+      sellerResolverAccountId,
+    ]);
+    const sellerResolverContactId = await createDirectContact({
+      accountId: sellerResolverAccountId,
+      actorUserId: sellerResolverUserId,
+      suffix: `${TEST_PREFIX}_lead_self_assign`,
+    });
+    cleanup.contactIds.push(sellerResolverContactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.lead.seller.resolver@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead self assign ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Self Assign",
+            "Contacto: Mariela Campos",
+            "Tema: Seguimiento comercial prioritario",
+            "Oportunidad: Plataforma de seguridad administrada",
+            "Correo: mariela.campos@self-assign.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_self_assign_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        assignCurrentUserAsOwnerSeller: true,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: sellerResolverAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: sellerResolverContactId,
+          },
+        ],
+        opportunityResolutions: [
+          {
+            suggestionId: firstOpportunitySuggestion.suggestionId,
+            mode: "create_new",
+            isPrimary: true,
+            draft: {
+              name:
+                firstOpportunitySuggestion.name ||
+                `Oportunidad self assign ${TEST_PREFIX}`,
+              contactId: sellerResolverContactId,
+              amountUsd: 99000,
+              closeDate: "2026-07-30",
+              businessLineId: ctx.catalogIds.businessLineId,
+              sellerUserId: sellerResolverUserId,
+              presalesUserId: null,
+              summary:
+                firstOpportunitySuggestion.summary ||
+                "Oportunidad creada tras autoasignacion explicita del vendedor.",
+            },
+          },
+        ],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.analysisStatus).toBe("lead_qualified");
+    expect(resolveResponse.body.sellerUserId).toBe(sellerResolverUserId);
+    expect(resolveResponse.body.opportunities).toHaveLength(1);
+    cleanup.opportunityIds.push(resolveResponse.body.opportunities[0].id);
+
+    const ownerRows = await query(
+      `SELECT user_id
+       FROM account_owners
+       WHERE account_id = ?
+         AND user_id = ?`,
+      [sellerResolverAccountId, sellerResolverUserId],
+    );
+    expect(ownerRows).toHaveLength(1);
   });
 
   test("interacciones permite agregar mas archivos a una interaccion existente", async () => {
@@ -4347,7 +4112,8 @@ describe("API integration baseline", () => {
       );
 
     expect(appendResponse.status).toBe(201);
-    expect(appendResponse.body.analysisStatus).toBe("analyzed");
+    expect(appendResponse.body.analysisStatus).toBe("created");
+    expect(appendResponse.body.processingStatus).toBe("analyzed");
     expect(appendResponse.body.documents).toHaveLength(3);
     expect(
       appendResponse.body.documents.map(
@@ -4425,7 +4191,7 @@ describe("API integration baseline", () => {
     expect(documentRows).toHaveLength(0);
   });
 
-  test("interacciones bloquea eliminar una interacción resuelta", async () => {
+  test("interacciones bloquea eliminar un lead calificado", async () => {
     const loginResponse = await login(
       request(app),
       `${TEST_PREFIX}.interactions.manager@example.com`,
@@ -4473,38 +4239,16 @@ describe("API integration baseline", () => {
         suggestedAccount: createResponse.body.suggestedAccount,
         suggestedContacts: createResponse.body.suggestedContacts,
         suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerUserId,
         accountResolution: {
-          mode: "create_new",
-          draft: {
-            name:
-              createResponse.body.suggestedAccount?.name ||
-              `Cuenta delete blocked ${TEST_PREFIX}`,
-            website: "",
-            phone: "",
-            city: "",
-            stateRegion: "",
-            countryId: ctx.catalogIds.countryMxId,
-            description: createResponse.body.summary,
-          },
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
         },
         contactResolutions: [
           {
             suggestionId: firstContactSuggestion.suggestionId,
-            mode: "create_new",
-            draft: {
-              firstName: firstContactSuggestion.firstName || "Laura",
-              lastName: firstContactSuggestion.lastName || "Perez",
-              email:
-                firstContactSuggestion.email ||
-                "laura.perez@epsilon.example.com",
-              phone: firstContactSuggestion.phone || "",
-              mobile: firstContactSuggestion.mobile || "",
-              positionTitle: firstContactSuggestion.positionTitle || "Compras",
-              department: firstContactSuggestion.department || "TI",
-              countryId: ctx.catalogIds.countryMxId,
-              stateRegion: "CDMX",
-              city: "Ciudad de Mexico",
-            },
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
           },
         ],
         opportunityResolutions: [
@@ -4540,9 +4284,7 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(deleteResponse.status).toBe(409);
-    expect(deleteResponse.body.message).toBe(
-      "No puedes eliminar una interaccion que ya fue resuelta",
-    );
+    expect(deleteResponse.body.message).toBe("No puedes eliminar un lead calificado");
 
     const interactionRows = await query(
       `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
@@ -4601,37 +4343,16 @@ describe("API integration baseline", () => {
         suggestedAccount: createResponse.body.suggestedAccount,
         suggestedContacts: createResponse.body.suggestedContacts,
         suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerUserId,
         accountResolution: {
-          mode: "create_new",
-          draft: {
-            name:
-              createResponse.body.suggestedAccount?.name ||
-              `Cuenta derivada ${TEST_PREFIX}`,
-            website: "",
-            phone: "",
-            city: "",
-            stateRegion: "",
-            countryId: ctx.catalogIds.countryMxId,
-            description: createResponse.body.summary,
-          },
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
         },
         contactResolutions: [
           {
             suggestionId: firstContactSuggestion.suggestionId,
-            mode: "create_new",
-            draft: {
-              firstName: firstContactSuggestion.firstName || "Laura",
-              lastName: firstContactSuggestion.lastName || "Perez",
-              email:
-                firstContactSuggestion.email || "laura.perez@beta.example.com",
-              phone: firstContactSuggestion.phone || "",
-              mobile: firstContactSuggestion.mobile || "",
-              positionTitle: firstContactSuggestion.positionTitle || "Compras",
-              department: firstContactSuggestion.department || "TI",
-              countryId: ctx.catalogIds.countryMxId,
-              stateRegion: "CDMX",
-              city: "Ciudad de Mexico",
-            },
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
           },
         ],
         opportunityResolutions: [
@@ -4658,13 +4379,11 @@ describe("API integration baseline", () => {
       });
 
     expect(resolveResponse.status).toBe(200);
-    expect(resolveResponse.body.analysisStatus).toBe("resolved");
+    expect(resolveResponse.body.analysisStatus).toBe("lead_qualified");
     expect(resolveResponse.body.accountId).not.toBeNull();
     expect(resolveResponse.body.contacts).toHaveLength(1);
     expect(resolveResponse.body.opportunities).toHaveLength(1);
     expect(resolveResponse.body.opportunities[0].isPrimary).toBe(true);
-    cleanup.accountIds.push(resolveResponse.body.accountId);
-    cleanup.contactIds.push(resolveResponse.body.contacts[0].id);
     cleanup.opportunityIds.push(resolveResponse.body.opportunities[0].id);
 
     const linkedDocsRows = await query(
@@ -4691,7 +4410,85 @@ describe("API integration baseline", () => {
     expect(Number(interactionRow.primary_opportunity_id)).toBe(
       resolveResponse.body.opportunities[0].id,
     );
-    expect(interactionRow.analysis_status).toBe("resolved");
+    expect(interactionRow.analysis_status).toBe("lead_qualified");
+  });
+
+  test("interacciones marca lead asignado cuando solo vincula cuenta y contacto", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead asignado ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Gamma Infraestructura",
+            "Contacto: Luis Gomez",
+            "Tema: Seguimiento comercial de infraestructura",
+            "Correo: luis.gomez@gamma.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_assigned_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.analysisStatus).toBe("lead_assigned");
+    expect(resolveResponse.body.accountId).toBe(ctx.fixtureAccountId);
+    expect(resolveResponse.body.contacts).toHaveLength(1);
+    expect(resolveResponse.body.opportunities).toHaveLength(0);
+
+    const [interactionRow] = await query(
+      `SELECT account_id, primary_opportunity_id, analysis_status, seller_user_id
+       FROM interactions
+       WHERE id = ?
+       LIMIT 1`,
+      [interactionId],
+    );
+    expect(Number(interactionRow.account_id)).toBe(ctx.fixtureAccountId);
+    expect(interactionRow.primary_opportunity_id).toBeNull();
+    expect(interactionRow.seller_user_id).toBeNull();
+    expect(interactionRow.analysis_status).toBe("lead_assigned");
   });
 
   test("contactos.request ya no autoriza crear contactos", async () => {

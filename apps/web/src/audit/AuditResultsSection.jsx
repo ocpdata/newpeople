@@ -1,4 +1,8 @@
-import { formatAuditDateTime, summarizeAuditChanges } from "./useSystemAuditPage";
+import {
+  formatAuditDateTime,
+  formatAuditModuleLabel,
+  summarizeAuditChanges,
+} from "./useSystemAuditPage";
 
 export default function AuditResultsSection({
   items,
@@ -31,7 +35,7 @@ export default function AuditResultsSection({
             items.map((entry) => (
               <tr key={entry.id}>
                 <td className="audit-date">{formatAuditDateTime(entry.created_at)}</td>
-                <td>{entry.module}</td>
+                <td>{formatAuditModuleLabel(entry.module)}</td>
                 <td>{entry.action}</td>
                 <td>
                   {entry.entity_type}

@@ -1484,7 +1484,7 @@ async function listPendingInteractions(user) {
     params.push(Number(user.id));
   }
 
-  const where = ["i.analysis_status <> 'resolved'"];
+  const where = ["i.analysis_status <> 'lead_qualified'"];
   if (!hasGlobalOpportunityScope(user)) {
     where.push("(ao_scope.user_id IS NOT NULL OR i.created_by = ?)");
   }

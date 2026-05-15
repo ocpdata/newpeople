@@ -11,7 +11,6 @@ import providerRoutes from "./routes.providers.js";
 import opportunityRoutes from "./routes.opportunities.js";
 import quotationRoutes from "./routes.quotations.js";
 import interactionRoutes from "./routes.interactions.js";
-import potentialOpportunityRoutes from "./routes.potential-opportunities.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
@@ -61,12 +60,6 @@ export function createApp() {
     authRequired,
     loadUser,
     commercialPlanningRoutes,
-  );
-  app.use(
-    "/api/potential-opportunities",
-    authRequired,
-    loadUser,
-    potentialOpportunityRoutes,
   );
   app.use("/api", authRequired, loadUser, quotationRoutes);
   app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);

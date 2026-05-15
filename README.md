@@ -155,7 +155,8 @@ Endpoints relevantes:
 
 ### Web (apps/web/.env)
 
-- VITE_API_URL: URL base de la API (ej. http://localhost:4000).
+- `VITE_API_URL`: usar solo en desarrollo local si necesitas apuntar a una API separada (ej. `http://localhost:4000`).
+- En VM, produccion y F5: dejar `VITE_API_URL` sin definir para que el frontend use mismo origen.
 
 ## Modulos actuales
 
@@ -211,7 +212,44 @@ Cobertura automatizada:
 - Enlace de set password invalido o vencido:
   revisa `APP_PASSWORD_SETUP_TOKEN_MINUTES`, genera una nueva invitacion y confirma que el token no haya sido reutilizado.
 - Frontend no conecta con backend:
-  confirma que VITE_API_URL apunte al host/puerto correcto.
+  en local, confirma que `VITE_API_URL` apunte a `http://localhost:4000` o usa el proxy de Vite.
+- Frontend funciona directo en VM pero falla detras de F5 HTTPS:
+  revisa que el build publicado no tenga una URL absoluta HTTP horneada en `VITE_API_URL`; el frontend debe consumir `/api` desde el mismo host visible al usuario.
+
+## Guia exacta de entornos web
+
+### Desarrollo local
+
+- `apps/web/.env.local` o `apps/web/.env`: `VITE_API_URL=http://localhost:4000`
+- Web: `http://localhost:5173`
+- API: `http://localhost:4000`
+- `npm run dev` en web usa proxy para `/api` y `/health`
+
+### VM directa
+
+- Host visible: `http://newpeople.digitalvs.com`
+- Build frontend: sin `VITE_API_URL`
+- El origen publica `/` y `/api` bajo el mismo host
+
+### F5 DCS delante de la VM
+
+- Host visible: `https://newpip.digitalvs.com`
+- Origen real: `http://newpeople.digitalvs.com`
+- Build frontend: sin `VITE_API_URL`
+- F5 publica `/` y `/api` en `newpip.digitalvs.com`
+- F5 reenvia al origen preservando la ruta; `/api/auth/login` debe llegar como `/api/auth/login`
+
+Configuracion recomendada en F5:
+
+1. Listener HTTPS para `newpip.digitalvs.com` con certificado valido.
+2. Ruta `/api/*` al origen de la VM o al upstream que ya sirve Express/Nginx.
+3. Ruta `/health` al mismo origen para verificacion operativa.
+4. Ruta `/*` a los estaticos del frontend o al mismo origen si la VM sirve todo.
+5. Reenvio de headers `Host`, `X-Forwarded-For`, `X-Forwarded-Host` y `X-Forwarded-Proto=https`.
+6. Sin reescribir ni eliminar el prefijo `/api`.
+7. Purga de cache/CDN despues de publicar un build nuevo.
+
+La opcion mas simple y robusta es que F5 envie todo el trafico de `newpip.digitalvs.com` a un mismo origen HTTP en la VM, y que ese origen resuelva `/` para frontend y `/api` para backend. Asi el frontend siempre habla al mismo host visible y no requiere builds por host.
 
 ## Proveedores y listas de precios
 

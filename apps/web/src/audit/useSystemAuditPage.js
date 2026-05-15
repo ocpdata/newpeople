@@ -29,6 +29,13 @@ export function summarizeAuditChanges(entry) {
   return fields.slice(0, 4).join(", ") + (fields.length > 4 ? "..." : "");
 }
 
+export function formatAuditModuleLabel(value) {
+  if (value === "interacciones") {
+    return "Leads";
+  }
+  return value || "-";
+}
+
 const DEFAULT_FILTERS = {
   page: 1,
   pageSize: 50,
@@ -47,6 +54,7 @@ const AUDIT_MODULE_OPTIONS = [
   { value: "usuarios", label: "Usuarios" },
   { value: "roles", label: "Roles" },
   { value: "cuentas", label: "Cuentas" },
+  { value: "interacciones", label: "Leads" },
   { value: "oportunidades", label: "Oportunidades" },
   { value: "contactos", label: "Contactos" },
 ];

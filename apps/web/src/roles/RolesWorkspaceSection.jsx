@@ -1,3 +1,10 @@
+function formatPermissionModuleName(moduleName) {
+  if (moduleName === "interacciones") {
+    return "Leads";
+  }
+  return moduleName.charAt(0).toUpperCase() + moduleName.slice(1);
+}
+
 export default function RolesWorkspaceSection({
   canUpdateRoles,
   roleStatusFilter,
@@ -227,7 +234,7 @@ export default function RolesWorkspaceSection({
               {permissionsByModule.map(([moduleName, modulePermissions]) => (
                 <div key={moduleName} className="permission-module-group">
                   <div className="permission-module-header">
-                    {moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}
+                    {formatPermissionModuleName(moduleName)}
                   </div>
                   <div className="checkbox-grid">
                     {modulePermissions.map((permission) => (

@@ -2453,12 +2453,6 @@ VALUES
   ('desarrollo_comercial.update', 'desarrollo_comercial', 'update', 'Operar el modulo de desarrollo comercial', NOW(3), NOW(3)),
   ('proceso_comercial_config.read', 'proceso_comercial_config', 'read', 'Ver la configuracion del proceso comercial', NOW(3), NOW(3)),
   ('proceso_comercial_config.update', 'proceso_comercial_config', 'update', 'Actualizar la configuracion del proceso comercial', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.read', 'oportunidades_potenciales', 'read', 'Ver oportunidades potenciales', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.read_all', 'oportunidades_potenciales', 'read_all', 'Ver todas las oportunidades potenciales', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.review', 'oportunidades_potenciales', 'review', 'Revisar y detectar oportunidades potenciales', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.assign', 'oportunidades_potenciales', 'assign', 'Asignar responsables en oportunidades potenciales', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.convert', 'oportunidades_potenciales', 'convert', 'Convertir oportunidades potenciales', NOW(3), NOW(3)),
-  ('oportunidades_potenciales.analytics', 'oportunidades_potenciales', 'analytics', 'Consultar analitica de oportunidades potenciales', NOW(3), NOW(3)),
   ('cotizaciones.operacion', 'cotizaciones', 'operacion', 'Operacion de cotizaciones', NOW(3), NOW(3)),
   ('cotizaciones.revision', 'cotizaciones', 'revision', 'Revision de cotizaciones', NOW(3), NOW(3)),
   ('cotizaciones.ingreso', 'cotizaciones', 'ingreso', 'Ingreso de cotizaciones', NOW(3), NOW(3)),
@@ -2975,36 +2969,4 @@ SELECT r.id, p.id, NOW(3)
 FROM roles r
 JOIN permissions p
 WHERE r.name = 'Administrador'
-ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);
-
-DELETE rp
-FROM role_permissions rp
-INNER JOIN roles r ON r.id = rp.role_id
-INNER JOIN permissions p ON p.id = rp.permission_id
-WHERE LOWER(TRIM(r.name)) = 'vendedor'
-  AND p.code IN (
-    'oportunidades_potenciales.read',
-    'oportunidades_potenciales.convert'
-  );
-
-INSERT INTO role_permissions (role_id, permission_id, created_at)
-SELECT r.id, p.id, NOW(3)
-FROM roles r
-JOIN permissions p ON p.code IN (
-  'oportunidades_potenciales.read',
-  'oportunidades_potenciales.read_all',
-  'oportunidades_potenciales.review',
-  'oportunidades_potenciales.assign',
-  'oportunidades_potenciales.convert',
-  'oportunidades_potenciales.analytics'
-)
-WHERE LOWER(TRIM(r.name)) IN (
-  'gerente comercial',
-  'gerente de ventas',
-  'director comercial',
-  'director de ventas',
-  'lider comercial',
-  'coordinador comercial',
-  'jefe comercial'
-)
 ON DUPLICATE KEY UPDATE created_at = VALUES(created_at);

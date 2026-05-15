@@ -629,7 +629,7 @@ export async function analyzeInteractionEvidence({
     suggestedAccount: analysis.suggestedAccount,
     suggestedContacts: analysis.suggestedContacts,
     suggestedOpportunities: analysis.suggestedOpportunities,
-    analysisStatus: mergedText ? "analyzed" : "requires_review",
+    processingStatus: mergedText ? "analyzed" : "requires_review",
   };
 }
 

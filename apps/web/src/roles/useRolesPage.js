@@ -353,6 +353,9 @@ export function useRolesPage({ onRefreshCurrentUser }) {
       Object.entries(
         permissions.reduce((accumulator, permission) => {
           const moduleName = permission.module || "otros";
+          if (moduleName === "oportunidades_potenciales") {
+            return accumulator;
+          }
           if (!accumulator[moduleName]) accumulator[moduleName] = [];
           accumulator[moduleName].push(permission);
           return accumulator;

@@ -60,6 +60,8 @@ const editableInteractionSchema = z.object({
 });
 
 const resolutionSchema = editableInteractionSchema.extend({
+  sellerUserId: z.number().int().positive().optional().nullable(),
+  assignCurrentUserAsOwnerSeller: z.boolean().optional().default(false),
   accountResolution: z
     .object({
       mode: z.enum(["link_existing", "create_new", "ignore"]),
@@ -129,6 +131,86 @@ const resolutionSchema = editableInteractionSchema.extend({
     .default([]),
 });
 
+function isQualifiedLeadStatus(status) {
+  return status === "lead_qualified";
+}
+
+function resolveLeadCommercialStatus({
+  accountId,
+  contactIds,
+  sellerUserId,
+  opportunityIds,
+}) {
+  if (!accountId || !Array.isArray(contactIds) || !contactIds.length) {
+    return "created";
+  }
+  if (Array.isArray(opportunityIds) && opportunityIds.length) {
+    if (!sellerUserId) {
+      return "created";
+    }
+    return "lead_qualified";
+  }
+  return "lead_assigned";
+}
+
+async function validateLinkedContactForAccount(contactId, accountId) {
+  const rows = await query(
+    `SELECT id
+     FROM contacts
+     WHERE id = ?
+       AND account_id = ?
+     LIMIT 1`,
+    [Number(contactId), Number(accountId)],
+  );
+  return rows.length > 0;
+}
+
+async function validateLinkedOpportunityForAccount(opportunityId, accountId) {
+  const rows = await query(
+    `SELECT id
+     FROM opportunities
+     WHERE id = ?
+       AND account_id = ?
+     LIMIT 1`,
+    [Number(opportunityId), Number(accountId)],
+  );
+  return rows.length > 0;
+}
+
+async function validateSellerOwnerForAccount(accountId, sellerUserId, conn = null) {
+  const executor = conn || { query };
+  const [rows] = conn
+    ? await executor.query(
+        `SELECT u.id
+         FROM account_owners ao
+         INNER JOIN users u ON u.id = ao.user_id
+         INNER JOIN user_roles ur ON ur.user_id = u.id
+         INNER JOIN roles r ON r.id = ur.role_id
+         WHERE ao.account_id = ?
+           AND ao.user_id = ?
+           AND u.status = 'active'
+           AND LOWER(TRIM(r.name)) = 'vendedor'
+         LIMIT 1`,
+        [Number(accountId), Number(sellerUserId)],
+      )
+    : [
+        await executor.query(
+          `SELECT u.id
+           FROM account_owners ao
+           INNER JOIN users u ON u.id = ao.user_id
+           INNER JOIN user_roles ur ON ur.user_id = u.id
+           INNER JOIN roles r ON r.id = ur.role_id
+           WHERE ao.account_id = ?
+             AND ao.user_id = ?
+             AND u.status = 'active'
+             AND LOWER(TRIM(r.name)) = 'vendedor'
+           LIMIT 1`,
+          [Number(accountId), Number(sellerUserId)],
+        ),
+      ];
+  return rows.length > 0;
+}
+
 function parseJsonField(value, fallback) {
   if (value === null || value === undefined || value === "") return fallback;
   if (typeof value === "string") {
@@ -148,6 +230,14 @@ function getFormField(fields, key) {
 
 function hasPermission(user, permission) {
   return user?.permissionSet?.has(permission);
+}
+
+function hasSellerRole(user) {
+  return Array.isArray(user?.roles)
+    ? user.roles.some(
+        (role) => String(role?.name || "").trim().toLowerCase() === "vendedor",
+      )
+    : false;
 }
 
 function hasGlobalReadScope(user) {
@@ -286,29 +376,66 @@ async function loadPresalesUsers() {
   );
 }
 
+async function loadSellerUsersByAccountIds(accountIds) {
+  const uniqueAccountIds = Array.from(
+    new Set(
+      (Array.isArray(accountIds) ? accountIds : [])
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item > 0),
+    ),
+  );
+
+  if (!uniqueAccountIds.length) {
+    return {};
+  }
+
+  const rows = await query(
+    `SELECT ao.account_id, u.id, u.full_name, u.email
+     FROM account_owners ao
+     INNER JOIN users u ON u.id = ao.user_id
+     INNER JOIN user_roles ur ON ur.user_id = u.id
+     INNER JOIN roles r ON r.id = ur.role_id
+     WHERE ao.account_id IN (${uniqueAccountIds.map(() => "?").join(", ")})
+       AND u.status = 'active'
+       AND LOWER(TRIM(r.name)) = 'vendedor'
+     ORDER BY ao.account_id, u.full_name`,
+    uniqueAccountIds,
+  );
+
+  return rows.reduce((accumulator, row) => {
+    const accountId = String(Number(row.account_id));
+    if (!accumulator[accountId]) {
+      accumulator[accountId] = [];
+    }
+    accumulator[accountId].push({
+      id: Number(row.id),
+      full_name: row.full_name,
+      email: row.email,
+    });
+    return accumulator;
+  }, {});
+}
+
 async function loadAccessibleContext(user) {
-  const [
-    accounts,
-    contacts,
-    opportunities,
-    businessLines,
-    sellerUsers,
-    presalesUsers,
-  ] = await Promise.all([
+  const [accounts, contacts, opportunities, businessLines, presalesUsers] =
+    await Promise.all([
     loadAccessibleAccounts(user),
     loadAccessibleContacts(user),
     loadAccessibleOpportunities(user),
     loadBusinessLines(),
-    loadSellerUsers(),
     loadPresalesUsers(),
   ]);
+  const sellerUsersByAccountId = await loadSellerUsersByAccountIds(
+    accounts.map((account) => account.id),
+  );
 
   return {
     accounts,
     contacts,
     opportunities,
     businessLines,
-    sellerUsers,
+    sellerUsersByAccountId,
+    sellerUsers: [],
     presalesUsers,
   };
 }
@@ -410,11 +537,14 @@ async function fetchInteractionDetail(interactionId) {
   const rows = await query(
     `SELECT i.*, a.name AS account_name,
             po.name AS primary_opportunity_name,
+            su.full_name AS seller_user_name,
+            su.email AS seller_user_email,
             u1.full_name AS created_by_name,
             u2.full_name AS updated_by_name
      FROM interactions i
      LEFT JOIN accounts a ON a.id = i.account_id
      LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
+     LEFT JOIN users su ON su.id = i.seller_user_id
      INNER JOIN users u1 ON u1.id = i.created_by
      INNER JOIN users u2 ON u2.id = i.updated_by
      WHERE i.id = ?
@@ -454,6 +584,7 @@ async function fetchInteractionDetail(interactionId) {
     sourceNotes: row.source_notes || "",
     summary: row.summary || "",
     analysisStatus: row.analysis_status,
+    processingStatus: row.processing_status || "pending",
     warnings: parseJsonField(row.warnings_json, []),
     topics: parseJsonField(row.topics_json, []),
     actionsTaken: parseJsonField(row.actions_taken_json, []),
@@ -471,6 +602,16 @@ async function fetchInteractionDetail(interactionId) {
         ? null
         : Number(row.primary_opportunity_id),
     primaryOpportunityName: row.primary_opportunity_name || "",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    seller:
+      row.seller_user_id === null
+        ? null
+        : {
+            id: Number(row.seller_user_id),
+            fullName: row.seller_user_name || "",
+            email: row.seller_user_email || "",
+          },
     contacts: contacts.map((contact) => ({
       id: Number(contact.id),
       accountId: Number(contact.account_id),
@@ -842,6 +983,47 @@ async function createContactFromDraft(conn, user, accountId, draft) {
   return Number(insertResult.insertId);
 }
 
+async function listSellerOwnersForAccount(conn, accountId) {
+  const [rows] = await conn.query(
+    `SELECT DISTINCT u.id, u.full_name, u.email
+     FROM account_owners ao
+     INNER JOIN users u ON u.id = ao.user_id
+     INNER JOIN user_roles ur ON ur.user_id = u.id
+     INNER JOIN roles r ON r.id = ur.role_id
+     WHERE ao.account_id = ?
+       AND u.status = 'active'
+       AND LOWER(TRIM(r.name)) = 'vendedor'
+     ORDER BY u.full_name`,
+    [Number(accountId)],
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    full_name: row.full_name,
+    email: row.email,
+  }));
+}
+
+async function ensureAccountOwner(conn, accountId, userId, assignedBy) {
+  await conn.query(
+    `INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by)
+     SELECT ?, ?, NOW(3), ?
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM account_owners
+       WHERE account_id = ?
+         AND user_id = ?
+       LIMIT 1
+     )`,
+    [
+      Number(accountId),
+      Number(userId),
+      Number(assignedBy),
+      Number(accountId),
+      Number(userId),
+    ],
+  );
+}
+
 async function createOpportunityFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = resolveCreationStatusCode(
     user,
@@ -1033,12 +1215,16 @@ router.get(
           (opportunity) => Number(opportunity.account_id) === accountId,
         )
       : accessibleContext.opportunities;
+    const sellerUsers = accountId
+      ? accessibleContext.sellerUsersByAccountId[String(accountId)] || []
+      : [];
     return res.json({
       accounts: accessibleContext.accounts,
       contacts: filteredContacts,
       opportunities: filteredOpportunities,
       businessLines: accessibleContext.businessLines,
-      sellerUsers: accessibleContext.sellerUsers,
+      sellerUsers,
+      sellerUsersByAccountId: accessibleContext.sellerUsersByAccountId,
       presalesUsers: accessibleContext.presalesUsers,
     });
   },
@@ -1077,17 +1263,18 @@ router.post(
       const interactionId = await withTransaction(async (conn) => {
         const [insertResult] = await conn.query(
           `INSERT INTO interactions
-             (public_id, title, source_notes, summary, analysis_status,
+             (public_id, title, source_notes, summary, analysis_status, processing_status,
               warnings_json, topics_json, actions_taken_json, next_steps_json,
               suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
               created_by, updated_by, created_at, updated_at, analyzed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             interactionPublicId,
             title,
             sourceNotes || null,
             analysis.summary || null,
-            analysis.analysisStatus,
+            "created",
+            analysis.processingStatus,
             normalizeForStorage(analysis.warnings),
             normalizeForStorage(analysis.topics),
             normalizeForStorage(analysis.actionsTaken),
@@ -1099,6 +1286,7 @@ router.post(
             Number(req.user.id),
             now,
             now,
+            analysis.processingStatus === "pending" ? null : now,
           ],
         );
         await createInteractionDocuments({
@@ -1177,10 +1365,10 @@ router.post(
       if (!detail) {
         return res.status(404).json({ message: "Interaccion no encontrada" });
       }
-      if (detail.resolvedAt || detail.analysisStatus === "resolved") {
+      if (isQualifiedLeadStatus(detail.analysisStatus)) {
         return res.status(409).json({
           message:
-            "No puedes agregar archivos a una interaccion que ya fue resuelta",
+            "No puedes agregar archivos a un lead calificado",
         });
       }
 
@@ -1212,14 +1400,14 @@ router.post(
 
         await conn.query(
           `UPDATE interactions
-           SET summary = ?, analysis_status = ?, warnings_json = ?, topics_json = ?,
+           SET summary = ?, processing_status = ?, warnings_json = ?, topics_json = ?,
                actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
                suggested_contacts_json = ?, suggested_opportunities_json = ?, analyzed_at = NOW(3),
                updated_by = ?, updated_at = NOW(3)
            WHERE id = ?`,
           [
             analysis.summary || null,
-            analysis.analysisStatus,
+            analysis.processingStatus,
             normalizeForStorage(analysis.warnings),
             normalizeForStorage(analysis.topics),
             normalizeForStorage(analysis.actionsTaken),
@@ -1277,10 +1465,9 @@ router.delete(
     if (!interaction) {
       return res.status(404).json({ message: "Interaccion no encontrada" });
     }
-    if (interaction.resolvedAt || interaction.analysisStatus === "resolved") {
+    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
-        message:
-          "No puedes eliminar archivos de una interaccion que ya fue resuelta",
+        message: "No puedes eliminar archivos de un lead calificado",
       });
     }
 
@@ -1343,9 +1530,9 @@ router.delete(
     if (!interaction) {
       return res.status(404).json({ message: "Interaccion no encontrada" });
     }
-    if (interaction.resolvedAt || interaction.analysisStatus === "resolved") {
+    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
-        message: "No puedes eliminar una interaccion que ya fue resuelta",
+        message: "No puedes eliminar un lead calificado",
       });
     }
 
@@ -1478,14 +1665,14 @@ router.post(
 
     await query(
       `UPDATE interactions
-       SET summary = ?, analysis_status = ?, warnings_json = ?, topics_json = ?,
+       SET summary = ?, processing_status = ?, warnings_json = ?, topics_json = ?,
            actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
            suggested_contacts_json = ?, suggested_opportunities_json = ?, analyzed_at = NOW(3),
            updated_by = ?, updated_at = NOW(3)
        WHERE id = ?`,
       [
         analysis.summary || null,
-        analysis.analysisStatus,
+        analysis.processingStatus,
         normalizeForStorage(analysis.warnings),
         normalizeForStorage(analysis.topics),
         normalizeForStorage(analysis.actionsTaken),
@@ -1558,16 +1745,28 @@ router.post(
         const contactsBySuggestionId = new Map();
         for (const resolution of parsed.data.contactResolutions) {
           if (resolution.mode === "ignore") continue;
+          if (!resolvedAccountId) {
+            throw Object.assign(
+              new Error("Debes vincular una cuenta antes de vincular contactos"),
+              { status: 400 },
+            );
+          }
           let contactId = null;
           if (resolution.mode === "link_existing") {
             contactId = Number(resolution.contactId || 0);
-          } else if (resolution.mode === "create_new") {
-            if (!resolvedAccountId) {
+            const belongsToAccount = await validateLinkedContactForAccount(
+              contactId,
+              resolvedAccountId,
+            );
+            if (!belongsToAccount) {
               throw Object.assign(
-                new Error("Debes resolver una cuenta antes de crear contactos"),
+                new Error(
+                  "Cada contacto vinculado debe pertenecer a la cuenta del lead",
+                ),
                 { status: 400 },
               );
             }
+          } else if (resolution.mode === "create_new") {
             contactId = await createContactFromDraft(
               conn,
               req.user,
@@ -1581,11 +1780,111 @@ router.post(
           }
         }
 
+        const hasMinimumCommercialLinks = Boolean(
+          resolvedAccountId && linkedContactIds.length,
+        );
+
+        let assignedSellerUserId = parsed.data.sellerUserId
+          ? Number(parsed.data.sellerUserId)
+          : null;
+
+        if (
+          parsed.data.assignCurrentUserAsOwnerSeller &&
+          !assignedSellerUserId &&
+          hasSellerRole(req.user)
+        ) {
+          assignedSellerUserId = Number(req.user.id);
+        }
+
+        if (assignedSellerUserId && !hasMinimumCommercialLinks) {
+          throw Object.assign(
+            new Error(
+              "Debes vincular cuenta y al menos un contacto antes de asignar vendedor",
+            ),
+            { status: 400 },
+          );
+        }
+
+        if (assignedSellerUserId) {
+          if (
+            Number(assignedSellerUserId) === Number(req.user.id) &&
+            parsed.data.assignCurrentUserAsOwnerSeller
+          ) {
+            if (!hasSellerRole(req.user)) {
+              throw Object.assign(
+                new Error(
+                  "Solo un usuario con rol de vendedor puede asignarse como owner vendedor",
+                ),
+                { status: 400 },
+              );
+            }
+
+            const currentSellerOwners = await listSellerOwnersForAccount(
+              conn,
+              resolvedAccountId,
+            );
+            const currentUserAlreadyOwner = currentSellerOwners.some(
+              (sellerOwner) => Number(sellerOwner.id) === Number(req.user.id),
+            );
+
+            if (!currentUserAlreadyOwner && currentSellerOwners.length > 0) {
+              throw Object.assign(
+                new Error(
+                  "La cuenta ya tiene owners vendedores; debes seleccionar uno de ellos",
+                ),
+                { status: 400 },
+              );
+            }
+
+            if (!currentUserAlreadyOwner) {
+              await ensureAccountOwner(
+                conn,
+                resolvedAccountId,
+                req.user.id,
+                req.user.id,
+              );
+            }
+          }
+
+          const isValidSellerOwner = await validateSellerOwnerForAccount(
+            resolvedAccountId,
+            assignedSellerUserId,
+            conn,
+          );
+          if (!isValidSellerOwner) {
+            throw Object.assign(
+              new Error(
+                "El vendedor asignado debe ser uno de los owners vendedores de la cuenta",
+              ),
+              { status: 400 },
+            );
+          }
+        }
+
         let primaryOpportunityId = null;
         const effectiveOpportunityResolutions =
           parsed.data.opportunityResolutions.filter(
             (resolution) => resolution.mode !== "ignore",
           );
+
+        if (effectiveOpportunityResolutions.length && !hasMinimumCommercialLinks) {
+          throw Object.assign(
+            new Error(
+              "Debes vincular cuenta y al menos un contacto antes de vincular una oportunidad",
+            ),
+            { status: 400 },
+          );
+        }
+
+        if (effectiveOpportunityResolutions.length && !assignedSellerUserId) {
+          throw Object.assign(
+            new Error(
+              "Debes asignar un vendedor antes de vincular una oportunidad",
+            ),
+            { status: 400 },
+          );
+        }
+
         const explicitPrimary = effectiveOpportunityResolutions.find(
           (resolution) => resolution.isPrimary,
         );
@@ -1594,15 +1893,19 @@ router.post(
           let opportunityId = null;
           if (resolution.mode === "link_existing") {
             opportunityId = Number(resolution.opportunityId || 0);
-          } else if (resolution.mode === "create_new") {
-            if (!resolvedAccountId) {
+            const belongsToAccount = await validateLinkedOpportunityForAccount(
+              opportunityId,
+              resolvedAccountId,
+            );
+            if (!belongsToAccount) {
               throw Object.assign(
                 new Error(
-                  "Debes resolver una cuenta antes de crear oportunidades",
+                  "Cada oportunidad vinculada debe pertenecer a la cuenta del lead",
                 ),
                 { status: 400 },
               );
             }
+          } else if (resolution.mode === "create_new") {
             const suggestion = (parsed.data.suggestedOpportunities || []).find(
               (item) => item?.suggestionId === resolution.suggestionId,
             );
@@ -1627,8 +1930,7 @@ router.post(
               contactId: resolution.draft?.contactId || defaultDraft.contactId,
               businessLineId:
                 resolution.draft?.businessLineId || defaultDraft.businessLineId,
-              sellerUserId:
-                resolution.draft?.sellerUserId || defaultDraft.sellerUserId,
+              sellerUserId: assignedSellerUserId,
               presalesUserId:
                 resolution.draft?.presalesUserId || defaultDraft.presalesUserId,
             };
@@ -1646,7 +1948,7 @@ router.post(
             ) {
               throw Object.assign(
                 new Error(
-                  "Cada oportunidad creada desde interacciones debe seleccionar linea de negocio y vendedor",
+                  "Cada oportunidad creada desde leads debe seleccionar linea de negocio y vendedor",
                 ),
                 { status: 400 },
               );
@@ -1675,18 +1977,29 @@ router.post(
           }
         }
 
+        const leadStatus = resolveLeadCommercialStatus({
+          accountId: resolvedAccountId,
+          contactIds: linkedContactIds,
+          sellerUserId: assignedSellerUserId,
+          opportunityIds: resolvedOpportunityIds.map(
+            (opportunity) => opportunity.id,
+          ),
+        });
+
         await conn.query(
           `UPDATE interactions
-           SET title = ?, source_notes = ?, summary = ?, analysis_status = 'resolved',
+           SET title = ?, source_notes = ?, summary = ?, analysis_status = ?,
                warnings_json = ?, topics_json = ?, actions_taken_json = ?, next_steps_json = ?,
                suggested_account_json = ?, suggested_contacts_json = ?, suggested_opportunities_json = ?,
-               account_id = ?, primary_opportunity_id = ?, resolved_at = NOW(3),
+               account_id = ?, primary_opportunity_id = ?, seller_user_id = ?,
+               resolved_at = ?,
                updated_by = ?, updated_at = NOW(3)
            WHERE id = ?`,
           [
             parsed.data.title,
             parsed.data.sourceNotes || null,
             parsed.data.summary || null,
+            leadStatus,
             normalizeForStorage(detail.warnings),
             normalizeForStorage(parsed.data.topics),
             normalizeForStorage(parsed.data.actionsTaken),
@@ -1696,6 +2009,8 @@ router.post(
             normalizeForStorage(parsed.data.suggestedOpportunities),
             resolvedAccountId,
             primaryOpportunityId,
+            assignedSellerUserId,
+            leadStatus === "lead_qualified" ? new Date() : null,
             Number(req.user.id),
             interactionId,
           ],
@@ -1733,7 +2048,9 @@ router.post(
         );
 
         return {
+          leadStatus,
           resolvedAccountId,
+          assignedSellerUserId,
           primaryOpportunityId,
           opportunityIds: resolvedOpportunityIds.map(
             (opportunity) => opportunity.id,
@@ -1744,10 +2061,10 @@ router.post(
       await logAuditEvent({
         req,
         module: "interacciones",
-        action: "resolved",
+        action: "updated",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Interaccion resuelta",
+        detail: "Lead actualizado",
         after: result,
       });
 
@@ -1757,7 +2074,7 @@ router.post(
         message:
           error.status && error.status < 500
             ? error.message
-            : "No fue posible resolver la interaccion",
+            : "No fue posible guardar el lead",
       });
     }
   },

@@ -73,10 +73,101 @@ function formatContactName(contactDraft, fallbackLabel) {
   return fullName || fallbackLabel;
 }
 
-function buildResolveConfirmationPreview(detail, resolutionForm, options) {
-  if (!detail || !resolutionForm || !options) return null;
+function isSellerUser(user) {
+  return Array.isArray(user?.roles)
+    ? user.roles.some(
+        (role) => String(role?.name || "").trim().toLowerCase() === "vendedor",
+      )
+    : false;
+}
 
-  const accountResolution = resolutionForm.accountResolution || {};
+function buildEffectiveResolutionForm(resolutionForm, currentUser) {
+  if (!resolutionForm) return null;
+
+  const effectiveContactResolutions = (resolutionForm.contactResolutions || []).map(
+    (item) => ({ ...item }),
+  );
+  const effectiveOpportunityResolutions = (
+    resolutionForm.opportunityResolutions || []
+  ).map((item) => ({
+    ...item,
+    draft: item.draft ? { ...item.draft } : item.draft,
+  }));
+
+  let effectiveSellerUserId = resolutionForm.sellerUserId || "";
+  let assignCurrentUserAsOwnerSeller = Boolean(
+    resolutionForm.assignCurrentUserAsOwnerSeller,
+  );
+  const accountMode = resolutionForm.accountResolution?.mode || "ignore";
+
+  if (accountMode === "ignore") {
+    return {
+      ...resolutionForm,
+      sellerUserId: "",
+      assignCurrentUserAsOwnerSeller: false,
+      contactResolutions: effectiveContactResolutions.map((item) => ({
+        ...item,
+        mode: "ignore",
+        contactId: "",
+      })),
+      opportunityResolutions: effectiveOpportunityResolutions.map((item) => ({
+        ...item,
+        mode: "ignore",
+        opportunityId: "",
+        isPrimary: false,
+      })),
+    };
+  }
+
+  const hasResolvedContacts = effectiveContactResolutions.some(
+    (item) => item.mode !== "ignore",
+  );
+
+  if (!hasResolvedContacts) {
+    effectiveSellerUserId = "";
+    assignCurrentUserAsOwnerSeller = false;
+  } else if (
+    assignCurrentUserAsOwnerSeller &&
+    currentUser?.id &&
+    isSellerUser(currentUser)
+  ) {
+    effectiveSellerUserId = String(currentUser.id);
+  }
+
+  if (!hasResolvedContacts || !effectiveSellerUserId) {
+    for (const item of effectiveOpportunityResolutions) {
+      item.mode = "ignore";
+      item.opportunityId = "";
+      item.isPrimary = false;
+      if (item.draft) {
+        item.draft.sellerUserId = "";
+      }
+    }
+  } else {
+    for (const item of effectiveOpportunityResolutions) {
+      if (item.draft) {
+        item.draft.sellerUserId = effectiveSellerUserId;
+      }
+    }
+  }
+
+  return {
+    ...resolutionForm,
+    sellerUserId: effectiveSellerUserId,
+    assignCurrentUserAsOwnerSeller,
+    contactResolutions: effectiveContactResolutions,
+    opportunityResolutions: effectiveOpportunityResolutions,
+  };
+}
+
+function buildResolveConfirmationPreview(detail, resolutionForm, options, currentUser) {
+  const effectiveResolutionForm = buildEffectiveResolutionForm(
+    resolutionForm,
+    currentUser,
+  );
+  if (!detail || !effectiveResolutionForm || !options) return null;
+
+  const accountResolution = effectiveResolutionForm.accountResolution || {};
   const accountDraft = accountResolution.draft || {};
   const accountToCreate =
     accountResolution.mode === "create_new"
@@ -87,7 +178,7 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options) {
       ? getOptionLabel(options.accounts || [], accountResolution.accountId)
       : "";
 
-  const contactsToCreate = (resolutionForm.contactResolutions || [])
+  const contactsToCreate = (effectiveResolutionForm.contactResolutions || [])
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item.mode === "create_new")
     .map(({ item, index }) => ({
@@ -97,7 +188,7 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options) {
         .join(" · "),
     }));
 
-  const contactsToLink = (resolutionForm.contactResolutions || [])
+  const contactsToLink = (effectiveResolutionForm.contactResolutions || [])
     .filter((item) => item.mode === "link_existing")
     .map((item) =>
       getOptionLabel(options.contacts || [], item.contactId, [
@@ -107,7 +198,9 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options) {
     )
     .filter(Boolean);
 
-  const opportunitiesToCreate = (resolutionForm.opportunityResolutions || [])
+  const opportunitiesToCreate = (
+    effectiveResolutionForm.opportunityResolutions || []
+  )
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item.mode === "create_new")
     .map(({ item, index }) => ({
@@ -118,24 +211,67 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options) {
           ? `Cierre ${formatDate(item.draft.closeDate)}`
           : "",
         getOptionLabel(options.businessLines || [], item.draft?.businessLineId),
-        item.draft?.sellerUserId
-          ? `Vendedor: ${getOptionLabel(options.sellerUsers || [], item.draft.sellerUserId, ["full_name", "name"])}`
+        effectiveResolutionForm.sellerUserId
+          ? `Vendedor: ${
+              Number(effectiveResolutionForm.sellerUserId) === Number(currentUser?.id)
+                ? currentUser?.full_name || ""
+                : getOptionLabel(options.sellerUsers || [], effectiveResolutionForm.sellerUserId, ["full_name", "name"])
+            }`
           : "",
         item.draft?.presalesUserId
           ? `Preventa: ${getOptionLabel(options.presalesUsers || [], item.draft.presalesUserId, ["full_name", "name"])}`
           : "",
-        item.isPrimary ? "Principal" : "",
       ]
         .filter(Boolean)
         .join(" · "),
     }));
 
-  const opportunitiesToLink = (resolutionForm.opportunityResolutions || [])
+  const opportunitiesToLink = (
+    effectiveResolutionForm.opportunityResolutions || []
+  )
     .filter((item) => item.mode === "link_existing")
     .map((item) =>
       getOptionLabel(options.opportunities || [], item.opportunityId),
     )
     .filter(Boolean);
+
+  const selfAssignedSellerLabel =
+    effectiveResolutionForm.assignCurrentUserAsOwnerSeller && currentUser?.id
+      ? currentUser.full_name || currentUser.email || "Usuario actual"
+      : "";
+
+  const sellerToAssign = effectiveResolutionForm.sellerUserId
+    ? selfAssignedSellerLabel ||
+      getOptionLabel(
+        (effectiveResolutionForm.accountResolution.mode === "link_existing"
+          ? options.sellerUsersByAccountId?.[
+              String(effectiveResolutionForm.accountResolution.accountId || "")
+            ] || []
+          : options.sellerUsers || []),
+        effectiveResolutionForm.sellerUserId,
+        ["full_name", "fullName", "name"],
+      )
+    : "";
+
+  const hasAccount =
+    effectiveResolutionForm.accountResolution.mode === "link_existing"
+      ? Boolean(effectiveResolutionForm.accountResolution.accountId)
+      : effectiveResolutionForm.accountResolution.mode === "create_new"
+        ? Boolean(effectiveResolutionForm.accountResolution.draft?.name)
+        : false;
+  const hasContacts = (effectiveResolutionForm.contactResolutions || []).some(
+    (item) => item.mode !== "ignore",
+  );
+  const hasOpportunities = (
+    effectiveResolutionForm.opportunityResolutions || []
+  ).some((item) => item.mode !== "ignore");
+  const targetStatus = !hasAccount || !hasContacts
+    ? "Creado"
+    : hasOpportunities
+      ? effectiveResolutionForm.sellerUserId
+        ? "Lead Calificado"
+        : "Creado"
+      : "Lead Asignado";
 
   return {
     interactionTitle: detail.title || "Interacción sin título",
@@ -145,38 +281,39 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options) {
     contactsToLink,
     opportunitiesToCreate,
     opportunitiesToLink,
-    ignoredContactsCount: (resolutionForm.contactResolutions || []).filter(
-      (item) => item.mode === "ignore",
-    ).length,
+    sellerToAssign,
+    selfAssignedSellerLabel,
+    targetStatus,
+    ignoredContactsCount: (
+      effectiveResolutionForm.contactResolutions || []
+    ).filter((item) => item.mode === "ignore").length,
     ignoredOpportunitiesCount: (
-      resolutionForm.opportunityResolutions || []
+      effectiveResolutionForm.opportunityResolutions || []
     ).filter((item) => item.mode === "ignore").length,
   };
 }
 
+function isQualifiedLeadStatus(status) {
+  return status === "lead_qualified";
+}
+
 function getInteractionStatusMeta(status) {
   switch (status) {
-    case "resolved":
+    case "lead_qualified":
       return {
-        label: "Resuelta",
+        label: "Lead Calificado",
         className: "interaction-status-pill is-resolved",
         toneClassName: "interaction-summary-card is-resolved",
       };
-    case "analyzed":
+    case "lead_assigned":
       return {
-        label: "Analizada",
+        label: "Lead Asignado",
         className: "interaction-status-pill is-analyzed",
         toneClassName: "interaction-summary-card is-analyzed",
       };
-    case "requires_review":
+    case "created":
       return {
-        label: "Requiere revisión",
-        className: "interaction-status-pill is-review",
-        toneClassName: "interaction-summary-card is-review",
-      };
-    case "uploaded":
-      return {
-        label: "Cargada",
+        label: "Creado",
         className: "interaction-status-pill is-uploaded",
         toneClassName: "interaction-summary-card is-uploaded",
       };
@@ -191,22 +328,17 @@ function getInteractionStatusMeta(status) {
 
 function getInteractionFilterPillClass(filter, selectedFilter) {
   const isSelected = filter === selectedFilter;
-  if (filter === "analyzed") {
+  if (filter === "lead_assigned") {
     return isSelected
       ? "status-filter-pill status-filter-pill-active is-selected"
       : "status-filter-pill status-filter-pill-active";
   }
-  if (filter === "resolved") {
+  if (filter === "lead_qualified") {
     return isSelected
       ? "status-filter-pill interaction-filter-pill-resolved is-selected"
       : "status-filter-pill interaction-filter-pill-resolved";
   }
-  if (filter === "requires_review") {
-    return isSelected
-      ? "status-filter-pill status-filter-pill-pending is-selected"
-      : "status-filter-pill status-filter-pill-pending";
-  }
-  if (filter === "uploaded") {
+  if (filter === "created") {
     return isSelected
       ? "status-filter-pill interaction-filter-pill-uploaded is-selected"
       : "status-filter-pill interaction-filter-pill-uploaded";
@@ -274,7 +406,7 @@ function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
         : "",
     sellerUserId: suggestion?.selectedSellerUserId
       ? String(suggestion.selectedSellerUserId)
-      : currentUser?.id
+      : isSellerUser(currentUser) && currentUser?.id
         ? String(currentUser.id)
         : options.sellerUsers[0]?.id
           ? String(options.sellerUsers[0].id)
@@ -367,7 +499,7 @@ function buildInitialResolutionForm(detail, options, currentUser) {
       suggestionId: opportunity.suggestionId,
       mode: opportunity.selectedOpportunityId
         ? "link_existing"
-        : opportunity.name
+        : detail?.sellerUserId && opportunity.name
           ? "create_new"
           : "ignore",
       opportunityId: opportunity.selectedOpportunityId
@@ -378,7 +510,13 @@ function buildInitialResolutionForm(detail, options, currentUser) {
     }),
   );
 
-  return { accountResolution, contactResolutions, opportunityResolutions };
+  return {
+    sellerUserId: detail?.sellerUserId ? String(detail.sellerUserId) : "",
+    assignCurrentUserAsOwnerSeller: false,
+    accountResolution,
+    contactResolutions,
+    opportunityResolutions,
+  };
 }
 
 function buildEditableForm(detail) {
@@ -497,17 +635,17 @@ function CreateInteractionModal({
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
                 <span className="interaction-create-kicker">
-                  Nueva interacción
+                  Nuevo lead
                 </span>
                 <div className="account-modal-help-shell" ref={createHelpRef}>
                   <div className="account-modal-title-row">
-                    <h3 className="modal-title">Crear interacción</h3>
+                    <h3 className="modal-title">Crear lead</h3>
                     <button
                       type="button"
                       className="accounts-module-help-trigger account-modal-help-trigger"
-                      aria-label="Ayuda sobre el modal de crear interacción"
+                      aria-label="Ayuda sobre el modal de crear lead"
                       aria-expanded={showCreateHelp}
-                      title="Ayuda sobre el modal de crear interacción"
+                      title="Ayuda sobre el modal de crear lead"
                       onClick={() => setShowCreateHelp((current) => !current)}
                     >
                       ?
@@ -517,17 +655,17 @@ function CreateInteractionModal({
                     <div
                       className="account-modal-help-popover"
                       role="dialog"
-                      aria-label="Ayuda sobre crear interacción"
+                      aria-label="Ayuda sobre crear lead"
                     >
                       <strong>Para qué sirve este modal</strong>
                       <p>
                         Úsalo para reunir evidencia comercial inicial y crear
-                        una interacción analizable a partir de archivos o texto.
+                        un lead analizable a partir de archivos o texto.
                       </p>
                       <strong>Cómo conviene usarlo</strong>
                       <p>
                         Sube documentos, agrega texto adicional si hace falta y
-                        luego crea la interacción para que el sistema sugiera
+                        luego crea el lead para que el sistema sugiera
                         cuenta, contactos y oportunidades relacionadas.
                       </p>
                     </div>
@@ -580,7 +718,7 @@ function CreateInteractionModal({
                     <span className="interaction-create-dropzone-copy">
                       Adjunta correos, cotizaciones, minutas, audios o archivos
                       de soporte. Si prefieres, también puedes crear la
-                      interacción solo con texto pegado.
+                      lead solo con texto pegado.
                     </span>
                     <span className="interaction-create-dropzone-action">
                       Elegir archivos
@@ -663,7 +801,7 @@ function CreateInteractionModal({
                         className="interaction-create-textarea"
                         value={pastedText}
                         onChange={(event) => setPastedText(event.target.value)}
-                        placeholder="Pega aquí el contenido que quieres añadir al análisis de la interacción."
+                        placeholder="Pega aquí el contenido que quieres añadir al análisis del lead."
                       />
                     </div>
                   </div>
@@ -678,8 +816,7 @@ function CreateInteractionModal({
                 <div className="interaction-create-files-header">
                   <h4>Archivos seleccionados</h4>
                   <p className="section-helper-text">
-                    Revisa aquí la evidencia que se usará para crear la
-                    interacción.
+                    Revisa aquí la evidencia que se usará para crear el lead.
                   </p>
                 </div>
 
@@ -720,7 +857,7 @@ function CreateInteractionModal({
                   className="btn-primary"
                   disabled={creating || (!files.length && !pastedText.trim())}
                 >
-                  {creating ? "Analizando..." : "Crear interacción"}
+                  {creating ? "Analizando..." : "Crear lead"}
                 </button>
               </div>
             </form>
@@ -785,6 +922,7 @@ function InteractionInfoModal({ message, onClose }) {
 function InteractionDetailModal({
   isOpen,
   onClose,
+  currentUser,
   detail,
   editForm,
   setEditForm,
@@ -803,7 +941,6 @@ function InteractionDetailModal({
   canDeleteDocuments,
   onAddDocuments,
   onDeleteDocument,
-  onSave,
   onResolve,
   onReanalyze,
 }) {
@@ -840,10 +977,42 @@ function InteractionDetailModal({
         (opportunity) => Number(opportunity.account_id) === resolvedAccountId,
       )
     : options.opportunities;
+  const availableSellerUsers = resolvedAccountId
+    ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
+    : [];
+  const commercialSellerUserId = resolutionForm.assignCurrentUserAsOwnerSeller
+    ? currentUser?.id
+      ? String(currentUser.id)
+      : ""
+    : resolutionForm.sellerUserId || "";
+  const commercialSellerLabel = commercialSellerUserId
+    ? Number(commercialSellerUserId) === Number(currentUser?.id)
+      ? currentUser?.full_name || currentUser?.email || "Usuario actual"
+      : getOptionLabel(availableSellerUsers, commercialSellerUserId, [
+          "full_name",
+          "name",
+        ])
+    : "";
+  const currentUserIsSeller = isSellerUser(currentUser);
   const showDependentResolutionSections =
     resolutionForm.accountResolution.mode !== "ignore";
   const hasResolvedSuggestedContact = resolutionForm.contactResolutions.some(
     (resolution) => resolution.mode !== "ignore",
+  );
+  const hasMinimumCommercialLinks = Boolean(
+    resolutionForm.accountResolution.mode !== "ignore" &&
+      hasResolvedSuggestedContact,
+  );
+  const canSelfAssignCurrentUserAsOwnerSeller = Boolean(
+    hasResolvedSuggestedContact &&
+      currentUserIsSeller &&
+      ((resolutionForm.accountResolution.mode === "link_existing" &&
+        resolvedAccountId &&
+        availableSellerUsers.length === 0) ||
+        resolutionForm.accountResolution.mode === "create_new"),
+  );
+  const canSelectOpportunityResolution = Boolean(
+    hasMinimumCommercialLinks && commercialSellerUserId,
   );
 
   const handleAdditionalFileChange = (event) => {
@@ -1433,6 +1602,80 @@ function InteractionDetailModal({
                     )}
                   </section>
 
+                  <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section">
+                    <div className="interaction-resolution-header">
+                      <div>
+                        <h4>Asignación comercial</h4>
+                        <p className="field-hint">
+                          El vendedor debe ser uno de los owners vendedores de
+                          la cuenta vinculada.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
+                      <div className="field-group interaction-grid-span-2">
+                        <label>Vendedor asignado</label>
+                        <select
+                          value={resolutionForm.sellerUserId || ""}
+                          onChange={(event) =>
+                            setResolutionForm((prev) => ({
+                              ...prev,
+                              sellerUserId: event.target.value,
+                              assignCurrentUserAsOwnerSeller: false,
+                            }))
+                          }
+                          disabled={!hasMinimumCommercialLinks}
+                        >
+                          <option value="">Sin asignar</option>
+                          {availableSellerUsers.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.full_name}
+                            </option>
+                          ))}
+                        </select>
+                        {!hasMinimumCommercialLinks ? (
+                          <span className="field-hint">
+                            Vincula cuenta y al menos un contacto para poder
+                            asignar vendedor.
+                          </span>
+                        ) : canSelfAssignCurrentUserAsOwnerSeller ? (
+                          <>
+                            <label className="interaction-primary-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(
+                                  resolutionForm.assignCurrentUserAsOwnerSeller,
+                                )}
+                                onChange={(event) =>
+                                  setResolutionForm((prev) => ({
+                                    ...prev,
+                                    assignCurrentUserAsOwnerSeller:
+                                      event.target.checked,
+                                    sellerUserId: event.target.checked
+                                      ? String(currentUser.id)
+                                      : "",
+                                  }))
+                                }
+                              />
+                              {resolutionForm.accountResolution.mode === "create_new"
+                                ? "Asignarme como owner vendedor de la nueva cuenta"
+                                : "Asignarme como owner vendedor de esta cuenta"}
+                            </label>
+                            <span className="field-hint">
+                              {resolutionForm.accountResolution.mode === "create_new"
+                                ? "Al guardar, se te asignará explícitamente como owner vendedor para poder continuar con la oportunidad."
+                                : "La cuenta no tiene owners vendedores. Si continúas, se te agregará explícitamente como owner vendedor para poder vincular la oportunidad."}
+                            </span>
+                          </>
+                        ) : !availableSellerUsers.length ? (
+                          <span className="field-hint">
+                            La cuenta no tiene owners con rol de vendedor.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </section>
+
                   {hasResolvedSuggestedContact ? (
                     <section className="account-form-section account-modal-section interaction-detail-section interaction-opportunity-suggestion-section">
                       <h4>Oportunidades sugeridas</h4>
@@ -1441,6 +1684,10 @@ function InteractionDetailModal({
                           const resolution =
                             resolutionForm.opportunityResolutions[index];
                           if (!resolution) return null;
+                          const displayedOpportunityMode =
+                            canSelectOpportunityResolution
+                              ? resolution.mode
+                              : "ignore";
                           return (
                             <article
                               key={opportunity.suggestionId}
@@ -1457,31 +1704,12 @@ function InteractionDetailModal({
                                       "Sugerida por análisis"}
                                   </p>
                                 </div>
-                                <label className="interaction-primary-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={resolution.isPrimary}
-                                    onChange={() =>
-                                      setResolutionForm((prev) => ({
-                                        ...prev,
-                                        opportunityResolutions:
-                                          prev.opportunityResolutions.map(
-                                            (item, itemIndex) => ({
-                                              ...item,
-                                              isPrimary: itemIndex === index,
-                                            }),
-                                          ),
-                                      }))
-                                    }
-                                  />
-                                  Principal
-                                </label>
                               </div>
                               <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
                                 <div className="field-group interaction-resolution-action-field">
                                   <label>Acción</label>
                                   <select
-                                    value={resolution.mode}
+                                    value={displayedOpportunityMode}
                                     onChange={(event) =>
                                       setResolutionForm((prev) => ({
                                         ...prev,
@@ -1497,6 +1725,7 @@ function InteractionDetailModal({
                                           ),
                                       }))
                                     }
+                                    disabled={!canSelectOpportunityResolution}
                                   >
                                     <option value="ignore">Ignorar</option>
                                     <option value="link_existing">
@@ -1506,8 +1735,14 @@ function InteractionDetailModal({
                                       Crear oportunidad
                                     </option>
                                   </select>
+                                  {!canSelectOpportunityResolution ? (
+                                    <span className="field-hint">
+                                      El vendedor de la oportunidad se define en
+                                      Asignación comercial.
+                                    </span>
+                                  ) : null}
                                 </div>
-                                {resolution.mode === "link_existing" ? (
+                                {displayedOpportunityMode === "link_existing" ? (
                                   <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
                                     <label>Oportunidad existente</label>
                                     <select
@@ -1543,7 +1778,7 @@ function InteractionDetailModal({
                                     </select>
                                   </div>
                                 ) : null}
-                                {resolution.mode === "create_new" ? (
+                                {displayedOpportunityMode === "create_new" ? (
                                   <>
                                     <div className="field-group interaction-grid-span-3 interaction-opportunity-name-field">
                                       <label>Nombre</label>
@@ -1660,35 +1895,11 @@ function InteractionDetailModal({
                                     </div>
                                     <div className="field-group">
                                       <label>Vendedor</label>
-                                      <select
-                                        value={resolution.draft.sellerUserId}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          sellerUserId:
-                                                            event.target.value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      >
-                                        <option value="">Sin vendedor</option>
-                                        {options.sellerUsers.map((user) => (
-                                          <option key={user.id} value={user.id}>
-                                            {user.full_name}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      <input
+                                        value={commercialSellerLabel}
+                                        disabled
+                                        placeholder="El vendedor de la oportunidad se define en Asignación comercial"
+                                      />
                                     </div>
                                     <div className="field-group">
                                       <label>Preventa</label>
@@ -1744,18 +1955,6 @@ function InteractionDetailModal({
               >
                 Cerrar
               </button>
-              {canUpdate &&
-              detail &&
-              (detail.resolvedAt || detail.analysisStatus === "resolved") ? (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={onSave}
-                  disabled={saving}
-                >
-                  {saving ? "Guardando..." : "Guardar cambios"}
-                </button>
-              ) : null}
               {canResolve ? (
                 <button
                   type="button"
@@ -1763,7 +1962,7 @@ function InteractionDetailModal({
                   onClick={onResolve}
                   disabled={resolving}
                 >
-                  {resolving ? "Resolviendo..." : "Resolver interacción"}
+                  {resolving ? "Guardando..." : "Guardar lead"}
                 </button>
               ) : null}
             </div>
@@ -1820,9 +2019,9 @@ function ResolveInteractionConfirmationModal({
       <div className="modal-dialog resolve-confirmation-modal">
         <div className="modal-header">
           <div>
-            <h3 className="modal-title">Confirmar resolución</h3>
+            <h3 className="modal-title">Confirmar cambios del lead</h3>
             <p className="roles-subtitle resolve-confirmation-subtitle">
-              Revisa lo que se aplicará a la interacción{" "}
+              Revisa lo que se aplicará al lead{" "}
               {preview.interactionTitle}.
             </p>
           </div>
@@ -1896,6 +2095,18 @@ function ResolveInteractionConfirmationModal({
             </section>
           ) : null}
 
+          <section className="resolve-confirmation-section">
+            <h4>Estado resultante</h4>
+            <div className="resolve-confirmation-list">
+              <article className="resolve-confirmation-item">
+                <strong>{preview.targetStatus}</strong>
+                {preview.sellerToAssign ? (
+                  <span>Vendedor: {preview.sellerToAssign}</span>
+                ) : null}
+              </article>
+            </div>
+          </section>
+
           {preview.ignoredContactsCount || preview.ignoredOpportunitiesCount ? (
             <section className="resolve-confirmation-section">
               <h4>Sugerencias ignoradas</h4>
@@ -1930,7 +2141,7 @@ function ResolveInteractionConfirmationModal({
             onClick={onConfirm}
             disabled={resolving}
           >
-            {resolving ? "Resolviendo..." : "Confirmar y resolver"}
+            {resolving ? "Guardando..." : "Confirmar y guardar"}
           </button>
         </div>
       </div>
@@ -1940,6 +2151,7 @@ function ResolveInteractionConfirmationModal({
 
 function InteractionsPage({ can, currentUser }) {
   const helpRef = useRef(null);
+  const interactionMenuRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -1965,6 +2177,7 @@ function InteractionsPage({ can, currentUser }) {
     opportunities: [],
     businessLines: [],
     sellerUsers: [],
+    sellerUsersByAccountId: {},
     presalesUsers: [],
   });
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -1983,8 +2196,14 @@ function InteractionsPage({ can, currentUser }) {
   const canAnalyze = can("interacciones.analyze");
   const canResolve = can("interacciones.resolve");
   const resolveConfirmationPreview = useMemo(
-    () => buildResolveConfirmationPreview(detail, resolutionForm, options),
-    [detail, resolutionForm, options],
+    () =>
+      buildResolveConfirmationPreview(
+        detail,
+        resolutionForm,
+        options,
+        currentUser,
+      ),
+    [detail, resolutionForm, options, currentUser],
   );
 
   function closeDetailModal() {
@@ -2002,6 +2221,33 @@ function InteractionsPage({ can, currentUser }) {
       currentValue === interactionId ? null : interactionId,
     );
   }
+
+  useEffect(() => {
+    if (!openInteractionMenuId) return undefined;
+
+    function handlePointerDown(event) {
+      if (
+        interactionMenuRef.current &&
+        !interactionMenuRef.current.contains(event.target)
+      ) {
+        setOpenInteractionMenuId(null);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setOpenInteractionMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openInteractionMenuId]);
 
   async function loadInteractions(overrides = {}) {
     const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
@@ -2026,7 +2272,7 @@ function InteractionsPage({ can, currentUser }) {
       setTotal(Number(data?.total || 0));
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible cargar las interacciones"),
+        getApiErrorMessage(err, "No fue posible cargar los leads"),
       );
     } finally {
       setLoading(false);
@@ -2133,36 +2379,14 @@ function InteractionsPage({ can, currentUser }) {
       setPage(1);
       setQuery("");
       setStatusFilter("all");
-      setSuccess("Interacción creada y analizada.");
+      setSuccess("Lead creado.");
       await loadInteractions({ page: 1, query: "", status: "all" });
     } catch (err) {
       setCreateInfoMessage(
-        getApiErrorMessage(err, "No fue posible crear la interacción"),
+        getApiErrorMessage(err, "No fue posible crear el lead"),
       );
     } finally {
       setCreating(false);
-    }
-  }
-
-  async function handleSave() {
-    if (!detail || !editForm) return;
-    setSaving(true);
-    setError("");
-    try {
-      const { data } = await api.put(
-        `/api/interactions/${detail.id}`,
-        editForm,
-      );
-      setDetail(data);
-      setEditForm(buildEditableForm(data));
-      setSuccess("Interacción actualizada");
-      await loadInteractions();
-    } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible guardar la interacción"),
-      );
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -2229,7 +2453,7 @@ function InteractionsPage({ can, currentUser }) {
 
   async function handleDeleteInteraction(interaction) {
     if (!interaction?.id) return;
-    if (interaction.resolvedAt || interaction.analysisStatus === "resolved") {
+    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
       return;
     }
     if (
@@ -2252,12 +2476,10 @@ function InteractionsPage({ can, currentUser }) {
         setEditForm(null);
         setResolutionForm(null);
       }
-      setSuccess("Interacción eliminada");
+      setSuccess("Lead eliminado");
       await loadInteractions();
     } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible eliminar la interacción"),
-      );
+      setError(getApiErrorMessage(err, "No fue posible eliminar el lead"));
     } finally {
       setDeletingInteractionId(null);
     }
@@ -2285,13 +2507,62 @@ function InteractionsPage({ can, currentUser }) {
 
   async function handleResolve() {
     if (!detail || !editForm || !resolutionForm) return;
+    const effectiveResolutionForm = buildEffectiveResolutionForm(
+      resolutionForm,
+      currentUser,
+    );
     setShowResolveConfirmation(false);
     setResolving(true);
     setError("");
     try {
       const payload = {
         ...editForm,
-        contactResolutions: resolutionForm.contactResolutions.map((item) => ({
+        sellerUserId: effectiveResolutionForm.sellerUserId
+          ? Number(effectiveResolutionForm.sellerUserId)
+          : null,
+        assignCurrentUserAsOwnerSeller: Boolean(
+          effectiveResolutionForm.assignCurrentUserAsOwnerSeller,
+        ),
+        suggestedAccount: {
+          ...(editForm.suggestedAccount || {}),
+          ...(effectiveResolutionForm.accountResolution.mode === "create_new"
+            ? effectiveResolutionForm.accountResolution.draft
+            : {}),
+          selectedAccountId:
+            effectiveResolutionForm.accountResolution.mode === "link_existing" &&
+            effectiveResolutionForm.accountResolution.accountId
+              ? Number(effectiveResolutionForm.accountResolution.accountId)
+              : null,
+        },
+        suggestedContacts: editForm.suggestedContacts.map((contact, index) => {
+          const resolution = effectiveResolutionForm.contactResolutions[index];
+          if (!resolution) return contact;
+          return {
+            ...contact,
+            selectedContactId:
+              resolution.mode === "link_existing" && resolution.contactId
+                ? Number(resolution.contactId)
+                : null,
+          };
+        }),
+        suggestedOpportunities: editForm.suggestedOpportunities.map(
+          (opportunity, index) => {
+            const resolution =
+              effectiveResolutionForm.opportunityResolutions[index];
+            if (!resolution) return opportunity;
+            return {
+              ...opportunity,
+              selectedOpportunityId:
+                resolution.mode === "link_existing" && resolution.opportunityId
+                  ? Number(resolution.opportunityId)
+                  : null,
+              selectedSellerUserId: effectiveResolutionForm.sellerUserId
+                ? Number(effectiveResolutionForm.sellerUserId)
+                : null,
+            };
+          },
+        ),
+        contactResolutions: effectiveResolutionForm.contactResolutions.map((item) => ({
           ...item,
           contactId: item.contactId ? Number(item.contactId) : null,
           draft:
@@ -2304,7 +2575,7 @@ function InteractionsPage({ can, currentUser }) {
                 }
               : undefined,
         })),
-        opportunityResolutions: resolutionForm.opportunityResolutions.map(
+        opportunityResolutions: effectiveResolutionForm.opportunityResolutions.map(
           (item) => ({
             ...item,
             opportunityId: item.opportunityId
@@ -2334,16 +2605,16 @@ function InteractionsPage({ can, currentUser }) {
           }),
         ),
         accountResolution: {
-          ...resolutionForm.accountResolution,
-          accountId: resolutionForm.accountResolution.accountId
-            ? Number(resolutionForm.accountResolution.accountId)
+          ...effectiveResolutionForm.accountResolution,
+          accountId: effectiveResolutionForm.accountResolution.accountId
+            ? Number(effectiveResolutionForm.accountResolution.accountId)
             : null,
           draft:
-            resolutionForm.accountResolution.mode === "create_new"
+            effectiveResolutionForm.accountResolution.mode === "create_new"
               ? {
-                  ...resolutionForm.accountResolution.draft,
-                  countryId: resolutionForm.accountResolution.draft.countryId
-                    ? Number(resolutionForm.accountResolution.draft.countryId)
+                  ...effectiveResolutionForm.accountResolution.draft,
+                  countryId: effectiveResolutionForm.accountResolution.draft.countryId
+                    ? Number(effectiveResolutionForm.accountResolution.draft.countryId)
                     : null,
                 }
               : undefined,
@@ -2356,12 +2627,11 @@ function InteractionsPage({ can, currentUser }) {
       setDetail(data);
       setEditForm(buildEditableForm(data));
       setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
-      setSuccess("Interacción resuelta");
+      closeDetailModal();
+      setSuccess("Lead guardado");
       await loadInteractions();
     } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible resolver la interacción"),
-      );
+      setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
     } finally {
       setResolving(false);
     }
@@ -2401,6 +2671,7 @@ function InteractionsPage({ can, currentUser }) {
       <InteractionDetailModal
         isOpen={showDetailModal}
         onClose={closeDetailModal}
+        currentUser={currentUser}
         detail={detail}
         editForm={editForm}
         setEditForm={setEditForm}
@@ -2417,14 +2688,14 @@ function InteractionsPage({ can, currentUser }) {
         canAddDocuments={Boolean(
           canUpdate &&
           detail &&
-          !detail.resolvedAt &&
-          detail.analysisStatus !== "resolved",
+          !isQualifiedLeadStatus(detail.analysisStatus),
         )}
         deletingDocumentPublicId={deletingDocumentPublicId}
-        canDeleteDocuments={Boolean(canUpdate && detail && !detail.resolvedAt)}
+        canDeleteDocuments={Boolean(
+          canUpdate && detail && !isQualifiedLeadStatus(detail.analysisStatus),
+        )}
         onAddDocuments={handleAddDocuments}
         onDeleteDocument={handleDeleteDocument}
-        onSave={handleSave}
         onResolve={openResolveConfirmation}
         onReanalyze={handleReanalyze}
       />
@@ -2440,7 +2711,7 @@ function InteractionsPage({ can, currentUser }) {
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Interacciones</h2>
+            <h2>Leads</h2>
             <span
               className="module-title-icon module-title-icon-contacts"
               aria-hidden="true"
@@ -2452,7 +2723,7 @@ function InteractionsPage({ can, currentUser }) {
             <details className="accounts-module-help" ref={helpRef}>
               <summary
                 className="accounts-module-help-trigger"
-                aria-label="Ayuda sobre el módulo de interacciones"
+                aria-label="Ayuda sobre el módulo de leads"
                 title="Ayuda sobre el módulo"
               >
                 ?
@@ -2460,9 +2731,9 @@ function InteractionsPage({ can, currentUser }) {
               <div className="accounts-module-help-popover">
                 <strong>Para qué sirve</strong>
                 <p>
-                  Este módulo centraliza documentos, notas e interacciones
-                  comerciales para extraer contexto y relacionarlo con cuentas,
-                  contactos y oportunidades.
+                  Este módulo de Leads centraliza documentos, notas e
+                  interacciones comerciales para extraer contexto y
+                  relacionarlo con cuentas, contactos y oportunidades.
                 </p>
                 <strong>Cómo usarlo</strong>
                 <p>
@@ -2474,7 +2745,7 @@ function InteractionsPage({ can, currentUser }) {
             </details>
           </div>
           <p className="roles-subtitle">
-            Centraliza evidencia documental, extrae contexto comercial y
+            Centraliza evidencia documental de leads, extrae contexto comercial y
             resuelve cuenta, contactos y oportunidades.
           </p>
         </div>
@@ -2484,7 +2755,7 @@ function InteractionsPage({ can, currentUser }) {
             className="btn-primary"
             onClick={() => setShowCreateModal(true)}
           >
-            + Crear interacción
+            + Crear lead
           </button>
         ) : null}
       </div>
@@ -2493,69 +2764,60 @@ function InteractionsPage({ can, currentUser }) {
         <div
           className="accounts-status-pills"
           role="group"
-          aria-label="Filtrar interacciones por estado"
+          aria-label="Filtrar leads por estado"
         >
           <button
             type="button"
-            className={getInteractionFilterPillClass("analyzed", statusFilter)}
-            aria-pressed={statusFilter === "analyzed"}
+            className={getInteractionFilterPillClass(
+              "lead_assigned",
+              statusFilter,
+            )}
+            aria-pressed={statusFilter === "lead_assigned"}
             onClick={() => {
               setPage(1);
-              setStatusFilter("analyzed");
+              setStatusFilter("lead_assigned");
             }}
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Analizadas</span>
+            <span className="status-filter-pill-text">Lead Asignado</span>
             <span className="status-filter-pill-count">
-              {statusCounts.analyzed || 0}
+              {statusCounts.lead_assigned || 0}
             </span>
           </button>
           <button
             type="button"
             className={getInteractionFilterPillClass(
-              "requires_review",
+              "created",
               statusFilter,
             )}
-            aria-pressed={statusFilter === "requires_review"}
+            aria-pressed={statusFilter === "created"}
             onClick={() => {
               setPage(1);
-              setStatusFilter("requires_review");
+              setStatusFilter("created");
             }}
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Revisión</span>
+            <span className="status-filter-pill-text">Creado</span>
             <span className="status-filter-pill-count">
-              {statusCounts.requires_review || 0}
+              {statusCounts.created || 0}
             </span>
           </button>
           <button
             type="button"
-            className={getInteractionFilterPillClass("uploaded", statusFilter)}
-            aria-pressed={statusFilter === "uploaded"}
+            className={getInteractionFilterPillClass(
+              "lead_qualified",
+              statusFilter,
+            )}
+            aria-pressed={statusFilter === "lead_qualified"}
             onClick={() => {
               setPage(1);
-              setStatusFilter("uploaded");
+              setStatusFilter("lead_qualified");
             }}
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Subidas</span>
+            <span className="status-filter-pill-text">Lead Calificado</span>
             <span className="status-filter-pill-count">
-              {statusCounts.uploaded || 0}
-            </span>
-          </button>
-          <button
-            type="button"
-            className={getInteractionFilterPillClass("resolved", statusFilter)}
-            aria-pressed={statusFilter === "resolved"}
-            onClick={() => {
-              setPage(1);
-              setStatusFilter("resolved");
-            }}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Resueltas</span>
-            <span className="status-filter-pill-count">
-              {statusCounts.resolved || 0}
+              {statusCounts.lead_qualified || 0}
             </span>
           </button>
           <button
@@ -2588,11 +2850,9 @@ function InteractionsPage({ can, currentUser }) {
       {success ? <div className="toast toast-success">{success}</div> : null}
 
       {loading ? (
-        <div className="centered">Cargando interacciones...</div>
+        <div className="centered">Cargando leads...</div>
       ) : !items.length ? (
-        <div className="account-opps-empty">
-          Aún no hay interacciones registradas.
-        </div>
+        <div className="account-opps-empty">Aún no hay leads registrados.</div>
       ) : (
         <>
           <table>
@@ -2616,8 +2876,7 @@ function InteractionsPage({ can, currentUser }) {
                 const displayIndex = (page - 1) * pageSize + index + 1;
                 const canDeleteInteraction =
                   canUpdate &&
-                  !item.resolvedAt &&
-                  item.analysisStatus !== "resolved";
+                  !isQualifiedLeadStatus(item.analysisStatus);
                 return (
                   <tr key={item.id}>
                     <td title={item.publicId}>{displayIndex}</td>
@@ -2641,7 +2900,10 @@ function InteractionsPage({ can, currentUser }) {
                     </td>
                     <td>{formatDate(item.createdAt)}</td>
                     <td className="accounts-actions-cell">
-                      <div className="user-kebab-wrap interactions-kebab-wrap">
+                      <div
+                        className="user-kebab-wrap interactions-kebab-wrap"
+                        ref={openInteractionMenuId === item.id ? interactionMenuRef : null}
+                      >
                         <button
                           type="button"
                           className="kebab-btn"
@@ -2663,7 +2925,7 @@ function InteractionsPage({ can, currentUser }) {
                                 deletingInteractionId === item.id
                               }
                             >
-                              Abrir interacción
+                              Abrir lead
                             </button>
                             {canDeleteInteraction ? (
                               <button
@@ -2676,7 +2938,7 @@ function InteractionsPage({ can, currentUser }) {
                               >
                                 {deletingInteractionId === item.id
                                   ? "Eliminando..."
-                                  : "Eliminar interacción"}
+                                  : "Eliminar lead"}
                               </button>
                             ) : null}
                           </div>

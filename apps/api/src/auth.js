@@ -7,12 +7,6 @@ const ADMIN_FALLBACK_PERMISSIONS = [
   "configuracion.update",
   "roles.read",
   "permissions.read",
-  "oportunidades_potenciales.read",
-  "oportunidades_potenciales.read_all",
-  "oportunidades_potenciales.review",
-  "oportunidades_potenciales.assign",
-  "oportunidades_potenciales.convert",
-  "oportunidades_potenciales.analytics",
 ];
 
 export async function getUserAuthContext(userId) {
