@@ -3705,13 +3705,14 @@ describe("API integration baseline", () => {
     expect(createResponse.status).toBe(201);
     expect(createResponse.body.analysisStatus).toBe("analyzed");
     expect(createResponse.body.documents).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+
     expect(createResponse.body.suggestedAccount.name).toContain(
       "Prospecto Integrado Alpha",
     );
     expect(createResponse.body.suggestedContacts).toHaveLength(1);
     expect(createResponse.body.suggestedOpportunities).toHaveLength(1);
-
-    const interactionId = Number(createResponse.body.id);
 
     const listResponse = await request(app)
       .get("/api/interactions")
@@ -3767,13 +3768,14 @@ describe("API integration baseline", () => {
     expect(createResponse.status).toBe(201);
     expect(createResponse.body.analysisStatus).toBe("analyzed");
     expect(createResponse.body.documents).toHaveLength(1);
+
+    const interactionId = Number(createResponse.body.id);
+
     expect(createResponse.body.suggestedAccount.name).toContain(
       "Prospecto Integrado Alpha",
     );
     expect(createResponse.body.suggestedContacts).toHaveLength(1);
     expect(createResponse.body.suggestedOpportunities).toHaveLength(1);
-
-    const interactionId = Number(createResponse.body.id);
 
     const detailResponse = await request(app)
       .get(`/api/interactions/${interactionId}`)
@@ -7314,7 +7316,7 @@ describe("API integration baseline", () => {
       [
         2026,
         4,
-        'Plan API desarrollo comercial',
+        "Plan API desarrollo comercial",
         actorUserId,
         actorUserId,
         now,
@@ -7368,8 +7370,8 @@ describe("API integration baseline", () => {
     );
 
     const dashboardResponse = await request(app)
-      .get('/api/commercial-development/dashboard?year=2026&quarter=4')
-      .set('Authorization', `Bearer ${fixture.token}`);
+      .get("/api/commercial-development/dashboard?year=2026&quarter=4")
+      .set("Authorization", `Bearer ${fixture.token}`);
 
     expect(dashboardResponse.status).toBe(200);
     expect(dashboardResponse.body.development).toEqual(
@@ -7377,7 +7379,7 @@ describe("API integration baseline", () => {
         period: expect.objectContaining({
           year: 2026,
           quarter: 4,
-          label: 'T4 2026',
+          label: "T4 2026",
           hasPlan: true,
         }),
         quota: expect.objectContaining({
@@ -7499,7 +7501,9 @@ describe("API integration baseline", () => {
     expect(dashboardResponse.status).toBe(200);
 
     const createActivityResponse = await request(app)
-      .post(`/api/commercial-development/opportunities/${opportunityId}/activities`)
+      .post(
+        `/api/commercial-development/opportunities/${opportunityId}/activities`,
+      )
       .set("Authorization", `Bearer ${token}`)
       .send({
         activityType: "call",
@@ -7527,7 +7531,8 @@ describe("API integration baseline", () => {
       .send({
         activityType: "call",
         scheduledAt: "2026-08-12T16:30:00.000Z",
-        objective: "Confirmar decisor, fecha de comite y condiciones de cierre.",
+        objective:
+          "Confirmar decisor, fecha de comite y condiciones de cierre.",
         note: "Participan sponsor y compras.",
         isPrimaryNextStep: true,
       });
@@ -7807,7 +7812,7 @@ describe("API integration baseline", () => {
         `Oportunidad ganada ${TEST_PREFIX}_commercial_development_actual_by_quarter`,
         33000,
         fixture.accountId,
-        '2027-05-15',
+        "2027-05-15",
         fixture.contactId,
         ctx.catalogIds.salesStageWaitingId,
         ctx.catalogIds.businessLineId,
@@ -7834,11 +7839,11 @@ describe("API integration baseline", () => {
     cleanup.opportunityIds.push(Number(wonOpportunityRow.id));
 
     const q1Response = await request(app)
-      .get('/api/commercial-development/dashboard?year=2027&quarter=1')
-      .set('Authorization', `Bearer ${fixture.token}`);
+      .get("/api/commercial-development/dashboard?year=2027&quarter=1")
+      .set("Authorization", `Bearer ${fixture.token}`);
     const q2Response = await request(app)
-      .get('/api/commercial-development/dashboard?year=2027&quarter=2')
-      .set('Authorization', `Bearer ${fixture.token}`);
+      .get("/api/commercial-development/dashboard?year=2027&quarter=2")
+      .set("Authorization", `Bearer ${fixture.token}`);
 
     expect(q1Response.status).toBe(200);
     expect(q2Response.status).toBe(200);
@@ -7863,7 +7868,7 @@ describe("API integration baseline", () => {
       [
         2027,
         3,
-        'Plan API desarrollo comercial excluye desactivadas',
+        "Plan API desarrollo comercial excluye desactivadas",
         actorUserId,
         actorUserId,
         now,
@@ -7927,7 +7932,7 @@ describe("API integration baseline", () => {
         `Oportunidad desactivada ${TEST_PREFIX}_dev_dash_inactive`,
         55000,
         fixture.accountId,
-        '2027-08-15',
+        "2027-08-15",
         fixture.contactId,
         ctx.catalogIds.salesStageWaitingId,
         ctx.catalogIds.businessLineId,
@@ -7947,15 +7952,13 @@ describe("API integration baseline", () => {
        WHERE name = ?
        ORDER BY id DESC
        LIMIT 1`,
-      [
-        `Oportunidad desactivada ${TEST_PREFIX}_dev_dash_inactive`,
-      ],
+      [`Oportunidad desactivada ${TEST_PREFIX}_dev_dash_inactive`],
     );
     cleanup.opportunityIds.push(Number(inactiveOpportunityRow.id));
 
     const dashboardResponse = await request(app)
-      .get('/api/commercial-development/dashboard?year=2027&quarter=3')
-      .set('Authorization', `Bearer ${fixture.token}`);
+      .get("/api/commercial-development/dashboard?year=2027&quarter=3")
+      .set("Authorization", `Bearer ${fixture.token}`);
 
     expect(dashboardResponse.status).toBe(200);
     expect(dashboardResponse.body.development.quota.openAmount).toBe(0);
@@ -8015,7 +8018,7 @@ describe("API integration baseline", () => {
       [
         2026,
         3,
-        'Plan API desarrollo comercial con multiples vendedores visibles',
+        "Plan API desarrollo comercial con multiples vendedores visibles",
         actorUserId,
         actorUserId,
         now,
@@ -8079,8 +8082,8 @@ describe("API integration baseline", () => {
     );
 
     const dashboardResponse = await request(app)
-      .get('/api/commercial-development/dashboard?year=2026&quarter=3')
-      .set('Authorization', `Bearer ${fixture.token}`);
+      .get("/api/commercial-development/dashboard?year=2026&quarter=3")
+      .set("Authorization", `Bearer ${fixture.token}`);
 
     expect(dashboardResponse.status).toBe(200);
     expect(dashboardResponse.body.development.quota).toEqual(
@@ -9432,7 +9435,9 @@ describe("API integration baseline", () => {
     expect(bypassResponse.status).toBe(200);
 
     const skippedStageResponse = await request(app)
-      .get(`/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}`)
+      .get(
+        `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageInitialId}`,
+      )
       .set("Authorization", `Bearer ${fixture.token}`);
 
     const destinationStageResponse = await request(app)
@@ -11596,10 +11601,14 @@ describe("API integration baseline", () => {
     const uploadResponse = await request(app)
       .post(`/api/quotation-versions/${fixture.latestVersionId}/documents`)
       .set("Authorization", `Bearer ${fixture.token}`)
-      .attach("files", Buffer.from("Documento de respaldo de propuesta", "utf8"), {
-        filename: "respaldo-propuesta.txt",
-        contentType: "text/plain",
-      });
+      .attach(
+        "files",
+        Buffer.from("Documento de respaldo de propuesta", "utf8"),
+        {
+          filename: "respaldo-propuesta.txt",
+          contentType: "text/plain",
+        },
+      );
 
     expect(uploadResponse.status).toBe(201);
     expect(uploadResponse.body.documents).toHaveLength(1);
@@ -12595,7 +12604,10 @@ describe("API integration baseline", () => {
         expect.objectContaining({
           action: "published_version",
           changed_fields: expect.objectContaining({
-            status: expect.objectContaining({ after: "active", before: "draft" }),
+            status: expect.objectContaining({
+              after: "active",
+              before: "draft",
+            }),
           }),
         }),
       ]),

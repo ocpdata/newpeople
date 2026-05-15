@@ -493,233 +493,238 @@ function CreateInteractionModal({
         aria-busy={creating}
       >
         <div className="modal-dialog-scroll-shell">
-        <div className="modal-header">
-          <div className="interaction-create-header">
-            <div className="interaction-create-heading">
-              <span className="interaction-create-kicker">
-                Nueva interacción
-              </span>
-              <div className="account-modal-help-shell" ref={createHelpRef}>
-                <div className="account-modal-title-row">
-                  <h3 className="modal-title">Crear interacción</h3>
-                  <button
-                    type="button"
-                    className="accounts-module-help-trigger account-modal-help-trigger"
-                    aria-label="Ayuda sobre el modal de crear interacción"
-                    aria-expanded={showCreateHelp}
-                    title="Ayuda sobre el modal de crear interacción"
-                    onClick={() => setShowCreateHelp((current) => !current)}
-                  >
-                    ?
-                  </button>
-                </div>
-                {showCreateHelp ? (
-                  <div
-                    className="account-modal-help-popover"
-                    role="dialog"
-                    aria-label="Ayuda sobre crear interacción"
-                  >
-                    <strong>Para qué sirve este modal</strong>
-                    <p>
-                      Úsalo para reunir evidencia comercial inicial y crear una
-                      interacción analizable a partir de archivos o texto.
-                    </p>
-                    <strong>Cómo conviene usarlo</strong>
-                    <p>
-                      Sube documentos, agrega texto adicional si hace falta y
-                      luego crea la interacción para que el sistema sugiera
-                      cuenta, contactos y oportunidades relacionadas.
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <div className="interaction-create-header-meta">
-              <span className="interaction-documents-count-badge">
-                {files.length} {files.length === 1 ? "archivo" : "archivos"}
-              </span>
-              <span className="interaction-documents-count-badge">
-                {pastedText.trim() ? "Texto cargado" : "Sin texto"}
-              </span>
-              <span className="interaction-create-format-pill">
-                PDF, Office, EML, imágenes y audio
-              </span>
-            </div>
-          </div>
-        </div>
-        <fieldset className="interaction-detail-lock-shell" disabled={creating}>
-          <form
-            className="account-create-form interaction-create-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              onSubmit();
-            }}
-          >
-            <section className="account-form-section account-modal-section interaction-create-dropzone-section">
-              <div className="interaction-create-grid">
-                <label className="interaction-create-dropzone">
-                  <input
-                    type="file"
-                    multiple
-                    accept={INTERACTION_FILE_ACCEPT}
-                    onChange={handleFileChange}
-                  />
-                  <span
-                    className="interaction-create-dropzone-icon"
-                    aria-hidden="true"
-                  >
-                    <svg viewBox="0 0 24 24" focusable="false">
-                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75" />
-                      <path d="M5.75 15.5a.75.75 0 0 1 .75.75v1.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25v-1.25a.75.75 0 0 1 1.5 0v1.25A2.75 2.75 0 0 1 16.25 20h-8.5A2.75 2.75 0 0 1 5 17.25v-1.25a.75.75 0 0 1 .75-.75" />
-                    </svg>
-                  </span>
-                  <strong>Selecciona uno o varios archivos</strong>
-                  <span className="interaction-create-dropzone-copy">
-                    Adjunta correos, cotizaciones, minutas, audios o archivos
-                    de soporte. Si prefieres, también puedes crear la
-                    interacción solo con texto pegado.
-                  </span>
-                  <span className="interaction-create-dropzone-action">
-                    Elegir archivos
-                  </span>
-                  <span className="interaction-create-dropzone-footnote">
-                    Formatos soportados: PDF, DOCX, XLSX, XLS, CSV, TXT, EML,
-                    PNG, JPG, JPEG, MP3, WAV y M4A.
-                  </span>
-                </label>
-
-                <div className="interaction-create-guidance">
-                  <div className="interaction-create-guidance-card">
-                    <strong>1. Carga evidencia</strong>
-                    <p>
-                      Reúne los archivos que explican el contexto comercial del
-                      caso.
-                    </p>
-                  </div>
-                  <div className="interaction-create-guidance-card">
-                    <strong>2. Análisis inicial</strong>
-                    <p>
-                      El sistema extrae contenido y detecta cuenta, contactos y
-                      oportunidades sugeridas.
-                    </p>
-                  </div>
-                  <div className="interaction-create-guidance-card">
-                    <strong>3. Resolución</strong>
-                    <p>
-                      Luego podrás revisar sugerencias y confirmar los vínculos
-                      correctos en el CRM.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="account-form-section account-modal-section interaction-create-text-section">
-              <div className="interaction-create-text-card">
-                <div className="interaction-create-text-card-head">
-                  <div className="interaction-create-text-card-copy">
-                    <span className="interaction-create-kicker">
-                      Texto de referencia
-                    </span>
-                    <strong>Agrega mas fuentes de texto al analisis</strong>
-                    <p className="section-helper-text interaction-create-text-card-hint">
-                      Convierte correos, minutas o notas en archivos `.txt`
-                      para analizarlos junto con el resto de la evidencia.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="interaction-create-text-controls">
-                  <div className="field-group interaction-create-text-name-field">
-                    <label>Nombre del archivo de texto</label>
-                    <input
-                      type="text"
-                      value={pastedTextName}
-                      onChange={(event) => setPastedTextName(event.target.value)}
-                      placeholder="Ej. correo-cliente, minuta-reunion, contexto-inicial"
-                    />
-                  </div>
-                  <div className="interaction-create-text-actions">
+          <div className="modal-header">
+            <div className="interaction-create-header">
+              <div className="interaction-create-heading">
+                <span className="interaction-create-kicker">
+                  Nueva interacción
+                </span>
+                <div className="account-modal-help-shell" ref={createHelpRef}>
+                  <div className="account-modal-title-row">
+                    <h3 className="modal-title">Crear interacción</h3>
                     <button
                       type="button"
-                      className="btn-secondary interaction-create-add-text-button"
-                      onClick={handleAddPastedText}
-                      disabled={creating || !String(pastedText || "").trim()}
+                      className="accounts-module-help-trigger account-modal-help-trigger"
+                      aria-label="Ayuda sobre el modal de crear interacción"
+                      aria-expanded={showCreateHelp}
+                      title="Ayuda sobre el modal de crear interacción"
+                      onClick={() => setShowCreateHelp((current) => !current)}
                     >
-                      Agregar texto al analisis
+                      ?
                     </button>
                   </div>
+                  {showCreateHelp ? (
+                    <div
+                      className="account-modal-help-popover"
+                      role="dialog"
+                      aria-label="Ayuda sobre crear interacción"
+                    >
+                      <strong>Para qué sirve este modal</strong>
+                      <p>
+                        Úsalo para reunir evidencia comercial inicial y crear
+                        una interacción analizable a partir de archivos o texto.
+                      </p>
+                      <strong>Cómo conviene usarlo</strong>
+                      <p>
+                        Sube documentos, agrega texto adicional si hace falta y
+                        luego crea la interacción para que el sistema sugiera
+                        cuenta, contactos y oportunidades relacionadas.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-
-                <div className="interaction-create-text-grid">
-                  <div className="field-group interaction-create-text-body-field">
-                    <label>Pegar texto</label>
-                    <textarea
-                      className="interaction-create-textarea"
-                      value={pastedText}
-                      onChange={(event) => setPastedText(event.target.value)}
-                      placeholder="Pega aquí el contenido que quieres añadir al análisis de la interacción."
-                    />
-                  </div>
-                </div>
-
-                <span className="field-hint interaction-create-text-footnote">
-                  Se agregará como un archivo `.txt` al análisis.
+              </div>
+              <div className="interaction-create-header-meta">
+                <span className="interaction-documents-count-badge">
+                  {files.length} {files.length === 1 ? "archivo" : "archivos"}
+                </span>
+                <span className="interaction-documents-count-badge">
+                  {pastedText.trim() ? "Texto cargado" : "Sin texto"}
+                </span>
+                <span className="interaction-create-format-pill">
+                  PDF, Office, EML, imágenes y audio
                 </span>
               </div>
-            </section>
-
-            <section className="account-form-section account-modal-section interaction-create-files-section">
-              <div className="interaction-create-files-header">
-                <h4>Archivos seleccionados</h4>
-                <p className="section-helper-text">
-                  Revisa aquí la evidencia que se usará para crear la
-                  interacción.
-                </p>
-              </div>
-
-              {files.length ? (
-                <div className="interaction-create-files-list">
-                  {files.map((file) => (
-                    <div
-                      key={`${file.name}-${file.size}`}
-                      className="interaction-create-file-card"
-                    >
-                      <span className="interaction-create-file-name">
-                        {file.name}
-                      </span>
-                      <span className="interaction-create-file-meta">
-                        {Math.max(1, Math.round(file.size / 1024))} KB
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="interaction-create-empty-state">
-                  Aún no has seleccionado archivos. Empieza cargando la
-                  evidencia del caso.
-                </div>
-              )}
-            </section>
-            <div className="modal-buttons">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={onClose}
-                disabled={creating}
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={creating || (!files.length && !pastedText.trim())}
-              >
-                {creating ? "Analizando..." : "Crear interacción"}
-              </button>
             </div>
-          </form>
-        </fieldset>
+          </div>
+          <fieldset
+            className="interaction-detail-lock-shell"
+            disabled={creating}
+          >
+            <form
+              className="account-create-form interaction-create-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit();
+              }}
+            >
+              <section className="account-form-section account-modal-section interaction-create-dropzone-section">
+                <div className="interaction-create-grid">
+                  <label className="interaction-create-dropzone">
+                    <input
+                      type="file"
+                      multiple
+                      accept={INTERACTION_FILE_ACCEPT}
+                      onChange={handleFileChange}
+                    />
+                    <span
+                      className="interaction-create-dropzone-icon"
+                      aria-hidden="true"
+                    >
+                      <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M12 3.75a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75" />
+                        <path d="M5.75 15.5a.75.75 0 0 1 .75.75v1.25c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25v-1.25a.75.75 0 0 1 1.5 0v1.25A2.75 2.75 0 0 1 16.25 20h-8.5A2.75 2.75 0 0 1 5 17.25v-1.25a.75.75 0 0 1 .75-.75" />
+                      </svg>
+                    </span>
+                    <strong>Selecciona uno o varios archivos</strong>
+                    <span className="interaction-create-dropzone-copy">
+                      Adjunta correos, cotizaciones, minutas, audios o archivos
+                      de soporte. Si prefieres, también puedes crear la
+                      interacción solo con texto pegado.
+                    </span>
+                    <span className="interaction-create-dropzone-action">
+                      Elegir archivos
+                    </span>
+                    <span className="interaction-create-dropzone-footnote">
+                      Formatos soportados: PDF, DOCX, XLSX, XLS, CSV, TXT, EML,
+                      PNG, JPG, JPEG, MP3, WAV y M4A.
+                    </span>
+                  </label>
+
+                  <div className="interaction-create-guidance">
+                    <div className="interaction-create-guidance-card">
+                      <strong>1. Carga evidencia</strong>
+                      <p>
+                        Reúne los archivos que explican el contexto comercial
+                        del caso.
+                      </p>
+                    </div>
+                    <div className="interaction-create-guidance-card">
+                      <strong>2. Análisis inicial</strong>
+                      <p>
+                        El sistema extrae contenido y detecta cuenta, contactos
+                        y oportunidades sugeridas.
+                      </p>
+                    </div>
+                    <div className="interaction-create-guidance-card">
+                      <strong>3. Resolución</strong>
+                      <p>
+                        Luego podrás revisar sugerencias y confirmar los
+                        vínculos correctos en el CRM.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section interaction-create-text-section">
+                <div className="interaction-create-text-card">
+                  <div className="interaction-create-text-card-head">
+                    <div className="interaction-create-text-card-copy">
+                      <span className="interaction-create-kicker">
+                        Texto de referencia
+                      </span>
+                      <strong>Agrega mas fuentes de texto al analisis</strong>
+                      <p className="section-helper-text interaction-create-text-card-hint">
+                        Convierte correos, minutas o notas en archivos `.txt`
+                        para analizarlos junto con el resto de la evidencia.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="interaction-create-text-controls">
+                    <div className="field-group interaction-create-text-name-field">
+                      <label>Nombre del archivo de texto</label>
+                      <input
+                        type="text"
+                        value={pastedTextName}
+                        onChange={(event) =>
+                          setPastedTextName(event.target.value)
+                        }
+                        placeholder="Ej. correo-cliente, minuta-reunion, contexto-inicial"
+                      />
+                    </div>
+                    <div className="interaction-create-text-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary interaction-create-add-text-button"
+                        onClick={handleAddPastedText}
+                        disabled={creating || !String(pastedText || "").trim()}
+                      >
+                        Agregar texto al analisis
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="interaction-create-text-grid">
+                    <div className="field-group interaction-create-text-body-field">
+                      <label>Pegar texto</label>
+                      <textarea
+                        className="interaction-create-textarea"
+                        value={pastedText}
+                        onChange={(event) => setPastedText(event.target.value)}
+                        placeholder="Pega aquí el contenido que quieres añadir al análisis de la interacción."
+                      />
+                    </div>
+                  </div>
+
+                  <span className="field-hint interaction-create-text-footnote">
+                    Se agregará como un archivo `.txt` al análisis.
+                  </span>
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section interaction-create-files-section">
+                <div className="interaction-create-files-header">
+                  <h4>Archivos seleccionados</h4>
+                  <p className="section-helper-text">
+                    Revisa aquí la evidencia que se usará para crear la
+                    interacción.
+                  </p>
+                </div>
+
+                {files.length ? (
+                  <div className="interaction-create-files-list">
+                    {files.map((file) => (
+                      <div
+                        key={`${file.name}-${file.size}`}
+                        className="interaction-create-file-card"
+                      >
+                        <span className="interaction-create-file-name">
+                          {file.name}
+                        </span>
+                        <span className="interaction-create-file-meta">
+                          {Math.max(1, Math.round(file.size / 1024))} KB
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="interaction-create-empty-state">
+                    Aún no has seleccionado archivos. Empieza cargando la
+                    evidencia del caso.
+                  </div>
+                )}
+              </section>
+              <div className="modal-buttons">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={onClose}
+                  disabled={creating}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={creating || (!files.length && !pastedText.trim())}
+                >
+                  {creating ? "Analizando..." : "Crear interacción"}
+                </button>
+              </div>
+            </form>
+          </fieldset>
         </div>
         {creating ? (
           <div
@@ -879,591 +884,382 @@ function InteractionDetailModal({
         aria-busy={isAnalysisLocked}
       >
         <div className="modal-dialog-scroll-shell">
-        <div className="modal-header">
-          <div className="interaction-detail-header-copy">
-            <h3 className="modal-title">{detail.title}</h3>
-            <p className="roles-subtitle">
-              Creada {formatDate(detail.createdAt)}
-            </p>
-          </div>
-          <div className="interaction-detail-header-actions">
-            <span className={statusMeta.className}>{statusMeta.label}</span>
-            {canAnalyze ? (
-              <button
-                type="button"
-                className="interaction-detail-icon-btn"
-                onClick={onReanalyze}
-                disabled={isAnalysisLocked}
-                aria-label={
-                  reanalyzing
-                    ? "Reanalizando interacción"
-                    : "Reanalizar interacción"
-                }
-                title={
-                  reanalyzing ? "Reanalizando..." : "Reanalizar interacción"
-                }
-              >
-                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                  <path d="M20 11a8 8 0 0 0-14.9-4" />
-                  <path d="M4 4v4h4" />
-                  <path d="M4 13a8 8 0 0 0 14.9 4" />
-                  <path d="M20 20v-4h-4" />
-                </svg>
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <fieldset
-          className="interaction-detail-lock-shell"
-          disabled={isAnalysisLocked}
-        >
-          <div className="interaction-detail-scroll">
-            <section className="account-form-section account-modal-section">
-              {canAddDocuments ? (
-                <div className="interaction-documents-toolbar">
-                  <div className="field-group interaction-documents-upload-field">
-                    <div className="interaction-documents-toolbar-head">
-                      <div>
-                        <label>Agregar más archivos</label>
-                        <p className="field-hint interaction-documents-step-hint">
-                          1. Selecciona los archivos. 2. Haz clic en anexar.
-                        </p>
-                      </div>
-                      <span className="interaction-documents-count-badge">
-                        {interactionDocumentCount} archivo
-                        {interactionDocumentCount === 1 ? "" : "s"} en la
-                        interaccion
-                      </span>
-                    </div>
-                    <div className="interaction-documents-toolbar-row">
-                      <input
-                        key={`${detail.id}-${uploadInputKey}`}
-                        type="file"
-                        multiple
-                        accept={INTERACTION_FILE_ACCEPT}
-                        onChange={handleAdditionalFileChange}
-                        disabled={addingDocuments}
-                      />
-                    </div>
-                    <div className="interaction-documents-upload-meta">
-                      <p className="field-hint interaction-documents-auto-note">
-                        Se reanalizara automaticamente al agregar archivos.
-                      </p>
-                      {pendingAdditionalFilesCount ? (
-                        <span className="interaction-documents-pending-note">
-                          {pendingAdditionalFilesCount} archivo
-                          {pendingAdditionalFilesCount === 1 ? "" : "s"} listo
-                          {pendingAdditionalFilesCount === 1 ? "" : "s"} para
-                          anexar
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="btn-secondary interaction-documents-submit-button"
-                        onClick={handleAddDocumentsClick}
-                        disabled={addingDocuments || !additionalFiles.length}
-                      >
-                        {addDocumentsButtonLabel}
-                      </button>
-                    </div>
-                    {additionalFiles.length ? (
-                      <div className="interaction-upload-list">
-                        {additionalFiles.map((file) => (
-                          <span
-                            key={`${file.name}-${file.size}`}
-                            className="account-interaction-contact-chip"
-                          >
-                            {file.name}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
+          <div className="modal-header">
+            <div className="interaction-detail-header-copy">
+              <h3 className="modal-title">{detail.title}</h3>
+              <p className="roles-subtitle">
+                Creada {formatDate(detail.createdAt)}
+              </p>
+            </div>
+            <div className="interaction-detail-header-actions">
+              <span className={statusMeta.className}>{statusMeta.label}</span>
+              {canAnalyze ? (
+                <button
+                  type="button"
+                  className="interaction-detail-icon-btn"
+                  onClick={onReanalyze}
+                  disabled={isAnalysisLocked}
+                  aria-label={
+                    reanalyzing
+                      ? "Reanalizando interacción"
+                      : "Reanalizar interacción"
+                  }
+                  title={
+                    reanalyzing ? "Reanalizando..." : "Reanalizar interacción"
+                  }
+                >
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M20 11a8 8 0 0 0-14.9-4" />
+                    <path d="M4 4v4h4" />
+                    <path d="M4 13a8 8 0 0 0 14.9 4" />
+                    <path d="M20 20v-4h-4" />
+                  </svg>
+                </button>
               ) : null}
-
-              <div className="interaction-documents-grid">
-                {(detail.documents || []).map((document) => (
-                  <article
-                    key={document.publicId}
-                    className="interaction-document-card"
-                  >
-                    <div className="interaction-document-card-head">
-                      <div>
-                        <strong>{document.originalFileName}</strong>
-                        <p className="field-hint">
-                          {document.detectedFormat || document.mimeType} ·{" "}
-                          {Math.round((document.byteSize || 0) / 1024)} KB
-                        </p>
-                        <p className="field-hint">
-                          {getDocumentProcessingSummary(document)}
-                        </p>
+            </div>
+          </div>
+          <fieldset
+            className="interaction-detail-lock-shell"
+            disabled={isAnalysisLocked}
+          >
+            <div className="interaction-detail-scroll">
+              <section className="account-form-section account-modal-section">
+                {canAddDocuments ? (
+                  <div className="interaction-documents-toolbar">
+                    <div className="field-group interaction-documents-upload-field">
+                      <div className="interaction-documents-toolbar-head">
+                        <div>
+                          <label>Agregar más archivos</label>
+                          <p className="field-hint interaction-documents-step-hint">
+                            1. Selecciona los archivos. 2. Haz clic en anexar.
+                          </p>
+                        </div>
+                        <span className="interaction-documents-count-badge">
+                          {interactionDocumentCount} archivo
+                          {interactionDocumentCount === 1 ? "" : "s"} en la
+                          interaccion
+                        </span>
                       </div>
-                      {canDeleteDocuments ? (
+                      <div className="interaction-documents-toolbar-row">
+                        <input
+                          key={`${detail.id}-${uploadInputKey}`}
+                          type="file"
+                          multiple
+                          accept={INTERACTION_FILE_ACCEPT}
+                          onChange={handleAdditionalFileChange}
+                          disabled={addingDocuments}
+                        />
+                      </div>
+                      <div className="interaction-documents-upload-meta">
+                        <p className="field-hint interaction-documents-auto-note">
+                          Se reanalizara automaticamente al agregar archivos.
+                        </p>
+                        {pendingAdditionalFilesCount ? (
+                          <span className="interaction-documents-pending-note">
+                            {pendingAdditionalFilesCount} archivo
+                            {pendingAdditionalFilesCount === 1 ? "" : "s"} listo
+                            {pendingAdditionalFilesCount === 1 ? "" : "s"} para
+                            anexar
+                          </span>
+                        ) : null}
                         <button
                           type="button"
-                          className="interaction-detail-icon-btn interaction-document-delete-btn"
-                          onClick={() => onDeleteDocument(document.publicId)}
-                          disabled={
-                            deletingDocumentPublicId === document.publicId
-                          }
-                          aria-label={
-                            deletingDocumentPublicId === document.publicId
-                              ? "Eliminando archivo"
-                              : "Eliminar archivo"
-                          }
-                          title={
-                            deletingDocumentPublicId === document.publicId
-                              ? "Eliminando..."
-                              : "Eliminar archivo"
-                          }
+                          className="btn-secondary interaction-documents-submit-button"
+                          onClick={handleAddDocumentsClick}
+                          disabled={addingDocuments || !additionalFiles.length}
                         >
-                          <svg
-                            viewBox="0 0 24 24"
-                            focusable="false"
-                            aria-hidden="true"
-                          >
-                            <path d="M5 7h14" />
-                            <path d="M9 7V5h6v2" />
-                            <path d="M8 7l1 12h6l1-12" />
-                            <path d="M10 11v5" />
-                            <path d="M14 11v5" />
-                          </svg>
+                          {addDocumentsButtonLabel}
                         </button>
+                      </div>
+                      {additionalFiles.length ? (
+                        <div className="interaction-upload-list">
+                          {additionalFiles.map((file) => (
+                            <span
+                              key={`${file.name}-${file.size}`}
+                              className="account-interaction-contact-chip"
+                            >
+                              {file.name}
+                            </span>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
-                  </article>
-                ))}
-              </div>
-            </section>
+                  </div>
+                ) : null}
 
-            <section className="account-form-section account-modal-section interaction-detail-section interaction-synopsis-section">
-              <div className="interaction-resolution-header">
-                <div>
-                  <h4>Sinopsis</h4>
+                <div className="interaction-documents-grid">
+                  {(detail.documents || []).map((document) => (
+                    <article
+                      key={document.publicId}
+                      className="interaction-document-card"
+                    >
+                      <div className="interaction-document-card-head">
+                        <div>
+                          <strong>{document.originalFileName}</strong>
+                          <p className="field-hint">
+                            {document.detectedFormat || document.mimeType} ·{" "}
+                            {Math.round((document.byteSize || 0) / 1024)} KB
+                          </p>
+                          <p className="field-hint">
+                            {getDocumentProcessingSummary(document)}
+                          </p>
+                        </div>
+                        {canDeleteDocuments ? (
+                          <button
+                            type="button"
+                            className="interaction-detail-icon-btn interaction-document-delete-btn"
+                            onClick={() => onDeleteDocument(document.publicId)}
+                            disabled={
+                              deletingDocumentPublicId === document.publicId
+                            }
+                            aria-label={
+                              deletingDocumentPublicId === document.publicId
+                                ? "Eliminando archivo"
+                                : "Eliminar archivo"
+                            }
+                            title={
+                              deletingDocumentPublicId === document.publicId
+                                ? "Eliminando..."
+                                : "Eliminar archivo"
+                            }
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              focusable="false"
+                              aria-hidden="true"
+                            >
+                              <path d="M5 7h14" />
+                              <path d="M9 7V5h6v2" />
+                              <path d="M8 7l1 12h6l1-12" />
+                              <path d="M10 11v5" />
+                              <path d="M14 11v5" />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
                 </div>
-              </div>
-              <div className="field-group">
-                <label>Título</label>
-                <input
-                  value={editForm.title}
-                  onChange={(event) =>
-                    setEditForm((currentValue) => ({
-                      ...currentValue,
-                      title: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="field-group">
-                <label>Notas iniciales</label>
-                <textarea
-                  value={editForm.sourceNotes}
-                  onChange={(event) =>
-                    setEditForm((currentValue) => ({
-                      ...currentValue,
-                      sourceNotes: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="field-group">
-                <label>Resumen</label>
-                <textarea
-                  value={editForm.summary}
-                  onChange={(event) =>
-                    setEditForm((currentValue) => ({
-                      ...currentValue,
-                      summary: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <TagEditor
-                label="Temas detectados"
-                values={editForm.topics}
-                onChange={(values) =>
-                  setEditForm((currentValue) => ({
-                    ...currentValue,
-                    topics: values,
-                  }))
-                }
-                placeholder="Un tema por línea"
-              />
-              <TagEditor
-                label="Acciones realizadas"
-                values={editForm.actionsTaken}
-                onChange={(values) =>
-                  setEditForm((currentValue) => ({
-                    ...currentValue,
-                    actionsTaken: values,
-                  }))
-                }
-                placeholder="Una acción por línea"
-              />
-              <TagEditor
-                label="Próximos pasos"
-                values={editForm.nextSteps}
-                onChange={(values) =>
-                  setEditForm((currentValue) => ({
-                    ...currentValue,
-                    nextSteps: values,
-                  }))
-                }
-                placeholder="Un siguiente paso por línea"
-              />
-            </section>
+              </section>
 
-            <section className="account-form-section account-modal-section interaction-detail-section interaction-account-suggestion-section">
-              <div className="interaction-resolution-header">
-                <div>
-                  <h4>Cuenta sugerida</h4>
-                  <p className="field-hint">
-                    Define si la interacción se vincula a una cuenta existente o
-                    crea una nueva.
-                  </p>
+              <section className="account-form-section account-modal-section interaction-detail-section interaction-synopsis-section">
+                <div className="interaction-resolution-header">
+                  <div>
+                    <h4>Sinopsis</h4>
+                  </div>
                 </div>
-              </div>
-              <div className="interaction-resolution-grid interaction-account-suggestion-grid">
-                <div className="field-group interaction-resolution-action-field">
-                  <label>Acción</label>
-                  <select
-                    value={resolutionForm.accountResolution.mode}
+                <div className="field-group">
+                  <label>Título</label>
+                  <input
+                    value={editForm.title}
                     onChange={(event) =>
-                      setResolutionForm((currentValue) => ({
+                      setEditForm((currentValue) => ({
                         ...currentValue,
-                        accountResolution: {
-                          ...currentValue.accountResolution,
-                          mode: event.target.value,
-                        },
+                        title: event.target.value,
                       }))
                     }
-                  >
-                    <option value="ignore">Ignorar</option>
-                    <option value="link_existing">Vincular existente</option>
-                    <option value="create_new">Crear cuenta</option>
-                  </select>
+                  />
                 </div>
-                {resolutionForm.accountResolution.mode === "link_existing" ? (
-                  <div className="field-group interaction-grid-span-2 interaction-account-existing-field">
-                    <label>Cuenta existente</label>
+                <div className="field-group">
+                  <label>Notas iniciales</label>
+                  <textarea
+                    value={editForm.sourceNotes}
+                    onChange={(event) =>
+                      setEditForm((currentValue) => ({
+                        ...currentValue,
+                        sourceNotes: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Resumen</label>
+                  <textarea
+                    value={editForm.summary}
+                    onChange={(event) =>
+                      setEditForm((currentValue) => ({
+                        ...currentValue,
+                        summary: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <TagEditor
+                  label="Temas detectados"
+                  values={editForm.topics}
+                  onChange={(values) =>
+                    setEditForm((currentValue) => ({
+                      ...currentValue,
+                      topics: values,
+                    }))
+                  }
+                  placeholder="Un tema por línea"
+                />
+                <TagEditor
+                  label="Acciones realizadas"
+                  values={editForm.actionsTaken}
+                  onChange={(values) =>
+                    setEditForm((currentValue) => ({
+                      ...currentValue,
+                      actionsTaken: values,
+                    }))
+                  }
+                  placeholder="Una acción por línea"
+                />
+                <TagEditor
+                  label="Próximos pasos"
+                  values={editForm.nextSteps}
+                  onChange={(values) =>
+                    setEditForm((currentValue) => ({
+                      ...currentValue,
+                      nextSteps: values,
+                    }))
+                  }
+                  placeholder="Un siguiente paso por línea"
+                />
+              </section>
+
+              <section className="account-form-section account-modal-section interaction-detail-section interaction-account-suggestion-section">
+                <div className="interaction-resolution-header">
+                  <div>
+                    <h4>Cuenta sugerida</h4>
+                    <p className="field-hint">
+                      Define si la interacción se vincula a una cuenta existente
+                      o crea una nueva.
+                    </p>
+                  </div>
+                </div>
+                <div className="interaction-resolution-grid interaction-account-suggestion-grid">
+                  <div className="field-group interaction-resolution-action-field">
+                    <label>Acción</label>
                     <select
-                      value={resolutionForm.accountResolution.accountId}
+                      value={resolutionForm.accountResolution.mode}
                       onChange={(event) =>
                         setResolutionForm((currentValue) => ({
                           ...currentValue,
                           accountResolution: {
                             ...currentValue.accountResolution,
-                            accountId: event.target.value,
+                            mode: event.target.value,
                           },
                         }))
                       }
                     >
-                      <option value="">Selecciona cuenta</option>
-                      {options.accounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
+                      <option value="ignore">Ignorar</option>
+                      <option value="link_existing">Vincular existente</option>
+                      <option value="create_new">Crear cuenta</option>
                     </select>
                   </div>
-                ) : null}
-                {resolutionForm.accountResolution.mode !== "link_existing" ? (
-                  <div className="field-group interaction-account-name-field">
-                    <label>Nombre</label>
-                    <input
-                      value={resolutionForm.accountResolution.draft.name}
-                      onChange={(event) =>
-                        setResolutionForm((currentValue) => ({
-                          ...currentValue,
-                          accountResolution: {
-                            ...currentValue.accountResolution,
-                            draft: {
-                              ...currentValue.accountResolution.draft,
-                              name: event.target.value,
-                            },
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                ) : null}
-                {resolutionForm.accountResolution.mode !== "link_existing" ? (
-                  <>
-                    <div className="field-group">
-                      <label>Website</label>
-                      <input
-                        value={resolutionForm.accountResolution.draft.website}
+                  {resolutionForm.accountResolution.mode === "link_existing" ? (
+                    <div className="field-group interaction-grid-span-2 interaction-account-existing-field">
+                      <label>Cuenta existente</label>
+                      <select
+                        value={resolutionForm.accountResolution.accountId}
                         onChange={(event) =>
                           setResolutionForm((currentValue) => ({
                             ...currentValue,
                             accountResolution: {
                               ...currentValue.accountResolution,
-                              draft: {
-                                ...currentValue.accountResolution.draft,
-                                website: event.target.value,
-                              },
+                              accountId: event.target.value,
                             },
                           }))
                         }
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label>Teléfono</label>
-                      <input
-                        value={resolutionForm.accountResolution.draft.phone}
-                        onChange={(event) =>
-                          setResolutionForm((currentValue) => ({
-                            ...currentValue,
-                            accountResolution: {
-                              ...currentValue.accountResolution,
-                              draft: {
-                                ...currentValue.accountResolution.draft,
-                                phone: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </section>
-
-            {showDependentResolutionSections ? (
-              <>
-                <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section">
-                  <h4>Contactos sugeridos</h4>
-                  {(editForm.suggestedContacts || []).map((contact, index) => {
-                    const resolution = resolutionForm.contactResolutions[index];
-                    if (!resolution) return null;
-                    return (
-                      <article
-                        key={contact.suggestionId}
-                        className="interaction-resolution-card"
                       >
-                        <div className="interaction-resolution-card-head">
-                          <strong>
-                            {contact.fullName ||
-                              `${contact.firstName} ${contact.lastName}`}
-                          </strong>
-                          <span className="field-hint">
-                            {contact.reason || "Sugerido por análisis"}
-                          </span>
-                        </div>
-                        <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
-                          <div className="field-group interaction-resolution-action-field">
-                            <label>Acción</label>
-                            <select
-                              value={resolution.mode}
-                              onChange={(event) =>
-                                setResolutionForm((prev) => ({
-                                  ...prev,
-                                  contactResolutions:
-                                    prev.contactResolutions.map(
-                                      (item, itemIndex) =>
-                                        itemIndex === index
-                                          ? {
-                                              ...item,
-                                              mode: event.target.value,
-                                            }
-                                          : item,
-                                    ),
-                                }))
-                              }
-                            >
-                              <option value="ignore">Ignorar</option>
-                              <option value="link_existing">
-                                Vincular existente
-                              </option>
-                              <option value="create_new">Crear contacto</option>
-                            </select>
-                          </div>
-                          {resolution.mode === "link_existing" ? (
-                            <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
-                              <label>Contacto existente</label>
-                              <select
-                                value={resolution.contactId}
-                                onChange={(event) =>
-                                  setResolutionForm((prev) => ({
-                                    ...prev,
-                                    contactResolutions:
-                                      prev.contactResolutions.map(
-                                        (item, itemIndex) =>
-                                          itemIndex === index
-                                            ? {
-                                                ...item,
-                                                contactId: event.target.value,
-                                              }
-                                            : item,
-                                      ),
-                                  }))
-                                }
-                              >
-                                <option value="">Selecciona contacto</option>
-                                {availableContacts.map((option) => (
-                                  <option key={option.id} value={option.id}>
-                                    {option.full_name}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : null}
-                          {resolution.mode !== "link_existing" ? (
-                            <>
-                              <div className="field-group interaction-contact-name-field">
-                                <label>Nombre</label>
-                                <input
-                                  value={resolution.draft.firstName}
-                                  onChange={(event) =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      contactResolutions:
-                                        prev.contactResolutions.map(
-                                          (item, itemIndex) =>
-                                            itemIndex === index
-                                              ? {
-                                                  ...item,
-                                                  draft: {
-                                                    ...item.draft,
-                                                    firstName:
-                                                      event.target.value,
-                                                  },
-                                                }
-                                              : item,
-                                        ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="field-group">
-                                <label>Apellido</label>
-                                <input
-                                  value={resolution.draft.lastName}
-                                  onChange={(event) =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      contactResolutions:
-                                        prev.contactResolutions.map(
-                                          (item, itemIndex) =>
-                                            itemIndex === index
-                                              ? {
-                                                  ...item,
-                                                  draft: {
-                                                    ...item.draft,
-                                                    lastName:
-                                                      event.target.value,
-                                                  },
-                                                }
-                                              : item,
-                                        ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="field-group">
-                                <label>Email</label>
-                                <input
-                                  value={resolution.draft.email}
-                                  onChange={(event) =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      contactResolutions:
-                                        prev.contactResolutions.map(
-                                          (item, itemIndex) =>
-                                            itemIndex === index
-                                              ? {
-                                                  ...item,
-                                                  draft: {
-                                                    ...item.draft,
-                                                    email: event.target.value,
-                                                  },
-                                                }
-                                              : item,
-                                        ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                              <div className="field-group">
-                                <label>Cargo</label>
-                                <input
-                                  value={resolution.draft.positionTitle}
-                                  onChange={(event) =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      contactResolutions:
-                                        prev.contactResolutions.map(
-                                          (item, itemIndex) =>
-                                            itemIndex === index
-                                              ? {
-                                                  ...item,
-                                                  draft: {
-                                                    ...item.draft,
-                                                    positionTitle:
-                                                      event.target.value,
-                                                  },
-                                                }
-                                              : item,
-                                        ),
-                                    }))
-                                  }
-                                />
-                              </div>
-                            </>
-                          ) : null}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </section>
+                        <option value="">Selecciona cuenta</option>
+                        {options.accounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                  {resolutionForm.accountResolution.mode !== "link_existing" ? (
+                    <div className="field-group interaction-account-name-field">
+                      <label>Nombre</label>
+                      <input
+                        value={resolutionForm.accountResolution.draft.name}
+                        onChange={(event) =>
+                          setResolutionForm((currentValue) => ({
+                            ...currentValue,
+                            accountResolution: {
+                              ...currentValue.accountResolution,
+                              draft: {
+                                ...currentValue.accountResolution.draft,
+                                name: event.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  {resolutionForm.accountResolution.mode !== "link_existing" ? (
+                    <>
+                      <div className="field-group">
+                        <label>Website</label>
+                        <input
+                          value={resolutionForm.accountResolution.draft.website}
+                          onChange={(event) =>
+                            setResolutionForm((currentValue) => ({
+                              ...currentValue,
+                              accountResolution: {
+                                ...currentValue.accountResolution,
+                                draft: {
+                                  ...currentValue.accountResolution.draft,
+                                  website: event.target.value,
+                                },
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label>Teléfono</label>
+                        <input
+                          value={resolutionForm.accountResolution.draft.phone}
+                          onChange={(event) =>
+                            setResolutionForm((currentValue) => ({
+                              ...currentValue,
+                              accountResolution: {
+                                ...currentValue.accountResolution,
+                                draft: {
+                                  ...currentValue.accountResolution.draft,
+                                  phone: event.target.value,
+                                },
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </section>
 
-                {hasResolvedSuggestedContact ? (
-                  <section className="account-form-section account-modal-section interaction-detail-section interaction-opportunity-suggestion-section">
-                    <h4>Oportunidades sugeridas</h4>
-                    {(editForm.suggestedOpportunities || []).map(
-                      (opportunity, index) => {
+              {showDependentResolutionSections ? (
+                <>
+                  <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section">
+                    <h4>Contactos sugeridos</h4>
+                    {(editForm.suggestedContacts || []).map(
+                      (contact, index) => {
                         const resolution =
-                          resolutionForm.opportunityResolutions[index];
+                          resolutionForm.contactResolutions[index];
                         if (!resolution) return null;
                         return (
                           <article
-                            key={opportunity.suggestionId}
+                            key={contact.suggestionId}
                             className="interaction-resolution-card"
                           >
-                            <div className="interaction-resolution-card-head interaction-resolution-card-head-split">
-                              <div>
-                                <strong>
-                                  {opportunity.name ||
-                                    `Oportunidad ${index + 1}`}
-                                </strong>
-                                <p className="field-hint">
-                                  {opportunity.reason ||
-                                    "Sugerida por análisis"}
-                                </p>
-                              </div>
-                              <label className="interaction-primary-checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={resolution.isPrimary}
-                                  onChange={() =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      opportunityResolutions:
-                                        prev.opportunityResolutions.map(
-                                          (item, itemIndex) => ({
-                                            ...item,
-                                            isPrimary: itemIndex === index,
-                                          }),
-                                        ),
-                                    }))
-                                  }
-                                />
-                                Principal
-                              </label>
+                            <div className="interaction-resolution-card-head">
+                              <strong>
+                                {contact.fullName ||
+                                  `${contact.firstName} ${contact.lastName}`}
+                              </strong>
+                              <span className="field-hint">
+                                {contact.reason || "Sugerido por análisis"}
+                              </span>
                             </div>
-                            <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
+                            <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
                               <div className="field-group interaction-resolution-action-field">
                                 <label>Acción</label>
                                 <select
@@ -1471,8 +1267,8 @@ function InteractionDetailModal({
                                   onChange={(event) =>
                                     setResolutionForm((prev) => ({
                                       ...prev,
-                                      opportunityResolutions:
-                                        prev.opportunityResolutions.map(
+                                      contactResolutions:
+                                        prev.contactResolutions.map(
                                           (item, itemIndex) =>
                                             itemIndex === index
                                               ? {
@@ -1489,25 +1285,25 @@ function InteractionDetailModal({
                                     Vincular existente
                                   </option>
                                   <option value="create_new">
-                                    Crear oportunidad
+                                    Crear contacto
                                   </option>
                                 </select>
                               </div>
                               {resolution.mode === "link_existing" ? (
-                                <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
-                                  <label>Oportunidad existente</label>
+                                <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
+                                  <label>Contacto existente</label>
                                   <select
-                                    value={resolution.opportunityId}
+                                    value={resolution.contactId}
                                     onChange={(event) =>
                                       setResolutionForm((prev) => ({
                                         ...prev,
-                                        opportunityResolutions:
-                                          prev.opportunityResolutions.map(
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
                                             (item, itemIndex) =>
                                               itemIndex === index
                                                 ? {
                                                     ...item,
-                                                    opportunityId:
+                                                    contactId:
                                                       event.target.value,
                                                   }
                                                 : item,
@@ -1516,35 +1312,35 @@ function InteractionDetailModal({
                                     }
                                   >
                                     <option value="">
-                                      Selecciona oportunidad
+                                      Selecciona contacto
                                     </option>
-                                    {availableOpportunities.map((option) => (
+                                    {availableContacts.map((option) => (
                                       <option key={option.id} value={option.id}>
-                                        {option.name}
+                                        {option.full_name}
                                       </option>
                                     ))}
                                   </select>
                                 </div>
                               ) : null}
-                              {resolution.mode === "create_new" ? (
+                              {resolution.mode !== "link_existing" ? (
                                 <>
-                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-name-field">
+                                  <div className="field-group interaction-contact-name-field">
                                     <label>Nombre</label>
                                     <input
-                                      value={resolution.draft.name}
+                                      value={resolution.draft.firstName}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
+                                          contactResolutions:
+                                            prev.contactResolutions.map(
                                               (item, itemIndex) =>
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
                                                       draft: {
                                                         ...item.draft,
-                                                        name: event.target
-                                                          .value,
+                                                        firstName:
+                                                          event.target.value,
                                                       },
                                                     }
                                                   : item,
@@ -1554,24 +1350,21 @@ function InteractionDetailModal({
                                     />
                                   </div>
                                   <div className="field-group">
-                                    <label>Monto USD</label>
+                                    <label>Apellido</label>
                                     <input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={resolution.draft.amountUsd}
+                                      value={resolution.draft.lastName}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
+                                          contactResolutions:
+                                            prev.contactResolutions.map(
                                               (item, itemIndex) =>
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
                                                       draft: {
                                                         ...item.draft,
-                                                        amountUsd:
+                                                        lastName:
                                                           event.target.value,
                                                       },
                                                     }
@@ -1582,22 +1375,21 @@ function InteractionDetailModal({
                                     />
                                   </div>
                                   <div className="field-group">
-                                    <label>Fecha estimada de cierre</label>
+                                    <label>Email</label>
                                     <input
-                                      type="date"
-                                      value={resolution.draft.closeDate}
+                                      value={resolution.draft.email}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
+                                          contactResolutions:
+                                            prev.contactResolutions.map(
                                               (item, itemIndex) =>
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
                                                       draft: {
                                                         ...item.draft,
-                                                        closeDate:
+                                                        email:
                                                           event.target.value,
                                                       },
                                                     }
@@ -1608,21 +1400,21 @@ function InteractionDetailModal({
                                     />
                                   </div>
                                   <div className="field-group">
-                                    <label>Línea de negocio</label>
-                                    <select
-                                      value={resolution.draft.businessLineId}
+                                    <label>Cargo</label>
+                                    <input
+                                      value={resolution.draft.positionTitle}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
+                                          contactResolutions:
+                                            prev.contactResolutions.map(
                                               (item, itemIndex) =>
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
                                                       draft: {
                                                         ...item.draft,
-                                                        businessLineId:
+                                                        positionTitle:
                                                           event.target.value,
                                                       },
                                                     }
@@ -1630,78 +1422,7 @@ function InteractionDetailModal({
                                             ),
                                         }))
                                       }
-                                    >
-                                      <option value="">Selecciona línea</option>
-                                      {options.businessLines.map((line) => (
-                                        <option key={line.id} value={line.id}>
-                                          {line.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="field-group">
-                                    <label>Vendedor</label>
-                                    <select
-                                      value={resolution.draft.sellerUserId}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        sellerUserId:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    >
-                                      <option value="">Sin vendedor</option>
-                                      {options.sellerUsers.map((user) => (
-                                        <option key={user.id} value={user.id}>
-                                          {user.full_name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="field-group">
-                                    <label>Preventa</label>
-                                    <select
-                                      value={resolution.draft.presalesUserId}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          opportunityResolutions:
-                                            prev.opportunityResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        presalesUserId:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    >
-                                      <option value="">Sin preventa</option>
-                                      {options.presalesUsers.map((user) => (
-                                        <option key={user.id} value={user.id}>
-                                          {user.full_name}
-                                        </option>
-                                      ))}
-                                    </select>
+                                    />
                                   </div>
                                 </>
                               ) : null}
@@ -1711,44 +1432,342 @@ function InteractionDetailModal({
                       },
                     )}
                   </section>
-                ) : null}
-              </>
-            ) : null}
-          </div>
 
-          <div className="modal-buttons interaction-detail-modal-buttons">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-              disabled={isAnalysisLocked}
-            >
-              Cerrar
-            </button>
-            {canUpdate &&
-            detail &&
-            (detail.resolvedAt || detail.analysisStatus === "resolved") ? (
+                  {hasResolvedSuggestedContact ? (
+                    <section className="account-form-section account-modal-section interaction-detail-section interaction-opportunity-suggestion-section">
+                      <h4>Oportunidades sugeridas</h4>
+                      {(editForm.suggestedOpportunities || []).map(
+                        (opportunity, index) => {
+                          const resolution =
+                            resolutionForm.opportunityResolutions[index];
+                          if (!resolution) return null;
+                          return (
+                            <article
+                              key={opportunity.suggestionId}
+                              className="interaction-resolution-card"
+                            >
+                              <div className="interaction-resolution-card-head interaction-resolution-card-head-split">
+                                <div>
+                                  <strong>
+                                    {opportunity.name ||
+                                      `Oportunidad ${index + 1}`}
+                                  </strong>
+                                  <p className="field-hint">
+                                    {opportunity.reason ||
+                                      "Sugerida por análisis"}
+                                  </p>
+                                </div>
+                                <label className="interaction-primary-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={resolution.isPrimary}
+                                    onChange={() =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        opportunityResolutions:
+                                          prev.opportunityResolutions.map(
+                                            (item, itemIndex) => ({
+                                              ...item,
+                                              isPrimary: itemIndex === index,
+                                            }),
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                  Principal
+                                </label>
+                              </div>
+                              <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
+                                <div className="field-group interaction-resolution-action-field">
+                                  <label>Acción</label>
+                                  <select
+                                    value={resolution.mode}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        opportunityResolutions:
+                                          prev.opportunityResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    mode: event.target.value,
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  >
+                                    <option value="ignore">Ignorar</option>
+                                    <option value="link_existing">
+                                      Vincular existente
+                                    </option>
+                                    <option value="create_new">
+                                      Crear oportunidad
+                                    </option>
+                                  </select>
+                                </div>
+                                {resolution.mode === "link_existing" ? (
+                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
+                                    <label>Oportunidad existente</label>
+                                    <select
+                                      value={resolution.opportunityId}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      opportunityId:
+                                                        event.target.value,
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    >
+                                      <option value="">
+                                        Selecciona oportunidad
+                                      </option>
+                                      {availableOpportunities.map((option) => (
+                                        <option
+                                          key={option.id}
+                                          value={option.id}
+                                        >
+                                          {option.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : null}
+                                {resolution.mode === "create_new" ? (
+                                  <>
+                                    <div className="field-group interaction-grid-span-3 interaction-opportunity-name-field">
+                                      <label>Nombre</label>
+                                      <input
+                                        value={resolution.draft.name}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          name: event.target
+                                                            .value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                    <div className="field-group">
+                                      <label>Monto USD</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={resolution.draft.amountUsd}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          amountUsd:
+                                                            event.target.value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                    <div className="field-group">
+                                      <label>Fecha estimada de cierre</label>
+                                      <input
+                                        type="date"
+                                        value={resolution.draft.closeDate}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          closeDate:
+                                                            event.target.value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                    <div className="field-group">
+                                      <label>Línea de negocio</label>
+                                      <select
+                                        value={resolution.draft.businessLineId}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          businessLineId:
+                                                            event.target.value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      >
+                                        <option value="">
+                                          Selecciona línea
+                                        </option>
+                                        {options.businessLines.map((line) => (
+                                          <option key={line.id} value={line.id}>
+                                            {line.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="field-group">
+                                      <label>Vendedor</label>
+                                      <select
+                                        value={resolution.draft.sellerUserId}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          sellerUserId:
+                                                            event.target.value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      >
+                                        <option value="">Sin vendedor</option>
+                                        {options.sellerUsers.map((user) => (
+                                          <option key={user.id} value={user.id}>
+                                            {user.full_name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="field-group">
+                                      <label>Preventa</label>
+                                      <select
+                                        value={resolution.draft.presalesUserId}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        draft: {
+                                                          ...item.draft,
+                                                          presalesUserId:
+                                                            event.target.value,
+                                                        },
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      >
+                                        <option value="">Sin preventa</option>
+                                        {options.presalesUsers.map((user) => (
+                                          <option key={user.id} value={user.id}>
+                                            {user.full_name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </>
+                                ) : null}
+                              </div>
+                            </article>
+                          );
+                        },
+                      )}
+                    </section>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+
+            <div className="modal-buttons interaction-detail-modal-buttons">
               <button
                 type="button"
-                className="btn-primary"
-                onClick={onSave}
-                disabled={saving}
+                className="btn-secondary"
+                onClick={onClose}
+                disabled={isAnalysisLocked}
               >
-                {saving ? "Guardando..." : "Guardar cambios"}
+                Cerrar
               </button>
-            ) : null}
-            {canResolve ? (
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={onResolve}
-                disabled={resolving}
-              >
-                {resolving ? "Resolviendo..." : "Resolver interacción"}
-              </button>
-            ) : null}
-          </div>
-        </fieldset>
+              {canUpdate &&
+              detail &&
+              (detail.resolvedAt || detail.analysisStatus === "resolved") ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onSave}
+                  disabled={saving}
+                >
+                  {saving ? "Guardando..." : "Guardar cambios"}
+                </button>
+              ) : null}
+              {canResolve ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onResolve}
+                  disabled={resolving}
+                >
+                  {resolving ? "Resolviendo..." : "Resolver interacción"}
+                </button>
+              ) : null}
+            </div>
+          </fieldset>
         </div>
         {isAnalysisLocked ? (
           <div
@@ -2108,12 +2127,13 @@ function InteractionsPage({ can, currentUser }) {
       filesToUpload.forEach((file) => formData.append("files", file));
       await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
       });
       resetCreateForm();
       setPage(1);
       setQuery("");
       setStatusFilter("all");
-      setSuccess("Interacción creada y analizada");
+      setSuccess("Interacción creada y analizada.");
       await loadInteractions({ page: 1, query: "", status: "all" });
     } catch (err) {
       setCreateInfoMessage(

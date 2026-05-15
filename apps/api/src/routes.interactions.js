@@ -1081,7 +1081,7 @@ router.post(
               warnings_json, topics_json, actions_taken_json, next_steps_json,
               suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
               created_by, updated_by, created_at, updated_at, analyzed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3))`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
           [
             interactionPublicId,
             title,
@@ -1117,7 +1117,7 @@ router.post(
         action: "created",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Interaccion creada con archivos y analisis inicial",
+        detail: "Interaccion creada y analizada",
       });
 
       return res.status(201).json(await fetchInteractionDetail(interactionId));
@@ -1239,7 +1239,7 @@ router.post(
         action: "updated",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Archivos agregados a la interaccion",
+        detail: "Interaccion creada",
       });
 
       return res.status(201).json(await fetchInteractionDetail(interactionId));
