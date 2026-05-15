@@ -150,7 +150,10 @@ function resolveLeadCommercialStatus({
     }
     return "lead_qualified";
   }
-  return "lead_assigned";
+  if (sellerUserId) {
+    return "lead_assigned";
+  }
+  return "lead_unassigned";
 }
 
 async function validateLinkedContactForAccount(contactId, accountId) {

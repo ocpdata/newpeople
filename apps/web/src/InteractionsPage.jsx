@@ -271,7 +271,9 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options, curren
       ? effectiveResolutionForm.sellerUserId
         ? "Lead Calificado"
         : "Creado"
-      : "Lead Asignado";
+      : effectiveResolutionForm.sellerUserId
+        ? "Lead Asignado"
+        : "Lead no asignado";
 
   return {
     interactionTitle: detail.title || "Interacción sin título",
@@ -305,6 +307,12 @@ function getInteractionStatusMeta(status) {
         className: "interaction-status-pill is-resolved",
         toneClassName: "interaction-summary-card is-resolved",
       };
+    case "lead_unassigned":
+      return {
+        label: "Lead no asignado",
+        className: "interaction-status-pill is-uploaded",
+        toneClassName: "interaction-summary-card is-uploaded",
+      };
     case "lead_assigned":
       return {
         label: "Lead Asignado",
@@ -328,6 +336,11 @@ function getInteractionStatusMeta(status) {
 
 function getInteractionFilterPillClass(filter, selectedFilter) {
   const isSelected = filter === selectedFilter;
+  if (filter === "lead_unassigned") {
+    return isSelected
+      ? "status-filter-pill interaction-filter-pill-uploaded is-selected"
+      : "status-filter-pill interaction-filter-pill-uploaded";
+  }
   if (filter === "lead_assigned") {
     return isSelected
       ? "status-filter-pill status-filter-pill-active is-selected"
@@ -2766,6 +2779,24 @@ function InteractionsPage({ can, currentUser }) {
           role="group"
           aria-label="Filtrar leads por estado"
         >
+          <button
+            type="button"
+            className={getInteractionFilterPillClass(
+              "lead_unassigned",
+              statusFilter,
+            )}
+            aria-pressed={statusFilter === "lead_unassigned"}
+            onClick={() => {
+              setPage(1);
+              setStatusFilter("lead_unassigned");
+            }}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Lead no asignado</span>
+            <span className="status-filter-pill-count">
+              {statusCounts.lead_unassigned || 0}
+            </span>
+          </button>
           <button
             type="button"
             className={getInteractionFilterPillClass(

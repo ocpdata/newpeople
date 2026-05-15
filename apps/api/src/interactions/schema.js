@@ -111,9 +111,14 @@ async function ensureInteractionLeadColumns() {
          FROM interaction_contact_links icl
          WHERE icl.interaction_id = interactions.id
        ) THEN 'lead_assigned'
+       WHEN account_id IS NOT NULL AND EXISTS (
+         SELECT 1
+         FROM interaction_contact_links icl
+         WHERE icl.interaction_id = interactions.id
+       ) THEN 'lead_unassigned'
        ELSE 'created'
      END
-     WHERE analysis_status NOT IN ('created', 'lead_assigned', 'lead_qualified')`,
+     WHERE analysis_status NOT IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified')`,
   );
 }
 

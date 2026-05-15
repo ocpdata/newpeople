@@ -4413,7 +4413,7 @@ describe("API integration baseline", () => {
     expect(interactionRow.analysis_status).toBe("lead_qualified");
   });
 
-  test("interacciones marca lead asignado cuando solo vincula cuenta y contacto", async () => {
+  test("interacciones marca lead no asignado cuando vincula cuenta y contacto sin vendedor", async () => {
     const loginResponse = await login(
       request(app),
       `${TEST_PREFIX}.interactions.manager@example.com`,
@@ -4473,7 +4473,7 @@ describe("API integration baseline", () => {
       });
 
     expect(resolveResponse.status).toBe(200);
-    expect(resolveResponse.body.analysisStatus).toBe("lead_assigned");
+    expect(resolveResponse.body.analysisStatus).toBe("lead_unassigned");
     expect(resolveResponse.body.accountId).toBe(ctx.fixtureAccountId);
     expect(resolveResponse.body.contacts).toHaveLength(1);
     expect(resolveResponse.body.opportunities).toHaveLength(0);
@@ -4488,6 +4488,85 @@ describe("API integration baseline", () => {
     expect(Number(interactionRow.account_id)).toBe(ctx.fixtureAccountId);
     expect(interactionRow.primary_opportunity_id).toBeNull();
     expect(interactionRow.seller_user_id).toBeNull();
+    expect(interactionRow.analysis_status).toBe("lead_unassigned");
+  });
+
+  test("interacciones marca lead asignado cuando vincula cuenta y contacto con vendedor", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead asignado con vendedor ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Gamma Infraestructura",
+            "Contacto: Luis Gomez",
+            "Tema: Seguimiento comercial de infraestructura",
+            "Correo: luis.gomez@gamma.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_assigned_seller_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        sellerUserId: ctx.sellerUserId,
+        opportunityResolutions: [],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.analysisStatus).toBe("lead_assigned");
+    expect(resolveResponse.body.accountId).toBe(ctx.fixtureAccountId);
+    expect(resolveResponse.body.contacts).toHaveLength(1);
+    expect(resolveResponse.body.opportunities).toHaveLength(0);
+
+    const [interactionRow] = await query(
+      `SELECT account_id, primary_opportunity_id, analysis_status, seller_user_id
+       FROM interactions
+       WHERE id = ?
+       LIMIT 1`,
+      [interactionId],
+    );
+    expect(Number(interactionRow.account_id)).toBe(ctx.fixtureAccountId);
+    expect(interactionRow.primary_opportunity_id).toBeNull();
+    expect(Number(interactionRow.seller_user_id)).toBe(ctx.sellerUserId);
     expect(interactionRow.analysis_status).toBe("lead_assigned");
   });
 
