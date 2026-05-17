@@ -11,6 +11,8 @@ import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema
 import { ensureCommercialDevelopmentPermissions } from "./commercial-development/permissions.js";
 import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
+import { ensureManufacturerRegistrationPermissions } from "./manufacturer-registrations/permissions.js";
+import { ensureManufacturerRegistrationsSchema } from "./manufacturer-registrations/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { ensureProcessCommercialConfigPermissions } from "./process-commercial-config/permissions.js";
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
@@ -23,6 +25,7 @@ export async function startServer() {
   await ensureCommercialDevelopmentPermissions();
   await ensureCommercialEnablementPermissions();
   await ensureCommercialPlanningPermissions();
+  await ensureManufacturerRegistrationPermissions();
   await ensureProcessCommercialConfigPermissions();
   await ensureAccountInteractionsSchema();
   await ensureInteractionSchema();
@@ -31,6 +34,7 @@ export async function startServer() {
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
   await ensureCommercialPlanningSchema();
+  await ensureManufacturerRegistrationsSchema();
   await startAuditRetentionJob();
   await startOpportunityDocumentProcessingWorker();
   return app.listen(config.port, () => {

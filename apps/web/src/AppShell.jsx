@@ -27,6 +27,9 @@ const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
   () => import("./CommercialEnablementPage"),
 );
+const ManufacturerRegistrationsPage = lazy(
+  () => import("./ManufacturerRegistrationsPage"),
+);
 const ContactsPage = lazy(() => import("./ContactsPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
@@ -111,8 +114,7 @@ export default function AppShell({
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
   const canAccessCommercialDevelopment =
-    (can("desarrollo_comercial.read") ||
-      can("desarrollo_comercial.update")) &&
+    (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     can("oportunidades.read");
   const canAccessProcessCommercialConfig =
     can("proceso_comercial_config.read") ||
@@ -126,6 +128,8 @@ export default function AppShell({
     can("enablement_comercial.read") ||
     can("enablement_comercial.update") ||
     can("enablement_comercial.analytics");
+  const canAccessManufacturerRegistrations =
+    can("registros_fabricantes.read") || can("registros_fabricantes.read_all");
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
 
@@ -209,6 +213,16 @@ export default function AppShell({
           element={
             can("oportunidades.read") ? (
               <OpportunitiesPage can={can} currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/manufacturer-registrations"
+          element={
+            canAccessManufacturerRegistrations && can("oportunidades.read") ? (
+              <ManufacturerRegistrationsPage can={can} />
             ) : (
               <Navigate to="/" />
             )
@@ -303,7 +317,8 @@ export default function AppShell({
           {(can("cuentas.read") ||
             can("contactos.read") ||
             can("oportunidades.read") ||
-            canAccessQuotations) && (
+            canAccessQuotations ||
+            canAccessManufacturerRegistrations) && (
             <SidebarNavGroup title="Comercial">
               {can("cuentas.read") && (
                 <GuardedNavLink
@@ -338,6 +353,15 @@ export default function AppShell({
                   Cotizaciones
                 </GuardedNavLink>
               )}
+              {canAccessManufacturerRegistrations &&
+              can("oportunidades.read") ? (
+                <GuardedNavLink
+                  to="/manufacturer-registrations"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Registros de fabricantes
+                </GuardedNavLink>
+              ) : null}
             </SidebarNavGroup>
           )}
 

@@ -1,7 +1,47 @@
 import axios from "axios";
 
 const configuredBaseURL = import.meta.env.VITE_API_URL?.trim();
-const baseURL = configuredBaseURL || window.location.origin;
+
+function isLoopbackHostname(hostname) {
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  );
+}
+
+function resolveBaseURL() {
+  const pageOrigin = window.location.origin;
+  if (!configuredBaseURL) {
+    return pageOrigin;
+  }
+
+  try {
+    const configuredURL = new URL(configuredBaseURL, pageOrigin);
+    const pageURL = new URL(pageOrigin);
+
+    if (import.meta.env.PROD) {
+      const configuredTargetsLoopback = isLoopbackHostname(
+        configuredURL.hostname,
+      );
+      const pageTargetsLoopback = isLoopbackHostname(pageURL.hostname);
+      if (configuredTargetsLoopback && !pageTargetsLoopback) {
+        return pageOrigin;
+      }
+
+      if (
+        pageURL.protocol === "https:" &&
+        configuredURL.protocol !== "https:"
+      ) {
+        return pageOrigin;
+      }
+    }
+
+    return configuredURL.origin;
+  } catch {
+    return pageOrigin;
+  }
+}
+
+const baseURL = resolveBaseURL();
 
 export const api = axios.create({
   baseURL,
@@ -106,7 +146,9 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
     }
 
     if (error?.code === "ECONNABORTED") {
-      return String(error?.message || "La solicitud excedio el tiempo de espera");
+      return String(
+        error?.message || "La solicitud excedio el tiempo de espera",
+      );
     }
 
     if (String(error?.message || "").trim()) {

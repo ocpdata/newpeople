@@ -5,6 +5,8 @@ import { config } from "../src/config.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
+import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
+import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
 import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
@@ -47,6 +49,8 @@ describe("API integration baseline", () => {
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
     await ensureCommercialExecutionSchema();
+    await ensureManufacturerRegistrationPermissions();
+    await ensureManufacturerRegistrationsSchema();
 
     const sellerRole = await ensureNamedRole("Vendedor");
     if (sellerRole.created) {
@@ -211,6 +215,16 @@ describe("API integration baseline", () => {
         "planeacion_comercial.override_validation",
       ],
     });
+    ctx.manufacturerRegistrationManagerRoleId = await createRole({
+      name: `${TEST_PREFIX}_manufacturer_registration_manager`,
+      permissionCodes: [
+        "registros_fabricantes.read",
+        "registros_fabricantes.update",
+        "registros_fabricantes.request",
+        "registros_fabricantes.manage",
+        "registros_fabricantes.read_all",
+      ],
+    });
 
     cleanup.roleIds.push(
       ctx.accountCreateRoleId,
@@ -237,6 +251,7 @@ describe("API integration baseline", () => {
       ctx.userCrudRoleId,
       ctx.auditReaderRoleId,
       ctx.commercialPlanningManagerRoleId,
+      ctx.manufacturerRegistrationManagerRoleId,
     );
 
     ctx.catalogIds = {
@@ -402,7 +417,10 @@ describe("API integration baseline", () => {
     ctx.opportunityFlowUserId = await createUser({
       fullName: "API Opportunity Flow",
       email: `${TEST_PREFIX}.opps.flow@example.com`,
-      roleIds: [ctx.opportunityFlowRoleId],
+      roleIds: [
+        ctx.opportunityFlowRoleId,
+        ctx.manufacturerRegistrationManagerRoleId,
+      ],
     });
     ctx.opportunityGlobalScopeUserId = await createUser({
       fullName: "API Opportunity Global Scope",
@@ -4284,7 +4302,9 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(deleteResponse.status).toBe(409);
-    expect(deleteResponse.body.message).toBe("No puedes eliminar un lead calificado");
+    expect(deleteResponse.body.message).toBe(
+      "No puedes eliminar un lead calificado",
+    );
 
     const interactionRows = await query(
       `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
@@ -5892,6 +5912,174 @@ describe("API integration baseline", () => {
 
     expect(createResponse.status).toBe(403);
     expect(createResponse.body.message).toBe("No autorizado");
+  });
+
+  test("registros_fabricantes crea, aprueba, renueva y lista un registro por oportunidad", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_manufacturer_registration_flow`,
+    );
+
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_manufacturer_registration_flow`,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const createResponse = await request(app)
+      .post(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        providerId,
+        requestedAt: "2026-05-16",
+        notes: "Registro inicial de fabricante",
+      });
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.providerId).toBe(providerId);
+    expect(createResponse.body.displayStatus).toBe("sin_aprobar");
+
+    const registrationId = Number(createResponse.body.id);
+
+    const approveResponse = await request(app)
+      .post(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations/${registrationId}/approve`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        registrationFolio: `FOLIO-${TEST_PREFIX.slice(-6)}-A`,
+        approvedAt: "2026-05-18",
+        expiresAt: "2026-08-31",
+        notes: "Confirmado por fabricante",
+      });
+
+    expect(approveResponse.status).toBe(200);
+    expect(approveResponse.body.displayStatus).toBe("aprobado");
+    expect(approveResponse.body.registrationFolio).toContain("FOLIO-");
+
+    const renewResponse = await request(app)
+      .post(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations/${registrationId}/renew`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        registrationFolio: approveResponse.body.registrationFolio,
+        expiresAt: "2026-11-30",
+        notes: "Renovacion trimestral",
+      });
+
+    expect(renewResponse.status).toBe(200);
+    expect(renewResponse.body.displayStatus).toBe("renovado");
+    expect(renewResponse.body.renewalCount).toBe(1);
+    expect(Array.isArray(renewResponse.body.renewals)).toBe(true);
+    expect(renewResponse.body.renewals).toHaveLength(1);
+
+    const listResponse = await request(app)
+      .get(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toHaveLength(1);
+    expect(listResponse.body[0].displayStatus).toBe("renovado");
+
+    const globalListResponse = await request(app)
+      .get(`/api/manufacturer-registrations?providerId=${providerId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(globalListResponse.status).toBe(200);
+    expect(globalListResponse.body.items).toHaveLength(1);
+    expect(globalListResponse.body.summary.renovado).toBe(1);
+
+    const detailResponse = await request(app)
+      .get(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations/${registrationId}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.renewals).toHaveLength(1);
+    expect(detailResponse.body.auditEntries.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("registros_fabricantes bloquea solicitud y excluye listados cuando la oportunidad esta cerrada", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_manufacturer_registration_closed`,
+    );
+
+    const baselineAlertsResponse = await request(app)
+      .get("/api/manufacturer-registrations/alerts")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(baselineAlertsResponse.status).toBe(200);
+
+    const providerId = await createDirectProvider({
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_manufacturer_registration_closed`,
+    });
+    cleanup.providerIds.push(providerId);
+
+    const createOpenResponse = await request(app)
+      .post(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        providerId,
+        requestedAt: "2026-05-16",
+        notes: "Solicitud antes del cierre comercial",
+      });
+
+    expect(createOpenResponse.status).toBe(201);
+
+    await query(
+      `UPDATE opportunities
+       SET commercial_status_id = ?, commercial_closed_at = NOW(3), updated_at = NOW(3)
+       WHERE id = ?`,
+      [ctx.catalogIds.opportunityCommercialWonStatusId, fixture.opportunityId],
+    );
+
+    const createClosedResponse = await request(app)
+      .post(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        providerId,
+        requestedAt: "2026-05-17",
+        notes: "Solicitud bloqueada por cierre",
+      });
+
+    expect(createClosedResponse.status).toBe(422);
+    expect(createClosedResponse.body.reason).toBe(
+      "manufacturer_registration_closed_opportunity",
+    );
+
+    const opportunityListResponse = await request(app)
+      .get(
+        `/api/opportunities/${fixture.opportunityId}/manufacturer-registrations`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(opportunityListResponse.status).toBe(200);
+    expect(opportunityListResponse.body).toEqual([]);
+
+    const globalListResponse = await request(app)
+      .get(`/api/manufacturer-registrations?providerId=${providerId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(globalListResponse.status).toBe(200);
+    expect(globalListResponse.body.items).toHaveLength(0);
+    expect(globalListResponse.body.pagination.total).toBe(0);
+
+    const alertsResponse = await request(app)
+      .get("/api/manufacturer-registrations/alerts")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(alertsResponse.status).toBe(200);
+    expect(alertsResponse.body.total).toBe(baselineAlertsResponse.body.total);
   });
 
   test("oportunidades documentos soporta sesion, revision, transferencia y vinculos de etapa", async () => {

@@ -9,7 +9,7 @@ import OpportunityFormModal from "./opportunities/OpportunityFormModal";
 import OpportunitiesListSection from "./opportunities/OpportunitiesListSection";
 import { useOpportunitiesPage } from "./opportunities/useOpportunitiesPage";
 
-function OpportunitiesPage({ currentUser }) {
+function OpportunitiesPage({ currentUser, can }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     opportunityStatusFilter,
@@ -240,6 +240,10 @@ function OpportunitiesPage({ currentUser }) {
         formatDateTime={formatDateTime}
         setDocumentReviewFieldOverride={setDocumentReviewFieldOverride}
         setDocumentReviewMatchSelection={setDocumentReviewMatchSelection}
+        canRequestManufacturerRegistrations={can(
+          "registros_fabricantes.request",
+        )}
+        canUpdateManufacturerRegistrations={can("registros_fabricantes.update")}
         answerDocumentSelections={answerDocumentSelections}
         linkingStageDocumentId={linkingStageDocumentId}
         linkingAnswerSourceId={linkingAnswerSourceId}
