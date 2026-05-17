@@ -127,6 +127,30 @@ function formatRawErrorBody(data) {
   return normalized.slice(0, 500);
 }
 
+function formatGatewayTimeoutMessage(error, data) {
+  const status = Number(error?.response?.status);
+  const rawBody = typeof data === "string" ? data : "";
+  const normalizedBody = rawBody
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  if (status === 504) {
+    return "La solicitud tardo demasiado y fue interrumpida por el proxy antes de que la API respondiera. Intenta de nuevo con menos documentos o una etapa con menos preguntas.";
+  }
+
+  if (
+    (status === 502 || status === 503) &&
+    (normalizedBody.includes("gateway timeout") ||
+      normalizedBody.includes("requested url was rejected"))
+  ) {
+    return "La solicitud no alcanzo a completarse porque un proxy intermedio rechazo o interrumpio la respuesta de la API. Intenta nuevamente en unos momentos.";
+  }
+
+  return "";
+}
+
 function formatHttpStatusFallback(error) {
   const status = Number(error?.response?.status);
   const statusText = String(error?.response?.statusText || "").trim();
@@ -156,6 +180,11 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
     }
 
     return fallback;
+  }
+
+  const gatewayTimeoutMessage = formatGatewayTimeoutMessage(error, data);
+  if (gatewayTimeoutMessage) {
+    return gatewayTimeoutMessage;
   }
 
   const rawBodyDetail = formatRawErrorBody(data);

@@ -7,6 +7,10 @@ const PROCESS_GUIDE_URL = new URL(
   import.meta.url,
 );
 
+const PROPOSE_ANSWERS_MAX_RUNTIME_MS = 25000;
+const PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS = 18000;
+const PROPOSE_ANSWERS_MIN_PASS_WINDOW_MS = 2500;
+
 const STOP_WORDS = new Set([
   "al",
   "ante",
@@ -959,18 +963,58 @@ function buildTargetedQuestionRecoveryPayload({
   };
 }
 
-async function requestOpenAiSuggestions(payload) {
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    },
+function createRuntimeBudget(maxRuntimeMs = PROPOSE_ANSWERS_MAX_RUNTIME_MS) {
+  return {
+    startedAt: Date.now(),
+    maxRuntimeMs,
+  };
+}
+
+function getRemainingRuntimeMs(runtimeBudget) {
+  if (!runtimeBudget) return Number.POSITIVE_INFINITY;
+  return runtimeBudget.maxRuntimeMs - (Date.now() - runtimeBudget.startedAt);
+}
+
+function canRunAnotherPass(runtimeBudget) {
+  return (
+    getRemainingRuntimeMs(runtimeBudget) >= PROPOSE_ANSWERS_MIN_PASS_WINDOW_MS
   );
+}
+
+async function requestOpenAiSuggestions(payload, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
+  let response;
+
+  try {
+    response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.openai.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        ...(controller ? { signal: controller.signal } : {}),
+      },
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        `OpenAI request exceeded ${timeoutMs}ms while generating opportunity answer suggestions`,
+      );
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1037,10 +1081,16 @@ async function runTargetedQuestionRecovery({
   structuredGuide,
   stageGuide,
   questions,
+  runtimeBudget,
 }) {
   const recoveredSuggestions = [];
 
   for (const question of Array.isArray(questions) ? questions : []) {
+    const remainingRuntimeMs = getRemainingRuntimeMs(runtimeBudget);
+    if (remainingRuntimeMs < PROPOSE_ANSWERS_MIN_PASS_WINDOW_MS) {
+      break;
+    }
+
     const parsed = await requestOpenAiSuggestions(
       buildTargetedQuestionRecoveryPayload({
         salesStage,
@@ -1048,6 +1098,12 @@ async function runTargetedQuestionRecovery({
         stageGuide,
         question,
       }),
+      {
+        timeoutMs: Math.min(
+          PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
+          Math.max(remainingRuntimeMs, 1),
+        ),
+      },
     );
     const normalized = normalizeModelSuggestions(parsed?.suggestions, [
       question,
@@ -1815,6 +1871,8 @@ export async function suggestOpportunityStageAnswers({
   const stageGuide = structuredGuide.stagesByName.get(
     normalizeStageName(salesStage?.name || salesStage?.code || ""),
   );
+  const runtimeBudget = createRuntimeBudget();
+  let runtimeBudgetExceeded = false;
   const documentChunks = buildDocumentChunks(availableDocuments);
   const sharedDocumentContext = buildSharedDocumentContext(documentChunks);
   const questionContexts = questionInputs.map((question) => ({
@@ -1836,6 +1894,12 @@ export async function suggestOpportunityStageAnswers({
       questionContexts,
       sharedDocumentContext,
     }),
+    {
+      timeoutMs: Math.min(
+        PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
+        Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
+      ),
+    },
   );
   const normalized = normalizeModelSuggestions(
     parsed?.suggestions,
@@ -1849,26 +1913,38 @@ export async function suggestOpportunityStageAnswers({
     return shouldRetryWithFocusedPass(question, suggestion);
   });
 
-  const afterRetryResult = retryQuestions.length
-    ? mergeSuggestions(
-        normalized.suggestions,
-        normalizeModelSuggestions(
-          (
-            await requestOpenAiSuggestions(
-              buildOpenAiPayload({
-                salesStage,
-                structuredGuide,
-                stageGuide,
-                questionContexts: retryQuestions,
-                sharedDocumentContext: "",
-                retryMode: true,
-              }),
-            )
-          )?.suggestions,
-          retryQuestions,
-        ).suggestions,
-      )
-    : normalized;
+  const afterRetryResult =
+    retryQuestions.length && canRunAnotherPass(runtimeBudget)
+      ? mergeSuggestions(
+          normalized.suggestions,
+          normalizeModelSuggestions(
+            (
+              await requestOpenAiSuggestions(
+                buildOpenAiPayload({
+                  salesStage,
+                  structuredGuide,
+                  stageGuide,
+                  questionContexts: retryQuestions,
+                  sharedDocumentContext: "",
+                  retryMode: true,
+                }),
+                {
+                  timeoutMs: Math.min(
+                    PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
+                    Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
+                  ),
+                },
+              )
+            )?.suggestions,
+            retryQuestions,
+          ).suggestions,
+        )
+      : (() => {
+          if (retryQuestions.length) {
+            runtimeBudgetExceeded = true;
+          }
+          return normalized;
+        })();
 
   const semanticRecoveryQuestions = questionContexts.filter((question) => {
     const suggestion = afterRetryResult.suggestions.find(
@@ -1877,25 +1953,37 @@ export async function suggestOpportunityStageAnswers({
     return suggestion?.status === "insufficient_evidence";
   });
 
-  const finalResult = semanticRecoveryQuestions.length
-    ? mergeSuggestions(
-        afterRetryResult.suggestions,
-        normalizeModelSuggestions(
-          (
-            await requestOpenAiSuggestions(
-              buildSemanticRecoveryPayload({
-                salesStage,
-                structuredGuide,
-                stageGuide,
-                questionContexts: semanticRecoveryQuestions,
-                sharedDocumentContext,
-              }),
-            )
-          )?.suggestions,
-          semanticRecoveryQuestions,
-        ).suggestions,
-      )
-    : afterRetryResult;
+  const finalResult =
+    semanticRecoveryQuestions.length && canRunAnotherPass(runtimeBudget)
+      ? mergeSuggestions(
+          afterRetryResult.suggestions,
+          normalizeModelSuggestions(
+            (
+              await requestOpenAiSuggestions(
+                buildSemanticRecoveryPayload({
+                  salesStage,
+                  structuredGuide,
+                  stageGuide,
+                  questionContexts: semanticRecoveryQuestions,
+                  sharedDocumentContext,
+                }),
+                {
+                  timeoutMs: Math.min(
+                    PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
+                    Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
+                  ),
+                },
+              )
+            )?.suggestions,
+            semanticRecoveryQuestions,
+          ).suggestions,
+        )
+      : (() => {
+          if (semanticRecoveryQuestions.length) {
+            runtimeBudgetExceeded = true;
+          }
+          return afterRetryResult;
+        })();
 
   const targetedRecoveryQuestions = questionContexts.filter((question) => {
     const suggestion = finalResult.suggestions.find(
@@ -1908,17 +1996,24 @@ export async function suggestOpportunityStageAnswers({
     );
   });
 
-  const settledResult = targetedRecoveryQuestions.length
-    ? mergeSuggestions(
-        finalResult.suggestions,
-        await runTargetedQuestionRecovery({
-          salesStage,
-          structuredGuide,
-          stageGuide,
-          questions: targetedRecoveryQuestions,
-        }),
-      )
-    : finalResult;
+  const settledResult =
+    targetedRecoveryQuestions.length && canRunAnotherPass(runtimeBudget)
+      ? mergeSuggestions(
+          finalResult.suggestions,
+          await runTargetedQuestionRecovery({
+            salesStage,
+            structuredGuide,
+            stageGuide,
+            questions: targetedRecoveryQuestions,
+            runtimeBudget,
+          }),
+        )
+      : (() => {
+          if (targetedRecoveryQuestions.length) {
+            runtimeBudgetExceeded = true;
+          }
+          return finalResult;
+        })();
 
   return {
     ...settledResult,
@@ -1930,6 +2025,7 @@ export async function suggestOpportunityStageAnswers({
       focusedRetryQuestionCount: retryQuestions.length,
       semanticRecoveryQuestionCount: semanticRecoveryQuestions.length,
       targetedRecoveryQuestionCount: targetedRecoveryQuestions.length,
+      runtimeBudgetExceeded,
     },
   };
 }
