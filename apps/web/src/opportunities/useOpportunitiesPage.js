@@ -3,6 +3,7 @@ import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
 
 const PROPOSE_ANSWERS_TIMEOUT_MS = 240000;
+const PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 
 function normalizeText(value) {
@@ -410,6 +411,14 @@ export function useOpportunitiesPage({
     activationStatusId: "",
   });
   const openEditOpportunityModalRef = useRef(null);
+  const commercialSuggestionPollingTokenRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      commercialSuggestionPollingTokenRef.current += 1;
+    },
+    [],
+  );
 
   function findCatalogIdByCode(options, expectedCode) {
     const target = normalizeText(expectedCode);
@@ -1409,6 +1418,82 @@ export function useOpportunitiesPage({
     setCommercialSuggestionFeedback(null);
   }
 
+  function applyCommercialSuggestionResult(stageId, result) {
+    const suggestions = Array.isArray(result?.suggestions)
+      ? result.suggestions
+      : [];
+    const stageSuggestions = Object.fromEntries(
+      suggestions.map((suggestion) => [
+        Number(suggestion.questionId),
+        suggestion,
+      ]),
+    );
+
+    setCommercialAnswerSuggestionsByStageId((prev) => ({
+      ...prev,
+      [stageId]: stageSuggestions,
+    }));
+
+    const proposedCount = Number(result?.summary?.proposedCount || 0);
+    const ambiguousCount = Number(result?.summary?.ambiguousCount || 0);
+    const insufficientCount = Number(result?.summary?.insufficientCount || 0);
+    setCommercialSuggestionFeedback({
+      tone: proposedCount ? "success" : "warning",
+      title: proposedCount
+        ? "Sugerencias generadas"
+        : "No hubo sugerencias confiables",
+      message: proposedCount
+        ? `Se generaron ${proposedCount} propuestas documentales para la etapa seleccionada. ${ambiguousCount} quedaron ambiguas y ${insufficientCount} sin evidencia suficiente.`
+        : "No se encontraron respuestas documentales confiables para esta etapa.",
+    });
+  }
+
+  async function pollCommercialSuggestionJob({
+    opportunityId,
+    stageId,
+    jobId,
+    pollingToken,
+    pollAfterMs,
+  }) {
+    let nextDelay = Math.max(
+      Number(pollAfterMs || PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS),
+      0,
+    );
+
+    while (commercialSuggestionPollingTokenRef.current === pollingToken) {
+      if (nextDelay > 0) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, nextDelay);
+        });
+      }
+
+      if (commercialSuggestionPollingTokenRef.current !== pollingToken) {
+        return null;
+      }
+
+      const { data } = await api.get(
+        `/api/opportunities/${opportunityId}/stage-view/${stageId}/propose-answers/jobs/${jobId}`,
+        { timeout: PROPOSE_ANSWERS_TIMEOUT_MS },
+      );
+
+      if (data?.result) {
+        return data;
+      }
+
+      const jobStatus = String(data?.job?.status || "");
+      if (["failed", "stale", "expired"].includes(jobStatus)) {
+        return data;
+      }
+
+      nextDelay = Math.max(
+        Number(data?.job?.pollAfterMs || PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS),
+        0,
+      );
+    }
+
+    return null;
+  }
+
   function openCreateOpportunityModal() {
     setError("");
     setSuccess("");
@@ -1843,43 +1928,55 @@ export function useOpportunitiesPage({
 
     setError("");
     setSuccess("");
-  setCommercialSuggestionFeedback(null);
+    commercialSuggestionPollingTokenRef.current += 1;
+    const pollingToken = commercialSuggestionPollingTokenRef.current;
+    setCommercialSuggestionFeedback(null);
     setAnalyzingCommercialSuggestions(true);
 
     try {
       const { data } = await api.post(
-        `/api/opportunities/${editingOpportunityId}/stage-view/${stageId}/propose-answers`,
+        `/api/opportunities/${editingOpportunityId}/stage-view/${stageId}/propose-answers/jobs`,
         {},
         { timeout: PROPOSE_ANSWERS_TIMEOUT_MS },
       );
-      const suggestions = Array.isArray(data?.suggestions)
-        ? data.suggestions
-        : [];
-      const stageSuggestions = Object.fromEntries(
-        suggestions.map((suggestion) => [
-          Number(suggestion.questionId),
-          suggestion,
-        ]),
-      );
 
-      setCommercialAnswerSuggestionsByStageId((prev) => ({
-        ...prev,
-        [stageId]: stageSuggestions,
-      }));
+      let resolvedData = data;
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (!jobId) {
+          throw new Error(
+            "No fue posible obtener el identificador del job de sugerencias",
+          );
+        }
 
-      const proposedCount = Number(data?.summary?.proposedCount || 0);
-      const ambiguousCount = Number(data?.summary?.ambiguousCount || 0);
-      const insufficientCount = Number(data?.summary?.insufficientCount || 0);
-      setCommercialSuggestionFeedback({
-        tone: proposedCount ? "success" : "warning",
-        title: proposedCount
-          ? "Sugerencias generadas"
-          : "No hubo sugerencias confiables",
-        message: proposedCount
-          ? `Se generaron ${proposedCount} propuestas documentales para la etapa seleccionada. ${ambiguousCount} quedaron ambiguas y ${insufficientCount} sin evidencia suficiente.`
-          : "No se encontraron respuestas documentales confiables para esta etapa.",
-      });
+        resolvedData = await pollCommercialSuggestionJob({
+          opportunityId: editingOpportunityId,
+          stageId,
+          jobId,
+          pollingToken,
+          pollAfterMs: resolvedData?.job?.pollAfterMs,
+        });
+      }
+
+      if (commercialSuggestionPollingTokenRef.current !== pollingToken) {
+        return;
+      }
+
+      if (resolvedData?.result) {
+        applyCommercialSuggestionResult(stageId, resolvedData.result);
+      } else {
+        setCommercialSuggestionFeedback({
+          tone: "danger",
+          title: "No fue posible generar sugerencias",
+          message:
+            String(resolvedData?.error?.message || "").trim() ||
+            "No fue posible analizar los documentos para proponer respuestas",
+        });
+      }
     } catch (err) {
+      if (commercialSuggestionPollingTokenRef.current !== pollingToken) {
+        return;
+      }
       setCommercialSuggestionFeedback({
         tone: "danger",
         title: "No fue posible generar sugerencias",
@@ -1889,7 +1986,9 @@ export function useOpportunitiesPage({
         ),
       });
     } finally {
-      setAnalyzingCommercialSuggestions(false);
+      if (commercialSuggestionPollingTokenRef.current === pollingToken) {
+        setAnalyzingCommercialSuggestions(false);
+      }
     }
   }
 

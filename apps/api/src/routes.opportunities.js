@@ -20,6 +20,12 @@ import {
   uploadFilesToSession,
 } from "./opportunity-documents/service.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
+import { queueOpportunityStageAnswerSuggestionProcessing } from "./opportunity-stage-answer-suggestions/async.js";
+import {
+  createOrReuseOpportunityStageAnswerSuggestionJob,
+  getOpportunityStageAnswerSuggestionJob,
+} from "./opportunity-stage-answer-suggestions/service.js";
+import { ensureOpportunityStageAnswerSuggestionJobSchema } from "./opportunity-stage-answer-suggestions/schema.js";
 import {
   isOpportunityStageAnswerSuggestionsEnabled,
   suggestOpportunityStageAnswers,
@@ -115,6 +121,10 @@ const opportunityCommercialCloseSchema = z.object({
 
 const opportunityStageValidationSchema = z.object({
   note: z.string().trim().max(5000).optional().nullable(),
+});
+
+const opportunityProposeAnswersJobSchema = z.object({
+  forceRegenerate: z.boolean().optional(),
 });
 
 const opportunityStageBypassSchema = z.object({
@@ -2262,6 +2272,119 @@ router.delete(
       userId: Number(req.user.id),
     });
     return res.json({ ok: true });
+  },
+);
+
+router.post(
+  "/:id/stage-view/:salesStageId/propose-answers/jobs",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const salesStageId = Number(req.params.salesStageId);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    if (!Number.isInteger(salesStageId) || salesStageId <= 0) {
+      return res.status(400).json({ message: "salesStageId invalido" });
+    }
+
+    const parsed = opportunityProposeAnswersJobSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Parametros invalidos para generar sugerencias documentales",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    if (!isOpportunityStageAnswerSuggestionsEnabled()) {
+      return res.status(404).json({
+        message:
+          "Las sugerencias documentales de respuestas no estan habilitadas",
+      });
+    }
+
+    await ensureOpportunityStageAnswerSuggestionJobSchema();
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    try {
+      const result = await createOrReuseOpportunityStageAnswerSuggestionJob({
+        opportunityId: id,
+        salesStageId,
+        requestedByUserId: Number(req.user.id),
+        forceRegenerate: Boolean(parsed.data.forceRegenerate),
+      });
+
+      if (!result.wasReused) {
+        queueOpportunityStageAnswerSuggestionProcessing();
+      }
+
+      return res
+        .status(result.response?.result ? 200 : 202)
+        .json(result.response);
+    } catch (error) {
+      const status = Number(error?.status || 500);
+      const detail = getSanitizedInternalErrorDetail(error);
+      return res.status(status).json({
+        message:
+          status === 404
+            ? detail || "No fue posible preparar la generacion de sugerencias"
+            : "No fue posible preparar la generacion de sugerencias documentales",
+        ...(status >= 500 && detail ? { detail } : {}),
+      });
+    }
+  },
+);
+
+router.get(
+  "/:id/stage-view/:salesStageId/propose-answers/jobs/:jobId",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const salesStageId = Number(req.params.salesStageId);
+    const jobId = String(req.params.jobId || "").trim();
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    if (!Number.isInteger(salesStageId) || salesStageId <= 0) {
+      return res.status(400).json({ message: "salesStageId invalido" });
+    }
+    if (!jobId) {
+      return res.status(400).json({ message: "jobId invalido" });
+    }
+
+    await ensureOpportunityStageAnswerSuggestionJobSchema();
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    const job = await getOpportunityStageAnswerSuggestionJob({
+      publicId: jobId,
+      opportunityId: id,
+      salesStageId,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job no encontrado" });
+    }
+
+    return res.json(job);
   },
 );
 

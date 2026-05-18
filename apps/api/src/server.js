@@ -15,6 +15,8 @@ import { ensureManufacturerRegistrationPermissions } from "./manufacturer-regist
 import { ensureManufacturerRegistrationsSchema } from "./manufacturer-registrations/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { ensureProcessCommercialConfigPermissions } from "./process-commercial-config/permissions.js";
+import { startOpportunityStageAnswerSuggestionWorker } from "./opportunity-stage-answer-suggestions/async.js";
+import { ensureOpportunityStageAnswerSuggestionJobSchema } from "./opportunity-stage-answer-suggestions/schema.js";
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
 import { ensureCorePermissions } from "./permissions.js";
@@ -30,6 +32,7 @@ export async function startServer() {
   await ensureAccountInteractionsSchema();
   await ensureInteractionSchema();
   await ensureOpportunityDocumentSchema();
+  await ensureOpportunityStageAnswerSuggestionJobSchema();
   await ensureOpportunityWorkspaceSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
@@ -37,6 +40,7 @@ export async function startServer() {
   await ensureManufacturerRegistrationsSchema();
   await startAuditRetentionJob();
   await startOpportunityDocumentProcessingWorker();
+  await startOpportunityStageAnswerSuggestionWorker();
   return app.listen(config.port, () => {
     console.log(`API running on http://localhost:${config.port}`);
   });

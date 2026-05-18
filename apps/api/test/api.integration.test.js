@@ -9,6 +9,7 @@ import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-r
 import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
 import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
+import { processPendingOpportunityStageAnswerSuggestionJobs } from "../src/opportunity-stage-answer-suggestions/service.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
 import {
@@ -8844,6 +8845,186 @@ describe("API integration baseline", () => {
       expect(response.status).toBe(404);
       expect(response.body.message).toContain("no estan habilitadas");
     } finally {
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers.jobs crea un job y luego expone el resultado completado", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_async_job_flow`,
+    );
+    const waitingQuestions = await getStageQuestionRowsByCode("waiting");
+    const [firstQuestion] = waitingQuestions;
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer_async_job`,
+      text: "El cliente confirmo que evaluara a los postores y espera tomar la decision la siguiente semana.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            suggestions: [
+              {
+                questionId: Number(firstQuestion.id),
+                status: "proposed",
+                proposalKind: "fill_empty",
+                proposedAnswer:
+                  "El cliente evaluara a los postores y espera tomar la decision la siguiente semana.",
+                reason:
+                  "La minuta documenta una comparacion de postores con una decision cercana.",
+              },
+            ],
+          }),
+        }),
+      });
+
+      const createResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(createResponse.status).toBe(202);
+      expect(createResponse.body.job).toEqual(
+        expect.objectContaining({
+          status: "pending",
+        }),
+      );
+
+      const jobId = String(createResponse.body.job.id || "");
+      expect(jobId).toBeTruthy();
+
+      const pendingResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs/${jobId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(pendingResponse.status).toBe(200);
+      expect(pendingResponse.body.job.status).toBe("pending");
+
+      await processPendingOpportunityStageAnswerSuggestionJobs({ limit: 1 });
+
+      const completedResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs/${jobId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(completedResponse.status).toBe(200);
+      expect(completedResponse.body.job.status).toBe("completed");
+      expect(completedResponse.body.result.suggestions).toHaveLength(1);
+      expect(completedResponse.body.result.suggestions[0]).toEqual(
+        expect.objectContaining({
+          questionId: Number(firstQuestion.id),
+          status: "proposed",
+          proposalKind: "fill_empty",
+        }),
+      );
+      expect(completedResponse.body.result.summary).toEqual({
+        proposedCount: 1,
+        fillCount: 1,
+        replaceCount: 0,
+        ambiguousCount: 0,
+        insufficientCount: 0,
+      });
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers.jobs reutiliza un resultado completado con el mismo fingerprint", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_async_job_reuse`,
+    );
+    const waitingQuestions = await getStageQuestionRowsByCode("waiting");
+    const [firstQuestion] = waitingQuestions;
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer_async_job_reuse`,
+      text: "El cliente definira al ganador del proceso durante la siguiente semana despues de comparar propuestas.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            suggestions: [
+              {
+                questionId: Number(firstQuestion.id),
+                status: "proposed",
+                proposalKind: "fill_empty",
+                proposedAnswer:
+                  "El cliente definira al ganador del proceso la siguiente semana despues de comparar propuestas.",
+                reason:
+                  "El documento resume la comparacion de propuestas y la fecha de decision.",
+              },
+            ],
+          }),
+        }),
+      });
+
+      const firstCreateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(firstCreateResponse.status).toBe(202);
+      const firstJobId = String(firstCreateResponse.body.job.id || "");
+      expect(firstJobId).toBeTruthy();
+
+      await processPendingOpportunityStageAnswerSuggestionJobs({ limit: 1 });
+
+      const secondCreateResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(secondCreateResponse.status).toBe(200);
+      expect(secondCreateResponse.body.job.id).toBe(firstJobId);
+      expect(secondCreateResponse.body.job.status).toBe("completed");
+      expect(secondCreateResponse.body.result.suggestions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            questionId: Number(firstQuestion.id),
+            status: "proposed",
+            proposalKind: "fill_empty",
+          }),
+        ]),
+      );
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      global.fetch = originalFetch;
       config.openai.apiKey = originalApiKey;
       config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
     }
