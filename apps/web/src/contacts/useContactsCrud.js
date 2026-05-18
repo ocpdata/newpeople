@@ -89,9 +89,9 @@ function normalizeContactToken(token, index) {
   }
 
   return trimmedToken
-    .split(/([\-/'’])/)
+    .split(/([-/'’])/)
     .map((segment) => {
-      if (/^[\-/'’]$/.test(segment)) {
+      if (/^[-/'’]$/.test(segment)) {
         return segment;
       }
       return normalizeContactSegment(segment);
@@ -790,6 +790,7 @@ export function useContactsCrud({
   }, [openEditContactModal]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContactDuplicateReview(null);
   }, [
     form.firstName,

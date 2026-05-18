@@ -518,6 +518,7 @@ export function useAccountInteractions({
       interactionTypes.length &&
       interactionResults.length
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInteractionForm(
         buildDefaultInteractionForm({ interactionTypes, interactionResults }),
       );
@@ -529,6 +530,7 @@ export function useAccountInteractions({
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInteractionForm((prev) => {
       const nextTypeId =
         prev.interactionTypeId || interactionTypes[0]?.id

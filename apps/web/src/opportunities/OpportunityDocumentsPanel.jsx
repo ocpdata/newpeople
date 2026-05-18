@@ -54,19 +54,6 @@ function hasMatchSuggestion(match) {
   );
 }
 
-function renderApplySuggestionButton({ disabled, onApply, label = "Aplicar" }) {
-  return (
-    <button
-      type="button"
-      className="btn-secondary opportunity-documents-apply-field-button"
-      onClick={onApply}
-      disabled={disabled}
-    >
-      {label}
-    </button>
-  );
-}
-
 function buildDocumentPreview(document) {
   const previewText = String(document?.previewText || "").trim();
   if (previewText) {
@@ -141,7 +128,6 @@ function buildDocumentPreview(document) {
 
 function OpportunityDocumentsPanel({
   editingOpportunityId,
-  documentUploadSession,
   documents,
   documentReview,
   documentReviewOverrides,
@@ -155,8 +141,6 @@ function OpportunityDocumentsPanel({
   onApplySuggestions,
   onDeleteDocument,
   onDownloadDocument,
-  onChangeFieldOverride,
-  onChangeMatchSelection,
   onApplyFieldSuggestion,
   onApplyMatchSuggestion,
 }) {

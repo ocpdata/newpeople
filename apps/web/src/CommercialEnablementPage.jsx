@@ -237,57 +237,6 @@ function buildAssetPayload(draftValue) {
   };
 }
 
-function normalizeDraftTitleCandidate(value) {
-  return String(value || "")
-    .trim()
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function deriveDraftTitle({ draftValue, files, linkValue }) {
-  const explicitTitle = normalizeDraftTitleCandidate(draftValue?.title);
-  if (explicitTitle.length >= 3) {
-    return explicitTitle;
-  }
-
-  const firstFileTitle = normalizeDraftTitleCandidate(files?.[0]?.name);
-  if (firstFileTitle.length >= 3) {
-    return firstFileTitle;
-  }
-
-  const explicitLinkLabel = normalizeDraftTitleCandidate(linkValue?.label);
-  if (explicitLinkLabel.length >= 3) {
-    return explicitLinkLabel;
-  }
-
-  const linkUrl = String(linkValue?.url || "").trim();
-  if (linkUrl) {
-    try {
-      const parsedUrl = new URL(linkUrl);
-      const pathTitle = normalizeDraftTitleCandidate(
-        decodeURIComponent(
-          parsedUrl.pathname.split("/").filter(Boolean).pop() || "",
-        ),
-      );
-      if (pathTitle.length >= 3) {
-        return pathTitle;
-      }
-      const hostTitle = normalizeDraftTitleCandidate(
-        parsedUrl.hostname.replace(/^www\./i, ""),
-      );
-      if (hostTitle.length >= 3) {
-        return hostTitle;
-      }
-    } catch {
-      // The URL field will be validated before creating a draft from a link.
-    }
-  }
-
-  return "Nuevo activo";
-}
-
 function buildPendingFileId(file) {
   return [file?.name || "archivo", file?.size || 0, file?.lastModified || 0].join(
     "::",
@@ -832,11 +781,14 @@ export default function CommercialEnablementPage({ currentUser }) {
   );
 
   useEffect(() => {
+    // Refreshing all library data on dependency changes is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshAll();
   }, [refreshAll]);
 
   useEffect(() => {
     if (loading) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAssets(activeTab, activeFilters).catch((requestError) => {
       setError(
         getApiErrorMessage(
@@ -852,6 +804,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       assetDetail?.publicId &&
       assetDetail.publicId !== selectedAssetPublicId
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAssetDetail(null);
     }
   }, [assetDetail?.publicId, selectedAssetPublicId]);
@@ -863,6 +816,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     ) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAssetDetail(selectedAssetPublicId).catch((requestError) => {
       setError(
         getApiErrorMessage(requestError, "No fue posible cargar el activo"),
@@ -872,6 +826,7 @@ export default function CommercialEnablementPage({ currentUser }) {
 
   useEffect(() => {
     if (activeTab === "governance") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadGovernance().catch((requestError) => {
         setError(
           getApiErrorMessage(requestError, "No fue posible cargar gobierno"),
@@ -915,14 +870,21 @@ export default function CommercialEnablementPage({ currentUser }) {
   }, [openCatalogAdminMenuId]);
 
   useEffect(() => {
+    // These drafts intentionally reset when the selected asset changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft(buildDraftFromAsset(selectedAsset));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLinkDraft(emptyLinkDraft());
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingFiles([]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingLinks([]);
   }, [selectedAsset]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPublishSectionErrors((current) => {
       if (!hasPublishSectionErrors(current)) return current;
       if (draft.status !== "published") return EMPTY_PUBLISH_SECTION_ERRORS;

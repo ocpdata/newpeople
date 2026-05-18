@@ -128,11 +128,14 @@ export default function ManufacturerRegistrationsPage({ can }) {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadProviders();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAlerts();
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadItems();
   }, [filters]);
 

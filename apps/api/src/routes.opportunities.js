@@ -26,10 +26,16 @@ import {
   getOpportunityStageAnswerSuggestionJob,
 } from "./opportunity-stage-answer-suggestions/service.js";
 import { ensureOpportunityStageAnswerSuggestionJobSchema } from "./opportunity-stage-answer-suggestions/schema.js";
+import { queueOpportunityStageValidationProcessing } from "./opportunity-stage-validations/async.js";
+import {
+  createOrReuseOpportunityStageValidationJob,
+  executeOpportunityCurrentStageValidation,
+  getOpportunityStageValidationJob,
+} from "./opportunity-stage-validations/service.js";
+import { ensureOpportunityStageValidationJobSchema } from "./opportunity-stage-validations/schema.js";
 import {
   isOpportunityStageAnswerSuggestionsEnabled,
   suggestOpportunityStageAnswers,
-  validateOpportunityCurrentStageWithAi,
 } from "./opportunityStageAnswerSuggestions.js";
 import {
   activateOpportunityWorkspacePlaybookVersion,
@@ -1401,6 +1407,10 @@ async function resolveOpportunityCreationStatusCode(user) {
     return null;
   }
 
+  if (hasGlobalAccountReadScope(user)) {
+    return "pendiente_activacion";
+  }
+
   const settings = await getTemporaryFeatureSettings();
   if (settings.opportunitiesPendingEnabled) {
     return "pendiente_activacion";
@@ -2698,18 +2708,20 @@ router.put(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    let effectiveActivationStatusId = Number(body.activationStatusId);
+    let effectiveRequestedStatusCode = requestedStatusCode;
+
     if (
       requestedStatusCode === "pendiente_activacion" &&
       requestedStatusCode !== previousStatusCode &&
       !(await ensurePendingOpportunityStatusAllowed())
     ) {
-      return res.status(400).json({
-        message: "El estado pendiente no esta habilitado para oportunidades",
-      });
+      effectiveActivationStatusId = Number(beforeRows[0].activation_status_id);
+      effectiveRequestedStatusCode = previousStatusCode;
     }
 
     if (
-      requestedStatusCode !== previousStatusCode &&
+      effectiveRequestedStatusCode !== previousStatusCode &&
       !canChangeOpportunityActivationStatus(req.user)
     ) {
       return res.status(403).json({
@@ -2883,7 +2895,7 @@ router.put(
         body.businessLineId,
         body.sellerUserId,
         body.presalesUserId || null,
-        body.activationStatusId,
+        effectiveActivationStatusId,
         commercialStatusId,
         commercialClosedAt,
         hasCommercialCloseChange
@@ -3281,6 +3293,99 @@ router.post(
 );
 
 router.post(
+  "/:id/validate-current-stage/jobs",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+
+    const parsed = opportunityStageValidationSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+
+    await ensureOpportunityStageValidationJobSchema();
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    try {
+      const result = await createOrReuseOpportunityStageValidationJob({
+        opportunityId: id,
+        requestedByUserId: Number(req.user.id),
+        note: parsed.data.note,
+      });
+
+      if (!result.wasReused) {
+        queueOpportunityStageValidationProcessing();
+      }
+
+      return res.status(202).json(result.response);
+    } catch (error) {
+      const status = Number(error?.status || 500);
+      if (error?.body) {
+        return res.status(status).json(error.body);
+      }
+      const detail = getSanitizedInternalErrorDetail(error);
+      return res.status(status).json({
+        message: "No fue posible preparar la validacion de la etapa",
+        ...(status >= 500 && detail ? { detail } : {}),
+      });
+    }
+  },
+);
+
+router.get(
+  "/:id/validate-current-stage/jobs/:jobId",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const jobId = String(req.params.jobId || "").trim();
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    if (!jobId) {
+      return res.status(400).json({ message: "jobId invalido" });
+    }
+
+    await ensureOpportunityStageValidationJobSchema();
+
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+
+    const job = await getOpportunityStageValidationJob({
+      publicId: jobId,
+      opportunityId: id,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job no encontrado" });
+    }
+
+    return res.json(job);
+  },
+);
+
+router.post(
   "/:id/validate-current-stage",
   requirePermission("oportunidades.update"),
   async (req, res) => {
@@ -3307,179 +3412,20 @@ router.post(
         .json(opportunityAccess.response.body);
     }
 
-    const opportunityState = await getOpportunityStateById(id);
-    if (!opportunityState) {
-      return res.status(404).json({ message: "Oportunidad no encontrada" });
-    }
-
-    if (isClosedCommercialStatus(opportunityState.commercial_status_code)) {
-      return res.status(400).json({
-        message: "No puedes validar una etapa de una oportunidad cerrada",
-      });
-    }
-
-    if (!isOpportunityStageAnswerSuggestionsEnabled()) {
-      return res.status(404).json({
-        message: "La validacion de etapas con IA no esta habilitada",
-      });
-    }
-
-    const salesStage = await getOpportunitySalesStageById(
-      Number(opportunityState.sales_stage_id),
-    );
-    if (!salesStage) {
-      return res.status(404).json({ message: "Etapa de venta no encontrada" });
-    }
-
-    const [currentAnswers, documents] = await Promise.all([
-      getLatestOpportunityStageAnswers({
+    try {
+      const result = await executeOpportunityCurrentStageValidation({
         opportunityId: id,
-        salesStageId: Number(opportunityState.sales_stage_id),
-      }),
-      listOpportunityDocuments({ opportunityId: id }),
-    ]);
-
-    const requiredAnswersValidation = await validateRequiredCurrentStageAnswers(
-      {
-        opportunityId: id,
-        salesStageId: Number(opportunityState.sales_stage_id),
-      },
-    );
-    if (!requiredAnswersValidation.ok) {
-      return res.status(400).json({
-        message: requiredAnswersValidation.message,
-        validation: {
-          decision: "not_ready_to_advance",
-          summary: requiredAnswersValidation.message,
-          reasons: [requiredAnswersValidation.message],
-          suggestions: [
-            "Completa todas las preguntas obligatorias de la etapa actual antes de validarla.",
-          ],
-          confidence: "high",
-          questionAssessments: currentAnswers.map((answer) => ({
-            questionId: Number(answer.question_id),
-            questionCode: String(answer.code || ""),
-            prompt: String(answer.prompt || ""),
-            answerValue: String(answer.answer_value || ""),
-            status:
-              answer.is_required && !String(answer.answer_value || "").trim()
-                ? "missing"
-                : "adequate",
-            reason:
-              answer.is_required && !String(answer.answer_value || "").trim()
-                ? "La pregunta obligatoria sigue sin respuesta."
-                : "Cumple la validacion minima de presencia para esta etapa.",
-            suggestion:
-              answer.is_required && !String(answer.answer_value || "").trim()
-                ? "Responde esta pregunta con informacion concreta antes de validar la etapa."
-                : "Sin accion inmediata.",
-          })),
-          meta: {
-            questionCount: currentAnswers.length,
-            documentCount: documents.length,
-            stageGuideAvailable: false,
-          },
-        },
+        note: parsed.data.note,
+        user: req.user,
+        req,
       });
-    }
-
-    const validationResult = applyContactoInicialValidationGuardrail({
-      salesStage,
-      currentAnswers,
-      validationResult: await validateOpportunityCurrentStageWithAi({
-        salesStage,
-        questions: currentAnswers,
-        documents,
-      }),
-    });
-
-    const validationNote = String(parsed.data.note || "").trim();
-    let autoAdvanced = false;
-    let advancedSalesStage = null;
-
-    await logAuditEvent({
-      req,
-      module: "oportunidades",
-      action: "stage_validated",
-      entityType: "opportunity",
-      entityId: id,
-      detail:
-        validationResult.decision === "ready_to_advance"
-          ? "Etapa actual validada por IA como lista para avanzar"
-          : validationResult.decision === "advance_with_caution"
-            ? "Etapa actual validada por IA con advertencias"
-            : "Etapa actual validada por IA como no lista para avanzar",
-      before: {
-        sales_stage_id: Number(opportunityState.sales_stage_id),
-      },
-      after: {
-        sales_stage_id: Number(opportunityState.sales_stage_id),
-        validated_sales_stage_id: Number(opportunityState.sales_stage_id),
-        validated_sales_stage_code: String(opportunityState.sales_stage_code),
-        validated_sales_stage_name: String(opportunityState.sales_stage_name),
-        validation_note: validationNote || null,
-        validation_decision: validationResult.decision,
-        validation_summary: validationResult.summary,
-      },
-    });
-
-    if (validationResult.decision === "ready_to_advance") {
-      const stageResolution = await getAdjacentOpportunityStage({
-        salesStageId: Number(opportunityState.sales_stage_id),
-        direction: "advance",
-      });
-      if (stageResolution.ok) {
-        const targetStage = stageResolution.targetStage;
-        const now = new Date();
-        await query(
-          `UPDATE opportunities
-           SET sales_stage_id = ?, updated_by = ?, updated_at = ?
-           WHERE id = ?`,
-          [Number(targetStage.id), req.user.id, now, id],
-        );
-
-        await logAuditEvent({
-          req,
-          module: "oportunidades",
-          action: "stage_advanced",
-          entityType: "opportunity",
-          entityId: id,
-          detail:
-            "Etapa de oportunidad avanzada automaticamente tras validacion",
-          before: { sales_stage_id: Number(opportunityState.sales_stage_id) },
-          after: { sales_stage_id: Number(targetStage.id) },
-        });
-
-        autoAdvanced = true;
-        advancedSalesStage = {
-          id: Number(targetStage.id),
-          code: String(targetStage.code),
-          name: String(targetStage.name),
-        };
+      return res.json(result);
+    } catch (error) {
+      if (error?.status && error?.body) {
+        return res.status(error.status).json(error.body);
       }
+      throw error;
     }
-
-    await refreshOpportunityRecommendedStrategy({
-      opportunityId: id,
-      selectedSalesStageId: Number(
-        advancedSalesStage?.id || opportunityState.sales_stage_id,
-      ),
-      userId: Number(req.user.id),
-    });
-
-    return res.json({
-      message:
-        validationResult.decision === "ready_to_advance"
-          ? autoAdvanced && advancedSalesStage
-            ? `La etapa ${opportunityState.sales_stage_name} fue validada y la oportunidad avanzo a ${advancedSalesStage.name}`
-            : `La etapa ${opportunityState.sales_stage_name} esta lista para avanzar`
-          : validationResult.decision === "advance_with_caution"
-            ? `La etapa ${opportunityState.sales_stage_name} puede avanzar con reservas`
-            : `La etapa ${opportunityState.sales_stage_name} aun no esta lista para avanzar`,
-      validation: validationResult,
-      autoAdvanced,
-      advancedSalesStage,
-    });
   },
 );
 

@@ -368,6 +368,36 @@ export async function cleanupArtifacts({
       `DELETE FROM documents WHERE uploaded_by_user_id IN (${placeholders(userIds.length)})`,
       userIds,
     );
+    try {
+      await query(
+        `DELETE FROM account_draft_analysis_jobs WHERE requested_by_user_id IN (${placeholders(userIds.length)})`,
+        userIds,
+      );
+    } catch (error) {
+      if (!String(error?.message || "").includes("doesn't exist")) {
+        throw error;
+      }
+    }
+    try {
+      await query(
+        `DELETE FROM commercial_opportunity_narrative_jobs WHERE requested_by_user_id IN (${placeholders(userIds.length)})`,
+        userIds,
+      );
+    } catch (error) {
+      if (!String(error?.message || "").includes("doesn't exist")) {
+        throw error;
+      }
+    }
+    try {
+      await query(
+        `DELETE FROM interaction_analysis_jobs WHERE requested_by_user_id IN (${placeholders(userIds.length)})`,
+        userIds,
+      );
+    } catch (error) {
+      if (!String(error?.message || "").includes("doesn't exist")) {
+        throw error;
+      }
+    }
     await query(
       `DELETE FROM opportunity_document_upload_sessions WHERE created_by_user_id IN (${placeholders(userIds.length)})`,
       userIds,

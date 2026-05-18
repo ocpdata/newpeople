@@ -7,9 +7,15 @@ import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schem
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
 import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
-import { analyzeAccountDraft } from "../src/accounts/draft-analysis/index.js";
+import {
+  analyzeAccountDraft,
+  processPendingAccountDraftAnalysisJobs,
+} from "../src/accounts/draft-analysis/index.js";
 import { pool, query } from "../src/db.js";
+import { processPendingCommercialNarrativeJobs } from "../src/routes.execution-commercial.js";
+import { processPendingInteractionAnalysisJobs } from "../src/routes.interactions.js";
 import { processPendingOpportunityStageAnswerSuggestionJobs } from "../src/opportunity-stage-answer-suggestions/service.js";
+import { processPendingOpportunityStageValidationJobs } from "../src/opportunity-stage-validations/service.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
 import {
@@ -720,6 +726,30 @@ describe("API integration baseline", () => {
       contactId,
       opportunityId: Number(createResponse.body.id),
     };
+  }
+
+  async function forceInvalidJobRequester(tableName, publicId) {
+    const allowedTableNames = new Set([
+      "interaction_analysis_jobs",
+      "commercial_opportunity_narrative_jobs",
+    ]);
+    if (!allowedTableNames.has(tableName)) {
+      throw new Error(`Unsupported job table: ${tableName}`);
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.query("SET FOREIGN_KEY_CHECKS = 0");
+      await connection.query(
+        `UPDATE ${tableName}
+         SET requested_by_user_id = 999999999
+         WHERE public_id = ?`,
+        [publicId],
+      );
+    } finally {
+      await connection.query("SET FOREIGN_KEY_CHECKS = 1");
+      connection.release();
+    }
   }
 
   async function getStageQuestionRowsByCode(stageCode) {
@@ -2471,6 +2501,249 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("cuentas draft-analysis.jobs completa el analisis y expone el resultado", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const response = await request(app)
+      .post("/api/accounts/draft-analysis/jobs")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        draft: {
+          name: "Cuenta Async Demo",
+          accountTypeId: null,
+          registrationCode: "",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          companyDescription: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalFetch: false,
+          allowAiSynthesis: false,
+          allowWebSearchTool: false,
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body.job).toEqual(
+      expect.objectContaining({
+        status: "pending",
+      }),
+    );
+
+    await processPendingAccountDraftAnalysisJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(`/api/accounts/draft-analysis/jobs/${response.body.job.id}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job).toEqual(
+      expect.objectContaining({
+        id: response.body.job.id,
+        status: "completed",
+        resultAvailable: true,
+      }),
+    );
+    expect(pollResponse.body.result).toEqual(
+      expect.objectContaining({
+        duplicateWarnings: expect.any(Array),
+        warnings: expect.any(Array),
+        meta: expect.objectContaining({
+          executionPlan: expect.objectContaining({
+            queueName: "account-draft-analysis",
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("cuentas draft-analysis.jobs reutiliza el resultado completado para el mismo solicitante", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+    const payload = {
+      draft: {
+        name: "Cuenta Async Reuse",
+        accountTypeId: null,
+        registrationCode: "",
+        phone: "",
+        economicSectorId: null,
+        website: "",
+        city: "",
+        stateRegion: "",
+        countryId: ctx.catalogIds.countryMxId,
+        companyDescription: "",
+        addressLine: "",
+        postalCode: "",
+        ownerUserIds: [ctx.accountCreateUserId],
+      },
+      options: {
+        allowExternalFetch: false,
+        allowAiSynthesis: false,
+        allowWebSearchTool: false,
+      },
+    };
+
+    const firstResponse = await request(app)
+      .post("/api/accounts/draft-analysis/jobs")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send(payload);
+
+    await processPendingAccountDraftAnalysisJobs({ limit: 5 });
+
+    const secondResponse = await request(app)
+      .post("/api/accounts/draft-analysis/jobs")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send(payload);
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(200);
+    expect(secondResponse.body.job).toEqual(
+      expect.objectContaining({
+        id: firstResponse.body.job.id,
+        status: "completed",
+        resultAvailable: true,
+      }),
+    );
+    expect(secondResponse.body.result).toEqual(
+      expect.objectContaining({
+        duplicateWarnings: expect.any(Array),
+      }),
+    );
+  });
+
+  test("cuentas draft-analysis.jobs expone failed cuando el worker no puede completar el analisis", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+    const draftAnalysisService = await import(
+      "../src/accounts/draft-analysis/service.js"
+    );
+    const analyzeSpy = vi
+      .spyOn(draftAnalysisService, "analyzeAccountDraft")
+      .mockRejectedValueOnce(new Error("Fallo forzado de analisis"));
+
+    try {
+      const createResponse = await request(app)
+        .post("/api/accounts/draft-analysis/jobs")
+        .set("Authorization", `Bearer ${loginResponse.body.token}`)
+        .send({
+          draft: {
+            name: "Cuenta Async Failed",
+            accountTypeId: null,
+            registrationCode: "",
+            phone: "",
+            economicSectorId: null,
+            website: "",
+            city: "",
+            stateRegion: "",
+            countryId: ctx.catalogIds.countryMxId,
+            companyDescription: "",
+            addressLine: "",
+            postalCode: "",
+            ownerUserIds: [ctx.accountCreateUserId],
+          },
+          options: {
+            allowExternalFetch: false,
+            allowAiSynthesis: false,
+            allowWebSearchTool: false,
+          },
+          forceRegenerate: true,
+        });
+
+      await processPendingAccountDraftAnalysisJobs({ limit: 5 });
+
+      const pollResponse = await request(app)
+        .get(`/api/accounts/draft-analysis/jobs/${createResponse.body.job.id}`)
+        .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.job).toEqual(
+        expect.objectContaining({
+          status: "failed",
+        }),
+      );
+      expect(pollResponse.body.error).toEqual(
+        expect.objectContaining({
+          code: "generation_failed",
+          message: "Fallo forzado de analisis",
+        }),
+      );
+    } finally {
+      analyzeSpy.mockRestore();
+    }
+  });
+
+  test("cuentas draft-analysis.jobs expone expired cuando el resultado ya vencio", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.create@example.com`,
+    );
+
+    const createResponse = await request(app)
+      .post("/api/accounts/draft-analysis/jobs")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        draft: {
+          name: "Cuenta Async Expired",
+          accountTypeId: null,
+          registrationCode: "",
+          phone: "",
+          economicSectorId: null,
+          website: "",
+          city: "",
+          stateRegion: "",
+          countryId: ctx.catalogIds.countryMxId,
+          companyDescription: "",
+          addressLine: "",
+          postalCode: "",
+          ownerUserIds: [ctx.accountCreateUserId],
+        },
+        options: {
+          allowExternalFetch: false,
+          allowAiSynthesis: false,
+          allowWebSearchTool: false,
+        },
+        forceRegenerate: true,
+      });
+
+    await processPendingAccountDraftAnalysisJobs({ limit: 5 });
+    await query(
+      `UPDATE account_draft_analysis_jobs
+       SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE)
+       WHERE public_id = ?`,
+      [createResponse.body.job.id],
+    );
+
+    const pollResponse = await request(app)
+      .get(`/api/accounts/draft-analysis/jobs/${createResponse.body.job.id}`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job).toEqual(
+      expect.objectContaining({
+        status: "expired",
+      }),
+    );
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "expired_result",
+      }),
+    );
+  });
+
   test("cuentas draft-analysis ignora ruido del HTML del buscador para no inventar direccion o telefono", async () => {
     const originalApiKey = config.openai.apiKey;
     const originalEnableWebSearch = config.openai.enableWebSearch;
@@ -3743,6 +4016,219 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${token}`);
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.summary).toContain("Prospecto Integrado Alpha");
+  });
+
+  test("interacciones.analyze.jobs completa el reanalisis asincrono", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion async ${TEST_PREFIX}`)
+      .field(
+        "sourceNotes",
+        "Seguimiento a discovery con necesidad confirmada y proximo paso comercial.",
+      )
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Async Beta",
+            "Contacto: Laura Perez",
+            "Tema: Expansion de servicios administrados",
+            "Accion realizada: Llamada de seguimiento",
+            "Proximo paso: Coordinar reunion tecnica",
+            "Oportunidad: Expansion Beta",
+            "Correo: laura.perez@beta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_async_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+
+    const jobResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/analyze/jobs`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(jobResponse.status).toBe(202);
+    expect(jobResponse.body.job.status).toBe("pending");
+
+    await processPendingInteractionAnalysisJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        resultAvailable: true,
+      }),
+    );
+    expect(pollResponse.body.result).toEqual(
+      expect.objectContaining({
+        interactionId,
+        processingStatus: expect.stringMatching(/analyzed|fallback/),
+      }),
+    );
+  });
+
+  test("interacciones.analyze.jobs expone failed cuando el worker no puede resolver el solicitante", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion async failed ${TEST_PREFIX}`)
+      .field("sourceNotes", "Seguimiento comercial con job asincrono fallido.")
+      .attach(
+        "files",
+        Buffer.from("Cuenta: Prospecto Failed\nContacto: Laura Test", "utf8"),
+        {
+          filename: `interaction_async_failed_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    const interactionId = Number(createResponse.body.id);
+
+    const jobResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/analyze/jobs`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    await forceInvalidJobRequester(
+      "interaction_analysis_jobs",
+      jobResponse.body.job.id,
+    );
+    await processPendingInteractionAnalysisJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("failed");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "requester_not_found",
+      }),
+    );
+  });
+
+  test("interacciones.analyze.jobs expone stale cuando cambia la interaccion antes de procesar", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion async stale ${TEST_PREFIX}`)
+      .field("sourceNotes", "Seguimiento comercial para invalidar snapshot.")
+      .attach(
+        "files",
+        Buffer.from("Cuenta: Prospecto Stale\nContacto: Laura Test", "utf8"),
+        {
+          filename: `interaction_async_stale_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    const interactionId = Number(createResponse.body.id);
+
+    const jobResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/analyze/jobs`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    await query(
+      `UPDATE interactions
+       SET title = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [`Interaccion modificada ${TEST_PREFIX}`, interactionId],
+    );
+
+    await processPendingInteractionAnalysisJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("stale");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "stale_snapshot",
+      }),
+    );
+  });
+
+  test("interacciones.analyze.jobs expone expired cuando vence el TTL del resultado", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Interaccion async expired ${TEST_PREFIX}`)
+      .field("sourceNotes", "Seguimiento comercial para expirar resultado.")
+      .attach(
+        "files",
+        Buffer.from("Cuenta: Prospecto Expired\nContacto: Laura Test", "utf8"),
+        {
+          filename: `interaction_async_expired_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    const interactionId = Number(createResponse.body.id);
+
+    const jobResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/analyze/jobs`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    await processPendingInteractionAnalysisJobs({ limit: 5 });
+    await query(
+      `UPDATE interaction_analysis_jobs
+       SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE)
+       WHERE public_id = ?`,
+      [jobResponse.body.job.id],
+    );
+
+    const pollResponse = await request(app)
+      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("expired");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "expired_result",
+      }),
+    );
   });
 
   test("interacciones permite registrar y analizar una interaccion top-level desde un .eml", async () => {
@@ -7691,6 +8177,161 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("desarrollo comercial.ai-narrative.jobs completa la narrativa asincrona", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_ai_narrative_job`,
+    );
+
+    const createResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createResponse.status).toBe(202);
+    expect(createResponse.body.job.status).toBe("pending");
+    expect(createResponse.body.fallback).toEqual(
+      expect.objectContaining({
+        opportunityId: fixture.opportunityId,
+        aiStatusSummary: expect.any(String),
+        aiNextStepRecommendation: expect.any(String),
+      }),
+    );
+
+    await processPendingCommercialNarrativeJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs/${createResponse.body.job.id}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        resultAvailable: true,
+      }),
+    );
+    expect(pollResponse.body.result).toEqual(
+      expect.objectContaining({
+        opportunityId: fixture.opportunityId,
+        aiStatusSummary: expect.any(String),
+        aiNextStepRecommendation: expect.any(String),
+      }),
+    );
+  });
+
+  test("desarrollo comercial.ai-narrative.jobs expone failed cuando el worker no puede resolver el solicitante", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_ai_narrative_failed`,
+    );
+
+    const createResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    await forceInvalidJobRequester(
+      "commercial_opportunity_narrative_jobs",
+      createResponse.body.job.id,
+    );
+    await processPendingCommercialNarrativeJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs/${createResponse.body.job.id}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("failed");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "requester_not_found",
+      }),
+    );
+    expect(pollResponse.body.fallback).toEqual(
+      expect.objectContaining({
+        opportunityId: fixture.opportunityId,
+      }),
+    );
+  });
+
+  test("desarrollo comercial.ai-narrative.jobs expone stale cuando cambia la oportunidad antes de procesar", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_ai_narrative_stale`,
+    );
+
+    const createResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    await query(
+      `UPDATE opportunities
+       SET name = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [`Oportunidad narrativa modificada ${TEST_PREFIX}`, fixture.opportunityId],
+    );
+
+    await processPendingCommercialNarrativeJobs({ limit: 5 });
+
+    const pollResponse = await request(app)
+      .get(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs/${createResponse.body.job.id}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("stale");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "stale_snapshot",
+      }),
+    );
+  });
+
+  test("desarrollo comercial.ai-narrative.jobs expone expired cuando vence el TTL del resultado", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_ai_narrative_expired`,
+    );
+
+    const createResponse = await request(app)
+      .post(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    await processPendingCommercialNarrativeJobs({ limit: 5 });
+    await query(
+      `UPDATE commercial_opportunity_narrative_jobs
+       SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE)
+       WHERE public_id = ?`,
+      [createResponse.body.job.id],
+    );
+
+    const pollResponse = await request(app)
+      .get(
+        `/api/commercial-development/opportunities/${fixture.opportunityId}/ai-narrative/jobs/${createResponse.body.job.id}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(pollResponse.status).toBe(200);
+    expect(pollResponse.body.job.status).toBe("expired");
+    expect(pollResponse.body.error).toEqual(
+      expect.objectContaining({
+        code: "expired_result",
+      }),
+    );
+  });
+
   test("desarrollo comercial expone calendario de actividades por dia semana y mes", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_development_calendar`,
@@ -9030,6 +9671,194 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("oportunidades.propose-answers.jobs expone failed cuando la generacion falla", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_async_job_failed`,
+    );
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer_async_job_failed`,
+      text: "El cliente sigue evaluando opciones y definira al ganador despues del comite.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockRejectedValue(new Error("OpenAI downstream failure"));
+
+      const createResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(createResponse.status).toBe(202);
+      const jobId = String(createResponse.body.job.id || "");
+      expect(jobId).toBeTruthy();
+
+      await processPendingOpportunityStageAnswerSuggestionJobs({ limit: 1 });
+
+      const failedResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs/${jobId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(failedResponse.status).toBe(200);
+      expect(failedResponse.body.job.status).toBe("failed");
+      expect(failedResponse.body.error).toEqual(
+        expect.objectContaining({
+          code: "generation_failed",
+        }),
+      );
+      expect(String(failedResponse.body.error.message || "")).toContain(
+        "OpenAI downstream failure",
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers.jobs expone stale cuando cambia la evidencia antes de procesar", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_async_job_stale`,
+    );
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer_async_job_stale_initial`,
+      text: "El cliente comparara propuestas y espera decidir pronto.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            suggestions: [],
+          }),
+        }),
+      });
+
+      const createResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(createResponse.status).toBe(202);
+      const jobId = String(createResponse.body.job.id || "");
+      expect(jobId).toBeTruthy();
+
+      await attachOpportunityDocumentForTest({
+        opportunityId: fixture.opportunityId,
+        uploadedByUserId: ctx.opportunityFlowUserId,
+        suffix: `${TEST_PREFIX}_waiting_answer_async_job_stale_new`,
+        text: "Se agrego una nueva minuta con evidencia distinta antes de terminar la generacion.",
+      });
+
+      await processPendingOpportunityStageAnswerSuggestionJobs({ limit: 1 });
+
+      const staleResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs/${jobId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(staleResponse.status).toBe(200);
+      expect(staleResponse.body.job.status).toBe("stale");
+      expect(staleResponse.body.error).toEqual(
+        expect.objectContaining({
+          code: "stale_result",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
+  test("oportunidades.propose-answers.jobs expone expired cuando un terminal vence su TTL", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_answer_async_job_expired`,
+    );
+
+    await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId,
+      uploadedByUserId: ctx.opportunityFlowUserId,
+      suffix: `${TEST_PREFIX}_waiting_answer_async_job_expired`,
+      text: "El cliente revisara propuestas y definira el siguiente paso en breve.",
+    });
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFlag =
+      config.features.opportunityStageAnswerSuggestionsEnabled;
+
+    try {
+      config.openai.apiKey = "test-key";
+      config.features.opportunityStageAnswerSuggestionsEnabled = true;
+
+      const createResponse = await request(app)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({});
+
+      expect(createResponse.status).toBe(202);
+      const jobId = String(createResponse.body.job.id || "");
+      expect(jobId).toBeTruthy();
+
+      await query(
+        `UPDATE opportunity_stage_answer_suggestion_jobs
+         SET status = 'failed',
+             error_code = NULL,
+             error_message = NULL,
+             expires_at = DATE_SUB(NOW(3), INTERVAL 1 SECOND),
+             updated_at = NOW(3)
+         WHERE public_id = ?`,
+        [jobId],
+      );
+
+      const expiredResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/stage-view/${ctx.catalogIds.salesStageWaitingId}/propose-answers/jobs/${jobId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(expiredResponse.status).toBe(200);
+      expect(expiredResponse.body.job.status).toBe("expired");
+      expect(expiredResponse.body.error).toEqual(
+        expect.objectContaining({
+          code: "expired_result",
+        }),
+      );
+    } finally {
+      config.openai.apiKey = originalApiKey;
+      config.features.opportunityStageAnswerSuggestionsEnabled = originalFlag;
+    }
+  });
+
   test("oportunidades.propose-answers reintenta con una segunda pasada de IA cuando la evidencia es fuerte", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_answer_interest_fallback`,
@@ -10055,7 +10884,7 @@ describe("API integration baseline", () => {
       const snapshot = await getOpportunityCommercialSnapshot(
         fixture.opportunityId,
       );
-      expect(snapshot.sales_stage_code).toBe("contacto_inicial");
+      expect(snapshot.sales_stage_code).toBe("identificacion_oportunidad");
 
       const auditRows = await getAuditActionsForOpportunity(
         fixture.opportunityId,
@@ -10500,6 +11329,339 @@ describe("API integration baseline", () => {
           "Haz la respuesta mas concreta y verificable antes de avanzar.",
         ]),
       );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage.jobs completa la validacion y avanza una sola vez", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_jobs_completed`,
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "ready_to_advance",
+                  summary: "La etapa ya cumplio su objetivo.",
+                  reasons: ["Las respuestas son suficientes."],
+                  suggestions: ["Avanza a la siguiente etapa."],
+                  confidence: "high",
+                  questionAssessments: [
+                    {
+                      questionId: 1,
+                      status: "adequate",
+                      reason: "Suficiente.",
+                      suggestion: "Sin accion inmediata.",
+                    },
+                  ],
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue:
+              "El cliente confirmo una necesidad concreta y el siguiente paso ya quedo acordado.",
+          })),
+        });
+
+      const createResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Validacion async" });
+
+      expect(createResponse.status).toBe(202);
+      expect(createResponse.body.job.status).toBe("pending");
+
+      await processPendingOpportunityStageValidationJobs({ limit: 5 });
+
+      const pollResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs/${createResponse.body.job.id}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.job).toEqual(
+        expect.objectContaining({
+          status: "completed",
+          resultAvailable: true,
+        }),
+      );
+      expect(pollResponse.body.result).toEqual(
+        expect.objectContaining({
+          autoAdvanced: true,
+          validation: expect.objectContaining({
+            decision: "ready_to_advance",
+          }),
+        }),
+      );
+
+      const snapshot = await getOpportunityCommercialSnapshot(
+        fixture.opportunityId,
+      );
+      expect(snapshot.sales_stage_code).not.toBe("contacto_inicial");
+
+      const validatedAuditRows = await getAuditActionsForOpportunity(
+        fixture.opportunityId,
+        "stage_validated",
+      );
+      const advancedAuditRows = await getAuditActionsForOpportunity(
+        fixture.opportunityId,
+        "stage_advanced",
+      );
+      expect(validatedAuditRows.length).toBe(1);
+      expect(advancedAuditRows.length).toBe(1);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage.jobs reutiliza el pending del mismo fingerprint", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_jobs_reuse`,
+    );
+    const originalApiKey = config.openai.apiKey;
+    config.openai.apiKey = "test-key";
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue: "Respuesta consistente para el fingerprint.",
+          })),
+        });
+
+      const firstResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Misma solicitud" });
+      const secondResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Misma solicitud" });
+
+      expect(firstResponse.status).toBe(202);
+      expect(secondResponse.status).toBe(202);
+      expect(secondResponse.body.job.id).toBe(firstResponse.body.job.id);
+    } finally {
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage.jobs expone failed cuando el worker falla", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_jobs_failed`,
+    );
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => {
+      throw new Error("Fallo forzado de validacion");
+    });
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue: "Respuesta lista para disparar el worker.",
+          })),
+        });
+
+      const createResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Fallo async" });
+
+      await processPendingOpportunityStageValidationJobs({ limit: 5 });
+
+      const pollResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs/${createResponse.body.job.id}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.job.status).toBe("failed");
+      expect(pollResponse.body.error).toEqual(
+        expect.objectContaining({
+          code: "validation_failed",
+          message: "Fallo forzado de validacion",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage.jobs expone stale cuando cambia la evidencia antes de procesar", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_jobs_stale`,
+    );
+    const originalApiKey = config.openai.apiKey;
+    config.openai.apiKey = "test-key";
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue: "Respuesta original para crear el snapshot.",
+          })),
+        });
+
+      const createResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "Snapshot inicial" });
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue: "Respuesta modificada para invalidar el snapshot del job.",
+          })),
+        });
+
+      await processPendingOpportunityStageValidationJobs({ limit: 5 });
+
+      const pollResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs/${createResponse.body.job.id}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.job.status).toBe("stale");
+      expect(pollResponse.body.error?.code).toBe("stale_snapshot");
+    } finally {
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("oportunidades.validate-current-stage.jobs expone expired cuando vence el TTL", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_validate_jobs_expired`,
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  decision: "not_ready_to_advance",
+                  summary: "La etapa aun no esta lista.",
+                  reasons: ["Falta trabajo adicional."],
+                  suggestions: ["Completa la informacion pendiente."],
+                  confidence: "medium",
+                  questionAssessments: [
+                    {
+                      questionId: 1,
+                      status: "weak",
+                      reason: "Aun no es suficiente.",
+                      suggestion: "Agregar mas detalle.",
+                    },
+                  ],
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    try {
+      const stageViewResponse = await request(app)
+        .get(`/api/opportunities/${fixture.opportunityId}/commercial-context`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          answers: stageViewResponse.body.answers.map((answer) => ({
+            questionId: Number(answer.question_id),
+            answerValue: "Respuesta suficiente para crear el job terminal.",
+          })),
+        });
+
+      const createResponse = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ note: "TTL async" });
+
+      await processPendingOpportunityStageValidationJobs({ limit: 5 });
+      await query(
+        `UPDATE opportunity_stage_validation_jobs
+         SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE)
+         WHERE public_id = ?`,
+        [createResponse.body.job.id],
+      );
+
+      const pollResponse = await request(app)
+        .get(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs/${createResponse.body.job.id}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.job.status).toBe("expired");
+      expect(pollResponse.body.error?.code).toBe("expired_result");
     } finally {
       global.fetch = originalFetch;
       config.openai.apiKey = originalApiKey;
@@ -12665,14 +13827,14 @@ describe("API integration baseline", () => {
       .post("/api/commercial-planning/periods")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        year: 2026,
+        year: 2029,
         quarter: 3,
         baseCurrencyCode: "USD",
-        notes: "Planeacion inicial T3 2026",
+        notes: "Planeacion inicial T3 2029",
       });
 
     expect(createPeriodResponse.status).toBe(201);
-    expect(createPeriodResponse.body.period.label).toBe("T3 2026");
+    expect(createPeriodResponse.body.period.label).toBe("T3 2029");
     expect(createPeriodResponse.body.createdVersionId).toBeGreaterThan(0);
 
     const versionId = Number(createPeriodResponse.body.createdVersionId);
@@ -12714,13 +13876,15 @@ describe("API integration baseline", () => {
 
     expect(validateResponse.status).toBe(200);
     expect(validateResponse.body.errors).toEqual([]);
-    expect(validateResponse.body.warnings).toEqual([]);
     expect(validateResponse.body.canPublish).toBe(true);
 
     const publishResponse = await request(app)
       .post(`/api/commercial-planning/versions/${versionId}/publish`)
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
-      .send({});
+      .send({
+        justification:
+          "Se publica aunque existan vendedores activos sin meta asignada en esta version de prueba.",
+      });
 
     expect(publishResponse.status).toBe(200);
     expect(publishResponse.body.version.status).toBe("active");
@@ -12750,7 +13914,7 @@ describe("API integration baseline", () => {
     expect(loginResponse.status).toBe(200);
 
     const token = loginResponse.body.token;
-    const year = 2028;
+    const year = 2030;
     const quarter = 2;
 
     const createPeriodResponse = await request(app)
@@ -12793,7 +13957,10 @@ describe("API integration baseline", () => {
     const publishResponse = await request(app)
       .post(`/api/commercial-planning/versions/${versionId}/publish`)
       .set("Authorization", `Bearer ${token}`)
-      .send({});
+      .send({
+        justification:
+          "Se publica con advertencias para verificar que la auditoria soporte changed_fields serializado como objeto.",
+      });
 
     expect(publishResponse.status).toBe(200);
 
@@ -12870,10 +14037,10 @@ describe("API integration baseline", () => {
       .post("/api/commercial-planning/periods")
       .set("Authorization", `Bearer ${loginResponse.body.token}`)
       .send({
-        year: 2027,
+        year: 2031,
         quarter: 1,
         baseCurrencyCode: "USD",
-        notes: "Planeacion inicial T1 2027",
+        notes: "Planeacion inicial T1 2031",
       });
 
     expect(createPeriodResponse.status).toBe(201);

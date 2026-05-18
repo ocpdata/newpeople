@@ -74,8 +74,10 @@ function OpportunityFormModal({
   analyzeCommercialStageAnswers,
   applyCommercialAnswerSuggestion,
   closeCommercialSuggestionFeedback,
+  retryCommercialSuggestionAnalysis,
   refreshOpportunityCommercialView,
   closeStageValidationResult,
+  retryCurrentStageValidation,
   closeOpportunityModal,
   saveOpportunity,
   confirmValidatedStageAdvance,
@@ -105,6 +107,7 @@ function OpportunityFormModal({
   const createHelpRef = useRef(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowCreateHelp(false);
   }, [editingOpportunityId, isOpen]);
 
@@ -164,24 +167,28 @@ function OpportunityFormModal({
     ? stageValidationAdvancedStageName
       ? `La oportunidad avanzo a ${stageValidationAdvancedStageName}`
       : "La oportunidad avanzo de etapa"
-    : stageValidationDecision === "not_ready_to_advance"
-      ? "La etapa no esta lista para avanzar"
-      : stageValidationDecision === "advance_with_caution"
-        ? "La etapa puede avanzar con reservas"
-        : "La etapa esta lista para avanzar";
+    : String(stageValidationResult?.title || "").trim() ||
+      (stageValidationDecision === "not_ready_to_advance"
+        ? "La etapa no esta lista para avanzar"
+        : stageValidationDecision === "advance_with_caution"
+          ? "La etapa puede avanzar con reservas"
+          : "La etapa esta lista para avanzar");
   const stageValidationTone =
-    stageValidationDecision === "not_ready_to_advance"
+    String(stageValidationResult?.tone || "").trim() ||
+    (stageValidationDecision === "not_ready_to_advance"
       ? "danger"
       : stageValidationDecision === "advance_with_caution"
         ? "warning"
-        : "success";
+        : "success");
   const stageValidationStatusLabel = stageValidationAutoAdvanced
     ? "Avanzada"
-    : stageValidationDecision === "not_ready_to_advance"
-      ? "No lista"
-      : stageValidationDecision === "advance_with_caution"
-        ? "Con reservas"
-        : "Lista para avanzar";
+    : String(stageValidationResult?.statusLabel || "").trim() ||
+      (stageValidationDecision === "not_ready_to_advance"
+        ? "No lista"
+        : stageValidationDecision === "advance_with_caution"
+          ? "Con reservas"
+          : "Lista para avanzar");
+  const canRetryStageValidation = Boolean(stageValidationResult?.canRetry);
   const isWaitingCurrentStage =
     String(currentCommercialStage?.code || currentCommercialStage?.name || "")
       .trim()
@@ -190,17 +197,17 @@ function OpportunityFormModal({
     isWaitingCurrentStage &&
     (stageValidationDecision === "ready_to_advance" ||
       stageValidationDecision === "advance_with_caution") &&
-    !Boolean(savingCommercialAction) &&
+    !savingCommercialAction &&
     !isCommercialFlowClosed &&
-    Boolean(commercialContext?.isSelectedStageCurrent) &&
+    commercialContext?.isSelectedStageCurrent &&
     !hasPendingStageChange &&
     !hasPendingCommercialClose;
   const canAdvanceFromValidationResult =
     (stageValidationDecision === "advance_with_caution" ||
       canMarkWonFromValidationResult) &&
-    !Boolean(savingCommercialAction) &&
+    !savingCommercialAction &&
     !isCommercialFlowClosed &&
-    Boolean(commercialContext?.isSelectedStageCurrent) &&
+    commercialContext?.isSelectedStageCurrent &&
     !hasPendingStageChange &&
     !hasPendingCommercialClose &&
     (canBypassCurrentStage || canMarkWonFromValidationResult);
@@ -232,7 +239,7 @@ function OpportunityFormModal({
   const progressOverlayMessage = isStageValidationInProgress
     ? "La ventana queda bloqueada hasta recibir el resultado de la validacion y que cierres ese mensaje para retomar el control."
     : isCommercialSuggestionsInProgress
-      ? "Estamos revisando la evidencia documental para proponer respuestas para la etapa actual. La ventana seguira bloqueada hasta mostrar el resultado."
+      ? "Estamos revisando la evidencia documental para proponer respuestas para la etapa actual. Esto puede tardar hasta 2 minutos antes de ofrecerte reintentar."
       : isDocumentUploadLocked
         ? "Estamos cargando y analizando la evidencia para enriquecer la oportunidad con mejores sugerencias antes de continuar."
         : editingOpportunityId
@@ -1191,9 +1198,22 @@ function OpportunityFormModal({
               </div>
 
               <div className="modal-buttons">
+                {commercialSuggestionFeedback.canRetry ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={retryCommercialSuggestionAnalysis}
+                  >
+                    Reintentar
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="btn-primary"
+                  className={
+                    commercialSuggestionFeedback.canRetry
+                      ? "btn-secondary"
+                      : "btn-primary"
+                  }
                   onClick={closeCommercialSuggestionFeedback}
                 >
                   Cerrar
@@ -1301,10 +1321,24 @@ function OpportunityFormModal({
                         : "Confirmar avance"}
                   </button>
                 ) : null}
+                {canRetryStageValidation ? (
+                  <button
+                    type="button"
+                    className={
+                      canAdvanceFromValidationResult
+                        ? "btn-secondary"
+                        : "btn-primary"
+                    }
+                    onClick={retryCurrentStageValidation}
+                    disabled={savingCommercialAction === "validate-current-stage"}
+                  >
+                    Reintentar validacion
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={
-                    canAdvanceFromValidationResult
+                    canAdvanceFromValidationResult || canRetryStageValidation
                       ? "btn-secondary"
                       : "btn-primary"
                   }

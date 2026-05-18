@@ -6,9 +6,13 @@
     phone: "Telefono",
   };
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
+
+const ACCOUNT_DRAFT_ANALYSIS_REQUEST_TIMEOUT_MS = 45000;
+const ACCOUNT_DRAFT_ANALYSIS_POLL_INTERVAL_MS = 3000;
+const ACCOUNT_DRAFT_ANALYSIS_TOTAL_POLL_TIMEOUT_MS = 120000;
 
 function normalizeText(value) {
   return String(value || "")
@@ -49,6 +53,14 @@ export function useAccountsCrud({ currentUser }) {
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const accountDraftAnalysisPollingTokenRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      accountDraftAnalysisPollingTokenRef.current += 1;
+    },
+    [],
+  );
 
   const explicitAccountPermissions = useMemo(
     () => new Set(currentUser?.permissions || []),
@@ -187,6 +199,7 @@ export function useAccountsCrud({ currentUser }) {
   }
 
   function openCreateAccountModal() {
+    cancelAccountDraftAnalysisPolling();
     setError("");
     setSuccess("");
     setAccountDraftAnalysis(null);
@@ -201,6 +214,7 @@ export function useAccountsCrud({ currentUser }) {
 
   function closeAccountModal() {
     if (creatingAccount) return;
+    cancelAccountDraftAnalysisPolling();
     setAccountDraftAnalysis(null);
     setAccountDraftAnalysisError("");
     setAccountDuplicateReview(null);
@@ -236,7 +250,122 @@ export function useAccountsCrud({ currentUser }) {
     };
   }
 
-  async function runDuplicateAiReview(reviewState) {
+  function cancelAccountDraftAnalysisPolling() {
+    accountDraftAnalysisPollingTokenRef.current += 1;
+  }
+
+  async function pollAccountDraftAnalysisJob({
+    jobId,
+    pollingToken,
+    pollAfterMs,
+  }) {
+    const deadline = Date.now() + ACCOUNT_DRAFT_ANALYSIS_TOTAL_POLL_TIMEOUT_MS;
+    let nextDelay = Math.max(
+      Number(pollAfterMs || ACCOUNT_DRAFT_ANALYSIS_POLL_INTERVAL_MS),
+      0,
+    );
+
+    while (accountDraftAnalysisPollingTokenRef.current === pollingToken) {
+      if (Date.now() >= deadline) {
+        return {
+          job: { id: jobId, status: "timed_out" },
+          error: {
+            code: "poll_timeout",
+            message:
+              "El analisis del borrador sigue tardando mas de 2 minutos. Puedes reintentarlo sin cerrar el modal.",
+          },
+        };
+      }
+
+      if (nextDelay > 0) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, nextDelay);
+        });
+      }
+
+      if (accountDraftAnalysisPollingTokenRef.current !== pollingToken) {
+        return null;
+      }
+
+      const { data } = await api.get(`/api/accounts/draft-analysis/jobs/${jobId}`, {
+        timeout: ACCOUNT_DRAFT_ANALYSIS_REQUEST_TIMEOUT_MS,
+      });
+
+      if (data?.result) {
+        return data;
+      }
+
+      const jobStatus = String(data?.job?.status || "");
+      if (["failed", "expired"].includes(jobStatus)) {
+        return data;
+      }
+
+      nextDelay = Math.max(
+        Number(data?.job?.pollAfterMs || ACCOUNT_DRAFT_ANALYSIS_POLL_INTERVAL_MS),
+        0,
+      );
+      nextDelay = Math.min(nextDelay, Math.max(deadline - Date.now(), 0));
+    }
+
+    return null;
+  }
+
+  async function requestAccountDraftAnalysis({
+    onResolved,
+    onJobError,
+    onTransportError,
+    forceRegenerate = false,
+  } = {}) {
+    cancelAccountDraftAnalysisPolling();
+    const pollingToken = accountDraftAnalysisPollingTokenRef.current;
+
+    try {
+      const { data } = await api.post(
+        "/api/accounts/draft-analysis/jobs",
+        {
+          ...buildAccountDraftAnalysisPayload(),
+          ...(forceRegenerate ? { forceRegenerate: true } : {}),
+        },
+        { timeout: ACCOUNT_DRAFT_ANALYSIS_REQUEST_TIMEOUT_MS },
+      );
+
+      let resolvedData = data;
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (!jobId) {
+          throw new Error(
+            "No fue posible obtener el identificador del job de analisis de cuenta",
+          );
+        }
+
+        resolvedData = await pollAccountDraftAnalysisJob({
+          jobId,
+          pollingToken,
+          pollAfterMs: resolvedData?.job?.pollAfterMs,
+        });
+      }
+
+      if (accountDraftAnalysisPollingTokenRef.current !== pollingToken) {
+        return null;
+      }
+
+      if (resolvedData?.result) {
+        onResolved?.(resolvedData.result);
+        return resolvedData.result;
+      }
+
+      onJobError?.(resolvedData?.error);
+      return null;
+    } catch (err) {
+      if (accountDraftAnalysisPollingTokenRef.current !== pollingToken) {
+        return null;
+      }
+      onTransportError?.(err);
+      return null;
+    }
+  }
+
+  async function runDuplicateAiReview() {
     setAccountDuplicateReview((current) =>
       current
         ? {
@@ -247,43 +376,53 @@ export function useAccountsCrud({ currentUser }) {
         : current,
     );
 
-    try {
-      const { data } = await api.post(
-        "/api/accounts/draft-analysis",
-        buildAccountDraftAnalysisPayload(),
-        { timeout: 45000 },
-      );
-
-      setAccountDraftAnalysis(data);
-      setAccountDuplicateReview((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          duplicateWarnings:
-            Array.isArray(data?.duplicateWarnings) &&
-            data.duplicateWarnings.length
-              ? data.duplicateWarnings
-              : current.duplicateWarnings,
-          aiReview: data?.duplicateReview || null,
-          aiReviewStatus: "ready",
-          aiReviewError: "",
-          aiReviewMeta: data?.meta || null,
-        };
-      });
-    } catch (err) {
-      setAccountDuplicateReview((current) =>
-        current
-          ? {
-              ...current,
-              aiReviewStatus: "error",
-              aiReviewError: getApiErrorMessage(
-                err,
-                "No fue posible completar la revision IA del posible duplicado",
-              ),
-            }
-          : current,
-      );
-    }
+    await requestAccountDraftAnalysis({
+      onResolved: (data) => {
+        setAccountDraftAnalysis(data);
+        setAccountDuplicateReview((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            duplicateWarnings:
+              Array.isArray(data?.duplicateWarnings) &&
+              data.duplicateWarnings.length
+                ? data.duplicateWarnings
+                : current.duplicateWarnings,
+            aiReview: data?.duplicateReview || null,
+            aiReviewStatus: "ready",
+            aiReviewError: "",
+            aiReviewMeta: data?.meta || null,
+          };
+        });
+      },
+      onJobError: (jobError) => {
+        setAccountDuplicateReview((current) =>
+          current
+            ? {
+                ...current,
+                aiReviewStatus: "error",
+                aiReviewError:
+                  String(jobError?.message || "").trim() ||
+                  "No fue posible completar la revision IA del posible duplicado",
+              }
+            : current,
+        );
+      },
+      onTransportError: (err) => {
+        setAccountDuplicateReview((current) =>
+          current
+            ? {
+                ...current,
+                aiReviewStatus: "error",
+                aiReviewError: getApiErrorMessage(
+                  err,
+                  "No fue posible completar la revision IA del posible duplicado",
+                ),
+              }
+            : current,
+        );
+      },
+    });
   }
 
   async function saveAccount(event, options = {}) {
@@ -544,6 +683,7 @@ export function useAccountsCrud({ currentUser }) {
   }
 
   async function openEditAccountModal(accountId) {
+    cancelAccountDraftAnalysisPolling();
     setError("");
     setSuccess("");
     setAccountDraftAnalysis(null);
@@ -824,23 +964,28 @@ export function useAccountsCrud({ currentUser }) {
     setAnalyzingAccountDraft(true);
 
     try {
-      const { data } = await api.post(
-        "/api/accounts/draft-analysis",
-        buildAccountDraftAnalysisPayload(),
-        {
-          timeout: 45000,
+      await requestAccountDraftAnalysis({
+        onResolved: (data) => {
+          setAccountDraftAnalysis(data);
+          setSuccess("Analisis de cuenta generado");
         },
-      );
-      setAccountDraftAnalysis(data);
-      setSuccess("Analisis de cuenta generado");
-    } catch (err) {
-      setAccountDraftAnalysis(null);
-      setAccountDraftAnalysisError(
-        getApiErrorMessage(
-          err,
-          "No fue posible analizar el borrador de cuenta",
-        ),
-      );
+        onJobError: (jobError) => {
+          setAccountDraftAnalysis(null);
+          setAccountDraftAnalysisError(
+            String(jobError?.message || "").trim() ||
+              "No fue posible analizar el borrador de la cuenta",
+          );
+        },
+        onTransportError: (err) => {
+          setAccountDraftAnalysis(null);
+          setAccountDraftAnalysisError(
+            getApiErrorMessage(
+              err,
+              "No fue posible analizar el borrador de la cuenta",
+            ),
+          );
+        },
+      });
     } finally {
       setAnalyzingAccountDraft(false);
     }
@@ -863,6 +1008,7 @@ export function useAccountsCrud({ currentUser }) {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAccountDuplicateReview(null);
   }, [form.name, form.registrationCode, form.website, form.countryId]);
 
@@ -879,7 +1025,7 @@ export function useAccountsCrud({ currentUser }) {
     setSuccess("Descripcion sugerida aplicada al formulario");
   }
 
-  function useSuggestedAccountField(field) {
+  function applySuggestedAccountField(field) {
     if (field === "economicSector") {
       const nextSectorId =
         accountDraftAnalysis?.suggestedEconomicSector?.sectorId;
@@ -986,10 +1132,11 @@ export function useAccountsCrud({ currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
+    runDuplicateAiReview,
     dismissAccountDuplicateReview,
     confirmAccountDuplicateOverride,
     openDuplicateCandidateAccount,
     useSuggestedCompanyDescription,
-    useSuggestedAccountField,
+    applySuggestedAccountField,
   };
 }

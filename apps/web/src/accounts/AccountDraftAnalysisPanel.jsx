@@ -17,25 +17,6 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
-function isSuggestedContactDataApplied(form, suggestedContactData) {
-  if (!form || !suggestedContactData?.canAutoApply) return false;
-
-  const comparableFields = [
-    ["addressLine", suggestedContactData.addressLine],
-    ["city", suggestedContactData.city],
-    ["stateRegion", suggestedContactData.stateRegion],
-    ["postalCode", suggestedContactData.postalCode],
-    ["phone", suggestedContactData.phone],
-  ].filter(([, value]) => normalizeText(value));
-
-  if (!comparableFields.length) return false;
-
-  return comparableFields.every(
-    ([fieldName, value]) =>
-      normalizeText(form[fieldName]) === normalizeText(value),
-  );
-}
-
 function renderSuggestedFieldCard({
   title,
   value,

@@ -19,14 +19,6 @@ function hasVisibleMoneyValue(value) {
   return Math.round(Math.abs(numericValue) * 100) > 0;
 }
 
-function renderContactLine(primary, secondary) {
-  if (!primary && !secondary) {
-    return "";
-  }
-
-  return [primary, secondary].filter(Boolean).join("    ");
-}
-
 function hasVatInSummary(summary) {
   return summary?.vatMode === "total" || summary?.vatMode === "per_item";
 }

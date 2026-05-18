@@ -1,6 +1,11 @@
 import { buffer as streamToBuffer } from "node:stream/consumers";
+import { createHash, randomUUID } from "node:crypto";
 import express from "express";
-import { requireAnyPermission, requirePermission } from "./auth.js";
+import {
+  getUserAuthContext,
+  requireAnyPermission,
+  requirePermission,
+} from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import {
   getCommercialEnablementAssetDetail,
@@ -9,6 +14,7 @@ import {
   loadCommercialEnablementRecommendationCatalog,
   recommendCommercialEnablementResources,
 } from "./commercial-enablement/service.js";
+import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
 import { config } from "./config.js";
 import { query } from "./db.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
@@ -116,6 +122,12 @@ const COMMERCIAL_ACTION_STATUSES = new Set([
   "done",
   "cancelled",
 ]);
+const COMMERCIAL_NARRATIVE_JOB_LEASE_SECONDS = 30;
+const COMMERCIAL_NARRATIVE_JOB_RESULT_TTL_MINUTES = 15;
+const COMMERCIAL_NARRATIVE_JOB_POLL_AFTER_MS = 3000;
+
+let commercialNarrativeWorkerQueued = false;
+let commercialNarrativeWorkerStarted = false;
 
 const COMMERCIAL_ACTIVITY_OPEN_STATUSES = new Set([
   "pending",
@@ -1050,6 +1062,453 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     activityCount: activitySummary.activityCount,
     actionCount: activitySummary.actionCount,
   };
+}
+
+function buildCommercialNarrativeJobPublicId() {
+  return `opp_narrative_${randomUUID().replace(/-/g, "")}`;
+}
+
+function parseCommercialNarrativeJson(value, fallback) {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function buildCommercialNarrativeSnapshot(item) {
+  return {
+    id: Number(item?.id || 0),
+    name: String(item?.name || ""),
+    accountName: String(item?.accountName || ""),
+    amountUsd: Number(item?.amountUsd || 0),
+    closeDate: item?.closeDate || null,
+    stageId: Number(item?.stageId || 0),
+    stageCode: String(item?.stageCode || ""),
+    stageName: String(item?.stageName || ""),
+    daysSinceActivity: Number(item?.daysSinceActivity || 0),
+    slaDays: Number(item?.slaDays || 0),
+    currentStageValidated: Boolean(item?.currentStageValidated),
+    workspaceSummary: item?.workspaceSummary || null,
+    scorecardOverallTone: String(item?.scorecardOverallTone || "neutral"),
+    scorecardItems: Array.isArray(item?.scorecardItems)
+      ? item.scorecardItems
+      : [],
+    openWeaknesses: Array.isArray(item?.openWeaknesses)
+      ? item.openWeaknesses
+      : [],
+    recommendedHeading: String(item?.recommendedHeading || ""),
+    recommendedRoute: String(item?.recommendedRoute || ""),
+    recommendedFinalObjective: String(item?.recommendedFinalObjective || ""),
+    recommendedStrategySteps: Array.isArray(item?.recommendedStrategySteps)
+      ? item.recommendedStrategySteps
+      : [],
+    recommendedNextMove: item?.recommendedNextMove || "",
+    riskLevel: String(item?.riskLevel || "low"),
+    riskReasons: Array.isArray(item?.riskReasons) ? item.riskReasons : [],
+    executionState: item?.executionState || null,
+    dependencies: Array.isArray(item?.dependencies) ? item.dependencies : [],
+    nextStep: item?.nextStep || null,
+  };
+}
+
+function hashCommercialNarrativeSnapshot(snapshot) {
+  return createHash("sha256")
+    .update(JSON.stringify(snapshot))
+    .digest("hex");
+}
+
+function buildCommercialNarrativeJobResponse(row) {
+  const fallback = parseCommercialNarrativeJson(row.fallback_json, null);
+  const result = parseCommercialNarrativeJson(row.result_json, null);
+  const isExpired =
+    row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+  const status =
+    isExpired && ["completed", "failed", "stale"].includes(row.status)
+      ? "expired"
+      : row.status;
+  const response = {
+    job: {
+      id: String(row.public_id),
+      status,
+      pollAfterMs: COMMERCIAL_NARRATIVE_JOB_POLL_AFTER_MS,
+      resultAvailable: status === "completed" && Boolean(result),
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      expiresAt: row.expires_at,
+    },
+    fallback,
+  };
+
+  if (status === "completed" && result) {
+    response.result = result;
+    return response;
+  }
+
+  if (status === "failed") {
+    response.error = {
+      code: row.error_code || "narrative_failed",
+      message:
+        String(row.error_message || "").trim() ||
+        "No fue posible completar la narrativa IA",
+    };
+    return response;
+  }
+
+  if (status === "stale") {
+    response.error = {
+      code: row.error_code || "stale_snapshot",
+      message:
+        String(row.error_message || "").trim() ||
+        "La oportunidad cambio antes de ejecutar la narrativa IA. Solicita una nueva generacion.",
+    };
+    return response;
+  }
+
+  if (status === "expired") {
+    response.error = {
+      code: "expired_result",
+      message:
+        "El resultado de la narrativa IA ya expiro. Solicita una nueva generacion.",
+    };
+  }
+
+  return response;
+}
+
+async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
+  const opportunity = await loadOpportunityForExecution(user, opportunityId);
+  if (!opportunity) {
+    const error = new Error("Oportunidad no encontrada");
+    error.status = 404;
+    throw error;
+  }
+
+  const narrativeItem = await buildExecutionNarrativeItem({
+    user,
+    opportunity,
+  });
+  if (!narrativeItem) {
+    const error = new Error("Oportunidad no encontrada");
+    error.status = 404;
+    throw error;
+  }
+
+  const fallbackNarrative = buildOpportunityNarrativeFallback(narrativeItem);
+  try {
+    const aiInsights = await requestOpportunityNarrativesWithAi([
+      {
+        ...narrativeItem,
+        ...fallbackNarrative,
+      },
+    ]);
+    const aiNarrative = aiInsights.get(opportunityId);
+    return {
+      snapshot: buildCommercialNarrativeSnapshot(narrativeItem),
+      fallback: {
+        opportunityId,
+        ...fallbackNarrative,
+      },
+      result: {
+        opportunityId,
+        aiStatusSummary:
+          aiNarrative?.aiStatusSummary || fallbackNarrative.aiStatusSummary,
+        aiNextStepRecommendation:
+          aiNarrative?.aiNextStepRecommendation ||
+          fallbackNarrative.aiNextStepRecommendation,
+        aiNarrativeSource:
+          aiNarrative?.aiNarrativeSource || fallbackNarrative.aiNarrativeSource,
+      },
+    };
+  } catch {
+    return {
+      snapshot: buildCommercialNarrativeSnapshot(narrativeItem),
+      fallback: {
+        opportunityId,
+        ...fallbackNarrative,
+      },
+      result: {
+        opportunityId,
+        ...fallbackNarrative,
+      },
+    };
+  }
+}
+
+async function createOrReuseCommercialNarrativeJob({
+  opportunityId,
+  requestedByUserId,
+  user,
+}) {
+  const execution = await executeCommercialOpportunityNarrative({
+    user,
+    opportunityId,
+  });
+  const fingerprint = hashCommercialNarrativeSnapshot(execution.snapshot);
+  const reusableRows = await query(
+    `SELECT *
+     FROM commercial_opportunity_narrative_jobs
+     WHERE opportunity_id = ?
+       AND requested_by_user_id = ?
+       AND request_fingerprint = ?
+       AND status IN ('pending', 'running', 'completed')
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY id DESC
+     LIMIT 1`,
+    [opportunityId, requestedByUserId, fingerprint],
+  );
+
+  if (reusableRows.length) {
+    return {
+      wasReused: true,
+      response: buildCommercialNarrativeJobResponse(reusableRows[0]),
+    };
+  }
+
+  const publicId = buildCommercialNarrativeJobPublicId();
+  await query(
+    `INSERT INTO commercial_opportunity_narrative_jobs (
+       public_id,
+       opportunity_id,
+       requested_by_user_id,
+       status,
+       request_fingerprint,
+       source_snapshot_json,
+       fallback_json
+     ) VALUES (?, ?, ?, 'pending', ?, ?, ?)`,
+    [
+      publicId,
+      opportunityId,
+      requestedByUserId,
+      fingerprint,
+      JSON.stringify(execution.snapshot),
+      JSON.stringify(execution.fallback),
+    ],
+  );
+
+  const rows = await query(
+    `SELECT *
+     FROM commercial_opportunity_narrative_jobs
+     WHERE public_id = ?
+     LIMIT 1`,
+    [publicId],
+  );
+  return {
+    wasReused: false,
+    response: buildCommercialNarrativeJobResponse(rows[0]),
+  };
+}
+
+async function getCommercialNarrativeJob({ publicId, opportunityId }) {
+  const rows = await query(
+    `SELECT *
+     FROM commercial_opportunity_narrative_jobs
+     WHERE public_id = ?
+       AND opportunity_id = ?
+     LIMIT 1`,
+    [publicId, opportunityId],
+  );
+  return rows.length ? buildCommercialNarrativeJobResponse(rows[0]) : null;
+}
+
+async function claimNextPendingCommercialNarrativeJob() {
+  const candidates = await query(
+    `SELECT id
+     FROM commercial_opportunity_narrative_jobs
+     WHERE (
+         status = 'pending'
+         OR (
+           status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= NOW(3)
+         )
+       )
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY created_at ASC, id ASC
+     LIMIT 20`,
+  );
+
+  for (const candidate of candidates) {
+    const leaseToken = randomUUID().replace(/-/g, "");
+    const updateResult = await query(
+      `UPDATE commercial_opportunity_narrative_jobs
+       SET status = 'running',
+           attempt_count = attempt_count + 1,
+           lease_token = ?,
+           lease_expires_at = DATE_ADD(NOW(3), INTERVAL ? SECOND),
+           started_at = COALESCE(started_at, NOW(3)),
+           updated_at = NOW(3)
+       WHERE id = ?
+         AND (
+           status = 'pending'
+           OR (
+             status = 'running'
+             AND lease_expires_at IS NOT NULL
+             AND lease_expires_at <= NOW(3)
+           )
+         )`,
+      [
+        leaseToken,
+        COMMERCIAL_NARRATIVE_JOB_LEASE_SECONDS,
+        Number(candidate.id),
+      ],
+    );
+
+    if (updateResult.affectedRows) {
+      const rows = await query(
+        `SELECT *
+         FROM commercial_opportunity_narrative_jobs
+         WHERE id = ?
+         LIMIT 1`,
+        [Number(candidate.id)],
+      );
+      return rows[0] || null;
+    }
+  }
+
+  return null;
+}
+
+async function finalizeCommercialNarrativeJob({
+  jobId,
+  leaseToken,
+  status,
+  result,
+  errorCode,
+  errorMessage,
+}) {
+  await query(
+    `UPDATE commercial_opportunity_narrative_jobs
+     SET status = ?,
+         result_json = ?,
+         error_code = ?,
+         error_message = ?,
+         finished_at = NOW(3),
+         expires_at = DATE_ADD(NOW(3), INTERVAL ? MINUTE),
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      status,
+      result ? JSON.stringify(result) : null,
+      errorCode || null,
+      errorMessage || null,
+      COMMERCIAL_NARRATIVE_JOB_RESULT_TTL_MINUTES,
+      jobId,
+      leaseToken,
+    ],
+  );
+}
+
+async function processCommercialNarrativeJob(row) {
+  try {
+    const user = await getUserAuthContext(Number(row.requested_by_user_id));
+    if (!user) {
+      await finalizeCommercialNarrativeJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "requester_not_found",
+        errorMessage: "No fue posible resolver el usuario solicitante del job",
+      });
+      return;
+    }
+
+    const execution = await executeCommercialOpportunityNarrative({
+      user,
+      opportunityId: Number(row.opportunity_id),
+    });
+    const fingerprint = hashCommercialNarrativeSnapshot(execution.snapshot);
+    if (fingerprint !== row.request_fingerprint) {
+      await finalizeCommercialNarrativeJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "stale",
+        errorCode: "stale_snapshot",
+        errorMessage:
+          "La oportunidad cambio antes de ejecutar la narrativa IA. Solicita una nueva generacion.",
+      });
+      return;
+    }
+
+    await finalizeCommercialNarrativeJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "completed",
+      result: execution.result,
+    });
+  } catch (error) {
+    await finalizeCommercialNarrativeJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "failed",
+      errorCode: "narrative_failed",
+      errorMessage:
+        String(error?.message || "").trim() ||
+        "No fue posible completar la narrativa IA",
+    });
+  }
+}
+
+export function queueCommercialNarrativeProcessing() {
+  commercialNarrativeWorkerQueued = true;
+}
+
+export async function processPendingCommercialNarrativeJobs({ limit = 1 } = {}) {
+  let processed = 0;
+  while (processed < limit) {
+    const row = await claimNextPendingCommercialNarrativeJob();
+    if (!row) {
+      break;
+    }
+    processed += 1;
+    await processCommercialNarrativeJob(row);
+  }
+  return processed;
+}
+
+export async function startCommercialNarrativeWorker() {
+  if (commercialNarrativeWorkerStarted) {
+    return;
+  }
+  commercialNarrativeWorkerStarted = true;
+
+  const tick = async () => {
+    if (!commercialNarrativeWorkerQueued) {
+      return;
+    }
+    commercialNarrativeWorkerQueued = false;
+    try {
+      const processed = await processPendingCommercialNarrativeJobs({
+        limit: 5,
+      });
+      if (processed > 0) {
+        commercialNarrativeWorkerQueued = true;
+      }
+    } catch (error) {
+      console.error(
+        "Commercial narrative worker error:",
+        error?.message || error,
+      );
+    }
+  };
+
+  const interval = setInterval(() => {
+    tick();
+  }, COMMERCIAL_NARRATIVE_JOB_POLL_AFTER_MS);
+  interval.unref?.();
+
+  queueCommercialNarrativeProcessing();
+  await tick();
 }
 
 function buildPriorityItems(items, planningSnapshot) {
@@ -4342,6 +4801,74 @@ router.get(
 );
 
 router.post(
+  "/opportunities/:id/ai-narrative/jobs",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    await ensureCommercialNarrativeJobSchema();
+
+    try {
+      const result = await createOrReuseCommercialNarrativeJob({
+        opportunityId,
+        requestedByUserId: Number(req.user.id),
+        user: req.user,
+      });
+      if (!result.wasReused) {
+        queueCommercialNarrativeProcessing();
+      }
+
+      return res.status(result.response?.result ? 200 : 202).json(result.response);
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible preparar la narrativa IA",
+      });
+    }
+  },
+);
+
+router.get(
+  "/opportunities/:id/ai-narrative/jobs/:jobId",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    const jobId = String(req.params.jobId || "").trim();
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0 || !jobId) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(req.user, opportunityId);
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    await ensureCommercialNarrativeJobSchema();
+    const job = await getCommercialNarrativeJob({
+      publicId: jobId,
+      opportunityId,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job no encontrado" });
+    }
+
+    return res.json(job);
+  },
+);
+
+router.post(
   "/opportunities/:id/ai-narrative",
   requireAnyPermission([
     "desarrollo_comercial.read",
@@ -4354,46 +4881,17 @@ router.post(
       return res.status(400).json({ message: "Parametros invalidos" });
     }
 
-    const opportunity = await loadOpportunityForExecution(
-      req.user,
-      opportunityId,
-    );
-    if (!opportunity) {
-      return res.status(404).json({ message: "Oportunidad no encontrada" });
-    }
-
-    const narrativeItem = await buildExecutionNarrativeItem({
-      user: req.user,
-      opportunity,
-    });
-    if (!narrativeItem) {
-      return res.status(404).json({ message: "Oportunidad no encontrada" });
-    }
-
-    const fallbackNarrative = buildOpportunityNarrativeFallback(narrativeItem);
-
     try {
-      const aiInsights = await requestOpportunityNarrativesWithAi([
-        {
-          ...narrativeItem,
-          ...fallbackNarrative,
-        },
-      ]);
-      const aiNarrative = aiInsights.get(opportunityId);
-      return res.json({
+      const execution = await executeCommercialOpportunityNarrative({
+        user: req.user,
         opportunityId,
-        aiStatusSummary:
-          aiNarrative?.aiStatusSummary || fallbackNarrative.aiStatusSummary,
-        aiNextStepRecommendation:
-          aiNarrative?.aiNextStepRecommendation ||
-          fallbackNarrative.aiNextStepRecommendation,
-        aiNarrativeSource:
-          aiNarrative?.aiNarrativeSource || fallbackNarrative.aiNarrativeSource,
       });
-    } catch {
-      return res.json({
-        opportunityId,
-        ...fallbackNarrative,
+      return res.json(execution.result);
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar la narrativa IA",
       });
     }
   },

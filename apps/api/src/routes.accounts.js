@@ -3,10 +3,14 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { queueAccountDraftAnalysisProcessing } from "./accounts/draft-analysis/async.js";
 import {
   accountDraftAnalysisRequestSchema,
   analyzeAccountDraft,
   analyzeAccountDuplicateReview,
+  createOrReuseAccountDraftAnalysisJob,
+  ensureAccountDraftAnalysisJobSchema,
+  getAccountDraftAnalysisJob,
 } from "./accounts/draft-analysis/index.js";
 import {
   buildDuplicateWarnings,
@@ -442,6 +446,75 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
 });
 
 router.post(
+  "/draft-analysis/jobs",
+  requireAnyPermission(accountCreatePermissions),
+  async (req, res) => {
+    const parsed = accountDraftAnalysisRequestSchema
+      .extend({ forceRegenerate: z.boolean().optional() })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      await ensureAccountDraftAnalysisJobSchema();
+      const result = await createOrReuseAccountDraftAnalysisJob({
+        draft: parsed.data.draft,
+        options: parsed.data.options,
+        requestedByUserId: Number(req.user.id),
+        forceRegenerate: Boolean(parsed.data.forceRegenerate),
+      });
+
+      if (!result.wasReused) {
+        queueAccountDraftAnalysisProcessing();
+      }
+
+      return res
+        .status(result.response?.result ? 200 : 202)
+        .json(result.response);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        message: "No fue posible preparar el analisis del borrador de cuenta",
+      });
+    }
+  },
+);
+
+router.get(
+  "/draft-analysis/jobs/:jobId",
+  requireAnyPermission(accountCreatePermissions),
+  async (req, res) => {
+    const jobId = String(req.params.jobId || "").trim();
+    if (!jobId) {
+      return res.status(400).json({ message: "jobId invalido" });
+    }
+
+    try {
+      await ensureAccountDraftAnalysisJobSchema();
+      const job = await getAccountDraftAnalysisJob(jobId);
+      if (!job) {
+        return res.status(404).json({ message: "Job no encontrado" });
+      }
+
+      if (Number(job.job?.requestedByUserId || 0) !== Number(req.user.id)) {
+        return res.status(404).json({ message: "Job no encontrado" });
+      }
+
+      return res.json(job);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        message: "No fue posible obtener el analisis del borrador de cuenta",
+      });
+    }
+  },
+);
+
+router.post(
   "/draft-analysis",
   requireAnyPermission(accountCreatePermissions),
   async (req, res) => {
@@ -834,6 +907,16 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    const blockedStatusResponse = await getBlockedAccountStatusResponse(
+      id,
+      parsed.data.statusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
+    }
+
     if (
       parsed.data.statusCode === "pendiente_activacion" &&
       !(await ensurePendingAccountStatusAllowed())
@@ -870,17 +953,6 @@ router.patch(
     if (!accountRows.length) {
       return res.status(404).json({ message: "Cuenta no encontrada" });
     }
-
-    const blockedStatusResponse = await getBlockedAccountStatusResponse(
-      id,
-      parsed.data.statusCode,
-    );
-    if (blockedStatusResponse) {
-      return res
-        .status(blockedStatusResponse.status)
-        .json(blockedStatusResponse.body);
-    }
-
     const previousStatusId = Number(accountRows[0].activation_status_id);
     const previousStatusCode = await getAccountActivationStatusCodeById(
       previousStatusId,

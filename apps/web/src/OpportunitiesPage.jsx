@@ -95,6 +95,7 @@ function OpportunitiesPage({ currentUser, can }) {
     normalizeOpportunityNameField,
     closeOpportunityModal,
     closeStageValidationResult,
+    retryCurrentStageValidation,
     toggleOpportunitySort,
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
@@ -207,6 +208,7 @@ function OpportunitiesPage({ currentUser, can }) {
         }
         stageValidationResult={stageValidationResult}
         closeStageValidationResult={closeStageValidationResult}
+        retryCurrentStageValidation={retryCurrentStageValidation}
         handleCommercialStageSelect={handleCommercialStageSelect}
         handleCurrentStageValidation={handleCurrentStageValidation}
         confirmValidatedStageAdvance={confirmValidatedStageAdvance}
@@ -257,6 +259,7 @@ function OpportunitiesPage({ currentUser, can }) {
         analyzeCommercialStageAnswers={analyzeCommercialStageAnswers}
         applyCommercialAnswerSuggestion={applyCommercialAnswerSuggestion}
         closeCommercialSuggestionFeedback={closeCommercialSuggestionFeedback}
+        retryCommercialSuggestionAnalysis={analyzeCommercialStageAnswers}
         refreshOpportunityCommercialView={refreshOpportunityCommercialView}
       />
 

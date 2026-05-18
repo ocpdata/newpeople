@@ -66,11 +66,12 @@ function AccountsPage({ can, currentUser }) {
     toggleAccountSort,
     getAccountSortArrow,
     analyzeAccountDraft,
+    runDuplicateAiReview,
     dismissAccountDuplicateReview,
     confirmAccountDuplicateOverride,
     openDuplicateCandidateAccount,
     useSuggestedCompanyDescription,
-    useSuggestedAccountField,
+    applySuggestedAccountField,
   } = useAccountsCrud({ currentUser });
 
   const {
@@ -204,15 +205,15 @@ function AccountsPage({ can, currentUser }) {
         onSubmit={saveAccount}
         onAnalyzeDraft={analyzeAccountDraft}
         onUseSuggestedCompanyDescription={useSuggestedCompanyDescription}
-        onApplySuggestedWebsite={() => useSuggestedAccountField("website")}
+        onApplySuggestedWebsite={() => applySuggestedAccountField("website")}
         onApplySuggestedEconomicSector={() =>
-          useSuggestedAccountField("economicSector")
+          applySuggestedAccountField("economicSector")
         }
         onApplySuggestedContactData={(fieldName) =>
-          useSuggestedAccountField(fieldName)
+          applySuggestedAccountField(fieldName)
         }
         onApplySuggestedRegistration={() =>
-          useSuggestedAccountField("registration")
+          applySuggestedAccountField("registration")
         }
         accountDraftAnalysis={accountDraftAnalysis}
         accountDraftAnalysisError={accountDraftAnalysisError}
@@ -221,6 +222,9 @@ function AccountsPage({ can, currentUser }) {
         onDismissDuplicateReview={dismissAccountDuplicateReview}
         onConfirmDuplicateOverride={confirmAccountDuplicateOverride}
         onOpenDuplicateCandidateAccount={openDuplicateCandidateAccount}
+        onRetryDuplicateAiReview={() =>
+          runDuplicateAiReview(accountDuplicateReview)
+        }
         accountInteractions={accountInteractions}
         visibleAccountInteractions={visibleAccountInteractions}
         interactionTypes={interactionTypes}

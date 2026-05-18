@@ -1029,6 +1029,16 @@ router.patch(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    const blockedStatusResponse = await getBlockedContactStatusResponse(
+      id,
+      parsed.data.statusCode,
+    );
+    if (blockedStatusResponse) {
+      return res
+        .status(blockedStatusResponse.status)
+        .json(blockedStatusResponse.body);
+    }
+
     if (
       parsed.data.statusCode === "pendiente_activacion" &&
       !(await ensurePendingContactStatusAllowed())
@@ -1077,17 +1087,6 @@ router.patch(
         message: "El estado pendiente no esta habilitado para contactos",
       });
     }
-
-    const blockedStatusResponse = await getBlockedContactStatusResponse(
-      id,
-      parsed.data.statusCode,
-    );
-    if (blockedStatusResponse) {
-      return res
-        .status(blockedStatusResponse.status)
-        .json(blockedStatusResponse.body);
-    }
-
     const now = new Date();
     await query(
       `UPDATE contacts

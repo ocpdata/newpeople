@@ -4,7 +4,10 @@ import { usePersistedStatusFilter } from "../appFilters";
 
 const PROPOSE_ANSWERS_TIMEOUT_MS = 240000;
 const PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS = 3000;
+const PROPOSE_ANSWERS_TOTAL_POLL_TIMEOUT_MS = 120000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
+const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
+const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
 
 function normalizeText(value) {
   return String(value || "")
@@ -108,9 +111,9 @@ function normalizeOpportunityNameToken(token, index) {
   }
 
   return trimmedToken
-    .split(/([\-/'’])/)
+    .split(/([-/'’])/)
     .map((segment) => {
-      if (/^[\-/'’]$/.test(segment)) {
+      if (/^[-/'’]$/.test(segment)) {
         return segment;
       }
       return normalizeOpportunityNameSegment(segment);
@@ -412,10 +415,12 @@ export function useOpportunitiesPage({
   });
   const openEditOpportunityModalRef = useRef(null);
   const commercialSuggestionPollingTokenRef = useRef(0);
+  const stageValidationPollingTokenRef = useRef(0);
 
   useEffect(
     () => () => {
       commercialSuggestionPollingTokenRef.current += 1;
+      stageValidationPollingTokenRef.current += 1;
     },
     [],
   );
@@ -940,10 +945,6 @@ export function useOpportunitiesPage({
     return "status-icon-badge inactive";
   }
 
-  function isCommercialOpportunityWaiting(statusValue) {
-    return normalizeText(statusValue) === "waiting";
-  }
-
   function resetCommercialDraftState() {
     setCommercialContext(null);
     setCommercialStageViewsById({});
@@ -1418,6 +1419,20 @@ export function useOpportunitiesPage({
     setCommercialSuggestionFeedback(null);
   }
 
+  function showCommercialSuggestionFeedback({
+    tone,
+    title,
+    message,
+    canRetry = false,
+  }) {
+    setCommercialSuggestionFeedback({
+      tone,
+      title,
+      message,
+      canRetry,
+    });
+  }
+
   function applyCommercialSuggestionResult(stageId, result) {
     const suggestions = Array.isArray(result?.suggestions)
       ? result.suggestions
@@ -1437,7 +1452,7 @@ export function useOpportunitiesPage({
     const proposedCount = Number(result?.summary?.proposedCount || 0);
     const ambiguousCount = Number(result?.summary?.ambiguousCount || 0);
     const insufficientCount = Number(result?.summary?.insufficientCount || 0);
-    setCommercialSuggestionFeedback({
+    showCommercialSuggestionFeedback({
       tone: proposedCount ? "success" : "warning",
       title: proposedCount
         ? "Sugerencias generadas"
@@ -1455,12 +1470,27 @@ export function useOpportunitiesPage({
     pollingToken,
     pollAfterMs,
   }) {
+    const deadline = Date.now() + PROPOSE_ANSWERS_TOTAL_POLL_TIMEOUT_MS;
     let nextDelay = Math.max(
       Number(pollAfterMs || PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS),
       0,
     );
 
     while (commercialSuggestionPollingTokenRef.current === pollingToken) {
+      if (Date.now() >= deadline) {
+        return {
+          job: {
+            id: jobId,
+            status: "timed_out",
+          },
+          error: {
+            code: "poll_timeout",
+            message:
+              "La generacion de sugerencias sigue tardando mas de 2 minutos. Puedes reintentar sin cerrar el modal.",
+          },
+        };
+      }
+
       if (nextDelay > 0) {
         await new Promise((resolve) => {
           window.setTimeout(resolve, nextDelay);
@@ -1489,6 +1519,9 @@ export function useOpportunitiesPage({
         Number(data?.job?.pollAfterMs || PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS),
         0,
       );
+
+      const remainingMs = Math.max(deadline - Date.now(), 0);
+      nextDelay = Math.min(nextDelay, remainingMs);
     }
 
     return null;
@@ -1608,6 +1641,7 @@ export function useOpportunitiesPage({
     if (savingOpportunity || savingCommercialAction) return;
     setError("");
     setCommercialSuggestionFeedback(null);
+    stageValidationPollingTokenRef.current += 1;
     setShowOpportunityModal(false);
     setEditingOpportunityId(null);
     setEditOpportunityAudit(null);
@@ -1617,7 +1651,70 @@ export function useOpportunitiesPage({
   }
 
   function closeStageValidationResult() {
+    stageValidationPollingTokenRef.current += 1;
     setStageValidationResult(null);
+  }
+
+  async function pollCurrentStageValidationJob({
+    opportunityId,
+    jobId,
+    pollingToken,
+    pollAfterMs,
+  }) {
+    const deadline = Date.now() + VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS;
+    let nextDelay = Math.max(
+      Number(pollAfterMs || VALIDATE_STAGE_JOB_POLL_INTERVAL_MS),
+      0,
+    );
+
+    while (stageValidationPollingTokenRef.current === pollingToken) {
+      if (Date.now() >= deadline) {
+        return {
+          job: {
+            id: jobId,
+            status: "timed_out",
+          },
+          error: {
+            code: "poll_timeout",
+            message:
+              "La validacion sigue tardando mas de 2 minutos. Puedes reintentar sin cerrar el modal.",
+          },
+        };
+      }
+
+      if (nextDelay > 0) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, nextDelay);
+        });
+      }
+
+      if (stageValidationPollingTokenRef.current !== pollingToken) {
+        return null;
+      }
+
+      const { data } = await api.get(
+        `/api/opportunities/${opportunityId}/validate-current-stage/jobs/${jobId}`,
+        { timeout: VALIDATE_STAGE_TIMEOUT_MS },
+      );
+
+      if (data?.result) {
+        return data;
+      }
+
+      const jobStatus = String(data?.job?.status || "");
+      if (["failed", "stale", "expired"].includes(jobStatus)) {
+        return data;
+      }
+
+      nextDelay = Math.max(
+        Number(data?.job?.pollAfterMs || VALIDATE_STAGE_JOB_POLL_INTERVAL_MS),
+        0,
+      );
+      const remainingMs = Math.max(deadline - Date.now(), 0);
+      nextDelay = Math.min(nextDelay, remainingMs);
+    }
+
+    return null;
   }
 
   const filteredOpportunities = useMemo(
@@ -1965,25 +2062,30 @@ export function useOpportunitiesPage({
       if (resolvedData?.result) {
         applyCommercialSuggestionResult(stageId, resolvedData.result);
       } else {
-        setCommercialSuggestionFeedback({
+        showCommercialSuggestionFeedback({
           tone: "danger",
-          title: "No fue posible generar sugerencias",
+          title:
+            resolvedData?.error?.code === "poll_timeout"
+              ? "La generacion sigue en proceso"
+              : "No fue posible generar sugerencias",
           message:
             String(resolvedData?.error?.message || "").trim() ||
             "No fue posible analizar los documentos para proponer respuestas",
+          canRetry: true,
         });
       }
     } catch (err) {
       if (commercialSuggestionPollingTokenRef.current !== pollingToken) {
         return;
       }
-      setCommercialSuggestionFeedback({
+      showCommercialSuggestionFeedback({
         tone: "danger",
         title: "No fue posible generar sugerencias",
         message: getApiErrorMessage(
           err,
           "No fue posible analizar los documentos para proponer respuestas",
         ),
+        canRetry: true,
       });
     } finally {
       if (commercialSuggestionPollingTokenRef.current === pollingToken) {
@@ -2326,6 +2428,8 @@ export function useOpportunitiesPage({
       return;
     }
     setSavingCommercialAction("validate-current-stage");
+    stageValidationPollingTokenRef.current += 1;
+    const pollingToken = stageValidationPollingTokenRef.current;
     try {
       const saved = await saveCommercialAnswers({
         silentSuccess: true,
@@ -2334,52 +2438,105 @@ export function useOpportunitiesPage({
       if (!saved) return;
 
       const { data } = await api.post(
-        `/api/opportunities/${editingOpportunityId}/validate-current-stage`,
-        {},
+        `/api/opportunities/${editingOpportunityId}/validate-current-stage/jobs`,
+        {
+          note: "",
+        },
         { timeout: VALIDATE_STAGE_TIMEOUT_MS },
       );
 
-      await refreshOpportunityCommercialView();
-      const validationDecision = String(
-        data?.validation?.decision || "",
-      ).trim();
-      const advancedStageName = String(
-        data?.advancedSalesStage?.name || "",
-      ).trim();
-      setStageValidationResult({
-        message:
-          data?.message ||
-          `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-        feedbackMessage: formatStageValidationFeedback(
-          data?.validation,
-          data?.message ||
+      let resolvedData = data;
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (!jobId) {
+          throw new Error(
+            "No fue posible obtener el identificador del job de validacion",
+          );
+        }
+
+        resolvedData = await pollCurrentStageValidationJob({
+          opportunityId: editingOpportunityId,
+          jobId,
+          pollingToken,
+          pollAfterMs: resolvedData?.job?.pollAfterMs,
+        });
+      }
+
+      if (stageValidationPollingTokenRef.current !== pollingToken) {
+        return;
+      }
+
+      if (resolvedData?.result) {
+        await refreshOpportunityCommercialView();
+        const validationDecision = String(
+          resolvedData?.result?.validation?.decision || "",
+        ).trim();
+        const advancedStageName = String(
+          resolvedData?.result?.advancedSalesStage?.name || "",
+        ).trim();
+        setStageValidationResult({
+          message:
+            resolvedData?.result?.message ||
             `Etapa ${currentCommercialStage?.name || "actual"} validada`,
-        ),
-        validation: data?.validation || null,
-        autoAdvanced: Boolean(data?.autoAdvanced),
-        advancedSalesStage: data?.advancedSalesStage || null,
-      });
-      if (validationDecision === "not_ready_to_advance") {
-        setError("Validacion completada: la etapa no esta lista para avanzar.");
-      } else if (validationDecision === "advance_with_caution") {
-        setSuccess(
-          "Validacion completada: la etapa puede avanzar con reservas.",
-        );
-      } else if (data?.autoAdvanced) {
-        setSuccess(
-          advancedStageName
-            ? `Validacion completada: la oportunidad avanzo a ${advancedStageName}.`
-            : "Validacion completada: la etapa fue validada y la oportunidad avanzo.",
-        );
+          feedbackMessage: formatStageValidationFeedback(
+            resolvedData?.result?.validation,
+            resolvedData?.result?.message ||
+              `Etapa ${currentCommercialStage?.name || "actual"} validada`,
+          ),
+          validation: resolvedData?.result?.validation || null,
+          autoAdvanced: Boolean(resolvedData?.result?.autoAdvanced),
+          advancedSalesStage: resolvedData?.result?.advancedSalesStage || null,
+        });
+        if (validationDecision === "not_ready_to_advance") {
+          setError(
+            "Validacion completada: la etapa no esta lista para avanzar.",
+          );
+        } else if (validationDecision === "advance_with_caution") {
+          setSuccess(
+            "Validacion completada: la etapa puede avanzar con reservas.",
+          );
+        } else if (resolvedData?.result?.autoAdvanced) {
+          setSuccess(
+            advancedStageName
+              ? `Validacion completada: la oportunidad avanzo a ${advancedStageName}.`
+              : "Validacion completada: la etapa fue validada y la oportunidad avanzo.",
+          );
+        } else {
+          setSuccess(
+            "Validacion completada: la etapa esta lista para avanzar.",
+          );
+        }
       } else {
-        setSuccess("Validacion completada: la etapa esta lista para avanzar.");
+        setStageValidationResult({
+          tone: "danger",
+          title:
+            resolvedData?.error?.code === "poll_timeout"
+              ? "La validacion sigue en proceso"
+              : "No fue posible validar la etapa",
+          statusLabel:
+            resolvedData?.error?.code === "poll_timeout"
+              ? "En proceso"
+              : "Error",
+          message:
+            String(resolvedData?.error?.message || "").trim() ||
+            "No fue posible completar la validacion de la etapa actual.",
+          feedbackMessage:
+            String(resolvedData?.error?.message || "").trim() ||
+            "No fue posible completar la validacion de la etapa actual.",
+          canRetry: true,
+        });
       }
     } catch (err) {
+      if (stageValidationPollingTokenRef.current !== pollingToken) {
+        return;
+      }
       setError(
         getApiErrorMessage(err, "No fue posible validar la etapa actual"),
       );
     } finally {
-      setSavingCommercialAction("");
+      if (stageValidationPollingTokenRef.current === pollingToken) {
+        setSavingCommercialAction("");
+      }
     }
   }
 
@@ -2867,6 +3024,7 @@ export function useOpportunitiesPage({
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm((prev) => {
       if (prev.sellerUserId) {
         return prev;
@@ -2983,6 +3141,7 @@ export function useOpportunitiesPage({
     normalizeOpportunityNameField,
     closeOpportunityModal,
     closeStageValidationResult,
+    retryCurrentStageValidation: handleCurrentStageValidation,
     toggleOpportunitySort,
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,

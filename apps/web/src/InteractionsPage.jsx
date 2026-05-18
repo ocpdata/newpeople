@@ -3,6 +3,9 @@ import { api, getApiErrorMessage } from "./api";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
+const INTERACTION_ANALYSIS_TIMEOUT_MS = 60000;
+const INTERACTION_ANALYSIS_JOB_POLL_INTERVAL_MS = 3000;
+const INTERACTION_ANALYSIS_TOTAL_POLL_TIMEOUT_MS = 120000;
 
 function buildPastedTextFileName(label) {
   const normalizedLabel = String(label || "")
@@ -22,13 +25,6 @@ function buildPastedTextFile({ fileName, text }) {
     type: "text/plain",
     lastModified: Date.now(),
   });
-}
-
-function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-  return date.toLocaleString("es-MX");
 }
 
 function formatDate(value) {
@@ -942,10 +938,8 @@ function InteractionDetailModal({
   resolutionForm,
   setResolutionForm,
   options,
-  saving,
   resolving,
   reanalyzing,
-  canUpdate,
   canAnalyze,
   canResolve,
   addingDocuments,
@@ -961,7 +955,10 @@ function InteractionDetailModal({
   const [uploadInputKey, setUploadInputKey] = useState(0);
 
   useEffect(() => {
+    // Reset staged uploads when the modal changes interaction context.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAdditionalFiles([]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUploadInputKey((currentValue) => currentValue + 1);
   }, [detail?.id, isOpen]);
 
@@ -2194,7 +2191,7 @@ function InteractionsPage({ can, currentUser }) {
     presalesUsers: [],
   });
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saving] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [addingDocuments, setAddingDocuments] = useState(false);
@@ -2202,6 +2199,7 @@ function InteractionsPage({ can, currentUser }) {
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
   const [showResolveConfirmation, setShowResolveConfirmation] = useState(false);
+  const interactionAnalysisPollingTokenRef = useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const canCreate = can("interacciones.create");
@@ -2293,6 +2291,8 @@ function InteractionsPage({ can, currentUser }) {
   }
 
   useEffect(() => {
+    // Reloading the list on pagination/filter changes is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInteractions();
   }, [page, pageSize, query, statusFilter]);
 
@@ -2502,11 +2502,99 @@ function InteractionsPage({ can, currentUser }) {
     if (!detail) return;
     setReanalyzing(true);
     setError("");
+    interactionAnalysisPollingTokenRef.current += 1;
+    const pollingToken = interactionAnalysisPollingTokenRef.current;
     try {
-      const { data } = await api.post(`/api/interactions/${detail.id}/analyze`);
-      setDetail(data);
-      setEditForm(buildEditableForm(data));
-      setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
+      const { data } = await api.post(
+        `/api/interactions/${detail.id}/analyze/jobs`,
+        {},
+        { timeout: INTERACTION_ANALYSIS_TIMEOUT_MS },
+      );
+
+      let resolvedData = data;
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (!jobId) {
+          throw new Error(
+            "No fue posible obtener el identificador del job de analisis",
+          );
+        }
+
+        const deadline =
+          Date.now() + INTERACTION_ANALYSIS_TOTAL_POLL_TIMEOUT_MS;
+        let nextDelay = Math.max(
+          Number(
+            resolvedData?.job?.pollAfterMs ||
+              INTERACTION_ANALYSIS_JOB_POLL_INTERVAL_MS,
+          ),
+          0,
+        );
+
+        while (interactionAnalysisPollingTokenRef.current === pollingToken) {
+          if (Date.now() >= deadline) {
+            resolvedData = {
+              error: {
+                message:
+                  "El analisis sigue tardando mas de 2 minutos. Puedes reintentarlo desde el modal.",
+              },
+            };
+            break;
+          }
+
+          if (nextDelay > 0) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, nextDelay);
+            });
+          }
+
+          if (interactionAnalysisPollingTokenRef.current !== pollingToken) {
+            return;
+          }
+
+          const pollResponse = await api.get(
+            `/api/interactions/${detail.id}/analyze/jobs/${jobId}`,
+            { timeout: INTERACTION_ANALYSIS_TIMEOUT_MS },
+          );
+          resolvedData = pollResponse.data;
+
+          if (resolvedData?.result) {
+            break;
+          }
+
+          const jobStatus = String(resolvedData?.job?.status || "");
+          if (["failed", "stale", "expired"].includes(jobStatus)) {
+            break;
+          }
+
+          nextDelay = Math.max(
+            Number(
+              resolvedData?.job?.pollAfterMs ||
+                INTERACTION_ANALYSIS_JOB_POLL_INTERVAL_MS,
+            ),
+            0,
+          );
+          nextDelay = Math.min(nextDelay, Math.max(deadline - Date.now(), 0));
+        }
+      }
+
+      if (interactionAnalysisPollingTokenRef.current !== pollingToken) {
+        return;
+      }
+
+      if (!resolvedData?.result) {
+        setError(
+          String(resolvedData?.error?.message || "").trim() ||
+            "No fue posible reanalizar la interacción",
+        );
+        return;
+      }
+
+      const refreshed = await api.get(`/api/interactions/${detail.id}`);
+      setDetail(refreshed.data);
+      setEditForm(buildEditableForm(refreshed.data));
+      setResolutionForm(
+        buildInitialResolutionForm(refreshed.data, options, currentUser),
+      );
       setSuccess("Interacción reanalizada");
       await loadInteractions();
     } catch (err) {
@@ -2514,7 +2602,9 @@ function InteractionsPage({ can, currentUser }) {
         getApiErrorMessage(err, "No fue posible reanalizar la interacción"),
       );
     } finally {
-      setReanalyzing(false);
+      if (interactionAnalysisPollingTokenRef.current === pollingToken) {
+        setReanalyzing(false);
+      }
     }
   }
 

@@ -19,7 +19,6 @@ function QuotationsListPanel({
   pagedQuotations,
   formatQuotationDate,
   getQuotationWorkflowBadgeClass,
-  getQuotationActivationBadgeClass,
   openQuotationMenuId,
   setOpenQuotationMenuId,
   quotationVersionsByQuotationId,

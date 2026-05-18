@@ -957,6 +957,7 @@ export function useQuotationsSection({
   const selectedQuotationIdRef = useRef(selectedQuotationId);
   const loadVersionRef = useRef(null);
   const initialEditSnapshotRef = useRef("");
+  const [initialEditSnapshot, setInitialEditSnapshot] = useState("");
   const createSectionDraftSequenceRef = useRef(1);
   const createItemDraftSequenceRef = useRef(1);
   const editSectionDraftSequenceRef = useRef(1);
@@ -987,6 +988,8 @@ export function useQuotationsSection({
   const editItemDraftSequenceRef = useRef(1);
 
   useEffect(() => {
+    // Pricing context changes must update in-progress local item edits.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setItemEdits((prev) =>
       syncQuotationItemEditsPricing(prev, quotationVersionPricingContext),
     );
@@ -1326,11 +1329,11 @@ export function useQuotationsSection({
     () =>
       Boolean(
         selectedVersion &&
-        initialEditSnapshotRef.current &&
+        initialEditSnapshot &&
         currentEditSnapshot &&
-        currentEditSnapshot !== initialEditSnapshotRef.current,
+        currentEditSnapshot !== initialEditSnapshot,
       ),
-    [currentEditSnapshot, selectedVersion],
+    [currentEditSnapshot, initialEditSnapshot, selectedVersion],
   );
 
   const confirmDiscardUnsavedChanges = useCallback(() => {
@@ -1370,56 +1373,6 @@ export function useQuotationsSection({
       setQuotationNavigationGuard("edit-quotation", { active: false });
     };
   }, [hasEditUnsavedChanges]);
-
-  useEffect(() => {
-    if (!showCreateQuotationForm) return;
-
-    setCreateQuotationForm((prev) => {
-      const shouldPreserveQuotedContact =
-        String(prev.accountId || "") ===
-          String(createSelectedAccountId || "") &&
-        String(prev.opportunityId || "") ===
-          String(createSelectedOpportunityId || "") &&
-        createContactOptions.some(
-          (contact) => String(contact.id) === String(prev.contactId),
-        );
-      const inheritedContactId =
-        selectedCreateOpportunity?.contactId &&
-        createContactOptions.some(
-          (contact) =>
-            String(contact.id) === String(selectedCreateOpportunity.contactId),
-        )
-          ? String(selectedCreateOpportunity.contactId)
-          : "";
-
-      return {
-        ...prev,
-        accountId: createSelectedAccountId,
-        opportunityId: createSelectedOpportunityId,
-        contextContactId: inheritedContactId,
-        contactId:
-          createCommercialContextConfirmed && shouldPreserveQuotedContact
-            ? String(prev.contactId)
-            : inheritedContactId,
-        sellerUserId: selectedCreateOpportunity?.sellerUserId
-          ? String(selectedCreateOpportunity.sellerUserId)
-          : "",
-        sellerUserName: selectedCreateOpportunity?.sellerUserName || "",
-        proposalName:
-          String(prev.opportunityId || "") ===
-          String(createSelectedOpportunityId || "")
-            ? prev.proposalName
-            : selectedCreateOpportunity?.name || "",
-      };
-    });
-  }, [
-    createCommercialContextConfirmed,
-    createContactOptions,
-    createSelectedAccountId,
-    createSelectedOpportunityId,
-    selectedCreateOpportunity,
-    showCreateQuotationForm,
-  ]);
 
   useEffect(() => {
     if (!showCreateQuotationForm || !createSelectedAccountId) return;
@@ -1473,10 +1426,46 @@ export function useQuotationsSection({
         const nextSelectedOpportunity = nextOpportunities.find(
           (item) => Number(item.id) === Number(createSelectedOpportunityId),
         );
+        const nextOpportunityId = nextSelectedOpportunity
+          ? String(nextSelectedOpportunity.id)
+          : "";
+        const inheritedContactId =
+          nextSelectedOpportunity?.contactId &&
+          nextContacts.some(
+            (contact) =>
+              String(contact.id) === String(nextSelectedOpportunity.contactId),
+          )
+            ? String(nextSelectedOpportunity.contactId)
+            : "";
 
-        setCreateSelectedOpportunityId(
-          nextSelectedOpportunity ? String(nextSelectedOpportunity.id) : "",
-        );
+        setCreateSelectedOpportunityId(nextOpportunityId);
+        setCreateQuotationForm((prev) => {
+          const shouldPreserveQuotedContact =
+            String(prev.accountId || "") === String(createSelectedAccountId || "") &&
+            String(prev.opportunityId || "") === nextOpportunityId &&
+            nextContacts.some(
+              (contact) => String(contact.id) === String(prev.contactId),
+            );
+
+          return {
+            ...prev,
+            accountId: String(createSelectedAccountId || ""),
+            opportunityId: nextOpportunityId,
+            contextContactId: inheritedContactId,
+            contactId:
+              createCommercialContextConfirmed && shouldPreserveQuotedContact
+                ? String(prev.contactId)
+                : inheritedContactId,
+            sellerUserId: nextSelectedOpportunity?.sellerUserId
+              ? String(nextSelectedOpportunity.sellerUserId)
+              : "",
+            sellerUserName: nextSelectedOpportunity?.sellerUserName || "",
+            proposalName:
+              String(prev.opportunityId || "") === nextOpportunityId
+                ? prev.proposalName
+                : nextSelectedOpportunity?.name || "",
+          };
+        });
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -1747,13 +1736,15 @@ export function useQuotationsSection({
       setSectionEdits(nextSectionEdits);
       setItemEdits(nextItemEdits);
       setItemDraftsBySection(buildItemDrafts(data, providerOptions));
-      initialEditSnapshotRef.current = buildPersistedQuotationVersionSnapshot({
+      const nextSnapshot = buildPersistedQuotationVersionSnapshot({
         selectedVersion: data,
         versionForm: nextVersionForm,
         sectionEdits: nextSectionEdits,
         itemEdits: nextItemEdits,
         inclusionTypes: catalogs.inclusionTypes,
       });
+      initialEditSnapshotRef.current = nextSnapshot;
+      setInitialEditSnapshot(nextSnapshot);
       if (!preserveMessage) {
         setError("");
         setSuccess("");
@@ -1773,13 +1764,15 @@ export function useQuotationsSection({
       setSectionEdits(nextSectionEdits);
       setItemEdits(nextItemEdits);
       setItemDraftsBySection(buildItemDrafts(data, providerOptions));
-      initialEditSnapshotRef.current = buildPersistedQuotationVersionSnapshot({
+      const nextSnapshot = buildPersistedQuotationVersionSnapshot({
         selectedVersion: data,
         versionForm: nextVersionForm,
         sectionEdits: nextSectionEdits,
         itemEdits: nextItemEdits,
         inclusionTypes: catalogs.inclusionTypes,
       });
+      initialEditSnapshotRef.current = nextSnapshot;
+      setInitialEditSnapshot(nextSnapshot);
     },
     [catalogs.inclusionTypes, catalogs.providers],
   );
@@ -2241,20 +2234,43 @@ export function useQuotationsSection({
     setCreateContactOptions([]);
     setCreateQuotationForm((prev) => ({
       ...prev,
+      accountId: String(nextAccountId || ""),
+      opportunityId: "",
+      proposalName: "",
+      sellerUserId: "",
+      sellerUserName: "",
       contextContactId: "",
       contactId: "",
     }));
   }, []);
 
   const handleCreateOpportunityChange = useCallback((nextOpportunityId) => {
+    const nextSelectedOpportunity = createOpportunities.find(
+      (item) => String(item.id) === String(nextOpportunityId),
+    );
+    const inheritedContactId =
+      nextSelectedOpportunity?.contactId &&
+      createContactOptions.some(
+        (contact) =>
+          String(contact.id) === String(nextSelectedOpportunity.contactId),
+      )
+        ? String(nextSelectedOpportunity.contactId)
+        : "";
+
     setCreateCommercialContextConfirmed(false);
     setCreateSelectedOpportunityId(nextOpportunityId);
     setCreateQuotationForm((prev) => ({
       ...prev,
-      contextContactId: "",
-      contactId: "",
+      opportunityId: String(nextOpportunityId || ""),
+      proposalName: nextSelectedOpportunity?.name || "",
+      sellerUserId: nextSelectedOpportunity?.sellerUserId
+        ? String(nextSelectedOpportunity.sellerUserId)
+        : "",
+      sellerUserName: nextSelectedOpportunity?.sellerUserName || "",
+      contextContactId: inheritedContactId,
+      contactId: inheritedContactId,
     }));
-  }, []);
+  }, [createContactOptions, createOpportunities]);
 
   const handleConfirmCreateCommercialContext = useCallback(() => {
     if (!canConfirmCreateCommercialContext) {
@@ -3002,7 +3018,7 @@ export function useQuotationsSection({
             nextItems.push(item);
 
             if (itemIndex === lastBundleIndex) {
-              nextItems.push(...normalizedComponentItems);
+              nextItems.push(...normalizedSelectedComponentItems);
             }
           });
 
@@ -4269,25 +4285,19 @@ export function useQuotationsSection({
     () => Math.max(1, Math.ceil(visibleQuotations.length / quotationsPerPage)),
     [visibleQuotations.length, quotationsPerPage],
   );
+  const currentQuotationsPage = useMemo(
+    () => Math.min(quotationsPage, totalQuotationPages),
+    [quotationsPage, totalQuotationPages],
+  );
 
   const pagedQuotations = useMemo(
     () =>
       visibleQuotations.slice(
-        (quotationsPage - 1) * quotationsPerPage,
-        quotationsPage * quotationsPerPage,
+        (currentQuotationsPage - 1) * quotationsPerPage,
+        currentQuotationsPage * quotationsPerPage,
       ),
-    [visibleQuotations, quotationsPage, quotationsPerPage],
+    [currentQuotationsPage, quotationsPerPage, visibleQuotations],
   );
-
-  useEffect(() => {
-    setQuotationsPage(1);
-  }, [quotationQuery, quotationStatusFilter]);
-
-  useEffect(() => {
-    if (quotationsPage > totalQuotationPages) {
-      setQuotationsPage(totalQuotationPages);
-    }
-  }, [quotationsPage, totalQuotationPages]);
 
   const toggleQuotationSort = useCallback((field) => {
     setQuotationSort((current) => {
@@ -4313,6 +4323,16 @@ export function useQuotationsSection({
   const setQuotationsPerPage = useCallback((value) => {
     setQuotationsPage(1);
     setQuotationsPerPageState(value);
+  }, []);
+
+  const handleQuotationStatusFilterChange = useCallback((value) => {
+    setQuotationsPage(1);
+    setQuotationStatusFilter(value);
+  }, []);
+
+  const handleQuotationQueryChange = useCallback((value) => {
+    setQuotationsPage(1);
+    setQuotationQuery(value);
   }, []);
 
   const getQuotationActivationBadgeClass = useCallback(
@@ -4452,10 +4472,10 @@ export function useQuotationsSection({
       selectedQuotationId,
       loadVersion: handleSelectQuotationVersion,
       quotationStatusFilter,
-      setQuotationStatusFilter,
+      setQuotationStatusFilter: handleQuotationStatusFilterChange,
       quotationStatusCounts,
       quotationQuery,
-      setQuotationQuery,
+      setQuotationQuery: handleQuotationQueryChange,
       toggleQuotationSort,
       getQuotationSortArrow,
       visibleQuotations,
@@ -4472,7 +4492,7 @@ export function useQuotationsSection({
       toggleQuotationMenu,
       busyAction,
       openEditQuotationModal,
-      quotationsPage,
+      quotationsPage: currentQuotationsPage,
       quotationsPerPage,
       totalQuotationPages,
       setQuotationsPage,
@@ -4480,7 +4500,6 @@ export function useQuotationsSection({
     },
     editorContentProps: {
       selectedVersion,
-      selectedQuotation,
       selectedQuotation,
       openQuotationPrintView,
       companyBranding,

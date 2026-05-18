@@ -303,7 +303,7 @@ export default function CommercialPlanningPage({ can }) {
           };
         });
       }
-    } catch (_requestError) {
+    } catch {
       setCurrencies([]);
     }
   }
@@ -353,7 +353,10 @@ export default function CommercialPlanningPage({ can }) {
   }
 
   useEffect(() => {
+    // Initial page bootstrap intentionally triggers these data loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadPeriods();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadCurrencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -361,12 +364,14 @@ export default function CommercialPlanningPage({ can }) {
   useEffect(() => {
     if (!selectedVersionId) return;
     if (versionDetail?.version?.id === selectedVersionId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadVersion(selectedVersionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVersionId]);
 
   useEffect(() => {
     if (activeTab === "audit") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadAudit();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

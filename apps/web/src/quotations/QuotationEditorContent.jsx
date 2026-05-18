@@ -460,24 +460,6 @@ function QuotationIconButton({
   );
 }
 
-function moveListItem(list, fromIndex, toIndex) {
-  if (
-    !Array.isArray(list) ||
-    fromIndex === toIndex ||
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= list.length ||
-    toIndex >= list.length
-  ) {
-    return list;
-  }
-
-  const nextList = [...list];
-  const [movedItem] = nextList.splice(fromIndex, 1);
-  nextList.splice(toIndex, 0, movedItem);
-  return nextList;
-}
-
 function moveSelectedListItems(list, selectedIds, direction) {
   const selectedIdSet = new Set(selectedIds);
   const blocks = [];
@@ -768,14 +750,11 @@ function QuotationEditorContent({
   handleUploadQuotationDocuments,
   handleDownloadQuotationDocument,
   handleAction,
-  sectionDraft,
-  setSectionDraft,
   handleCreateSection,
   sectionEdits,
   setSectionEdits,
   itemEdits,
   setItemEdits,
-  itemDraftsBySection,
   setItemDraftsBySection,
   handleSaveSection,
   handleMoveEditSection,
@@ -840,7 +819,6 @@ function QuotationEditorContent({
   const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
   const [exchangeRateFeedback, setExchangeRateFeedback] = useState("");
   const [exchangeRateError, setExchangeRateError] = useState("");
-  const newItemCodeInputRefs = useRef({});
   const quotationDocumentsInputRef = useRef(null);
   const exchangeRateRequestSequenceRef = useRef(0);
   const exchangeRateManualOverrideRef = useRef(0);
@@ -1030,7 +1008,6 @@ function QuotationEditorContent({
             const displayItem =
               effectiveSectionItemsById.get(String(item.localId || item.id)) ||
               item;
-            const isBundleComponent = Boolean(displayItem.isBundleComponent);
             const bundleParentLocalId = displayItem.bundleParentLocalId
               ? String(displayItem.bundleParentLocalId)
               : null;

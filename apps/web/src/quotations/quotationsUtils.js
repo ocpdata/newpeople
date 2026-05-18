@@ -135,7 +135,6 @@ export function buildQuotationCommercialConditionsForm(values) {
 
 export function buildCreateQuotationForm({
   accountId,
-  contactOptions,
   opportunityId,
   opportunityName,
   sellerUserId,

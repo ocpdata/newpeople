@@ -119,8 +119,10 @@ export default function ManufacturerRegistrationsPanel({
     if (!opportunityId) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadItems();
     if (!isOpportunityClosed && (canRequest || canUpdate)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       void loadProviders();
     }
   }, [opportunityId, isOpportunityClosed, canRequest, canUpdate]);

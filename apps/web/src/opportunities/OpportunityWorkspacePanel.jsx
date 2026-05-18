@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 
@@ -45,20 +46,6 @@ const DELIVERABLE_STATUS_OPTIONS = [
 
 const STRATEGY_VISIBLE_STEPS = 4;
 
-function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString("es-ES");
-}
-
-function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString("es-ES");
-}
-
 function formatOpportunityScore(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return null;
@@ -96,11 +83,6 @@ function derivePurchaseMaturity({ budgetItem, decidersItem, currentStage }) {
     summary:
       "La madurez de compra sigue debil: aun no hay claridad suficiente para sostener el cierre.",
   };
-}
-
-function buildCompactList(items, emptyText) {
-  if (!Array.isArray(items) || !items.length) return emptyText;
-  return items.join(" | ");
 }
 
 function getToneClass(tone) {
@@ -155,22 +137,6 @@ function getStrategyStepMeta(step) {
   };
 }
 
-function parseHistoryDetail(detail) {
-  if (!detail) return "";
-  if (typeof detail !== "string") {
-    try {
-      return JSON.stringify(detail, null, 2);
-    } catch {
-      return String(detail);
-    }
-  }
-  try {
-    return JSON.stringify(JSON.parse(detail), null, 2);
-  } catch {
-    return detail;
-  }
-}
-
 function buildDefaultThemeNote(themes) {
   return {
     themeCode: themes[0]?.code || "need",
@@ -178,52 +144,6 @@ function buildDefaultThemeNote(themes) {
     status: "supported",
     confidence: "medium",
     evidenceExcerpt: "",
-  };
-}
-
-function buildDefaultStakeholder() {
-  return {
-    name: "",
-    roleCode: "economic_buyer",
-    roleLabel: "",
-    influenceLevel: "medium",
-    supportLevel: "neutral",
-    status: "identified",
-    priorities: "",
-    concerns: "",
-    nextAction: "",
-    lastContactAt: "",
-  };
-}
-
-function buildDefaultAction() {
-  return {
-    title: "",
-    actionType: "follow_up",
-    status: "pending",
-    priority: "medium",
-    linkedStageId: "",
-    linkedThemeCode: "",
-    linkedWeaknessId: "",
-    stakeholderId: "",
-    ownerUserId: "",
-    dueDate: "",
-    successCriteria: "",
-    notes: "",
-  };
-}
-
-function buildDefaultDeliverable() {
-  return {
-    deliverableType: "executive_summary",
-    title: "",
-    audience: "",
-    status: "draft",
-    versionLabel: "",
-    linkedStageId: "",
-    sentAt: "",
-    outcomeSummary: "",
-    documentPublicId: "",
   };
 }
 
@@ -268,32 +188,21 @@ function StageSummaryCard({ stage, isCurrent }) {
 export default function OpportunityWorkspacePanel({
   opportunityId,
   commercialContext,
-  catalogs,
   isReadOnly,
   isCommercialFlowClosed,
   onRefresh,
 }) {
   const [savingKey, setSavingKey] = useState("");
-  const [localError, setLocalError] = useState("");
-  const [localSuccess, setLocalSuccess] = useState("");
   const [weaknessDrafts, setWeaknessDrafts] = useState({});
-  const [stakeholderDrafts, setStakeholderDrafts] = useState({});
-  const [actionDrafts, setActionDrafts] = useState({});
-  const [deliverableDrafts, setDeliverableDrafts] = useState({});
-  const [newThemeNote, setNewThemeNote] = useState({
+  const [, setActionDrafts] = useState({});
+  const [, setDeliverableDrafts] = useState({});
+  const [, setNewThemeNote] = useState({
     themeCode: "need",
     claim: "",
     status: "supported",
     confidence: "medium",
     evidenceExcerpt: "",
   });
-  const [newStakeholder, setNewStakeholder] = useState(
-    buildDefaultStakeholder(),
-  );
-  const [newAction, setNewAction] = useState(buildDefaultAction());
-  const [newDeliverable, setNewDeliverable] = useState(
-    buildDefaultDeliverable(),
-  );
   const [isStrategyExpanded, setIsStrategyExpanded] = useState(false);
 
   const workspace = commercialContext?.workspace || null;
@@ -313,9 +222,6 @@ export default function OpportunityWorkspacePanel({
   const weaknesses = Array.isArray(workspace?.weaknesses)
     ? workspace.weaknesses
     : [];
-  const stakeholders = Array.isArray(workspace?.stakeholders)
-    ? workspace.stakeholders
-    : [];
   const actions = Array.isArray(workspace?.actions) ? workspace.actions : [];
   const deliverables = Array.isArray(workspace?.deliverables)
     ? workspace.deliverables
@@ -323,20 +229,6 @@ export default function OpportunityWorkspacePanel({
   const scorecardItems = Array.isArray(workspace?.scorecard?.items)
     ? workspace.scorecard.items
     : [];
-  const recommendedActions = Array.isArray(workspace?.recommendations?.actions)
-    ? workspace.recommendations.actions
-    : [];
-  const recommendedDeliverables = Array.isArray(
-    workspace?.recommendations?.deliverables,
-  )
-    ? workspace.recommendations.deliverables
-    : [];
-  const recommendedStakeholders = Array.isArray(
-    workspace?.recommendations?.stakeholders,
-  )
-    ? workspace.recommendations.stakeholders
-    : [];
-  const stageOptions = Array.isArray(catalogs?.stages) ? catalogs.stages : [];
   const urgencyItem =
     scorecardItems.find((item) => item.key === "urgency") || null;
   const budgetItem =
@@ -380,19 +272,7 @@ export default function OpportunityWorkspacePanel({
       };
     });
     setWeaknessDrafts(nextDrafts);
-  }, [weaknesses]);
-
-  useEffect(() => {
-    const nextDrafts = {};
-    stakeholders.forEach((item) => {
-      nextDrafts[item.id] = {
-        supportLevel: item.supportLevel,
-        status: item.status,
-        nextAction: item.nextAction || "",
-      };
-    });
-    setStakeholderDrafts(nextDrafts);
-  }, [stakeholders]);
+  }, [workspace?.weaknesses]);
 
   useEffect(() => {
     const nextDrafts = {};
@@ -404,7 +284,7 @@ export default function OpportunityWorkspacePanel({
       };
     });
     setActionDrafts(nextDrafts);
-  }, [actions]);
+  }, [workspace?.actions]);
 
   useEffect(() => {
     const nextDrafts = {};
@@ -416,38 +296,12 @@ export default function OpportunityWorkspacePanel({
       };
     });
     setDeliverableDrafts(nextDrafts);
-  }, [deliverables]);
-  useEffect(() => {
-    const nextDrafts = {};
-    actions.forEach((item) => {
-      nextDrafts[item.id] = {
-        status: item.status,
-        dueDate: item.dueDate || "",
-        notes: item.notes || "",
-      };
-    });
-    setActionDrafts(nextDrafts);
-  }, [actions]);
-
-  useEffect(() => {
-    const nextDrafts = {};
-    deliverables.forEach((item) => {
-      nextDrafts[item.id] = {
-        status: item.status,
-        versionLabel: item.versionLabel || "",
-        outcomeSummary: item.outcomeSummary || "",
-      };
-    });
-    setDeliverableDrafts(nextDrafts);
-  }, [deliverables]);
-
+  }, [workspace?.deliverables]);
   useEffect(() => {
     setNewThemeNote(buildDefaultThemeNote(themes));
-  }, [themes]);
+  }, [workspace?.themes]);
 
-  async function postWorkspace(path, payload, successMessage) {
-    setLocalError("");
-    setLocalSuccess("");
+  async function postWorkspace(path, payload) {
     setSavingKey(path);
     try {
       await api.post(
@@ -455,40 +309,30 @@ export default function OpportunityWorkspacePanel({
         payload,
       );
       await onRefresh?.();
-      setLocalSuccess(successMessage);
     } catch (error) {
-      setLocalError(
-        getApiErrorMessage(
-          error,
-          "No fue posible guardar cambios del workspace",
-        ),
+      console.error(
+        getApiErrorMessage(error, "No fue posible actualizar el workspace"),
       );
     } finally {
       setSavingKey("");
     }
   }
 
-  async function deleteWorkspace(path, itemId, successMessage) {
+  async function deleteWorkspace(path, itemId) {
     if (
       !window.confirm("Se eliminara este registro del workspace. ¿Continuar?")
     ) {
       return;
     }
-    setLocalError("");
-    setLocalSuccess("");
     setSavingKey(`${path}:delete:${itemId}`);
     try {
       await api.delete(
         `/api/opportunities/${opportunityId}/workspace/${path}/${itemId}`,
       );
       await onRefresh?.();
-      setLocalSuccess(successMessage);
     } catch (error) {
-      setLocalError(
-        getApiErrorMessage(
-          error,
-          "No fue posible eliminar el registro del workspace",
-        ),
+      console.error(
+        getApiErrorMessage(error, "No fue posible eliminar el registro"),
       );
     } finally {
       setSavingKey("");

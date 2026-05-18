@@ -4,9 +4,14 @@ import path from "node:path";
 import express from "express";
 import { z } from "zod";
 import { logAuditEvent } from "./audit.js";
-import { requireAnyPermission, requirePermission } from "./auth.js";
+import {
+  getUserAuthContext,
+  requireAnyPermission,
+  requirePermission,
+} from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
+import { ensureInteractionAnalysisJobSchema } from "./interactions/analysis-jobs-schema.js";
 import { ensureInteractionPermissions } from "./interactions/permissions.js";
 import { ensureInteractionSchema } from "./interactions/schema.js";
 import {
@@ -34,6 +39,12 @@ const interactionCreatePermissions = ["interacciones.create"];
 const interactionUpdatePermissions = ["interacciones.update"];
 const interactionAnalyzePermissions = ["interacciones.analyze"];
 const interactionResolvePermissions = ["interacciones.resolve"];
+const INTERACTION_ANALYSIS_JOB_LEASE_SECONDS = 30;
+const INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES = 15;
+const INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS = 3000;
+
+let interactionAnalysisWorkerQueued = false;
+let interactionAnalysisWorkerStarted = false;
 
 const editableInteractionSchema = z.object({
   title: z.string().trim().min(2).max(255),
@@ -863,6 +874,437 @@ async function buildInteractionAnalysis({
   });
 }
 
+function buildInteractionAnalysisJobPublicId() {
+  return `int_analysis_${randomUUID().replace(/-/g, "")}`;
+}
+
+function buildInteractionAnalysisFingerprintSnapshot(detail) {
+  return {
+    interactionId: Number(detail?.id || 0),
+    title: String(detail?.title || "").trim(),
+    sourceNotes: String(detail?.sourceNotes || "").trim(),
+    documents: (Array.isArray(detail?.documents) ? detail.documents : []).map(
+      (document) => ({
+        publicId: String(document.publicId || ""),
+        processingStatus: String(document.processingStatus || ""),
+        extractionStatus: String(document.extractionStatus || ""),
+        transcriptionStatus: String(document.transcriptionStatus || ""),
+        normalizedText: String(document.normalizedText || ""),
+        rawText: String(document.rawText || ""),
+        transcriptText: String(document.transcriptText || ""),
+        contentSummary: String(document.contentSummary || ""),
+      }),
+    ),
+  };
+}
+
+function hashInteractionAnalysisSnapshot(snapshot) {
+  return createHash("sha256")
+    .update(JSON.stringify(snapshot))
+    .digest("hex");
+}
+
+function buildInteractionAnalysisJobResponse(row) {
+  const result = parseJsonField(row.result_json, null);
+  const isExpired =
+    row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+  const status =
+    isExpired && ["completed", "failed", "stale"].includes(row.status)
+      ? "expired"
+      : row.status;
+  const response = {
+    job: {
+      id: String(row.public_id),
+      status,
+      pollAfterMs: INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS,
+      resultAvailable: status === "completed" && Boolean(result),
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      expiresAt: row.expires_at,
+    },
+  };
+
+  if (status === "completed" && result) {
+    response.result = result;
+    return response;
+  }
+
+  if (status === "failed") {
+    response.error = {
+      code: row.error_code || "analysis_failed",
+      message:
+        String(row.error_message || "").trim() ||
+        "No fue posible completar el analisis de la interaccion",
+    };
+    return response;
+  }
+
+  if (status === "stale") {
+    response.error = {
+      code: row.error_code || "stale_snapshot",
+      message:
+        String(row.error_message || "").trim() ||
+        "La interaccion cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
+    };
+    return response;
+  }
+
+  if (status === "expired") {
+    response.error = {
+      code: "expired_result",
+      message:
+        "El resultado del analisis ya expiro. Solicita un nuevo analisis.",
+    };
+  }
+
+  return response;
+}
+
+async function executeInteractionAnalysis({ interactionId, user, req }) {
+  const detail = await fetchInteractionDetail(interactionId);
+  if (!detail) {
+    const error = new Error("Interaccion no encontrada");
+    error.status = 404;
+    throw error;
+  }
+
+  const analysis = await buildInteractionAnalysis({
+    user,
+    title: detail.title,
+    sourceNotes: detail.sourceNotes,
+    existingDocuments: detail.documents,
+  });
+
+  await query(
+    `UPDATE interactions
+     SET summary = ?, processing_status = ?, warnings_json = ?, topics_json = ?,
+         actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
+         suggested_contacts_json = ?, suggested_opportunities_json = ?, analyzed_at = NOW(3),
+         updated_by = ?, updated_at = NOW(3)
+     WHERE id = ?`,
+    [
+      analysis.summary || null,
+      analysis.processingStatus,
+      normalizeForStorage(analysis.warnings),
+      normalizeForStorage(analysis.topics),
+      normalizeForStorage(analysis.actionsTaken),
+      normalizeForStorage(analysis.nextSteps),
+      normalizeForStorage(analysis.suggestedAccount),
+      normalizeForStorage(analysis.suggestedContacts),
+      normalizeForStorage(analysis.suggestedOpportunities),
+      Number(user.id),
+      interactionId,
+    ],
+  );
+
+  await logAuditEvent({
+    req,
+    actor: user,
+    module: "interacciones",
+    action: "analyzed",
+    entityType: "interaction",
+    entityId: interactionId,
+    detail: "Interaccion reanalizada",
+  });
+
+  return {
+    interactionId: Number(interactionId),
+    processingStatus: String(analysis.processingStatus || "analyzed"),
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+async function createOrReuseInteractionAnalysisJob({
+  interactionId,
+  requestedByUserId,
+}) {
+  const detail = await fetchInteractionDetail(interactionId);
+  if (!detail) {
+    const error = new Error("Interaccion no encontrada");
+    error.status = 404;
+    throw error;
+  }
+
+  const snapshot = buildInteractionAnalysisFingerprintSnapshot(detail);
+  const fingerprint = hashInteractionAnalysisSnapshot(snapshot);
+  const reusableRows = await query(
+    `SELECT *
+     FROM interaction_analysis_jobs
+     WHERE interaction_id = ?
+       AND requested_by_user_id = ?
+       AND request_fingerprint = ?
+       AND status IN ('pending', 'running')
+     ORDER BY id DESC
+     LIMIT 1`,
+    [interactionId, requestedByUserId, fingerprint],
+  );
+
+  if (reusableRows.length) {
+    return {
+      wasReused: true,
+      response: buildInteractionAnalysisJobResponse(reusableRows[0]),
+    };
+  }
+
+  const publicId = buildInteractionAnalysisJobPublicId();
+  await query(
+    `INSERT INTO interaction_analysis_jobs (
+       public_id,
+       interaction_id,
+       requested_by_user_id,
+       status,
+       request_fingerprint,
+       source_snapshot_json
+     ) VALUES (?, ?, ?, 'pending', ?, ?)`,
+    [
+      publicId,
+      interactionId,
+      requestedByUserId,
+      fingerprint,
+      JSON.stringify(snapshot),
+    ],
+  );
+
+  const rows = await query(
+    `SELECT *
+     FROM interaction_analysis_jobs
+     WHERE public_id = ?
+     LIMIT 1`,
+    [publicId],
+  );
+
+  return {
+    wasReused: false,
+    response: buildInteractionAnalysisJobResponse(rows[0]),
+  };
+}
+
+async function getInteractionAnalysisJob({ publicId, interactionId }) {
+  const rows = await query(
+    `SELECT *
+     FROM interaction_analysis_jobs
+     WHERE public_id = ?
+       AND interaction_id = ?
+     LIMIT 1`,
+    [publicId, interactionId],
+  );
+  return rows.length ? buildInteractionAnalysisJobResponse(rows[0]) : null;
+}
+
+async function claimNextPendingInteractionAnalysisJob() {
+  const candidates = await query(
+    `SELECT id
+     FROM interaction_analysis_jobs
+     WHERE (
+         status = 'pending'
+         OR (
+           status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= NOW(3)
+         )
+       )
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY created_at ASC, id ASC
+     LIMIT 20`,
+  );
+
+  for (const candidate of candidates) {
+    const leaseToken = randomUUID().replace(/-/g, "");
+    const row = await withTransaction(async (conn) => {
+      const [updateResult] = await conn.query(
+        `UPDATE interaction_analysis_jobs
+         SET status = 'running',
+             attempt_count = attempt_count + 1,
+             lease_token = ?,
+             lease_expires_at = DATE_ADD(NOW(3), INTERVAL ? SECOND),
+             started_at = COALESCE(started_at, NOW(3)),
+             updated_at = NOW(3)
+         WHERE id = ?
+           AND (
+             status = 'pending'
+             OR (
+               status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at <= NOW(3)
+             )
+           )`,
+        [
+          leaseToken,
+          INTERACTION_ANALYSIS_JOB_LEASE_SECONDS,
+          Number(candidate.id),
+        ],
+      );
+      if (!updateResult.affectedRows) {
+        return null;
+      }
+      const [rows] = await conn.query(
+        `SELECT * FROM interaction_analysis_jobs WHERE id = ? LIMIT 1`,
+        [Number(candidate.id)],
+      );
+      return rows[0] || null;
+    });
+
+    if (row) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
+async function finalizeInteractionAnalysisJob({
+  jobId,
+  leaseToken,
+  status,
+  result,
+  errorCode,
+  errorMessage,
+}) {
+  await query(
+    `UPDATE interaction_analysis_jobs
+     SET status = ?,
+         result_json = ?,
+         error_code = ?,
+         error_message = ?,
+         finished_at = NOW(3),
+         expires_at = DATE_ADD(NOW(3), INTERVAL ? MINUTE),
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      status,
+      result ? JSON.stringify(result) : null,
+      errorCode || null,
+      errorMessage || null,
+      INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES,
+      jobId,
+      leaseToken,
+    ],
+  );
+}
+
+async function processInteractionAnalysisJob(row) {
+  const snapshot = parseJsonField(row.source_snapshot_json, null);
+  try {
+    const user = await getUserAuthContext(Number(row.requested_by_user_id));
+    if (!user) {
+      await finalizeInteractionAnalysisJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "requester_not_found",
+        errorMessage: "No fue posible resolver el usuario solicitante del job",
+      });
+      return;
+    }
+
+    const detail = await fetchInteractionDetail(Number(row.interaction_id));
+    if (!detail) {
+      await finalizeInteractionAnalysisJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "interaction_not_found",
+        errorMessage: "Interaccion no encontrada",
+      });
+      return;
+    }
+
+    const fingerprint = hashInteractionAnalysisSnapshot(
+      buildInteractionAnalysisFingerprintSnapshot(detail),
+    );
+    if (fingerprint !== row.request_fingerprint) {
+      await finalizeInteractionAnalysisJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "stale",
+        errorCode: "stale_snapshot",
+        errorMessage:
+          "La interaccion cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
+      });
+      return;
+    }
+
+    const result = await executeInteractionAnalysis({
+      interactionId: Number(row.interaction_id),
+      user,
+      req: null,
+    });
+
+    await finalizeInteractionAnalysisJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "completed",
+      result,
+    });
+  } catch (error) {
+    await finalizeInteractionAnalysisJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "failed",
+      errorCode: "analysis_failed",
+      errorMessage:
+        String(error?.message || "").trim() ||
+        "No fue posible completar el analisis de la interaccion",
+    });
+  }
+}
+
+export function queueInteractionAnalysisProcessing() {
+  interactionAnalysisWorkerQueued = true;
+}
+
+export async function processPendingInteractionAnalysisJobs({ limit = 1 } = {}) {
+  let processed = 0;
+  while (processed < limit) {
+    const row = await claimNextPendingInteractionAnalysisJob();
+    if (!row) {
+      break;
+    }
+    processed += 1;
+    await processInteractionAnalysisJob(row);
+  }
+  return processed;
+}
+
+export async function startInteractionAnalysisWorker() {
+  if (interactionAnalysisWorkerStarted) {
+    return;
+  }
+  interactionAnalysisWorkerStarted = true;
+
+  const tick = async () => {
+    if (!interactionAnalysisWorkerQueued) {
+      return;
+    }
+    interactionAnalysisWorkerQueued = false;
+    try {
+      const processed = await processPendingInteractionAnalysisJobs({
+        limit: 5,
+      });
+      if (processed > 0) {
+        interactionAnalysisWorkerQueued = true;
+      }
+    } catch (error) {
+      console.error(
+        "Interaction analysis worker error:",
+        error?.message || error,
+      );
+    }
+  };
+
+  const interval = setInterval(() => {
+    tick();
+  }, INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS);
+  interval.unref?.();
+
+  queueInteractionAnalysisProcessing();
+  await tick();
+}
+
 async function createAccountFromDraft(conn, user, draft) {
   const creationStatusCode = resolveCreationStatusCode(user, "cuentas.create");
   if (!creationStatusCode) {
@@ -1643,6 +2085,77 @@ router.put(
 );
 
 router.post(
+  "/:interactionId/analyze/jobs",
+  requireAnyPermission(interactionAnalyzePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    await ensureInteractionAnalysisJobSchema();
+
+    try {
+      const result = await createOrReuseInteractionAnalysisJob({
+        interactionId,
+        requestedByUserId: Number(req.user.id),
+      });
+
+      if (!result.wasReused) {
+        queueInteractionAnalysisProcessing();
+      }
+
+      return res.status(202).json(result.response);
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible preparar el analisis de la interaccion",
+      });
+    }
+  },
+);
+
+router.get(
+  "/:interactionId/analyze/jobs/:jobId",
+  requireAnyPermission(interactionAnalyzePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    const jobId = String(req.params.jobId || "").trim();
+    if (!Number.isInteger(interactionId) || interactionId <= 0 || !jobId) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    await ensureInteractionAnalysisJobSchema();
+    const job = await getInteractionAnalysisJob({
+      publicId: jobId,
+      interactionId,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job no encontrado" });
+    }
+
+    return res.json(job);
+  },
+);
+
+router.post(
   "/:interactionId/analyze",
   requireAnyPermission(interactionAnalyzePermissions),
   async (req, res) => {
@@ -1658,43 +2171,10 @@ router.post(
       return res.status(access.response.status).json(access.response.body);
     }
 
-    const detail = await fetchInteractionDetail(interactionId);
-    const analysis = await buildInteractionAnalysis({
+    await executeInteractionAnalysis({
+      interactionId,
       user: req.user,
-      title: detail.title,
-      sourceNotes: detail.sourceNotes,
-      existingDocuments: detail.documents,
-    });
-
-    await query(
-      `UPDATE interactions
-       SET summary = ?, processing_status = ?, warnings_json = ?, topics_json = ?,
-           actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
-           suggested_contacts_json = ?, suggested_opportunities_json = ?, analyzed_at = NOW(3),
-           updated_by = ?, updated_at = NOW(3)
-       WHERE id = ?`,
-      [
-        analysis.summary || null,
-        analysis.processingStatus,
-        normalizeForStorage(analysis.warnings),
-        normalizeForStorage(analysis.topics),
-        normalizeForStorage(analysis.actionsTaken),
-        normalizeForStorage(analysis.nextSteps),
-        normalizeForStorage(analysis.suggestedAccount),
-        normalizeForStorage(analysis.suggestedContacts),
-        normalizeForStorage(analysis.suggestedOpportunities),
-        Number(req.user.id),
-        interactionId,
-      ],
-    );
-
-    await logAuditEvent({
       req,
-      module: "interacciones",
-      action: "analyzed",
-      entityType: "interaction",
-      entityId: interactionId,
-      detail: "Interaccion reanalizada",
     });
 
     return res.json(await fetchInteractionDetail(interactionId));

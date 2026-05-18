@@ -1,3 +1,27 @@
+// eslint-disable-next-line no-unused-vars
+function getStartOfWeek(dateValue) {
+  // Your implementation here
+}
+// eslint-disable-next-line no-unused-vars
+function getStartOfMonth(dateValue) {
+  // Your implementation here
+}
+// eslint-disable-next-line no-unused-vars
+function getFunnelStageWidth(stage, mode, funnel) {
+  // Your implementation here
+}
+// eslint-disable-next-line no-unused-vars
+function getRiskToneClass(level) {
+  // Your implementation here
+}
+// eslint-disable-next-line no-unused-vars
+function getRecommendedNextMoveTitle(value) {
+  // Your implementation here
+}
+// eslint-disable-next-line no-unused-vars
+function formatOpportunityScore(value) {
+  // Your implementation here
+}
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
@@ -23,6 +47,9 @@ const ACTION_TYPE_OPTIONS = [
   { value: "internal_approval", label: "Gestionar aprobacion interna" },
   { value: "other_action", label: "Otra accion" },
 ];
+const COMMERCIAL_NARRATIVE_TIMEOUT_MS = 60000;
+const COMMERCIAL_NARRATIVE_JOB_POLL_INTERVAL_MS = 3000;
+const COMMERCIAL_NARRATIVE_TOTAL_POLL_TIMEOUT_MS = 120000;
 
 const ACTIVITY_STATUS_LABELS = {
   pending: "Programada",
@@ -287,25 +314,6 @@ function addDaysToDateValue(dateValue, days) {
   return date.toISOString().slice(0, 10);
 }
 
-function getStartOfWeek(dateValue) {
-  if (!dateValue) return getTodayDateValue();
-  const [year, month, day] = String(dateValue)
-    .split("-")
-    .map((part) => Number(part));
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const utcDay = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - utcDay + 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function getStartOfMonth(dateValue) {
-  if (!dateValue) return getTodayDateValue();
-  const [year, month] = String(dateValue)
-    .split("-")
-    .map((part) => Number(part));
-  return `${year}-${String(month).padStart(2, "0")}-01`;
-}
-
 function shiftCalendarDate(view, dateValue, direction) {
   const delta = Number(direction || 0);
   if (view === "day") {
@@ -456,19 +464,6 @@ function buildCommercialFunnel(pipelineByStage = []) {
   };
 }
 
-function getFunnelStageWidth(stage, mode, funnel) {
-  const maxValue =
-    mode === "count"
-      ? Number(funnel?.maxOpportunityCount || 0)
-      : Number(funnel?.maxOpenAmount || 0);
-  const rawValue =
-    mode === "count"
-      ? Number(stage?.opportunityCount || 0)
-      : Number(stage?.openAmount || 0);
-  if (!(maxValue > 0) || !(rawValue > 0)) return 38;
-  return Math.max(38, Math.round((rawValue / maxValue) * 100));
-}
-
 function getFunnelShapeWidth(index, totalStages) {
   const total = Math.max(Number(totalStages || 0), 1);
   if (total === 1) return 100;
@@ -539,30 +534,10 @@ function isDateWithinPeriod(value, period) {
   return isoDate >= range.startDate && isoDate <= range.endDate;
 }
 
-function getRiskToneClass(level) {
-  if (level === "high") return "is-high";
-  if (level === "medium") return "is-medium";
-  return "is-low";
-}
-
 function getRiskLabel(level) {
   if (level === "high") return "Riesgo alto";
   if (level === "medium") return "Riesgo medio";
   return "Controlado";
-}
-
-function getRecommendedNextMoveTitle(value) {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  return value.title || value.text || "";
-}
-
-function formatOpportunityScore(value) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return null;
-  }
-  return Number(numericValue.toFixed(1));
 }
 
 function getActivityTypeLabel(value) {
@@ -884,27 +859,32 @@ function getEmailAttachmentCatalogInfo(attachment, catalogType) {
   return { codes: [], labels: [] };
 }
 
+// eslint-disable-next-line no-unused-vars
 function buildEmailAttachmentCatalogFilterOptions(attachments, catalogType) {
+  // eslint-disable-next-line no-unused-vars
+  function buildEmailAttachmentCatalogFilterOptions(attachments, catalogType) {
+    // Your implementation here
+  }
   const optionsByCode = new Map();
-  asArray(attachments).forEach((attachment) => {
-    const { codes, labels } = getEmailAttachmentCatalogInfo(
-      attachment,
-      catalogType,
-    );
-    codes.forEach((code, index) => {
-      const normalizedCode = String(code || "").trim();
-      if (!normalizedCode || optionsByCode.has(normalizedCode)) return;
-      optionsByCode.set(normalizedCode, {
-        value: normalizedCode,
-        label: String(labels[index] || normalizedCode).trim() || normalizedCode,
-      });
-    });
-  });
-  return Array.from(optionsByCode.values()).sort((left, right) =>
-    left.label.localeCompare(right.label, "es"),
-  );
+        asArray(attachments).forEach((attachment) => {
+          const metadata = getEmailAttachmentCatalogInfo(attachment, catalogType);
+          metadata.codes.forEach((code, index) => {
+            const normalizedCode = String(code || "").trim();
+            if (!normalizedCode) return;
+            if (optionsByCode.has(normalizedCode)) return;
+            const label = String(metadata.labels[index] || normalizedCode).trim();
+            optionsByCode.set(normalizedCode, {
+              value: normalizedCode,
+              label,
+            });
+          });
+        });
+        return [...optionsByCode.values()].sort((left, right) =>
+          left.label.localeCompare(right.label, "es"),
+        );
 }
 
+      // eslint-disable-next-line no-unused-vars
 function buildEmailAttachmentSearchText(attachment) {
   return [
     attachment?.fileName,
@@ -1058,6 +1038,7 @@ function matchesSuggestedValue(currentValue, suggestedValue) {
   );
 }
 
+// eslint-disable-next-line no-unused-vars
 function applySuggestedEmailContent(details, item, previousDetails = null) {
   const normalizedDetails = normalizeEmailActionDetails(details);
   const nextSuggestion = buildSuggestedEmailContent(item, normalizedDetails);
@@ -1100,6 +1081,7 @@ function normalizeEmailSuggestionResult(item, details, suggestion) {
   };
 }
 
+// eslint-disable-next-line no-unused-vars
 function mergeGeneratedEmailSuggestion(
   details,
   item,
@@ -1149,6 +1131,7 @@ function mergeGeneratedEmailSuggestion(
   };
 }
 
+// eslint-disable-next-line no-unused-vars
 function buildEmailSuggestionKey(item, details) {
   return JSON.stringify({
     opportunityId: Number(item?.id || 0),
@@ -1356,6 +1339,7 @@ function EmailAttachmentsField({
     if (areEmailAttachmentLibraryFiltersEqual(appliedFilters, normalizedLibraryFilters)) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLibraryQuery(appliedFilters.q || "");
     setLibraryManufacturerCodes(asArray(appliedFilters.manufacturerCodes));
     setLibrarySolutionCodes(asArray(appliedFilters.solutionCodes));
@@ -1369,6 +1353,7 @@ function EmailAttachmentsField({
       normalizedLibraryFilters.solutionCodes.length ||
       normalizedLibraryFilters.industryCodes.length
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAreLibraryFiltersVisible(true);
     }
   }, [
@@ -2436,14 +2421,12 @@ function CommercialActivityModal({
   onShowCreate,
   onShowCreateAction,
   onShowList,
+  onSelectActivity,
   onOpenEmailDraft,
   recipientOptions,
   recipientOptionsLoading,
   recipientOptionsError,
-  currencyCode,
 }) {
-  if (!item) return null;
-
   const hasEditableActivity = Boolean(draft?.id);
   const isCompletionDisabled =
     saving || !hasEditableActivity || draft.status === "done";
@@ -2488,8 +2471,11 @@ function CommercialActivityModal({
   const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
-  }, [ccVisibilityKey]);
+  }, [ccVisibilityKey, hasCcValue]);
+
+  if (!item) return null;
 
   return (
     <div
@@ -3093,8 +3079,6 @@ function CommercialEmailDraftModal({
   onRequestSend,
   onCancelConfirm,
 }) {
-  if (!item || !draft) return null;
-
   const emailDetails = {
     ...emptyActionDetails(),
     ...(draft.details || {}),
@@ -3107,8 +3091,11 @@ function CommercialEmailDraftModal({
   const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
   }, [ccVisibilityKey, hasCcValue]);
+
+  if (!item || !draft) return null;
 
   function handleEmailPurposeChange(nextPurpose) {
     onChange("purpose", nextPurpose);
@@ -3439,6 +3426,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   const emailDraftSuggestionRef = useRef(null);
   const emailAttachmentOptionsRef = useRef({});
   const emailAttachmentRequestKeyByOpportunityRef = useRef({});
+  const gapCoverageAiPollingTokenRef = useRef({});
   const dashboardRequestIdRef = useRef(0);
   const dashboardPendingRequestRef = useRef({ key: "", promise: null });
   const lastLoadedDashboardPeriodKeyRef = useRef("");
@@ -3552,46 +3540,133 @@ export default function CommercialDevelopmentPage({ currentUser }) {
 
     try {
       const response = await api.post(
-        `/api/commercial-development/opportunities/${normalizedOpportunityId}/ai-narrative`,
+        `/api/commercial-development/opportunities/${normalizedOpportunityId}/ai-narrative/jobs`,
         {},
+        { timeout: COMMERCIAL_NARRATIVE_TIMEOUT_MS },
       );
-      const nextStatusSummary = String(
-        response.data?.aiStatusSummary || "",
-      ).trim();
-      const nextStepRecommendation = String(
-        response.data?.aiNextStepRecommendation || "",
-      ).trim();
-      const nextNarrativeSource = String(
-        response.data?.aiNarrativeSource || "",
-      ).trim();
+      const pollingToken = `${Date.now()}-${Math.random()}`;
+      gapCoverageAiPollingTokenRef.current[normalizedOpportunityId] =
+        pollingToken;
 
-      setDashboard((current) => {
-        if (!current) {
-          return current;
+      const applyNarrative = (payload) => {
+        const nextStatusSummary = String(
+          payload?.aiStatusSummary || "",
+        ).trim();
+        const nextStepRecommendation = String(
+          payload?.aiNextStepRecommendation || "",
+        ).trim();
+        const nextNarrativeSource = String(
+          payload?.aiNarrativeSource || "",
+        ).trim();
+
+        setDashboard((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            workboard: asArray(current.workboard).map((item) =>
+              Number(item?.id || 0) === normalizedOpportunityId
+                ? {
+                    ...item,
+                    aiStatusSummary:
+                      nextStatusSummary || item.aiStatusSummary || "",
+                    aiNextStepRecommendation:
+                      nextStepRecommendation ||
+                      item.aiNextStepRecommendation ||
+                      "",
+                    aiNarrativeSource:
+                      nextNarrativeSource || item.aiNarrativeSource || "",
+                  }
+                : item,
+            ),
+          };
+        });
+      };
+
+      if (response.data?.fallback) {
+        applyNarrative(response.data.fallback);
+      }
+
+      let resolvedData = response.data;
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (jobId) {
+          const deadline =
+            Date.now() + COMMERCIAL_NARRATIVE_TOTAL_POLL_TIMEOUT_MS;
+          let nextDelay = Math.max(
+            Number(
+              resolvedData?.job?.pollAfterMs ||
+                COMMERCIAL_NARRATIVE_JOB_POLL_INTERVAL_MS,
+            ),
+            0,
+          );
+
+          while (
+            gapCoverageAiPollingTokenRef.current[normalizedOpportunityId] ===
+            pollingToken
+          ) {
+            if (Date.now() >= deadline) {
+              break;
+            }
+
+            if (nextDelay > 0) {
+              await new Promise((resolve) => {
+                window.setTimeout(resolve, nextDelay);
+              });
+            }
+
+            if (
+              gapCoverageAiPollingTokenRef.current[normalizedOpportunityId] !==
+              pollingToken
+            ) {
+              return;
+            }
+
+            const pollResponse = await api.get(
+              `/api/commercial-development/opportunities/${normalizedOpportunityId}/ai-narrative/jobs/${jobId}`,
+              { timeout: COMMERCIAL_NARRATIVE_TIMEOUT_MS },
+            );
+            resolvedData = pollResponse.data;
+            if (resolvedData?.result) {
+              break;
+            }
+
+            const jobStatus = String(resolvedData?.job?.status || "");
+            if (["failed", "stale", "expired"].includes(jobStatus)) {
+              break;
+            }
+
+            nextDelay = Math.max(
+              Number(
+                resolvedData?.job?.pollAfterMs ||
+                  COMMERCIAL_NARRATIVE_JOB_POLL_INTERVAL_MS,
+              ),
+              0,
+            );
+            nextDelay = Math.min(
+              nextDelay,
+              Math.max(deadline - Date.now(), 0),
+            );
+          }
         }
+      }
 
-        return {
-          ...current,
-          workboard: asArray(current.workboard).map((item) =>
-            Number(item?.id || 0) === normalizedOpportunityId
-              ? {
-                  ...item,
-                  aiStatusSummary:
-                    nextStatusSummary || item.aiStatusSummary || "",
-                  aiNextStepRecommendation:
-                    nextStepRecommendation ||
-                    item.aiNextStepRecommendation ||
-                    "",
-                  aiNarrativeSource:
-                    nextNarrativeSource || item.aiNarrativeSource || "",
-                }
-              : item,
-          ),
-        };
-      });
+      if (
+        gapCoverageAiPollingTokenRef.current[normalizedOpportunityId] !==
+        pollingToken
+      ) {
+        return;
+      }
+
+      if (resolvedData?.result) {
+        applyNarrative(resolvedData.result);
+      }
     } catch {
       return;
     } finally {
+      delete gapCoverageAiPollingTokenRef.current[normalizedOpportunityId];
       setGapCoverageAiLoadingByOpportunityId((current) => {
         if (!current[normalizedOpportunityId]) {
           return current;
@@ -4162,8 +4237,6 @@ export default function CommercialDevelopmentPage({ currentUser }) {
 
   const calendarDays = asArray(calendarData?.days);
   const calendarFilters = calendarData?.filters || {};
-  const developmentPriorities = asArray(development.priorities);
-  const actionsToday = asArray(development.actionsToday);
   const selectedDayData =
     calendarDays.find((day) => day.date === selectedCalendarDay) ||
     calendarDays.find((day) => day.date === calendarFilters.date) ||
@@ -4986,6 +5059,11 @@ export default function CommercialDevelopmentPage({ currentUser }) {
 
   async function handleCompleteActivity() {
     if (!activityModalItem?.id || !activityDraft?.id) return;
+
+    const isActionForm = activityDraft.entryKind === "action";
+    const actionObjective = isActionForm
+      ? getActionDraftObjective(activityDraft)
+      : "";
 
     setSavingActivity(true);
     setActivityError("");

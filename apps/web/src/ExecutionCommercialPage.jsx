@@ -26,6 +26,10 @@ const DEPENDENCY_TYPE_OPTIONS = [
   { value: "operations_alignment", label: "Operaciones" },
 ];
 
+function buildCadenceNextRunAt(daysAhead = 2) {
+  return new Date(Date.now() + daysAhead * 86400000).toISOString();
+}
+
 function formatDate(value) {
   if (!value) return "Sin fecha";
   const parsed = new Date(value);
@@ -306,6 +310,8 @@ export default function ExecutionCommercialPage() {
   }, []);
 
   useEffect(() => {
+    // Server data load on mount is intentional for this page.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDashboard();
   }, [loadDashboard]);
 
@@ -320,11 +326,15 @@ export default function ExecutionCommercialPage() {
   );
 
   useEffect(() => {
+    // These drafts intentionally reset when the selected opportunity changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNextStepDraft(buildNextStepDraft(selectedOpportunity));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDependencyDraft(buildDependencyDraft(selectedOpportunity));
   }, [selectedOpportunity]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowAllCadences(false);
   }, [dashboard?.cadences?.totalSuggested]);
 
@@ -451,7 +461,7 @@ export default function ExecutionCommercialPage() {
         nextRunAt:
           nextStatus === "completed"
             ? null
-            : new Date(Date.now() + 2 * 86400000).toISOString(),
+            : buildCadenceNextRunAt(),
       });
       await loadDashboard();
     } catch (requestError) {

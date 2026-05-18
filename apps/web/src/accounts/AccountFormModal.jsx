@@ -199,19 +199,6 @@ function getDuplicateReviewSourceLabel(source) {
   return "Con reglas internas";
 }
 
-function getDuplicateReviewStatus(review) {
-  if (review.aiReviewStatus === "loading") {
-    return "Analizando con IA";
-  }
-  if (review.aiReviewError) {
-    return "IA no disponible";
-  }
-  if (review.aiReview) {
-    return getDuplicateReviewVerdictLabel(review.aiReview.verdict);
-  }
-  return getDuplicateReviewSourceLabel(review.duplicateValidationSource);
-}
-
 function AccountDuplicateReviewModal({
   review,
   draftName,
@@ -219,6 +206,7 @@ function AccountDuplicateReviewModal({
   onCancel,
   onConfirm,
   onOpenCandidate,
+  onRetryAiReview,
 }) {
   if (!review) return null;
 
@@ -408,6 +396,13 @@ function AccountDuplicateReviewModal({
           <button className="btn-secondary" onClick={onCancel}>
             Volver a editar
           </button>
+          {review.aiReviewStatus !== "loading" &&
+          !review.aiReview &&
+          review.aiReviewError ? (
+            <button className="btn-secondary" onClick={onRetryAiReview}>
+              Reintentar revision IA
+            </button>
+          ) : null}
           <button
             className="btn-primary"
             onClick={onConfirm}
@@ -452,6 +447,7 @@ function AccountFormModal({
   onDismissDuplicateReview,
   onConfirmDuplicateOverride,
   onOpenDuplicateCandidateAccount,
+  onRetryDuplicateAiReview,
   accountInteractions,
   visibleAccountInteractions,
   interactionTypes,
@@ -540,6 +536,7 @@ function AccountFormModal({
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setWaitingCreateResponse(false);
   }, [waitingCreateResponse, creatingAccount]);
 
@@ -693,6 +690,7 @@ function AccountFormModal({
           onCancel={onDismissDuplicateReview}
           onConfirm={onConfirmDuplicateOverride}
           onOpenCandidate={onOpenDuplicateCandidateAccount}
+          onRetryAiReview={onRetryDuplicateAiReview}
         />
         <div className="modal-dialog-scroll-shell">
         <div className="modal-header">

@@ -7,7 +7,6 @@ import {
   buildQuotationCommercialConditionsForm,
   calculateCreateQuotationSummary,
   calculateQuotationItemDisplayTotals,
-  calculateQuotationItemTotals,
   DEFAULT_QUOTATION_COMMERCIAL_CONDITIONS,
   DEFAULT_QUOTATION_VAT_PCT,
   buildQuotationItemPricing,
@@ -442,14 +441,12 @@ const ITEM_TABLE_COLUMNS = [
 
 function QuotationCreateModal({
   accounts,
-  accountName,
   draftQuotationIdLabel,
   draftQuotationVersionLabel,
   selectedAccountId,
   onCreateAccountChange,
   loadingAccounts,
   opportunities,
-  opportunityName,
   selectedOpportunityId,
   onCreateOpportunityChange,
   loadingOpportunities,
@@ -461,11 +458,7 @@ function QuotationCreateModal({
   canConfirmCreateCommercialContext,
   createQuotationForm,
   setCreateQuotationForm,
-  createSectionDraft,
-  setCreateSectionDraft,
   createSectionDrafts,
-  createItemDraftsBySection,
-  setCreateItemDraftsBySection,
   catalogs,
   handleAddCreateSectionDraft,
   handleRemoveCreateSectionDraft,
@@ -494,7 +487,6 @@ function QuotationCreateModal({
   handleCreateQuotation,
   busyAction,
   canSubmitCreateQuotation,
-  hasCreateCommercialContext,
   canCreateProviderPrices,
 }) {
   const [summaryDiscountMode, setSummaryDiscountMode] = useState("percentage");
@@ -1298,10 +1290,6 @@ function QuotationCreateModal({
         [sectionLocalId]: nextIds,
       };
     });
-  }
-
-  function closeDescriptionEditor() {
-    setActiveDescriptionEditor({ sectionIndex: -1, itemIndex: -1 });
   }
 
   function setPreferredBundleHintAction(sectionLocalId, action) {
