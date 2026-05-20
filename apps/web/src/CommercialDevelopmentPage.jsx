@@ -2427,6 +2427,8 @@ function CommercialActivityModal({
   recipientOptionsLoading,
   recipientOptionsError,
 }) {
+  if (!item) return null;
+
   const hasEditableActivity = Boolean(draft?.id);
   const isCompletionDisabled =
     saving || !hasEditableActivity || draft.status === "done";
@@ -2474,8 +2476,6 @@ function CommercialActivityModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
   }, [ccVisibilityKey, hasCcValue]);
-
-  if (!item) return null;
 
   return (
     <div
@@ -3079,6 +3079,8 @@ function CommercialEmailDraftModal({
   onRequestSend,
   onCancelConfirm,
 }) {
+  if (!item || !draft) return null;
+
   const emailDetails = {
     ...emptyActionDetails(),
     ...(draft.details || {}),
@@ -3094,8 +3096,6 @@ function CommercialEmailDraftModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
   }, [ccVisibilityKey, hasCcValue]);
-
-  if (!item || !draft) return null;
 
   function handleEmailPurposeChange(nextPurpose) {
     onChange("purpose", nextPurpose);
