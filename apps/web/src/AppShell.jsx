@@ -403,7 +403,7 @@ export default function AppShell({
                   to="/commercial-enablement"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Enablement Comercial
+                  Biblioteca Comercial
                 </GuardedNavLink>
               ) : null}
             </SidebarNavGroup>

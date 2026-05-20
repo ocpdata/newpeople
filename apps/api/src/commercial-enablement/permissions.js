@@ -16,44 +16,44 @@ const COMMERCIAL_ENABLEMENT_PERMISSIONS = [
     code: "enablement_comercial.use",
     module: "enablement_comercial",
     action: "use",
-    description: "Buscar, abrir y usar activos de enablement comercial",
+    description: "Buscar, abrir y usar activos de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.upload",
     module: "enablement_comercial",
     action: "upload",
-    description: "Cargar y editar activos de enablement comercial",
+    description: "Cargar y editar activos de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.manage",
     module: "enablement_comercial",
     action: "manage",
     description:
-      "Publicar, obsoletar y gobernar activos de enablement comercial",
+      "Publicar, obsoletar y gobernar activos de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.admin",
     module: "enablement_comercial",
     action: "admin",
-    description: "Administrar catalogos y gobierno del enablement comercial",
+    description: "Administrar catalogos y gobierno de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.read",
     module: "enablement_comercial",
     action: "read",
-    description: "Ver biblioteca y recomendaciones de enablement comercial",
+    description: "Ver recursos y recomendaciones de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.update",
     module: "enablement_comercial",
     action: "update",
-    description: "Crear y mantener recursos de enablement comercial",
+    description: "Crear y mantener recursos de la biblioteca comercial",
   },
   {
     code: "enablement_comercial.analytics",
     module: "enablement_comercial",
     action: "analytics",
-    description: "Consultar analitica del enablement comercial",
+    description: "Consultar analitica de la biblioteca comercial",
   },
 ];
 

@@ -770,7 +770,7 @@ export default function CommercialEnablementPage({ currentUser }) {
         setError(
           getApiErrorMessage(
             requestError,
-            "No fue posible cargar el modulo de enablement comercial",
+            "No fue posible cargar el modulo de biblioteca comercial",
           ),
         );
       } finally {
@@ -1747,7 +1747,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       <header className="enablement-library-hero">
         <div>
           <span className="enablement-library-eyebrow">
-            Enablement Comercial
+            Biblioteca Comercial
           </span>
           <h1>Biblioteca comercial para preparar, comparar y compartir</h1>
           <p>
@@ -2874,7 +2874,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       {!canUse ? (
         <EmptyState
           title="No tienes permisos de uso"
-          helper="Solicita acceso a enablement comercial para consultar o administrar el contenido."
+          helper="Solicita acceso a biblioteca comercial para consultar o administrar el contenido."
         />
       ) : null}
     </div>
