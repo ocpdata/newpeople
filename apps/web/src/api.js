@@ -211,10 +211,14 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
       : extraDetail;
   }
 
+  if (typeof data.message === "string" && data.message.trim()) {
+    return data.message.trim();
+  }
+
   const httpStatusFallback = formatHttpStatusFallback(error);
   if (httpStatusFallback) {
     return httpStatusFallback;
   }
 
-  return data.message || fallback;
+  return fallback;
 }
