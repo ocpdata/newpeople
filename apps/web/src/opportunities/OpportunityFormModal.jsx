@@ -442,7 +442,14 @@ function OpportunityFormModal({
                             ),
                           }))
                         }
-                        required
+                        onBlur={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            amountUsd: formatOpportunityAmountInput(
+                              event.target.value || "0",
+                            ),
+                          }))
+                        }
                       />
                     </div>
                     <div className="field-group">
@@ -1330,7 +1337,9 @@ function OpportunityFormModal({
                         : "btn-primary"
                     }
                     onClick={retryCurrentStageValidation}
-                    disabled={savingCommercialAction === "validate-current-stage"}
+                    disabled={
+                      savingCommercialAction === "validate-current-stage"
+                    }
                   >
                     Reintentar validacion
                   </button>

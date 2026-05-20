@@ -2770,10 +2770,18 @@ export function useOpportunitiesPage({
       const normalizedOpportunityName = normalizeOpportunityNameValue(
         form.name,
       );
+      const normalizedAmountUsd = formatOpportunityAmountInput(
+        form.amountUsd || "0",
+      );
       setForm((prev) =>
-        prev.name === normalizedOpportunityName
+        prev.name === normalizedOpportunityName &&
+        prev.amountUsd === normalizedAmountUsd
           ? prev
-          : { ...prev, name: normalizedOpportunityName },
+          : {
+              ...prev,
+              name: normalizedOpportunityName,
+              amountUsd: normalizedAmountUsd,
+            },
       );
 
       if (
@@ -2795,7 +2803,7 @@ export function useOpportunitiesPage({
 
       const payload = {
         name: normalizedOpportunityName,
-        amountUsd: parseOpportunityAmountInput(form.amountUsd),
+        amountUsd: parseOpportunityAmountInput(normalizedAmountUsd),
         accountId: Number(form.accountId),
         closeDate: form.closeDate,
         contactId: Number(form.contactId),
