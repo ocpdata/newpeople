@@ -42,6 +42,12 @@ const STATIC_CATALOG_SEEDS = {
       sortOrder: 10,
     },
     {
+      code: "infographic",
+      name: "Infografia",
+      description: "Resumen visual para comunicar hallazgos, beneficios o cifras clave",
+      sortOrder: 15,
+    },
+    {
       code: "case_study",
       name: "Caso de exito",
       description: "Historia o prueba de valor para el cliente",
