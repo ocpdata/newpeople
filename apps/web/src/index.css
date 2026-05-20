@@ -438,6 +438,15 @@ button:disabled {
   background: #bf3c2f;
 }
 
+.sidebar-version {
+  margin-top: auto;
+  padding: 10px 8px 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8fb0d8;
+}
+
 .content {
   padding: 16px;
 }

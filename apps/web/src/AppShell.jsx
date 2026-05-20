@@ -98,6 +98,8 @@ export default function AppShell({
   onLogout,
   onRefreshCurrentUser,
 }) {
+  const appVersion = __APP_VERSION__;
+  const appCommit = __APP_COMMIT__;
   const location = useLocation();
   const can = useMemo(() => {
     const set = new Set(currentUser.permissions || []);
@@ -482,6 +484,9 @@ export default function AppShell({
         >
           Salir
         </button>
+        <div className="sidebar-version">
+          Version {appVersion} · {appCommit}
+        </div>
       </aside>
       <main className="content">
         <header className="topbar">
