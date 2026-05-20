@@ -1779,14 +1779,20 @@ function buildActionsToday({
     .slice(0, DEVELOPMENT_ACTION_LIMIT);
 }
 
-function hasGlobalOpportunityScope(user) {
+function userHasPermission(user, permission) {
+  if (user?.permissionSet instanceof Set) {
+    return user.permissionSet.has(permission);
+  }
   const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
-  return permissions.includes("oportunidades.read_all");
+  return permissions.includes(permission);
+}
+
+function hasGlobalOpportunityScope(user) {
+  return userHasPermission(user, "oportunidades.read_all");
 }
 
 function hasInteractionReadPermission(user) {
-  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
-  return permissions.includes("interacciones.read");
+  return userHasPermission(user, "interacciones.read");
 }
 
 function getDiffDays(fromDate, toDate = new Date()) {
