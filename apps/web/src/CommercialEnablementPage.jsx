@@ -606,6 +606,7 @@ export default function CommercialEnablementPage({ currentUser }) {
   const [bootstrap, setBootstrap] = useState(EMPTY_BOOTSTRAP);
   const [assetsResult, setAssetsResult] = useState(EMPTY_ASSET_RESULT);
   const [selectedAssetPublicId, setSelectedAssetPublicId] = useState(null);
+  const [isCreatingNewAsset, setIsCreatingNewAsset] = useState(false);
   const [assetDetail, setAssetDetail] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [loading, setLoading] = useState(true);
@@ -709,32 +710,57 @@ export default function CommercialEnablementPage({ currentUser }) {
       ? assetDetail
       : selectedAssetFromList;
 
+  function handleSelectAsset(publicId) {
+    setIsCreatingNewAsset(false);
+    setSelectedAssetPublicId(publicId);
+  }
+
+  function handleStartNewAsset() {
+    setIsCreatingNewAsset(true);
+    setSelectedAssetPublicId(null);
+    setAssetDetail(null);
+    setDraft(emptyDraft());
+    setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
+    setAssetSaveFeedback(null);
+    setPendingFiles([]);
+    setPendingLinks([]);
+    setLinkDraft(emptyLinkDraft());
+    setSuccess("");
+    setError("");
+  }
+
   const loadBootstrap = useCallback(async () => {
     const response = await api.get("/api/commercial-enablement/bootstrap");
     setBootstrap(response.data || EMPTY_BOOTSTRAP);
   }, []);
 
-  const loadAssets = useCallback(async (currentTab, currentFilters) => {
-    setLoadingAssets(true);
-    try {
-      const response = await api.get("/api/commercial-enablement/assets", {
-        params: buildFiltersForApi(currentFilters, currentTab),
-      });
-      const payload = response.data || EMPTY_ASSET_RESULT;
-      setAssetsResult(payload);
-      setSelectedAssetPublicId((current) => {
-        if (
-          current &&
-          payload.items.some((item) => item.publicId === current)
-        ) {
-          return current;
-        }
-        return payload.items[0]?.publicId || null;
-      });
-    } finally {
-      setLoadingAssets(false);
-    }
-  }, []);
+  const loadAssets = useCallback(
+    async (currentTab, currentFilters) => {
+      setLoadingAssets(true);
+      try {
+        const response = await api.get("/api/commercial-enablement/assets", {
+          params: buildFiltersForApi(currentFilters, currentTab),
+        });
+        const payload = response.data || EMPTY_ASSET_RESULT;
+        setAssetsResult(payload);
+        setSelectedAssetPublicId((current) => {
+          if (
+            current &&
+            payload.items.some((item) => item.publicId === current)
+          ) {
+            return current;
+          }
+          if (currentTab === "manage" && isCreatingNewAsset) {
+            return null;
+          }
+          return payload.items[0]?.publicId || null;
+        });
+      } finally {
+        setLoadingAssets(false);
+      }
+    },
+    [isCreatingNewAsset],
+  );
 
   const loadAssetDetail = useCallback(async (assetPublicId) => {
     if (!assetPublicId) {
@@ -1028,6 +1054,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       let nextFilters = activeFilters;
 
       if (trackAssetResult && result?.data?.publicId) {
+        setIsCreatingNewAsset(false);
         setSelectedAssetPublicId(result.data.publicId);
         setAssetDetail(result.data);
 
@@ -1176,6 +1203,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     );
 
     if (saved?.publicId) {
+      setIsCreatingNewAsset(false);
       setSelectedAssetPublicId(saved.publicId);
     }
 
@@ -1565,6 +1593,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     try {
       await api.delete(`/api/commercial-enablement/assets/${item.publicId}`);
       if (selectedAssetPublicId === item.publicId) {
+        setIsCreatingNewAsset(false);
         setSelectedAssetPublicId(null);
         setAssetDetail(null);
       }
@@ -1897,7 +1926,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                       key={asset.publicId}
                       asset={asset}
                       isSelected={asset.publicId === selectedAsset?.publicId}
-                      onSelect={setSelectedAssetPublicId}
+                      onSelect={handleSelectAsset}
                     />
                   ))}
                 </div>
@@ -2029,18 +2058,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                   <button
                     type="button"
                     className="enablement-library-action"
-                    onClick={() => {
-                      setSelectedAssetPublicId(null);
-                      setAssetDetail(null);
-                      setDraft(emptyDraft());
-                      setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
-                      setAssetSaveFeedback(null);
-                      setPendingFiles([]);
-                      setPendingLinks([]);
-                      setLinkDraft(emptyLinkDraft());
-                      setSuccess("");
-                      setError("");
-                    }}
+                    onClick={handleStartNewAsset}
                   >
                     Nuevo activo
                   </button>
@@ -2071,7 +2089,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                     key={asset.publicId}
                     asset={asset}
                     isSelected={asset.publicId === selectedAsset?.publicId}
-                    onSelect={setSelectedAssetPublicId}
+                    onSelect={handleSelectAsset}
                   />
                 ))}
               </div>
@@ -2576,7 +2594,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                     onToggleMenu={toggleGovernanceMenu}
                     onCloseMenu={() => setOpenGovernanceMenuId(null)}
                     onOpen={(publicId) => {
-                      setSelectedAssetPublicId(publicId);
+                      handleSelectAsset(publicId);
                       setActiveTab(canUpload ? "manage" : "use");
                     }}
                     onDeactivate={(asset) =>
