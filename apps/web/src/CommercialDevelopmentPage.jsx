@@ -2464,6 +2464,15 @@ function CommercialActivityModal({
     : isActionForm
       ? "Define el siguiente paso comercial con enfoque en resultado, fecha y contexto para el equipo."
       : "Programa una interaccion comercial y manten visible el siguiente paso de la oportunidad.";
+  const entryKindGuidance = (
+    <div className="section-helper-text">
+      <strong>Diferencia clave:</strong> una actividad es una interaccion
+      programada con fecha y hora, por ejemplo una llamada o una visita con el
+      cliente. Una accion es un siguiente paso operativo, por ejemplo preparar
+      una propuesta, enviar un correo o quedar en espera de respuesta del
+      cliente.
+    </div>
+  );
   const isModalLocked = saving || isGeneratingEmailSuggestion;
   const emailDetails = {
     ...emptyActionDetails(),
@@ -2556,6 +2565,7 @@ function CommercialActivityModal({
               <div>
                 <strong>Historial</strong>
                 <p>Selecciona una actividad o accion para verla o editarla.</p>
+                {entryKindGuidance}
               </div>
               <div className="commercial-development-inline-row">
                 <button
@@ -2672,6 +2682,8 @@ function CommercialActivityModal({
                   : `Nueva ${getEntryKindLabel(entryKind).toLowerCase()}`}
               </span>
             </div>
+
+            {entryKindGuidance}
 
             <div className="commercial-development-activity-form-section">
               <div className="commercial-development-activity-section-heading">
