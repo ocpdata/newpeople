@@ -355,15 +355,6 @@ export default function AppShell({
                   Cotizaciones
                 </GuardedNavLink>
               )}
-              {canAccessManufacturerRegistrations &&
-              can("oportunidades.read") ? (
-                <GuardedNavLink
-                  to="/manufacturer-registrations"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Registros de fabricantes
-                </GuardedNavLink>
-              ) : null}
             </SidebarNavGroup>
           )}
 
@@ -411,7 +402,9 @@ export default function AppShell({
             </SidebarNavGroup>
           )}
 
-          {can("proveedores.read") && (
+          {(can("proveedores.read") ||
+            (canAccessManufacturerRegistrations &&
+              can("oportunidades.read"))) && (
             <SidebarNavGroup title="Operacion comercial">
               {can("proveedores.read") && (
                 <GuardedNavLink
@@ -421,6 +414,15 @@ export default function AppShell({
                   Proveedores
                 </GuardedNavLink>
               )}
+              {canAccessManufacturerRegistrations &&
+              can("oportunidades.read") ? (
+                <GuardedNavLink
+                  to="/manufacturer-registrations"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Registros de fabricantes
+                </GuardedNavLink>
+              ) : null}
             </SidebarNavGroup>
           )}
 
