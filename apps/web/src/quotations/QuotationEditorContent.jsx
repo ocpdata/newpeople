@@ -7,10 +7,12 @@ import {
   calculateQuotationItemDisplayTotals,
   applyCreateQuotationDistributedFinalDiscount,
   DEFAULT_QUOTATION_VAT_PCT,
+  formatQuantityInputValue,
   formatQuotationMoneyInputValue,
   formatQuotationAmount,
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
+  toNumber,
 } from "./quotationsUtils";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -188,15 +190,16 @@ const ITEM_TABLE_COLUMNS = [
 
 function QuantityInput({ value, onChange, onBlur, min = "0" }) {
   function handleStep(delta) {
-    onChange(stepQuantityValueByUnit(value, delta, Number(min)));
+    onChange(
+      formatQuantityInputValue(stepQuantityValueByUnit(value, delta, Number(min))),
+    );
   }
 
   return (
     <div className="quotation-quantity-input">
       <input
-        type="number"
-        min={min}
-        step="any"
+        type="text"
+        inputMode="decimal"
         value={value}
         onKeyDown={(event) => {
           if (event.key === "ArrowUp") {
@@ -209,7 +212,7 @@ function QuantityInput({ value, onChange, onBlur, min = "0" }) {
             handleStep(-1);
           }
         }}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(formatQuantityInputValue(event.target.value))}
         onBlur={onBlur}
       />
       <div className="quotation-quantity-step-buttons">
@@ -1030,7 +1033,7 @@ function QuotationEditorContent({
               productCode: displayItem.productCode,
               productDescription: displayItem.productDescription,
               quantity: displayItem.quantity,
-              quantityDisplay: Number(displayItem.quantity || 0).toFixed(2),
+              quantityDisplay: toNumber(displayItem.quantity || 0).toFixed(2),
               salePriceUnit: totals.salePriceUnit,
               salePriceTotal: totals.salePriceTotal,
             };

@@ -718,7 +718,7 @@ function validatePersistedQuotationVersionPayload(payload) {
         return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener una descripcion.`;
       }
 
-      if (!(Number(item?.quantity) > 0)) {
+      if (!(toNumber(item?.quantity) > 0)) {
         return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener una cantidad mayor a cero.`;
       }
     }

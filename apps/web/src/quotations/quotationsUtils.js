@@ -243,10 +243,36 @@ export function toNumber(value) {
   return Number(String(value || "").replace(/,/g, ""));
 }
 
+export function formatQuantityInputValue(value) {
+  const rawValue = String(value ?? "").replace(/\s+/g, "").replace(/,/g, "");
+  if (!rawValue) return "";
+
+  const endsWithDecimalPoint = rawValue.endsWith(".");
+  const [integerCandidate = "", ...decimalCandidates] = rawValue.split(".");
+  const integerDigits = integerCandidate.replace(/\D/g, "");
+  const decimalDigits = decimalCandidates.join("").replace(/\D/g, "");
+
+  if (!integerDigits && !decimalDigits && !endsWithDecimalPoint) {
+    return "";
+  }
+
+  const normalizedInteger = (integerDigits || "0").replace(/^0+(?=\d)/, "");
+  const formattedInteger = normalizedInteger.replace(
+    /\B(?=(\d{3})+(?!\d))/g,
+    ",",
+  );
+
+  if (decimalDigits) {
+    return `${formattedInteger}.${decimalDigits}`;
+  }
+
+  return endsWithDecimalPoint ? `${formattedInteger}.` : formattedInteger;
+}
+
 export function stepQuantityValueByUnit(value, delta, min = 0) {
   const normalizedValue = String(value ?? "")
     .trim()
-    .replace(/,/g, ".");
+    .replace(/,/g, "");
   const numericValue = Number(normalizedValue || 0);
 
   if (!Number.isFinite(numericValue)) {
