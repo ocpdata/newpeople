@@ -127,7 +127,7 @@ const ITEM_TABLE_COLUMNS = [
   {
     key: "quantity",
     label: "Cant.",
-    defaultWidth: 64,
+    defaultWidth: 96,
   },
   {
     key: "originalListPriceUnit",
@@ -2799,8 +2799,14 @@ function QuotationEditorContent({
                             <col
                               key={column.key}
                               style={{
-                                width: `${column.defaultWidth}px`,
-                                minWidth: `${column.defaultWidth}px`,
+                                width:
+                                  column.key === "quantity"
+                                    ? "clamp(88px, 10vw, 96px)"
+                                    : `${column.defaultWidth}px`,
+                                minWidth:
+                                  column.key === "quantity"
+                                    ? "88px"
+                                    : `${column.defaultWidth}px`,
                               }}
                             />
                           ))}
