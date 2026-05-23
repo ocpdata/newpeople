@@ -2616,13 +2616,25 @@ button:disabled {
 }
 
 .commercial-development-activity-modal.is-compact-action .section-helper-text,
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-section-heading p,
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-summary,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option p,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item span,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option span,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header p {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-section-heading
+  p,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-context,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-summary,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  p,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item
+  span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-header
+  p {
   font-size: 0.78rem;
   line-height: 1.3;
 }
@@ -2671,30 +2683,36 @@ button:disabled {
   gap: 0.8rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-modal-header {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-modal-header {
   gap: 0.7rem;
   padding-bottom: 0.55rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-header-copy {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-header-copy {
   gap: 0.12rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-kicker {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-kicker {
   font-size: 0.66rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-context {
   padding: 0.62rem 0.72rem;
   border-radius: 14px;
   gap: 0.2rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-context-label {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-context-label {
   font-size: 0.64rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-form {
   gap: 0.62rem;
 }
 
@@ -2704,11 +2722,16 @@ button:disabled {
   gap: 0.65rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-grid,
-.commercial-development-activity-modal.is-compact-action .commercial-development-purpose-row,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-filters,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-options,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-list {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-form-grid,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-purpose-row,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-filters,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-options,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-list {
   gap: 0.5rem;
 }
 
@@ -2721,7 +2744,8 @@ button:disabled {
   background: rgba(251, 252, 247, 0.92);
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-section {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-form-section {
   gap: 0.45rem;
   padding: 0.62rem 0.72rem;
   border-radius: 14px;
@@ -2732,10 +2756,18 @@ button:disabled {
   gap: 0.1rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-section-heading strong,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header strong,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option strong,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item strong {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-section-heading
+  strong,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-header
+  strong,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option
+  strong,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item
+  strong {
   font-size: 0.88rem;
 }
 
@@ -2755,7 +2787,8 @@ button:disabled {
   gap: 0.28rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-field {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-field {
   gap: 0.2rem;
 }
 
@@ -2775,14 +2808,20 @@ button:disabled {
   font-weight: 700;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-field > span,
-.commercial-development-activity-modal.is-compact-action .commercial-development-field-header,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-summary,
-.commercial-development-activity-modal.is-compact-action .commercial-development-field-hint {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-field
+  > span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-field-header,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-summary,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-field-hint {
   font-size: 0.74rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-field-hint {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-field-hint {
   display: none;
 }
 
@@ -2921,7 +2960,8 @@ button:disabled {
   gap: 0.75rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-toolbar {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-form-toolbar {
   gap: 0.5rem;
 }
 
@@ -2948,11 +2988,17 @@ button:disabled {
   font-weight: 700;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-activity-form-badge,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-library-header span,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-toggle,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-filter-chip,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-meta-pill {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-activity-form-badge,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-library-header
+  span,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-toggle,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-filter-chip,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-meta-pill {
   font-size: 0.7rem;
 }
 
@@ -3103,7 +3149,9 @@ button:disabled {
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
   z-index: 8;
 }
 
@@ -3205,7 +3253,8 @@ button:disabled {
   padding: 0.8rem;
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-panel {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-panel {
   border-radius: 14px;
   padding: 0.48rem;
 }
@@ -3442,9 +3491,12 @@ button:disabled {
   border: 1px solid rgba(94, 120, 84, 0.12);
 }
 
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachment-option,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-selected-item,
-.commercial-development-activity-modal.is-compact-action .commercial-development-email-attachments-empty {
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachment-option,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-selected-item,
+.commercial-development-activity-modal.is-compact-action
+  .commercial-development-email-attachments-empty {
   border-radius: 12px;
   padding: 0.46rem 0.56rem;
 }
@@ -4177,6 +4229,18 @@ button:disabled {
 .accounts-module-help-popover p {
   margin: 0;
   color: #4f6180;
+  line-height: 1.45;
+}
+
+.accounts-module-help-list {
+  margin: 0;
+  padding-left: 1rem;
+  color: #4f6180;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.accounts-module-help-list li {
   line-height: 1.45;
 }
 
@@ -6706,7 +6770,7 @@ button:disabled {
   display: grid;
   width: 100%;
   grid-template-columns: 108px repeat(3, minmax(0, 1fr));
-  align-items: end;
+  align-items: start;
   gap: 8px 10px;
 }
 
@@ -6739,7 +6803,7 @@ button:disabled {
   display: grid;
   width: 100%;
   grid-template-columns: 108px repeat(4, minmax(0, 1fr));
-  align-items: end;
+  align-items: start;
   gap: 6px 8px;
 }
 
@@ -6767,12 +6831,18 @@ button:disabled {
   display: grid;
   width: 100%;
   grid-template-columns: 108px repeat(4, minmax(0, 1fr));
-  align-items: end;
+  align-items: start;
   gap: 6px 8px;
 }
 
 .interaction-opportunity-suggestion-grid .field-group {
   min-width: 0;
+}
+
+.interaction-opportunity-suggestion-grid .field-group > label {
+  display: flex;
+  align-items: flex-end;
+  min-height: 32px;
 }
 
 .interaction-opportunity-suggestion-grid
@@ -6791,8 +6861,63 @@ button:disabled {
   justify-self: stretch;
 }
 
+.interaction-materialized-hint-field {
+  grid-column: 1 / -1;
+}
+
+.interaction-materialized-hint-field .field-hint {
+  max-width: none;
+}
+
 .interaction-resolution-action-field select {
   width: 100%;
+}
+
+.interaction-readonly-field {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d6e1f0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f1f6fc 100%);
+}
+
+.interaction-readonly-field-compact {
+  justify-content: flex-start;
+}
+
+.interaction-readonly-link-field {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.interaction-readonly-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #dbe9fb;
+  color: #274c77;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.interaction-readonly-value-title {
+  color: #23415f;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.interaction-readonly-value-subtitle {
+  color: #5a6f8b;
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 @media (max-width: 900px) {
@@ -9587,6 +9712,92 @@ td {
   border: 0;
 }
 
+.interaction-duplicate-review {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid #f3d4ae;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff9ef, #fff3de);
+}
+
+.interaction-duplicate-review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.interaction-duplicate-review-header h4 {
+  margin: 4px 0 6px;
+  color: #7b3f00;
+}
+
+.interaction-duplicate-review-header p {
+  margin: 0;
+  color: #7b5a2d;
+  line-height: 1.5;
+}
+
+.interaction-duplicate-review-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8b5a14;
+}
+
+.interaction-duplicate-review-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.interaction-duplicate-review-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid #ebc98f;
+  color: #8b5a14;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.interaction-duplicate-review-ai-card,
+.interaction-duplicate-review-card {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  border: 1px solid #ecd6ad;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.interaction-duplicate-review-ai-card strong,
+.interaction-duplicate-review-card strong {
+  color: #6c3a00;
+}
+
+.interaction-duplicate-review-ai-card p,
+.interaction-duplicate-review-card p {
+  margin: 0;
+}
+
+.interaction-duplicate-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.interaction-duplicate-review-dismiss {
+  flex: 0 0 auto;
+}
+
 .interaction-progress-overlay {
   position: absolute;
   inset: 0;
@@ -11974,20 +12185,29 @@ td {
   padding: 16px;
   border: 1px solid #dde8ef;
   border-radius: 18px;
-  background:
-    linear-gradient(180deg, rgba(247, 250, 252, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(247, 250, 252, 0.95) 0%,
+    rgba(255, 255, 255, 0.98) 100%
+  );
 }
 
 .enablement-library-editor-section.is-primary {
   border-color: #d5e3ee;
-  background:
-    linear-gradient(180deg, rgba(242, 248, 252, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(242, 248, 252, 0.95) 0%,
+    rgba(255, 255, 255, 0.98) 100%
+  );
 }
 
 .enablement-library-editor-section.is-accent {
   border-color: #d7e7e3;
-  background:
-    linear-gradient(180deg, rgba(242, 249, 247, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(242, 249, 247, 0.95) 0%,
+    rgba(255, 255, 255, 0.98) 100%
+  );
 }
 
 .enablement-library-editor-section-header {

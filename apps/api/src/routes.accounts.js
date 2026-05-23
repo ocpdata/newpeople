@@ -216,7 +216,7 @@ function getAccountDuplicateSeverityMessage(severity) {
   return "Coincidencia baja. Revisa rapidamente antes de seguir.";
 }
 
-async function validateAccountDuplicates({ draft, user }) {
+export async function validateAccountDuplicates({ draft, user }) {
   const analysis = await analyzeAccountDuplicateReview({ draft, user });
   const duplicateWarnings = Array.isArray(analysis?.duplicateWarnings)
     ? analysis.duplicateWarnings.map((warning) => ({
@@ -246,7 +246,7 @@ async function validateAccountDuplicates({ draft, user }) {
   };
 }
 
-function buildAccountDuplicateResponse(validation) {
+export function buildAccountDuplicateResponse(validation) {
   const isReviewRequired = validation.duplicateDecision === "review_required";
   return {
     code: isReviewRequired
@@ -954,9 +954,8 @@ router.patch(
       return res.status(404).json({ message: "Cuenta no encontrada" });
     }
     const previousStatusId = Number(accountRows[0].activation_status_id);
-    const previousStatusCode = await getAccountActivationStatusCodeById(
-      previousStatusId,
-    );
+    const previousStatusCode =
+      await getAccountActivationStatusCodeById(previousStatusId);
 
     if (
       parsed.data.statusCode === "pendiente_activacion" &&

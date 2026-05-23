@@ -72,17 +72,24 @@ function formatContactName(contactDraft, fallbackLabel) {
 function isSellerUser(user) {
   return Array.isArray(user?.roles)
     ? user.roles.some(
-        (role) => String(role?.name || "").trim().toLowerCase() === "vendedor",
+        (role) =>
+          String(role?.name || "")
+            .trim()
+            .toLowerCase() === "vendedor",
       )
     : false;
 }
 
-function buildEffectiveResolutionForm(resolutionForm, currentUser) {
+function buildEffectiveResolutionForm(
+  resolutionForm,
+  currentUser,
+  commercialAssignmentPolicy = null,
+) {
   if (!resolutionForm) return null;
 
-  const effectiveContactResolutions = (resolutionForm.contactResolutions || []).map(
-    (item) => ({ ...item }),
-  );
+  const effectiveContactResolutions = (
+    resolutionForm.contactResolutions || []
+  ).map((item) => ({ ...item }));
   const effectiveOpportunityResolutions = (
     resolutionForm.opportunityResolutions || []
   ).map((item) => ({
@@ -118,10 +125,19 @@ function buildEffectiveResolutionForm(resolutionForm, currentUser) {
   const hasResolvedContacts = effectiveContactResolutions.some(
     (item) => item.mode !== "ignore",
   );
+  const assignmentMode = commercialAssignmentPolicy?.mode || "none";
 
   if (!hasResolvedContacts) {
     effectiveSellerUserId = "";
     assignCurrentUserAsOwnerSeller = false;
+  } else if (
+    assignmentMode === "self_only" &&
+    currentUser?.id &&
+    (!effectiveSellerUserId ||
+      Number(effectiveSellerUserId) === Number(currentUser.id))
+  ) {
+    effectiveSellerUserId = String(currentUser.id);
+    assignCurrentUserAsOwnerSeller = true;
   } else if (
     assignCurrentUserAsOwnerSeller &&
     currentUser?.id &&
@@ -156,10 +172,16 @@ function buildEffectiveResolutionForm(resolutionForm, currentUser) {
   };
 }
 
-function buildResolveConfirmationPreview(detail, resolutionForm, options, currentUser) {
+function buildResolveConfirmationPreview(
+  detail,
+  resolutionForm,
+  options,
+  currentUser,
+) {
   const effectiveResolutionForm = buildEffectiveResolutionForm(
     resolutionForm,
     currentUser,
+    detail?.commercialAssignmentPolicy,
   );
   if (!detail || !effectiveResolutionForm || !options) return null;
 
@@ -209,9 +231,14 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options, curren
         getOptionLabel(options.businessLines || [], item.draft?.businessLineId),
         effectiveResolutionForm.sellerUserId
           ? `Vendedor: ${
-              Number(effectiveResolutionForm.sellerUserId) === Number(currentUser?.id)
+              Number(effectiveResolutionForm.sellerUserId) ===
+              Number(currentUser?.id)
                 ? currentUser?.full_name || ""
-                : getOptionLabel(options.sellerUsers || [], effectiveResolutionForm.sellerUserId, ["full_name", "name"])
+                : getOptionLabel(
+                    options.sellerUsers || [],
+                    effectiveResolutionForm.sellerUserId,
+                    ["full_name", "name"],
+                  )
             }`
           : "",
         item.draft?.presalesUserId
@@ -239,11 +266,11 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options, curren
   const sellerToAssign = effectiveResolutionForm.sellerUserId
     ? selfAssignedSellerLabel ||
       getOptionLabel(
-        (effectiveResolutionForm.accountResolution.mode === "link_existing"
+        effectiveResolutionForm.accountResolution.mode === "link_existing"
           ? options.sellerUsersByAccountId?.[
               String(effectiveResolutionForm.accountResolution.accountId || "")
             ] || []
-          : options.sellerUsers || []),
+          : options.sellerUsers || [],
         effectiveResolutionForm.sellerUserId,
         ["full_name", "fullName", "name"],
       )
@@ -261,15 +288,16 @@ function buildResolveConfirmationPreview(detail, resolutionForm, options, curren
   const hasOpportunities = (
     effectiveResolutionForm.opportunityResolutions || []
   ).some((item) => item.mode !== "ignore");
-  const targetStatus = !hasAccount || !hasContacts
-    ? "Creado"
-    : hasOpportunities
-      ? effectiveResolutionForm.sellerUserId
-        ? "Lead Calificado"
-        : "Creado"
-      : effectiveResolutionForm.sellerUserId
-        ? "Lead Asignado"
-        : "Lead no asignado";
+  const targetStatus =
+    !hasAccount || !hasContacts
+      ? "Creado"
+      : hasOpportunities
+        ? effectiveResolutionForm.sellerUserId
+          ? "Lead Calificado"
+          : "Creado"
+        : effectiveResolutionForm.sellerUserId
+          ? "Lead Asignado"
+          : "Lead no asignado";
 
   return {
     interactionTitle: detail.title || "Interacción sin título",
@@ -430,7 +458,12 @@ function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
 }
 
 function buildInitialResolutionForm(detail, options, currentUser) {
+  const commercialAssignmentPolicy = detail?.commercialAssignmentPolicy || null;
   const suggestedAccount = detail?.suggestedAccount || null;
+  const persistedAccountMode =
+    typeof suggestedAccount?.resolutionMode === "string"
+      ? suggestedAccount.resolutionMode
+      : "";
   const accountResolution = suggestedAccount?.selectedAccountId
     ? {
         mode: "link_existing",
@@ -447,80 +480,117 @@ function buildInitialResolutionForm(detail, options, currentUser) {
           description: suggestedAccount.description || "",
         },
       }
-    : suggestedAccount?.name
+    : persistedAccountMode === "ignore"
       ? {
-          mode: "create_new",
-          accountId: "",
-          draft: {
-            name: suggestedAccount.name || "",
-            website: suggestedAccount.website || "",
-            phone: suggestedAccount.phone || "",
-            city: suggestedAccount.city || "",
-            stateRegion: suggestedAccount.stateRegion || "",
-            countryId: suggestedAccount.countryId
-              ? String(suggestedAccount.countryId)
-              : "",
-            description: suggestedAccount.description || detail?.summary || "",
-          },
-        }
-      : {
           mode: "ignore",
           accountId: "",
           draft: {
-            name: "",
-            website: "",
-            phone: "",
-            city: "",
-            stateRegion: "",
-            countryId: "",
-            description: "",
+            name: suggestedAccount?.name || "",
+            website: suggestedAccount?.website || "",
+            phone: suggestedAccount?.phone || "",
+            city: suggestedAccount?.city || "",
+            stateRegion: suggestedAccount?.stateRegion || "",
+            countryId: suggestedAccount?.countryId
+              ? String(suggestedAccount.countryId)
+              : "",
+            description: suggestedAccount?.description || detail?.summary || "",
           },
-        };
+        }
+      : suggestedAccount?.name
+        ? {
+            mode: "create_new",
+            accountId: "",
+            draft: {
+              name: suggestedAccount.name || "",
+              website: suggestedAccount.website || "",
+              phone: suggestedAccount.phone || "",
+              city: suggestedAccount.city || "",
+              stateRegion: suggestedAccount.stateRegion || "",
+              countryId: suggestedAccount.countryId
+                ? String(suggestedAccount.countryId)
+                : "",
+              description:
+                suggestedAccount.description || detail?.summary || "",
+            },
+          }
+        : {
+            mode: "ignore",
+            accountId: "",
+            draft: {
+              name: "",
+              website: "",
+              phone: "",
+              city: "",
+              stateRegion: "",
+              countryId: "",
+              description: "",
+            },
+          };
 
   const contactResolutions = (detail?.suggestedContacts || []).map(
-    (contact) => ({
-      suggestionId: contact.suggestionId,
-      mode: contact.selectedContactId
-        ? "link_existing"
-        : contact.fullName
-          ? "create_new"
-          : "ignore",
-      contactId: contact.selectedContactId
-        ? String(contact.selectedContactId)
-        : "",
-      draft: {
-        firstName: contact.firstName || "",
-        lastName: contact.lastName || "",
-        email: contact.email || "",
-        phone: contact.phone || "",
-        mobile: contact.mobile || "",
-        positionTitle: contact.positionTitle || "",
-        department: contact.department || "",
-        countryId: "",
-        stateRegion: "",
-        city: "",
-      },
-    }),
+    (contact) => {
+      const persistedMode =
+        typeof contact?.resolutionMode === "string"
+          ? contact.resolutionMode
+          : "";
+      return {
+        suggestionId: contact.suggestionId,
+        mode: contact.selectedContactId
+          ? "link_existing"
+          : persistedMode === "ignore"
+            ? "ignore"
+            : contact.fullName
+              ? "create_new"
+              : "ignore",
+        contactId: contact.selectedContactId
+          ? String(contact.selectedContactId)
+          : "",
+        draft: {
+          firstName: contact.firstName || "",
+          lastName: contact.lastName || "",
+          email: contact.email || "",
+          phone: contact.phone || "",
+          mobile: contact.mobile || "",
+          positionTitle: contact.positionTitle || "",
+          department: contact.department || "",
+          countryId: "",
+          stateRegion: "",
+          city: "",
+        },
+      };
+    },
   );
 
   const opportunityResolutions = (detail?.suggestedOpportunities || []).map(
-    (opportunity, index) => ({
-      suggestionId: opportunity.suggestionId,
-      mode: opportunity.selectedOpportunityId
-        ? "link_existing"
-        : detail?.sellerUserId && opportunity.name
-          ? "create_new"
-          : "ignore",
-      opportunityId: opportunity.selectedOpportunityId
-        ? String(opportunity.selectedOpportunityId)
-        : "",
-      isPrimary: index === 0,
-      draft: buildDefaultOpportunityDraft(opportunity, options, currentUser),
-    }),
+    (opportunity, index) => {
+      const persistedMode =
+        typeof opportunity?.resolutionMode === "string"
+          ? opportunity.resolutionMode
+          : "";
+      return {
+        suggestionId: opportunity.suggestionId,
+        mode: opportunity.selectedOpportunityId
+          ? "link_existing"
+          : persistedMode === "ignore"
+            ? "ignore"
+            : detail?.sellerUserId && opportunity.name
+              ? "create_new"
+              : "ignore",
+        opportunityId: opportunity.selectedOpportunityId
+          ? String(opportunity.selectedOpportunityId)
+          : "",
+        isPrimary: index === 0,
+        draft: buildDefaultOpportunityDraft(opportunity, options, currentUser),
+      };
+    },
   );
 
   return {
-    sellerUserId: detail?.sellerUserId ? String(detail.sellerUserId) : "",
+    sellerUserId: detail?.sellerUserId
+      ? String(detail.sellerUserId)
+      : commercialAssignmentPolicy?.mode === "self_only" && currentUser?.id
+        ? String(currentUser.id)
+        : "",
     assignCurrentUserAsOwnerSeller: false,
     accountResolution,
     contactResolutions,
@@ -643,9 +713,7 @@ function CreateInteractionModal({
           <div className="modal-header">
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
-                <span className="interaction-create-kicker">
-                  Nuevo lead
-                </span>
+                <span className="interaction-create-kicker">Nuevo lead</span>
                 <div className="account-modal-help-shell" ref={createHelpRef}>
                   <div className="account-modal-title-row">
                     <h3 className="modal-title">Crear lead</h3>
@@ -668,14 +736,14 @@ function CreateInteractionModal({
                     >
                       <strong>Para qué sirve este modal</strong>
                       <p>
-                        Úsalo para reunir evidencia comercial inicial y crear
-                        un lead analizable a partir de archivos o texto.
+                        Úsalo para reunir evidencia comercial inicial y crear un
+                        lead analizable a partir de archivos o texto.
                       </p>
                       <strong>Cómo conviene usarlo</strong>
                       <p>
                         Sube documentos, agrega texto adicional si hace falta y
-                        luego crea el lead para que el sistema sugiera
-                        cuenta, contactos y oportunidades relacionadas.
+                        luego crea el lead para que el sistema sugiera cuenta,
+                        contactos y oportunidades relacionadas.
                       </p>
                     </div>
                   ) : null}
@@ -726,8 +794,8 @@ function CreateInteractionModal({
                     <strong>Selecciona uno o varios archivos</strong>
                     <span className="interaction-create-dropzone-copy">
                       Adjunta correos, cotizaciones, minutas, audios o archivos
-                      de soporte. Si prefieres, también puedes crear la
-                      lead solo con texto pegado.
+                      de soporte. Si prefieres, también puedes crear la lead
+                      solo con texto pegado.
                     </span>
                     <span className="interaction-create-dropzone-action">
                       Elegir archivos
@@ -928,6 +996,140 @@ function InteractionInfoModal({ message, onClose }) {
   );
 }
 
+function getResolveDuplicateReviewTitle(review) {
+  const code = String(review?.code || "");
+  if (code.startsWith("ACCOUNT_")) return "Cuenta similar detectada";
+  if (code.startsWith("CONTACT_")) return "Contacto similar detectado";
+  if (code.startsWith("OPPORTUNITY_")) return "Oportunidad similar detectada";
+  return "Coincidencias detectadas";
+}
+
+function getResolveDuplicateReviewSourceLabel(source) {
+  if (source === "ai") return "Con apoyo de IA";
+  return "Con reglas internas";
+}
+
+function getResolveDuplicateCandidateKey(warning, index) {
+  return String(
+    warning.accountId ||
+      warning.contactId ||
+      warning.opportunityId ||
+      warning.email ||
+      warning.opportunityName ||
+      warning.accountName ||
+      `${index}`,
+  );
+}
+
+function getResolveDuplicateCandidateTitle(warning) {
+  return (
+    warning.accountName ||
+    warning.opportunityName ||
+    warning.contactName ||
+    warning.email ||
+    "Registro coincidente"
+  );
+}
+
+function getResolveDuplicateCandidateMeta(warning) {
+  const parts = [];
+  if (warning.reasonLabel) {
+    parts.push(warning.reasonLabel);
+  }
+  if (warning.severityMessage) {
+    parts.push(warning.severityMessage);
+  }
+  if (warning.contactName && warning.opportunityName) {
+    parts.push(`Contacto relacionado: ${warning.contactName}`);
+  }
+  if (warning.accountName && warning.email) {
+    parts.push(`Email: ${warning.email}`);
+  }
+  if (
+    Number.isFinite(Number(warning.similarityScore)) &&
+    Number(warning.similarityScore) > 0
+  ) {
+    parts.push(
+      `Similitud estimada: ${Math.round(Number(warning.similarityScore) * 100)}%`,
+    );
+  }
+  return parts;
+}
+
+function InteractionResolveDuplicateReview({ review, onDismiss }) {
+  if (!review) return null;
+
+  const warnings = Array.isArray(review.duplicateWarnings)
+    ? review.duplicateWarnings
+    : [];
+  const aiSummary = String(review.duplicateReview?.summary || "").trim();
+  const aiRecommendation = String(
+    review.duplicateReview?.recommendation || "",
+  ).trim();
+
+  return (
+    <section className="interaction-duplicate-review" aria-live="polite">
+      <div className="interaction-duplicate-review-header">
+        <div>
+          <span className="interaction-duplicate-review-eyebrow">
+            Revisa antes de guardar
+          </span>
+          <h4>{getResolveDuplicateReviewTitle(review)}</h4>
+          <p>{review.message}</p>
+        </div>
+        <button
+          type="button"
+          className="btn-secondary interaction-duplicate-review-dismiss"
+          onClick={onDismiss}
+        >
+          Ocultar detalle
+        </button>
+      </div>
+
+      <div className="interaction-duplicate-review-tags">
+        <span className="interaction-duplicate-review-tag">
+          {warnings.length}{" "}
+          {warnings.length === 1 ? "coincidencia" : "coincidencias"}
+        </span>
+        <span className="interaction-duplicate-review-tag">
+          {getResolveDuplicateReviewSourceLabel(
+            review.duplicateValidationSource,
+          )}
+        </span>
+      </div>
+
+      {review.duplicateReview ? (
+        <article className="interaction-duplicate-review-ai-card">
+          <strong>Resumen adicional</strong>
+          {aiSummary ? <p>{aiSummary}</p> : null}
+          {aiRecommendation && aiRecommendation !== aiSummary ? (
+            <p className="field-hint">{aiRecommendation}</p>
+          ) : null}
+        </article>
+      ) : null}
+
+      <div className="interaction-duplicate-review-list">
+        {warnings.map((warning, index) => {
+          const meta = getResolveDuplicateCandidateMeta(warning);
+          return (
+            <article
+              key={getResolveDuplicateCandidateKey(warning, index)}
+              className="interaction-duplicate-review-card"
+            >
+              <strong>{getResolveDuplicateCandidateTitle(warning)}</strong>
+              {meta.map((item) => (
+                <p key={item} className="field-hint">
+                  {item}
+                </p>
+              ))}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function InteractionDetailModal({
   isOpen,
   onClose,
@@ -938,6 +1140,8 @@ function InteractionDetailModal({
   resolutionForm,
   setResolutionForm,
   options,
+  resolveDuplicateReview,
+  onDismissResolveDuplicateReview,
   resolving,
   reanalyzing,
   canAnalyze,
@@ -964,13 +1168,17 @@ function InteractionDetailModal({
 
   if (!isOpen || !detail || !editForm || !resolutionForm) return null;
 
-  const isAnalysisLocked = reanalyzing || addingDocuments;
-  const analysisProgressTitle = reanalyzing
-    ? "Reanalizando interacción"
-    : "Analizando archivos anexados";
-  const analysisProgressMessage = reanalyzing
-    ? "Estamos actualizando la sinopsis, sugerencias y relaciones detectadas."
-    : "Estamos procesando los archivos nuevos y actualizando el análisis de la interacción.";
+  const isAnalysisLocked = reanalyzing || addingDocuments || resolving;
+  const analysisProgressTitle = resolving
+    ? "Guardando lead"
+    : reanalyzing
+      ? "Reanalizando interacción"
+      : "Analizando archivos anexados";
+  const analysisProgressMessage = resolving
+    ? "Estamos validando duplicados y guardando los cambios del lead."
+    : reanalyzing
+      ? "Estamos actualizando la sinopsis, sugerencias y relaciones detectadas."
+      : "Estamos procesando los archivos nuevos y actualizando el análisis de la interacción.";
 
   const statusMeta = getInteractionStatusMeta(detail.analysisStatus);
   const resolvedAccountId =
@@ -1003,6 +1211,15 @@ function InteractionDetailModal({
           "name",
         ])
     : "";
+  const commercialAssignmentPolicy = detail?.commercialAssignmentPolicy || {
+    mode: "none",
+    locked: true,
+    allowedSellerUserId: null,
+    reason: null,
+  };
+  const canEditCommercialAssignment = commercialAssignmentPolicy.mode === "any";
+  const isCommercialAssignmentSelfOnly =
+    commercialAssignmentPolicy.mode === "self_only";
   const currentUserIsSeller = isSellerUser(currentUser);
   const showDependentResolutionSections =
     resolutionForm.accountResolution.mode !== "ignore";
@@ -1011,15 +1228,16 @@ function InteractionDetailModal({
   );
   const hasMinimumCommercialLinks = Boolean(
     resolutionForm.accountResolution.mode !== "ignore" &&
-      hasResolvedSuggestedContact,
+    hasResolvedSuggestedContact,
   );
   const canSelfAssignCurrentUserAsOwnerSeller = Boolean(
+    canEditCommercialAssignment &&
     hasResolvedSuggestedContact &&
-      currentUserIsSeller &&
-      ((resolutionForm.accountResolution.mode === "link_existing" &&
-        resolvedAccountId &&
-        availableSellerUsers.length === 0) ||
-        resolutionForm.accountResolution.mode === "create_new"),
+    currentUserIsSeller &&
+    ((resolutionForm.accountResolution.mode === "link_existing" &&
+      resolvedAccountId &&
+      availableSellerUsers.length === 0) ||
+      resolutionForm.accountResolution.mode === "create_new"),
   );
   const canSelectOpportunityResolution = Boolean(
     hasMinimumCommercialLinks && commercialSellerUserId,
@@ -1103,6 +1321,11 @@ function InteractionDetailModal({
           >
             <div className="interaction-detail-scroll">
               <section className="account-form-section account-modal-section">
+                <InteractionResolveDuplicateReview
+                  review={resolveDuplicateReview}
+                  onDismiss={onDismissResolveDuplicateReview}
+                />
+
                 {canAddDocuments ? (
                   <div className="interaction-documents-toolbar">
                     <div className="field-group interaction-documents-upload-field">
@@ -1309,47 +1532,88 @@ function InteractionDetailModal({
                   </div>
                 </div>
                 <div className="interaction-resolution-grid interaction-account-suggestion-grid">
-                  <div className="field-group interaction-resolution-action-field">
-                    <label>Acción</label>
-                    <select
-                      value={resolutionForm.accountResolution.mode}
-                      onChange={(event) =>
-                        setResolutionForm((currentValue) => ({
-                          ...currentValue,
-                          accountResolution: {
-                            ...currentValue.accountResolution,
-                            mode: event.target.value,
-                          },
-                        }))
-                      }
-                    >
-                      <option value="ignore">Ignorar</option>
-                      <option value="link_existing">Vincular existente</option>
-                      <option value="create_new">Crear cuenta</option>
-                    </select>
-                  </div>
+                  {(() => {
+                    const isMaterializedAccountSuggestion = Boolean(
+                      editForm.suggestedAccount?.selectedAccountId,
+                    );
+
+                    return (
+                      <div className="field-group interaction-resolution-action-field">
+                        <label>Acción</label>
+                        {isMaterializedAccountSuggestion ? (
+                          <div className="interaction-readonly-field interaction-readonly-field-compact">
+                            <span className="interaction-readonly-pill">
+                              Vincular existente
+                            </span>
+                          </div>
+                        ) : (
+                          <select
+                            value={resolutionForm.accountResolution.mode}
+                            onChange={(event) =>
+                              setResolutionForm((currentValue) => ({
+                                ...currentValue,
+                                accountResolution: {
+                                  ...currentValue.accountResolution,
+                                  mode: event.target.value,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="link_existing">
+                              Vincular existente
+                            </option>
+                            <option value="ignore">Ignorar</option>
+                            <option value="create_new">Crear cuenta</option>
+                          </select>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {resolutionForm.accountResolution.mode === "link_existing" ? (
                     <div className="field-group interaction-grid-span-2 interaction-account-existing-field">
                       <label>Cuenta existente</label>
-                      <select
-                        value={resolutionForm.accountResolution.accountId}
-                        onChange={(event) =>
-                          setResolutionForm((currentValue) => ({
-                            ...currentValue,
-                            accountResolution: {
-                              ...currentValue.accountResolution,
-                              accountId: event.target.value,
-                            },
-                          }))
-                        }
-                      >
-                        <option value="">Selecciona cuenta</option>
-                        {options.accounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.name}
-                          </option>
-                        ))}
-                      </select>
+                      {Boolean(editForm.suggestedAccount?.selectedAccountId) ? (
+                        <div className="interaction-readonly-field interaction-readonly-link-field">
+                          <span className="interaction-readonly-value-title">
+                            {getOptionLabel(
+                              options.accounts,
+                              resolutionForm.accountResolution.accountId,
+                              ["name"],
+                            ) || "Cuenta vinculada"}
+                          </span>
+                          <span className="interaction-readonly-value-subtitle">
+                            Vinculo materializado desde este lead
+                          </span>
+                        </div>
+                      ) : (
+                        <select
+                          value={resolutionForm.accountResolution.accountId}
+                          onChange={(event) =>
+                            setResolutionForm((currentValue) => ({
+                              ...currentValue,
+                              accountResolution: {
+                                ...currentValue.accountResolution,
+                                accountId: event.target.value,
+                              },
+                            }))
+                          }
+                        >
+                          <option value="">Selecciona cuenta</option>
+                          {options.accounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  ) : null}
+                  {Boolean(editForm.suggestedAccount?.selectedAccountId) ? (
+                    <div className="field-group interaction-materialized-hint-field">
+                      <span className="field-hint">
+                        Esta sugerencia ya genero una cuenta y no puede
+                        modificarse desde este lead.
+                      </span>
                     </div>
                   ) : null}
                   {resolutionForm.accountResolution.mode !== "link_existing" ? (
@@ -1424,6 +1688,9 @@ function InteractionDetailModal({
                         const resolution =
                           resolutionForm.contactResolutions[index];
                         if (!resolution) return null;
+                        const isMaterializedContactSuggestion = Boolean(
+                          contact.selectedContactId,
+                        );
                         return (
                           <article
                             key={contact.suggestionId}
@@ -1441,38 +1708,15 @@ function InteractionDetailModal({
                             <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
                               <div className="field-group interaction-resolution-action-field">
                                 <label>Acción</label>
-                                <select
-                                  value={resolution.mode}
-                                  onChange={(event) =>
-                                    setResolutionForm((prev) => ({
-                                      ...prev,
-                                      contactResolutions:
-                                        prev.contactResolutions.map(
-                                          (item, itemIndex) =>
-                                            itemIndex === index
-                                              ? {
-                                                  ...item,
-                                                  mode: event.target.value,
-                                                }
-                                              : item,
-                                        ),
-                                    }))
-                                  }
-                                >
-                                  <option value="ignore">Ignorar</option>
-                                  <option value="link_existing">
-                                    Vincular existente
-                                  </option>
-                                  <option value="create_new">
-                                    Crear contacto
-                                  </option>
-                                </select>
-                              </div>
-                              {resolution.mode === "link_existing" ? (
-                                <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
-                                  <label>Contacto existente</label>
+                                {isMaterializedContactSuggestion ? (
+                                  <div className="interaction-readonly-field interaction-readonly-field-compact">
+                                    <span className="interaction-readonly-pill">
+                                      Vincular existente
+                                    </span>
+                                  </div>
+                                ) : (
                                   <select
-                                    value={resolution.contactId}
+                                    value={resolution.mode}
                                     onChange={(event) =>
                                       setResolutionForm((prev) => ({
                                         ...prev,
@@ -1482,23 +1726,80 @@ function InteractionDetailModal({
                                               itemIndex === index
                                                 ? {
                                                     ...item,
-                                                    contactId:
-                                                      event.target.value,
+                                                    mode: event.target.value,
                                                   }
                                                 : item,
                                           ),
                                       }))
                                     }
                                   >
-                                    <option value="">
-                                      Selecciona contacto
+                                    <option value="link_existing">
+                                      Vincular existente
                                     </option>
-                                    {availableContacts.map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.full_name}
-                                      </option>
-                                    ))}
+                                    <option value="ignore">Ignorar</option>
+                                    <option value="create_new">
+                                      Crear contacto
+                                    </option>
                                   </select>
+                                )}
+                              </div>
+                              {resolution.mode === "link_existing" ? (
+                                <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
+                                  <label>Contacto existente</label>
+                                  {isMaterializedContactSuggestion ? (
+                                    <div className="interaction-readonly-field interaction-readonly-link-field">
+                                      <span className="interaction-readonly-value-title">
+                                        {getOptionLabel(
+                                          availableContacts,
+                                          resolution.contactId,
+                                          ["full_name", "name"],
+                                        ) || "Contacto vinculado"}
+                                      </span>
+                                      <span className="interaction-readonly-value-subtitle">
+                                        Vinculo materializado desde este lead
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <select
+                                      value={resolution.contactId}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          contactResolutions:
+                                            prev.contactResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      contactId:
+                                                        event.target.value,
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    >
+                                      <option value="">
+                                        Selecciona contacto
+                                      </option>
+                                      {availableContacts.map((option) => (
+                                        <option
+                                          key={option.id}
+                                          value={option.id}
+                                        >
+                                          {option.full_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                              ) : null}
+                              {isMaterializedContactSuggestion ? (
+                                <div className="field-group interaction-materialized-hint-field">
+                                  <span className="field-hint">
+                                    Esta sugerencia ya genero un contacto y no
+                                    puede modificarse desde este lead.
+                                  </span>
                                 </div>
                               ) : null}
                               {resolution.mode !== "link_existing" ? (
@@ -1625,64 +1926,103 @@ function InteractionDetailModal({
                     <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
                       <div className="field-group interaction-grid-span-2">
                         <label>Vendedor asignado</label>
-                        <select
-                          value={resolutionForm.sellerUserId || ""}
-                          onChange={(event) =>
-                            setResolutionForm((prev) => ({
-                              ...prev,
-                              sellerUserId: event.target.value,
-                              assignCurrentUserAsOwnerSeller: false,
-                            }))
-                          }
-                          disabled={!hasMinimumCommercialLinks}
-                        >
-                          <option value="">Sin asignar</option>
-                          {availableSellerUsers.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.full_name}
-                            </option>
-                          ))}
-                        </select>
-                        {!hasMinimumCommercialLinks ? (
-                          <span className="field-hint">
-                            Vincula cuenta y al menos un contacto para poder
-                            asignar vendedor.
-                          </span>
-                        ) : canSelfAssignCurrentUserAsOwnerSeller ? (
+                        {canEditCommercialAssignment ? (
                           <>
-                            <label className="interaction-primary-checkbox">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(
-                                  resolutionForm.assignCurrentUserAsOwnerSeller,
-                                )}
-                                onChange={(event) =>
-                                  setResolutionForm((prev) => ({
-                                    ...prev,
-                                    assignCurrentUserAsOwnerSeller:
-                                      event.target.checked,
-                                    sellerUserId: event.target.checked
-                                      ? String(currentUser.id)
-                                      : "",
-                                  }))
-                                }
-                              />
-                              {resolutionForm.accountResolution.mode === "create_new"
-                                ? "Asignarme como owner vendedor de la nueva cuenta"
-                                : "Asignarme como owner vendedor de esta cuenta"}
-                            </label>
+                            <select
+                              value={resolutionForm.sellerUserId || ""}
+                              onChange={(event) =>
+                                setResolutionForm((prev) => ({
+                                  ...prev,
+                                  sellerUserId: event.target.value,
+                                  assignCurrentUserAsOwnerSeller: false,
+                                }))
+                              }
+                              disabled={!hasMinimumCommercialLinks}
+                            >
+                              <option value="">Sin asignar</option>
+                              {availableSellerUsers.map((user) => (
+                                <option key={user.id} value={user.id}>
+                                  {user.full_name}
+                                </option>
+                              ))}
+                            </select>
+                            {!hasMinimumCommercialLinks ? (
+                              <span className="field-hint">
+                                Vincula cuenta y al menos un contacto para poder
+                                asignar vendedor.
+                              </span>
+                            ) : canSelfAssignCurrentUserAsOwnerSeller ? (
+                              <>
+                                <label className="interaction-primary-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(
+                                      resolutionForm.assignCurrentUserAsOwnerSeller,
+                                    )}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        assignCurrentUserAsOwnerSeller:
+                                          event.target.checked,
+                                        sellerUserId: event.target.checked
+                                          ? String(currentUser.id)
+                                          : "",
+                                      }))
+                                    }
+                                  />
+                                  {resolutionForm.accountResolution.mode ===
+                                  "create_new"
+                                    ? "Asignarme como owner vendedor de la nueva cuenta"
+                                    : "Asignarme como owner vendedor de esta cuenta"}
+                                </label>
+                                <span className="field-hint">
+                                  {resolutionForm.accountResolution.mode ===
+                                  "create_new"
+                                    ? "Al guardar, se te asignará explícitamente como owner vendedor para poder continuar con la oportunidad."
+                                    : "La cuenta no tiene owners vendedores. Si continúas, se te agregará explícitamente como owner vendedor para poder vincular la oportunidad."}
+                                </span>
+                              </>
+                            ) : !availableSellerUsers.length ? (
+                              <span className="field-hint">
+                                La cuenta no tiene owners con rol de vendedor.
+                              </span>
+                            ) : null}
+                          </>
+                        ) : isCommercialAssignmentSelfOnly ? (
+                          <>
+                            <div className="interaction-readonly-value">
+                              {detail?.seller?.fullName ||
+                                detail?.seller?.email ||
+                                currentUser?.full_name ||
+                                currentUser?.email ||
+                                "Usuario actual"}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="interaction-readonly-value">
+                              {detail?.seller?.fullName ||
+                                detail?.seller?.email ||
+                                "Sin asignar"}
+                            </div>
                             <span className="field-hint">
-                              {resolutionForm.accountResolution.mode === "create_new"
-                                ? "Al guardar, se te asignará explícitamente como owner vendedor para poder continuar con la oportunidad."
-                                : "La cuenta no tiene owners vendedores. Si continúas, se te agregará explícitamente como owner vendedor para poder vincular la oportunidad."}
+                              No tienes permiso para modificar la asignacion
+                              comercial del lead.
                             </span>
                           </>
-                        ) : !availableSellerUsers.length ? (
-                          <span className="field-hint">
-                            La cuenta no tiene owners con rol de vendedor.
-                          </span>
-                        ) : null}
+                        )}
                       </div>
+                      {isCommercialAssignmentSelfOnly ? (
+                        <div className="field-group interaction-materialized-hint-field">
+                          <span className="field-hint">
+                            {detail?.sellerUserId
+                              ? "Este lead solo admite tu propia asignacion comercial y ya no puede modificarse."
+                              : hasMinimumCommercialLinks
+                                ? "Al guardar, este lead se asignara automaticamente a ti."
+                                : "Vincula cuenta y al menos un contacto para que el lead se asigne automaticamente a ti al guardar."}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
                   </section>
 
@@ -1694,10 +2034,15 @@ function InteractionDetailModal({
                           const resolution =
                             resolutionForm.opportunityResolutions[index];
                           if (!resolution) return null;
+                          const isMaterializedOpportunitySuggestion = Boolean(
+                            opportunity.selectedOpportunityId,
+                          );
                           const displayedOpportunityMode =
-                            canSelectOpportunityResolution
-                              ? resolution.mode
-                              : "ignore";
+                            isMaterializedOpportunitySuggestion
+                              ? "link_existing"
+                              : canSelectOpportunityResolution
+                                ? resolution.mode
+                                : "ignore";
                           return (
                             <article
                               key={opportunity.suggestionId}
@@ -1718,45 +2063,15 @@ function InteractionDetailModal({
                               <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
                                 <div className="field-group interaction-resolution-action-field">
                                   <label>Acción</label>
-                                  <select
-                                    value={displayedOpportunityMode}
-                                    onChange={(event) =>
-                                      setResolutionForm((prev) => ({
-                                        ...prev,
-                                        opportunityResolutions:
-                                          prev.opportunityResolutions.map(
-                                            (item, itemIndex) =>
-                                              itemIndex === index
-                                                ? {
-                                                    ...item,
-                                                    mode: event.target.value,
-                                                  }
-                                                : item,
-                                          ),
-                                      }))
-                                    }
-                                    disabled={!canSelectOpportunityResolution}
-                                  >
-                                    <option value="ignore">Ignorar</option>
-                                    <option value="link_existing">
-                                      Vincular existente
-                                    </option>
-                                    <option value="create_new">
-                                      Crear oportunidad
-                                    </option>
-                                  </select>
-                                  {!canSelectOpportunityResolution ? (
-                                    <span className="field-hint">
-                                      El vendedor de la oportunidad se define en
-                                      Asignación comercial.
-                                    </span>
-                                  ) : null}
-                                </div>
-                                {displayedOpportunityMode === "link_existing" ? (
-                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
-                                    <label>Oportunidad existente</label>
+                                  {isMaterializedOpportunitySuggestion ? (
+                                    <div className="interaction-readonly-field interaction-readonly-field-compact">
+                                      <span className="interaction-readonly-pill">
+                                        Vincular existente
+                                      </span>
+                                    </div>
+                                  ) : (
                                     <select
-                                      value={resolution.opportunityId}
+                                      value={displayedOpportunityMode}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
@@ -1766,26 +2081,90 @@ function InteractionDetailModal({
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
-                                                      opportunityId:
-                                                        event.target.value,
+                                                      mode: event.target.value,
                                                     }
                                                   : item,
                                             ),
                                         }))
                                       }
+                                      disabled={!canSelectOpportunityResolution}
                                     >
-                                      <option value="">
-                                        Selecciona oportunidad
+                                      <option value="link_existing">
+                                        Vincular existente
                                       </option>
-                                      {availableOpportunities.map((option) => (
-                                        <option
-                                          key={option.id}
-                                          value={option.id}
-                                        >
-                                          {option.name}
-                                        </option>
-                                      ))}
+                                      <option value="ignore">Ignorar</option>
+                                      <option value="create_new">
+                                        Crear oportunidad
+                                      </option>
                                     </select>
+                                  )}
+                                  {!canSelectOpportunityResolution ? (
+                                    <span className="field-hint">
+                                      El vendedor de la oportunidad se define en
+                                      Asignación comercial.
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {displayedOpportunityMode ===
+                                "link_existing" ? (
+                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
+                                    <label>Oportunidad existente</label>
+                                    {isMaterializedOpportunitySuggestion ? (
+                                      <div className="interaction-readonly-field interaction-readonly-link-field">
+                                        <span className="interaction-readonly-value-title">
+                                          {getOptionLabel(
+                                            availableOpportunities,
+                                            resolution.opportunityId,
+                                            ["name"],
+                                          ) || "Oportunidad vinculada"}
+                                        </span>
+                                        <span className="interaction-readonly-value-subtitle">
+                                          Vinculo materializado desde este lead
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <select
+                                        value={resolution.opportunityId}
+                                        onChange={(event) =>
+                                          setResolutionForm((prev) => ({
+                                            ...prev,
+                                            opportunityResolutions:
+                                              prev.opportunityResolutions.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        opportunityId:
+                                                          event.target.value,
+                                                      }
+                                                    : item,
+                                              ),
+                                          }))
+                                        }
+                                      >
+                                        <option value="">
+                                          Selecciona oportunidad
+                                        </option>
+                                        {availableOpportunities.map(
+                                          (option) => (
+                                            <option
+                                              key={option.id}
+                                              value={option.id}
+                                            >
+                                              {option.name}
+                                            </option>
+                                          ),
+                                        )}
+                                      </select>
+                                    )}
+                                  </div>
+                                ) : null}
+                                {isMaterializedOpportunitySuggestion ? (
+                                  <div className="field-group interaction-materialized-hint-field">
+                                    <span className="field-hint">
+                                      Esta sugerencia ya genero una oportunidad
+                                      y no puede modificarse desde este lead.
+                                    </span>
                                   </div>
                                 ) : null}
                                 {displayedOpportunityMode === "create_new" ? (
@@ -2031,8 +2410,7 @@ function ResolveInteractionConfirmationModal({
           <div>
             <h3 className="modal-title">Confirmar cambios del lead</h3>
             <p className="roles-subtitle resolve-confirmation-subtitle">
-              Revisa lo que se aplicará al lead{" "}
-              {preview.interactionTitle}.
+              Revisa lo que se aplicará al lead {preview.interactionTitle}.
             </p>
           </div>
         </div>
@@ -2199,6 +2577,7 @@ function InteractionsPage({ can, currentUser }) {
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
   const [showResolveConfirmation, setShowResolveConfirmation] = useState(false);
+  const [resolveDuplicateReview, setResolveDuplicateReview] = useState(null);
   const interactionAnalysisPollingTokenRef = useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -2219,6 +2598,7 @@ function InteractionsPage({ can, currentUser }) {
 
   function closeDetailModal() {
     setShowResolveConfirmation(false);
+    setResolveDuplicateReview(null);
     setShowDetailModal(false);
   }
 
@@ -2282,9 +2662,7 @@ function InteractionsPage({ can, currentUser }) {
       setItems(Array.isArray(data?.items) ? data.items : []);
       setTotal(Number(data?.total || 0));
     } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible cargar los leads"),
-      );
+      setError(getApiErrorMessage(err, "No fue posible cargar los leads"));
     } finally {
       setLoading(false);
     }
@@ -2358,6 +2736,7 @@ function InteractionsPage({ can, currentUser }) {
           currentUser,
         ),
       );
+      setResolveDuplicateReview(null);
       setShowDetailModal(true);
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible abrir la interacción"));
@@ -2613,10 +2992,12 @@ function InteractionsPage({ can, currentUser }) {
     const effectiveResolutionForm = buildEffectiveResolutionForm(
       resolutionForm,
       currentUser,
+      detail?.commercialAssignmentPolicy,
     );
     setShowResolveConfirmation(false);
     setResolving(true);
     setError("");
+    setResolveDuplicateReview(null);
     try {
       const payload = {
         ...editForm,
@@ -2632,7 +3013,8 @@ function InteractionsPage({ can, currentUser }) {
             ? effectiveResolutionForm.accountResolution.draft
             : {}),
           selectedAccountId:
-            effectiveResolutionForm.accountResolution.mode === "link_existing" &&
+            effectiveResolutionForm.accountResolution.mode ===
+              "link_existing" &&
             effectiveResolutionForm.accountResolution.accountId
               ? Number(effectiveResolutionForm.accountResolution.accountId)
               : null,
@@ -2665,21 +3047,23 @@ function InteractionsPage({ can, currentUser }) {
             };
           },
         ),
-        contactResolutions: effectiveResolutionForm.contactResolutions.map((item) => ({
-          ...item,
-          contactId: item.contactId ? Number(item.contactId) : null,
-          draft:
-            item.mode === "create_new"
-              ? {
-                  ...item.draft,
-                  countryId: item.draft.countryId
-                    ? Number(item.draft.countryId)
-                    : null,
-                }
-              : undefined,
-        })),
-        opportunityResolutions: effectiveResolutionForm.opportunityResolutions.map(
+        contactResolutions: effectiveResolutionForm.contactResolutions.map(
           (item) => ({
+            ...item,
+            contactId: item.contactId ? Number(item.contactId) : null,
+            draft:
+              item.mode === "create_new"
+                ? {
+                    ...item.draft,
+                    countryId: item.draft.countryId
+                      ? Number(item.draft.countryId)
+                      : null,
+                  }
+                : undefined,
+          }),
+        ),
+        opportunityResolutions:
+          effectiveResolutionForm.opportunityResolutions.map((item) => ({
             ...item,
             opportunityId: item.opportunityId
               ? Number(item.opportunityId)
@@ -2705,8 +3089,7 @@ function InteractionsPage({ can, currentUser }) {
                       : null,
                   }
                 : undefined,
-          }),
-        ),
+          })),
         accountResolution: {
           ...effectiveResolutionForm.accountResolution,
           accountId: effectiveResolutionForm.accountResolution.accountId
@@ -2716,8 +3099,12 @@ function InteractionsPage({ can, currentUser }) {
             effectiveResolutionForm.accountResolution.mode === "create_new"
               ? {
                   ...effectiveResolutionForm.accountResolution.draft,
-                  countryId: effectiveResolutionForm.accountResolution.draft.countryId
-                    ? Number(effectiveResolutionForm.accountResolution.draft.countryId)
+                  countryId: effectiveResolutionForm.accountResolution.draft
+                    .countryId
+                    ? Number(
+                        effectiveResolutionForm.accountResolution.draft
+                          .countryId,
+                      )
                     : null,
                 }
               : undefined,
@@ -2734,6 +3121,23 @@ function InteractionsPage({ can, currentUser }) {
       setSuccess("Lead guardado");
       await loadInteractions();
     } catch (err) {
+      const duplicatePayload = err?.response?.data;
+      if (
+        duplicatePayload &&
+        (Array.isArray(duplicatePayload.duplicateWarnings) ||
+          duplicatePayload.duplicateReview)
+      ) {
+        setResolveDuplicateReview({
+          code: duplicatePayload.code || null,
+          message: String(duplicatePayload.message || "").trim(),
+          duplicateWarnings: Array.isArray(duplicatePayload.duplicateWarnings)
+            ? duplicatePayload.duplicateWarnings
+            : [],
+          duplicateReview: duplicatePayload.duplicateReview || null,
+          duplicateValidationSource:
+            duplicatePayload.duplicateValidationSource || "heuristic",
+        });
+      }
       setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
     } finally {
       setResolving(false);
@@ -2781,6 +3185,8 @@ function InteractionsPage({ can, currentUser }) {
         resolutionForm={resolutionForm}
         setResolutionForm={setResolutionForm}
         options={options}
+        resolveDuplicateReview={resolveDuplicateReview}
+        onDismissResolveDuplicateReview={() => setResolveDuplicateReview(null)}
         saving={saving}
         resolving={resolving}
         reanalyzing={reanalyzing}
@@ -2789,9 +3195,7 @@ function InteractionsPage({ can, currentUser }) {
         canAnalyze={canAnalyze}
         canResolve={canResolve}
         canAddDocuments={Boolean(
-          canUpdate &&
-          detail &&
-          !isQualifiedLeadStatus(detail.analysisStatus),
+          canUpdate && detail && !isQualifiedLeadStatus(detail.analysisStatus),
         )}
         deletingDocumentPublicId={deletingDocumentPublicId}
         canDeleteDocuments={Boolean(
@@ -2834,22 +3238,46 @@ function InteractionsPage({ can, currentUser }) {
               <div className="accounts-module-help-popover">
                 <strong>Para qué sirve</strong>
                 <p>
-                  Este módulo de Leads centraliza documentos, notas e
-                  interacciones comerciales para extraer contexto y
-                  relacionarlo con cuentas, contactos y oportunidades.
+                  Este módulo centraliza evidencia documental de leads, extrae
+                  contexto comercial y te ayuda a relacionarlo con cuenta,
+                  contactos, vendedor y oportunidad.
                 </p>
                 <strong>Cómo usarlo</strong>
                 <p>
-                  Úsalo para cargar evidencia, analizarla, revisar sugerencias
-                  del sistema y resolver cada caso enlazando o creando los
-                  registros comerciales correctos.
+                  Carga documentos o notas, revisa las sugerencias del sistema y
+                  resuelve cada lead vinculando o creando los registros
+                  correctos antes de guardarlo.
+                </p>
+                <strong>Estados del lead</strong>
+                <ul className="accounts-module-help-list">
+                  <li>
+                    <strong>Creado:</strong> falta cuenta o falta al menos un
+                    contacto.
+                  </li>
+                  <li>
+                    <strong>Lead no asignado:</strong> ya hay cuenta y al menos
+                    un contacto, pero aun no tiene vendedor asignado.
+                  </li>
+                  <li>
+                    <strong>Lead asignado:</strong> ya hay cuenta, contacto y
+                    vendedor, pero aun no tiene oportunidad vinculada o creada.
+                  </li>
+                  <li>
+                    <strong>Lead calificado:</strong> ya tiene cuenta, contacto,
+                    vendedor y oportunidad.
+                  </li>
+                </ul>
+                <strong>Regla rápida</strong>
+                <p>
+                  La progresion normal es: Creado → Lead no asignado → Lead
+                  asignado → Lead calificado.
                 </p>
               </div>
             </details>
           </div>
           <p className="roles-subtitle">
-            Centraliza evidencia documental de leads, extrae contexto comercial y
-            resuelve cuenta, contactos y oportunidades.
+            Centraliza evidencia documental de leads, extrae contexto comercial
+            y resuelve cuenta, contactos y oportunidades.
           </p>
         </div>
         {canCreate ? (
@@ -2907,10 +3335,7 @@ function InteractionsPage({ can, currentUser }) {
           </button>
           <button
             type="button"
-            className={getInteractionFilterPillClass(
-              "created",
-              statusFilter,
-            )}
+            className={getInteractionFilterPillClass("created", statusFilter)}
             aria-pressed={statusFilter === "created"}
             onClick={() => {
               setPage(1);
@@ -2996,8 +3421,7 @@ function InteractionsPage({ can, currentUser }) {
                 );
                 const displayIndex = (page - 1) * pageSize + index + 1;
                 const canDeleteInteraction =
-                  canUpdate &&
-                  !isQualifiedLeadStatus(item.analysisStatus);
+                  canUpdate && !isQualifiedLeadStatus(item.analysisStatus);
                 return (
                   <tr key={item.id}>
                     <td title={item.publicId}>{displayIndex}</td>
@@ -3023,7 +3447,11 @@ function InteractionsPage({ can, currentUser }) {
                     <td className="accounts-actions-cell">
                       <div
                         className="user-kebab-wrap interactions-kebab-wrap"
-                        ref={openInteractionMenuId === item.id ? interactionMenuRef : null}
+                        ref={
+                          openInteractionMenuId === item.id
+                            ? interactionMenuRef
+                            : null
+                        }
                       >
                         <button
                           type="button"

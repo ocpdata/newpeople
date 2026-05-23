@@ -197,6 +197,21 @@ describe("API integration baseline", () => {
         "interacciones.update",
         "interacciones.analyze",
         "interacciones.resolve",
+        "interacciones.resolve.assign_any",
+        "cuentas.create",
+        "contactos.create",
+        "oportunidades.create",
+      ],
+    });
+    ctx.interactionsSelfAssignRoleId = await createRole({
+      name: `${TEST_PREFIX}_interactions_self_assign`,
+      permissionCodes: [
+        "interacciones.read",
+        "interacciones.create",
+        "interacciones.update",
+        "interacciones.analyze",
+        "interacciones.resolve",
+        "interacciones.resolve.assign_self",
         "cuentas.create",
         "contactos.create",
         "oportunidades.create",
@@ -255,6 +270,7 @@ describe("API integration baseline", () => {
       ctx.configurationManagerRoleId,
       ctx.dynamicPermissionRoleId,
       ctx.interactionsManagerRoleId,
+      ctx.interactionsSelfAssignRoleId,
       ctx.userCrudRoleId,
       ctx.auditReaderRoleId,
       ctx.commercialPlanningManagerRoleId,
@@ -484,6 +500,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.interactions.manager@example.com`,
       roleIds: [ctx.interactionsManagerRoleId],
     });
+    ctx.interactionsSelfAssignUserId = await createUser({
+      fullName: "API Interactions Seller Self",
+      email: `${TEST_PREFIX}.interactions.self@example.com`,
+      roleIds: [ctx.sellerRoleId, ctx.interactionsSelfAssignRoleId],
+    });
     ctx.userCrudUserId = await createUser({
       fullName: "API User CRUD",
       email: `${TEST_PREFIX}.users.crud@example.com`,
@@ -528,6 +549,7 @@ describe("API integration baseline", () => {
       ctx.quotationExternalUserId,
       ctx.dynamicPermissionUserId,
       ctx.interactionsManagerUserId,
+      ctx.interactionsSelfAssignUserId,
       ctx.userCrudUserId,
       ctx.auditReaderUserId,
       ctx.commercialPlanningManagerUserId,
@@ -2628,9 +2650,8 @@ describe("API integration baseline", () => {
       request(app),
       `${TEST_PREFIX}.accounts.create@example.com`,
     );
-    const draftAnalysisService = await import(
-      "../src/accounts/draft-analysis/service.js"
-    );
+    const draftAnalysisService =
+      await import("../src/accounts/draft-analysis/service.js");
     const analyzeSpy = vi
       .spyOn(draftAnalysisService, "analyzeAccountDraft")
       .mockRejectedValueOnce(new Error("Fallo forzado de analisis"));
@@ -4067,7 +4088,9 @@ describe("API integration baseline", () => {
     await processPendingInteractionAnalysisJobs({ limit: 5 });
 
     const pollResponse = await request(app)
-      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .get(
+        `/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`,
+      )
       .set("Authorization", `Bearer ${token}`);
 
     expect(pollResponse.status).toBe(200);
@@ -4120,7 +4143,9 @@ describe("API integration baseline", () => {
     await processPendingInteractionAnalysisJobs({ limit: 5 });
 
     const pollResponse = await request(app)
-      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .get(
+        `/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`,
+      )
       .set("Authorization", `Bearer ${token}`);
 
     expect(pollResponse.status).toBe(200);
@@ -4170,7 +4195,9 @@ describe("API integration baseline", () => {
     await processPendingInteractionAnalysisJobs({ limit: 5 });
 
     const pollResponse = await request(app)
-      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .get(
+        `/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`,
+      )
       .set("Authorization", `Bearer ${token}`);
 
     expect(pollResponse.status).toBe(200);
@@ -4219,7 +4246,9 @@ describe("API integration baseline", () => {
     );
 
     const pollResponse = await request(app)
-      .get(`/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`)
+      .get(
+        `/api/interactions/${interactionId}/analyze/jobs/${jobResponse.body.job.id}`,
+      )
       .set("Authorization", `Bearer ${token}`);
 
     expect(pollResponse.status).toBe(200);
@@ -4858,8 +4887,21 @@ describe("API integration baseline", () => {
         contactResolutions: [
           {
             suggestionId: firstContactSuggestion.suggestionId,
-            mode: "link_existing",
-            contactId: ctx.fixtureContactId,
+            mode: "create_new",
+            draft: {
+              firstName: firstContactSuggestion.firstName || "Laura",
+              lastName: firstContactSuggestion.lastName || "Perez",
+              email:
+                firstContactSuggestion.email ||
+                `laura.perez.${TEST_PREFIX}@beta.example.com`,
+              phone: firstContactSuggestion.phone || "",
+              mobile: firstContactSuggestion.mobile || "",
+              positionTitle: firstContactSuggestion.positionTitle || "Compras",
+              department: firstContactSuggestion.department || "",
+              countryId: null,
+              stateRegion: "",
+              city: "",
+            },
           },
         ],
         opportunityResolutions: [
@@ -4891,7 +4933,34 @@ describe("API integration baseline", () => {
     expect(resolveResponse.body.contacts).toHaveLength(1);
     expect(resolveResponse.body.opportunities).toHaveLength(1);
     expect(resolveResponse.body.opportunities[0].isPrimary).toBe(true);
+    cleanup.contactIds.push(resolveResponse.body.contacts[0].id);
     cleanup.opportunityIds.push(resolveResponse.body.opportunities[0].id);
+
+    expect(resolveResponse.body.suggestedAccount?.selectedAccountId).toBe(
+      ctx.fixtureAccountId,
+    );
+    expect(resolveResponse.body.suggestedContacts?.[0]?.selectedContactId).toBe(
+      resolveResponse.body.contacts[0].id,
+    );
+    expect(
+      resolveResponse.body.suggestedOpportunities?.[0]?.selectedOpportunityId,
+    ).toBe(resolveResponse.body.opportunities[0].id);
+
+    const persistedDetailResponse = await request(app)
+      .get(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(persistedDetailResponse.status).toBe(200);
+    expect(
+      persistedDetailResponse.body.suggestedAccount?.selectedAccountId,
+    ).toBe(ctx.fixtureAccountId);
+    expect(
+      persistedDetailResponse.body.suggestedContacts?.[0]?.selectedContactId,
+    ).toBe(resolveResponse.body.contacts[0].id);
+    expect(
+      persistedDetailResponse.body.suggestedOpportunities?.[0]
+        ?.selectedOpportunityId,
+    ).toBe(resolveResponse.body.opportunities[0].id);
 
     const linkedDocsRows = await query(
       `SELECT odl.id
@@ -5075,6 +5144,1672 @@ describe("API integration baseline", () => {
     expect(interactionRow.primary_opportunity_id).toBeNull();
     expect(Number(interactionRow.seller_user_id)).toBe(ctx.sellerUserId);
     expect(interactionRow.analysis_status).toBe("lead_assigned");
+  });
+
+  test("interacciones conserva resoluciones ignoradas al reabrir el lead", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead ignored resolution ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Delta Seguridad",
+            "Contacto: Diana Hernandez",
+            "Tema: Seguimiento comercial de seguridad",
+            "Correo: diana.hernandez@delta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_ignore_resolution_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "ignore",
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "ignore",
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(
+      resolveResponse.body.suggestedContacts?.[0]?.selectedContactId,
+    ).toBeNull();
+    expect(resolveResponse.body.suggestedContacts?.[0]?.resolutionMode).toBe(
+      "ignore",
+    );
+
+    const persistedDetailResponse = await request(app)
+      .get(`/api/interactions/${interactionId}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(persistedDetailResponse.status).toBe(200);
+    expect(
+      persistedDetailResponse.body.suggestedContacts?.[0]?.selectedContactId,
+    ).toBeNull();
+    expect(
+      persistedDetailResponse.body.suggestedContacts?.[0]?.resolutionMode,
+    ).toBe("ignore");
+  });
+
+  test("interacciones expone politica self_only para vendedor que creo el lead", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.self@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead self only ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Sigma Seguridad",
+            "Contacto: Sofia Ibarra",
+            "Correo: sofia.ibarra@sigma.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_self_only_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.body.createdById).toBe(
+      ctx.interactionsSelfAssignUserId,
+    );
+    expect(createResponse.body.commercialAssignmentPolicy).toMatchObject({
+      mode: "self_only",
+      locked: true,
+      allowedSellerUserId: ctx.interactionsSelfAssignUserId,
+    });
+
+    const detailResponse = await request(app)
+      .get(`/api/interactions/${createResponse.body.id}`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.createdById).toBe(
+      ctx.interactionsSelfAssignUserId,
+    );
+    expect(detailResponse.body.commercialAssignmentPolicy).toMatchObject({
+      mode: "self_only",
+      locked: true,
+      allowedSellerUserId: ctx.interactionsSelfAssignUserId,
+    });
+  });
+
+  test("interacciones self_only autoasigna al vendedor creador y bloquea cambiar asignacion al reabrir", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.self@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead self assigned ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Tau Seguridad",
+            "Contacto: Tomas Vela",
+            "Correo: tomas.vela@tau.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_self_assign_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(initialResolveResponse.status).toBe(200);
+    expect(initialResolveResponse.body.sellerUserId).toBe(
+      ctx.interactionsSelfAssignUserId,
+    );
+    expect(
+      initialResolveResponse.body.commercialAssignmentPolicy,
+    ).toMatchObject({
+      mode: "self_only",
+      locked: true,
+      allowedSellerUserId: ctx.interactionsSelfAssignUserId,
+    });
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: initialResolveResponse.body.title,
+        sourceNotes: initialResolveResponse.body.sourceNotes || "",
+        summary: initialResolveResponse.body.summary,
+        topics: initialResolveResponse.body.topics,
+        actionsTaken: initialResolveResponse.body.actionsTaken,
+        nextSteps: initialResolveResponse.body.nextSteps,
+        suggestedAccount: initialResolveResponse.body.suggestedAccount,
+        suggestedContacts: initialResolveResponse.body.suggestedContacts,
+        suggestedOpportunities:
+          initialResolveResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerAltUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: initialResolveResponse.body.accountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId:
+              initialResolveResponse.body.suggestedContacts[0].suggestionId,
+            mode: "link_existing",
+            contactId: initialResolveResponse.body.contacts[0].id,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(reopenResponse.status).toBe(403);
+    expect(reopenResponse.body.message).toBe(
+      "Solo puedes asignarte a ti mismo en leads creados por ti",
+    );
+  });
+
+  function buildInteractionResolvePayload(detail, overrides = {}) {
+    return {
+      title: detail.title,
+      sourceNotes: detail.sourceNotes || "",
+      summary: detail.summary,
+      topics: detail.topics,
+      actionsTaken: detail.actionsTaken,
+      nextSteps: detail.nextSteps,
+      suggestedAccount: detail.suggestedAccount,
+      suggestedContacts: detail.suggestedContacts,
+      suggestedOpportunities: detail.suggestedOpportunities,
+      ...overrides,
+    };
+  }
+
+  async function createExistingOpportunityForLead({
+    accountId,
+    contactId,
+    actorUserId,
+    suffix,
+    name,
+  }) {
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+         commercial_status_id, created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name || `Oportunidad lead bloqueado ${suffix}`,
+        48000,
+        accountId,
+        "2026-12-31",
+        contactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        actorUserId,
+        now,
+        actorUserId,
+        now,
+      ],
+    );
+    const opportunityId = Number(insertResult.insertId);
+    cleanup.opportunityIds.push(opportunityId);
+    return opportunityId;
+  }
+
+  test("interacciones resolution-options excluye cuentas, contactos y oportunidades inactivas", async () => {
+    const inactiveAccountId = await createDirectAccount({
+      ownerUserId: ctx.sellerUserId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_inactive_resolution_account`,
+    });
+    cleanup.accountIds.push(inactiveAccountId);
+    await query("UPDATE accounts SET activation_status_id = ? WHERE id = ?", [
+      ctx.catalogIds.accountPendingStatusId,
+      inactiveAccountId,
+    ]);
+
+    const inactiveContactId = await createDirectContact({
+      accountId: ctx.fixtureAccountId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_inactive_resolution_contact`,
+    });
+    cleanup.contactIds.push(inactiveContactId);
+    await query("UPDATE contacts SET activation_status_id = ? WHERE id = ?", [
+      ctx.catalogIds.contactInactiveStatusId,
+      inactiveContactId,
+    ]);
+
+    const inactiveOpportunityId = await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_inactive_resolution_opportunity`,
+      name: `Oportunidad inactiva ${TEST_PREFIX}`,
+    });
+    await query(
+      "UPDATE opportunities SET activation_status_id = ? WHERE id = ?",
+      [ctx.catalogIds.opportunityInactiveStatusId, inactiveOpportunityId],
+    );
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const response = await request(app)
+      .get("/api/interactions/resolution-options")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(
+      response.body.accounts.some(
+        (account) => Number(account.id) === inactiveAccountId,
+      ),
+    ).toBe(false);
+    expect(
+      response.body.contacts.some(
+        (contact) => Number(contact.id) === inactiveContactId,
+      ),
+    ).toBe(false);
+    expect(
+      response.body.opportunities.some(
+        (opportunity) => Number(opportunity.id) === inactiveOpportunityId,
+      ),
+    ).toBe(false);
+  });
+
+  test("interacciones avisa si al guardar el lead la cuenta a crear ya existe", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead duplicate account on resolve ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            `Cuenta: Cuenta fixture ${TEST_PREFIX}_fixture`,
+            "Contacto: Laura Paz",
+            "Correo: laura.paz@duplicate-account.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_duplicate_account_resolve_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${createResponse.body.id}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "create_new",
+            draft: {
+              name: `Cuenta fixture ${TEST_PREFIX}_fixture`,
+              website: "",
+              phone: "",
+              city: "CDMX",
+              stateRegion: "CDMX",
+              countryId: ctx.catalogIds.countryMxId,
+              description: "Intento de crear una cuenta duplicada desde lead.",
+            },
+          },
+          contactResolutions: [],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(resolveResponse.status).toBe(409);
+    expect(resolveResponse.body.code).toMatch(/ACCOUNT_DUPLICATE_/);
+    expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
+  });
+
+  test("interacciones avisa si al guardar el lead el contacto a crear ya existe", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead duplicate contact on resolve ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Duplicate Contact",
+            `Contacto: Contacto Fixture ${TEST_PREFIX}_fixture`,
+            `Correo: fixture.${TEST_PREFIX}_fixture@example.com`,
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_duplicate_contact_resolve_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${createResponse.body.id}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "create_new",
+              draft: {
+                firstName: "Contacto",
+                lastName: `Fixture ${TEST_PREFIX}_fixture`,
+                email: `fixture.${TEST_PREFIX}_fixture@example.com`,
+                phone: "",
+                mobile: `555${TEST_PREFIX.slice(-6)}`,
+                positionTitle: "Compras",
+                department: "Compras",
+                countryId: ctx.catalogIds.countryMxId,
+                stateRegion: "CDMX",
+                city: "Ciudad de Mexico",
+              },
+            },
+          ],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(resolveResponse.status).toBe(409);
+    expect(resolveResponse.body.code).toBe("CONTACT_DUPLICATE_BLOCKED");
+    expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
+  });
+
+  test("interacciones avisa si al guardar el lead la oportunidad a crear ya existe", async () => {
+    const duplicateOpportunityId = await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_duplicate_create_check`,
+    });
+
+    const duplicateOpportunityRows = await query(
+      `SELECT name
+       FROM opportunities
+       WHERE id = ?
+       LIMIT 1`,
+      [duplicateOpportunityId],
+    );
+    const duplicateOpportunityName = duplicateOpportunityRows[0]?.name;
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead duplicate opportunity on resolve ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Duplicate Opportunity",
+            "Contacto: Omar Ruiz",
+            "Correo: omar.ruiz@duplicate-opportunity.example.com",
+            `Oportunidad: ${duplicateOpportunityName}`,
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_duplicate_opportunity_resolve_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${createResponse.body.id}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "create_new",
+              isPrimary: true,
+              draft: {
+                name: duplicateOpportunityName,
+                contactId: ctx.fixtureContactId,
+                amountUsd: 48000,
+                closeDate: "2026-12-31",
+                businessLineId: ctx.catalogIds.businessLineId,
+                sellerUserId: ctx.sellerUserId,
+                presalesUserId: null,
+                summary:
+                  "Intento de crear una oportunidad duplicada desde lead.",
+              },
+            },
+          ],
+        }),
+      );
+
+    expect(resolveResponse.status).toBe(409);
+    expect(resolveResponse.body.code).toBe("OPPORTUNITY_DUPLICATE_BLOCKED");
+    expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
+  });
+
+  test("interacciones avisa si al guardar el lead la oportunidad a crear tiene un nombre muy parecido", async () => {
+    await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_duplicate_similar_name`,
+      name: "Expansion seguridad administrada Orion",
+    });
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead duplicate opportunity similar ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Duplicate Opportunity Similar",
+            "Contacto: Omar Ruiz",
+            "Correo: omar.ruiz@duplicate-opportunity-similar.example.com",
+            "Oportunidad: Expansion de seguridad administrada para Orion",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_duplicate_opportunity_similar_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${createResponse.body.id}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "create_new",
+              isPrimary: true,
+              draft: {
+                name: "Expansion de seguridad administrada para Orion",
+                contactId: ctx.fixtureContactId,
+                amountUsd: 48000,
+                closeDate: "2026-12-31",
+                businessLineId: ctx.catalogIds.businessLineId,
+                sellerUserId: ctx.sellerUserId,
+                presalesUserId: null,
+                summary:
+                  "Intento de crear una oportunidad con nombre muy parecido desde lead.",
+              },
+            },
+          ],
+        }),
+      );
+
+    expect(resolveResponse.status).toBe(409);
+    expect(resolveResponse.body.code).toBe("OPPORTUNITY_DUPLICATE_BLOCKED");
+    expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
+    expect(resolveResponse.body.duplicateWarnings[0].reasonLabel).toBe(
+      "Nombre muy parecido en la misma cuenta",
+    );
+  });
+
+  test("interacciones bloquea recrear una oportunidad ya materializada desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+    const isolatedAccountId = await createDirectAccount({
+      ownerUserId: ctx.sellerUserId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_recreate_opportunity_isolated`,
+    });
+    cleanup.accountIds.push(isolatedAccountId);
+    const isolatedContactId = await createDirectContact({
+      accountId: isolatedAccountId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_recreate_opportunity_isolated`,
+    });
+    cleanup.contactIds.push(isolatedContactId);
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead recreate opportunity ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Epsilon Seguridad",
+            "Contacto: Elena Ruiz",
+            "Tema: Seguimiento comercial de seguridad administrada",
+            "Correo: elena.ruiz@epsilon.example.com",
+            "Oportunidad: Expansion seguridad administrada Epsilon",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_recreate_opportunity_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: isolatedAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: isolatedContactId,
+          },
+        ],
+        opportunityResolutions: [
+          {
+            suggestionId: firstOpportunitySuggestion.suggestionId,
+            mode: "create_new",
+            isPrimary: true,
+            draft: {
+              name:
+                firstOpportunitySuggestion.name ||
+                `Oportunidad Epsilon ${TEST_PREFIX}`,
+              contactId: null,
+              amountUsd: 95000,
+              closeDate: "2026-07-20",
+              businessLineId: ctx.catalogIds.businessLineId,
+              sellerUserId: ctx.sellerUserId,
+              presalesUserId: null,
+              summary:
+                firstOpportunitySuggestion.summary ||
+                "Oportunidad creada desde lead para prueba de duplicado.",
+            },
+          },
+        ],
+      });
+
+    expect(initialResolveResponse.status).toBe(200);
+    cleanup.opportunityIds.push(
+      initialResolveResponse.body.opportunities[0].id,
+    );
+
+    const recreateResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: initialResolveResponse.body.title,
+        sourceNotes: initialResolveResponse.body.sourceNotes || "",
+        summary: initialResolveResponse.body.summary,
+        topics: initialResolveResponse.body.topics,
+        actionsTaken: initialResolveResponse.body.actionsTaken,
+        nextSteps: initialResolveResponse.body.nextSteps,
+        suggestedAccount: initialResolveResponse.body.suggestedAccount,
+        suggestedContacts: initialResolveResponse.body.suggestedContacts,
+        suggestedOpportunities:
+          initialResolveResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: initialResolveResponse.body.accountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId:
+              initialResolveResponse.body.suggestedContacts[0].suggestionId,
+            mode: "link_existing",
+            contactId: initialResolveResponse.body.contacts[0].id,
+          },
+        ],
+        opportunityResolutions: [
+          {
+            suggestionId:
+              initialResolveResponse.body.suggestedOpportunities[0]
+                .suggestionId,
+            mode: "create_new",
+            isPrimary: true,
+            draft: {
+              name: `Duplicado ${TEST_PREFIX}`,
+              contactId: initialResolveResponse.body.contacts[0].id,
+              amountUsd: 99000,
+              closeDate: "2026-08-01",
+              businessLineId: ctx.catalogIds.businessLineId,
+              sellerUserId: ctx.sellerUserId,
+              presalesUserId: null,
+              summary: "Intento invalido de recreacion.",
+            },
+          },
+        ],
+      });
+
+    expect(recreateResponse.status).toBe(409);
+    expect(recreateResponse.body.message).toBe(
+      "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+
+    const opportunityRows = await query(
+      `SELECT id
+       FROM opportunities
+       WHERE account_id = ?
+         AND name = ?`,
+      [isolatedAccountId, `Duplicado ${TEST_PREFIX}`],
+    );
+    expect(opportunityRows).toHaveLength(0);
+  });
+
+  test("interacciones bloquea recrear una cuenta ya materializada desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead recreate account ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Zeta Seguridad",
+            "Contacto: Zoe Lara",
+            "Correo: zoe.lara@zeta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_recreate_account_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [],
+        opportunityResolutions: [],
+      });
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const recreateResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: initialResolveResponse.body.title,
+        sourceNotes: initialResolveResponse.body.sourceNotes || "",
+        summary: initialResolveResponse.body.summary,
+        topics: initialResolveResponse.body.topics,
+        actionsTaken: initialResolveResponse.body.actionsTaken,
+        nextSteps: initialResolveResponse.body.nextSteps,
+        suggestedAccount: initialResolveResponse.body.suggestedAccount,
+        suggestedContacts: initialResolveResponse.body.suggestedContacts,
+        suggestedOpportunities:
+          initialResolveResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "create_new",
+          draft: {
+            name: `Duplicado cuenta ${TEST_PREFIX}`,
+            website: "",
+            phone: "",
+            city: "",
+            stateRegion: "",
+            countryId: null,
+            description: "",
+          },
+        },
+        contactResolutions: [],
+        opportunityResolutions: [],
+      });
+
+    expect(recreateResponse.status).toBe(409);
+    expect(recreateResponse.body.message).toBe(
+      "La cuenta sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea recrear un contacto ya materializado desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead recreate contact ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Eta Seguridad",
+            "Contacto: Elisa Neri",
+            "Correo: elisa.neri@eta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_recreate_contact_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const recreateResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: initialResolveResponse.body.title,
+        sourceNotes: initialResolveResponse.body.sourceNotes || "",
+        summary: initialResolveResponse.body.summary,
+        topics: initialResolveResponse.body.topics,
+        actionsTaken: initialResolveResponse.body.actionsTaken,
+        nextSteps: initialResolveResponse.body.nextSteps,
+        suggestedAccount: initialResolveResponse.body.suggestedAccount,
+        suggestedContacts: initialResolveResponse.body.suggestedContacts,
+        suggestedOpportunities:
+          initialResolveResponse.body.suggestedOpportunities,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId:
+              initialResolveResponse.body.suggestedContacts[0].suggestionId,
+            mode: "create_new",
+            draft: {
+              firstName: "Duplicado",
+              lastName: `Contacto ${TEST_PREFIX}`,
+              email: `duplicado.contacto.${TEST_PREFIX}@example.com`,
+              phone: "",
+              mobile: "",
+              positionTitle: "",
+              department: "",
+              countryId: null,
+              stateRegion: "",
+              city: "",
+            },
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(recreateResponse.status).toBe(409);
+    expect(recreateResponse.body.message).toBe(
+      "El contacto sugerido ya fue materializado y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea ignorar una cuenta ya materializada desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead ignore account ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Theta Seguridad",
+            "Contacto: Teo Lara",
+            "Correo: teo.lara@theta.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_ignore_account_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          accountResolution: {
+            mode: "ignore",
+          },
+          contactResolutions: [],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "La cuenta sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea relinkear una cuenta ya materializada a otro registro", async () => {
+    const alternateAccountId = await createDirectAccount({
+      ownerUserId: ctx.interactionsManagerUserId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_alt_relink_account`,
+    });
+    cleanup.accountIds.push(alternateAccountId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead relink account ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Iota Seguridad",
+            "Contacto: Iris Leon",
+            "Correo: iris.leon@iota.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_relink_account_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: alternateAccountId,
+          },
+          contactResolutions: [],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "La cuenta sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea ignorar un contacto ya materializado desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead ignore contact ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Kappa Seguridad",
+            "Contacto: Karla Mena",
+            "Correo: karla.mena@kappa.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_ignore_contact_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: initialResolveResponse.body.accountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "ignore",
+            },
+          ],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "El contacto sugerido ya fue materializado y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea relinkear un contacto ya materializado a otro registro", async () => {
+    const alternateContactId = await createDirectContact({
+      accountId: ctx.fixtureAccountId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_alt_relink_contact`,
+    });
+    cleanup.contactIds.push(alternateContactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead relink contact ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Lambda Seguridad",
+            "Contacto: Lucia Neira",
+            "Correo: lucia.neira@lambda.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_relink_contact_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          accountResolution: {
+            mode: "link_existing",
+            accountId: initialResolveResponse.body.accountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "link_existing",
+              contactId: alternateContactId,
+            },
+          ],
+          opportunityResolutions: [],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "El contacto sugerido ya fue materializado y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea ignorar una oportunidad ya materializada desde la misma sugerencia", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead ignore opportunity ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Mu Seguridad",
+            "Contacto: Mauro Diaz",
+            "Tema: Seguimiento comercial",
+            "Correo: mauro.diaz@mu.example.com",
+            "Oportunidad: Servicio gestionado Mu",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_ignore_opportunity_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "create_new",
+              isPrimary: true,
+              draft: {
+                name:
+                  firstOpportunitySuggestion.name ||
+                  `Oportunidad Mu ${TEST_PREFIX}`,
+                contactId: null,
+                amountUsd: 87000,
+                closeDate: "2026-09-18",
+                businessLineId: ctx.catalogIds.businessLineId,
+                sellerUserId: ctx.sellerUserId,
+                presalesUserId: null,
+                summary: "Oportunidad materializada para validar bloqueo.",
+              },
+            },
+          ],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: initialResolveResponse.body.accountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "link_existing",
+              contactId: initialResolveResponse.body.contacts[0].id,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedOpportunities[0]
+                  .suggestionId,
+              mode: "ignore",
+            },
+          ],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones bloquea relinkear una oportunidad ya materializada a otro registro", async () => {
+    const alternateOpportunityId = await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_alt_relink_opportunity`,
+    });
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead relink opportunity ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Nu Seguridad",
+            "Contacto: Nadia Soto",
+            "Tema: Seguimiento comercial",
+            "Correo: nadia.soto@nu.example.com",
+            "Oportunidad: Servicio gestionado Nu",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_relink_opportunity_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "create_new",
+              isPrimary: true,
+              draft: {
+                name:
+                  firstOpportunitySuggestion.name ||
+                  `Oportunidad Nu ${TEST_PREFIX}`,
+                contactId: null,
+                amountUsd: 91000,
+                closeDate: "2026-10-01",
+                businessLineId: ctx.catalogIds.businessLineId,
+                sellerUserId: ctx.sellerUserId,
+                presalesUserId: null,
+                summary: "Oportunidad materializada para validar relink.",
+              },
+            },
+          ],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: initialResolveResponse.body.accountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "link_existing",
+              contactId: initialResolveResponse.body.contacts[0].id,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedOpportunities[0]
+                  .suggestionId,
+              mode: "link_existing",
+              opportunityId: alternateOpportunityId,
+              isPrimary: true,
+            },
+          ],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+  test("interacciones permite reenviar sin cambios una sugerencia materializada", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead idempotent materialized ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Xi Seguridad",
+            "Contacto: Ximena Paz",
+            "Tema: Seguimiento comercial",
+            "Correo: ximena.paz@xi.example.com",
+            "Oportunidad: Servicio gestionado Xi",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_idempotent_materialized_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "create_new",
+              isPrimary: true,
+              draft: {
+                name:
+                  firstOpportunitySuggestion.name ||
+                  `Oportunidad Xi ${TEST_PREFIX}`,
+                contactId: null,
+                amountUsd: 79000,
+                closeDate: "2026-11-12",
+                businessLineId: ctx.catalogIds.businessLineId,
+                sellerUserId: ctx.sellerUserId,
+                presalesUserId: null,
+                summary: "Oportunidad materializada para validar idempotencia.",
+              },
+            },
+          ],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId:
+              initialResolveResponse.body.suggestedAccount.selectedAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "link_existing",
+              contactId:
+                initialResolveResponse.body.suggestedContacts[0]
+                  .selectedContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedOpportunities[0]
+                  .suggestionId,
+              mode: "link_existing",
+              opportunityId:
+                initialResolveResponse.body.suggestedOpportunities[0]
+                  .selectedOpportunityId,
+              isPrimary: true,
+            },
+          ],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(200);
+    expect(reopenResponse.body.accountId).toBe(ctx.fixtureAccountId);
+    expect(reopenResponse.body.contacts[0].id).toBe(ctx.fixtureContactId);
+    expect(reopenResponse.body.opportunities[0].id).toBe(
+      initialResolveResponse.body.suggestedOpportunities[0]
+        .selectedOpportunityId,
+    );
   });
 
   test("contactos.request ya no autoriza crear contactos", async () => {
@@ -5400,6 +7135,28 @@ describe("API integration baseline", () => {
         (account) => Number(account.id) === foreignAccountId,
       ),
     ).toBe(true);
+
+    const inactiveAccountId = await createDirectAccount({
+      ownerUserId: ctx.contactCreateUserId,
+      actorUserId: ctx.contactCreateUserId,
+      suffix: `${TEST_PREFIX}_contact_inactive_catalog`,
+    });
+    cleanup.accountIds.push(inactiveAccountId);
+    await query("UPDATE accounts SET activation_status_id = ? WHERE id = ?", [
+      ctx.catalogIds.accountPendingStatusId,
+      inactiveAccountId,
+    ]);
+
+    const inactiveCatalogResponse = await request(app)
+      .get("/api/catalogs/contact-accounts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(inactiveCatalogResponse.status).toBe(200);
+    expect(
+      inactiveCatalogResponse.body.some(
+        (account) => Number(account.id) === inactiveAccountId,
+      ),
+    ).toBe(false);
 
     const createResponse = await request(app)
       .post("/api/contacts")
@@ -7004,6 +8761,50 @@ describe("API integration baseline", () => {
       ),
     ).toBe(true);
 
+    const inactiveOpportunityAccountId = await createDirectAccount({
+      ownerUserId: ctx.sellerUserId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_opportunity_inactive_catalog_account`,
+    });
+    cleanup.accountIds.push(inactiveOpportunityAccountId);
+    await query("UPDATE accounts SET activation_status_id = ? WHERE id = ?", [
+      ctx.catalogIds.accountPendingStatusId,
+      inactiveOpportunityAccountId,
+    ]);
+
+    const inactiveOpportunityContactId = await createDirectContact({
+      accountId: ctx.fixtureAccountId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_opportunity_inactive_catalog_contact`,
+    });
+    cleanup.contactIds.push(inactiveOpportunityContactId);
+    await query("UPDATE contacts SET activation_status_id = ? WHERE id = ?", [
+      ctx.catalogIds.contactInactiveStatusId,
+      inactiveOpportunityContactId,
+    ]);
+
+    const refreshedAccountsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-accounts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(refreshedAccountsCatalogResponse.status).toBe(200);
+    expect(
+      refreshedAccountsCatalogResponse.body.some(
+        (account) => Number(account.id) === inactiveOpportunityAccountId,
+      ),
+    ).toBe(false);
+
+    const refreshedContactsCatalogResponse = await request(app)
+      .get("/api/catalogs/opportunity-contacts")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+
+    expect(refreshedContactsCatalogResponse.status).toBe(200);
+    expect(
+      refreshedContactsCatalogResponse.body.some(
+        (contact) => Number(contact.id) === inactiveOpportunityContactId,
+      ),
+    ).toBe(false);
+
     const createResponse = await request(app)
       .post("/api/opportunities")
       .set("Authorization", `Bearer ${globalLoginResponse.body.token}`)
@@ -8277,7 +10078,10 @@ describe("API integration baseline", () => {
       `UPDATE opportunities
        SET name = ?, updated_at = NOW(3)
        WHERE id = ?`,
-      [`Oportunidad narrativa modificada ${TEST_PREFIX}`, fixture.opportunityId],
+      [
+        `Oportunidad narrativa modificada ${TEST_PREFIX}`,
+        fixture.opportunityId,
+      ],
     );
 
     await processPendingCommercialNarrativeJobs({ limit: 5 });
@@ -9691,7 +11495,9 @@ describe("API integration baseline", () => {
     try {
       config.openai.apiKey = "test-key";
       config.features.opportunityStageAnswerSuggestionsEnabled = true;
-      global.fetch = vi.fn().mockRejectedValue(new Error("OpenAI downstream failure"));
+      global.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("OpenAI downstream failure"));
 
       const createResponse = await request(app)
         .post(
@@ -11390,7 +13196,9 @@ describe("API integration baseline", () => {
         });
 
       const createResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "Validacion async" });
 
@@ -11465,11 +13273,15 @@ describe("API integration baseline", () => {
         });
 
       const firstResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "Misma solicitud" });
       const secondResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "Misma solicitud" });
 
@@ -11508,7 +13320,9 @@ describe("API integration baseline", () => {
         });
 
       const createResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "Fallo async" });
 
@@ -11557,7 +13371,9 @@ describe("API integration baseline", () => {
         });
 
       const createResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "Snapshot inicial" });
 
@@ -11567,7 +13383,8 @@ describe("API integration baseline", () => {
         .send({
           answers: stageViewResponse.body.answers.map((answer) => ({
             questionId: Number(answer.question_id),
-            answerValue: "Respuesta modificada para invalidar el snapshot del job.",
+            answerValue:
+              "Respuesta modificada para invalidar el snapshot del job.",
           })),
         });
 
@@ -11641,7 +13458,9 @@ describe("API integration baseline", () => {
         });
 
       const createResponse = await request(app)
-        .post(`/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`)
+        .post(
+          `/api/opportunities/${fixture.opportunityId}/validate-current-stage/jobs`,
+        )
         .set("Authorization", `Bearer ${fixture.token}`)
         .send({ note: "TTL async" });
 

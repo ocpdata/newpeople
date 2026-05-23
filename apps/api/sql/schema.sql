@@ -2433,6 +2433,8 @@ VALUES
   ('interacciones.update', 'interacciones', 'update', 'Actualizar interacciones', NOW(3), NOW(3)),
   ('interacciones.analyze', 'interacciones', 'analyze', 'Analizar interacciones', NOW(3), NOW(3)),
   ('interacciones.resolve', 'interacciones', 'resolve', 'Resolver interacciones', NOW(3), NOW(3)),
+  ('interacciones.resolve.assign_self', 'interacciones', 'resolve_assign_self', 'Resolver interacciones asignando solo al usuario actual', NOW(3), NOW(3)),
+  ('interacciones.resolve.assign_any', 'interacciones', 'resolve_assign_any', 'Resolver interacciones asignando cualquier vendedor', NOW(3), NOW(3)),
   ('contactos.read', 'contactos', 'read', 'Ver contactos', NOW(3), NOW(3)),
   ('contactos.read_all', 'contactos', 'read_all', 'Ver todos los contactos', NOW(3), NOW(3)),
   ('contactos.create', 'contactos', 'create', 'Crear contactos', NOW(3), NOW(3)),

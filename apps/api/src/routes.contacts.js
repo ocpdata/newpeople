@@ -422,7 +422,7 @@ function getContactDuplicateDecision({ duplicateWarnings, duplicateReview }) {
   return "blocked";
 }
 
-async function validateContactDuplicates({ draft }) {
+export async function validateContactDuplicates({ draft }) {
   const duplicateCandidates = await getContactDuplicateCandidates({ draft });
   const duplicateWarnings = buildContactDuplicateWarnings({
     draft,
@@ -456,7 +456,7 @@ async function validateContactDuplicates({ draft }) {
   };
 }
 
-function buildContactDuplicateResponse(validation) {
+export function buildContactDuplicateResponse(validation) {
   return {
     code: "CONTACT_DUPLICATE_BLOCKED",
     message:

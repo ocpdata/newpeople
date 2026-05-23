@@ -5,12 +5,20 @@ import express from "express";
 import { z } from "zod";
 import { logAuditEvent } from "./audit.js";
 import {
+  buildAccountDuplicateResponse,
+  validateAccountDuplicates,
+} from "./routes.accounts.js";
+import {
   getUserAuthContext,
   requireAnyPermission,
   requirePermission,
 } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
+import {
+  buildContactDuplicateResponse,
+  validateContactDuplicates,
+} from "./routes.contacts.js";
 import { ensureInteractionAnalysisJobSchema } from "./interactions/analysis-jobs-schema.js";
 import { ensureInteractionPermissions } from "./interactions/permissions.js";
 import { ensureInteractionSchema } from "./interactions/schema.js";
@@ -39,6 +47,10 @@ const interactionCreatePermissions = ["interacciones.create"];
 const interactionUpdatePermissions = ["interacciones.update"];
 const interactionAnalyzePermissions = ["interacciones.analyze"];
 const interactionResolvePermissions = ["interacciones.resolve"];
+const interactionResolveAssignSelfPermission =
+  "interacciones.resolve.assign_self";
+const interactionResolveAssignAnyPermission =
+  "interacciones.resolve.assign_any";
 const INTERACTION_ANALYSIS_JOB_LEASE_SECONDS = 30;
 const INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES = 15;
 const INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS = 3000;
@@ -155,16 +167,237 @@ function resolveLeadCommercialStatus({
   if (!accountId || !Array.isArray(contactIds) || !contactIds.length) {
     return "created";
   }
+  if (!sellerUserId) {
+    return "lead_unassigned";
+  }
   if (Array.isArray(opportunityIds) && opportunityIds.length) {
-    if (!sellerUserId) {
-      return "created";
-    }
     return "lead_qualified";
   }
-  if (sellerUserId) {
-    return "lead_assigned";
+  return "lead_assigned";
+}
+
+function mergeResolvedSuggestedAccount(suggestedAccount, resolvedAccountId) {
+  if (!suggestedAccount) {
+    return suggestedAccount;
   }
-  return "lead_unassigned";
+
+  if (!resolvedAccountId) {
+    return {
+      ...suggestedAccount,
+      selectedAccountId: null,
+    };
+  }
+
+  return {
+    ...suggestedAccount,
+    selectedAccountId: Number(resolvedAccountId),
+  };
+}
+
+function mergeSuggestedAccountResolution(
+  suggestedAccount,
+  accountResolution,
+  resolvedAccountId,
+) {
+  const mergedAccount = mergeResolvedSuggestedAccount(
+    suggestedAccount,
+    resolvedAccountId,
+  );
+  if (!mergedAccount) {
+    return mergedAccount;
+  }
+
+  return {
+    ...mergedAccount,
+    resolutionMode:
+      accountResolution?.mode || mergedAccount.resolutionMode || null,
+  };
+}
+
+function mergeResolvedSuggestedContacts(
+  suggestedContacts,
+  contactsBySuggestionId,
+) {
+  if (!Array.isArray(suggestedContacts) || !suggestedContacts.length) {
+    return [];
+  }
+
+  return suggestedContacts.map((contact) => {
+    const suggestionId = String(contact?.suggestionId || "").trim();
+    if (!suggestionId || !contactsBySuggestionId.has(suggestionId)) {
+      return {
+        ...contact,
+        selectedContactId: contact?.selectedContactId || null,
+      };
+    }
+
+    return {
+      ...contact,
+      selectedContactId: Number(contactsBySuggestionId.get(suggestionId)),
+    };
+  });
+}
+
+function mergeSuggestedContactResolutions(
+  suggestedContacts,
+  contactsBySuggestionId,
+  contactResolutions,
+) {
+  const resolutionsBySuggestionId = new Map(
+    Array.isArray(contactResolutions)
+      ? contactResolutions.map((resolution) => [
+          String(resolution?.suggestionId || "").trim(),
+          resolution,
+        ])
+      : [],
+  );
+
+  return mergeResolvedSuggestedContacts(
+    suggestedContacts,
+    contactsBySuggestionId,
+  ).map((contact) => {
+    const suggestionId = String(contact?.suggestionId || "").trim();
+    const resolution = suggestionId
+      ? resolutionsBySuggestionId.get(suggestionId)
+      : null;
+
+    return {
+      ...contact,
+      resolutionMode: resolution?.mode || contact?.resolutionMode || null,
+    };
+  });
+}
+
+function mergeResolvedSuggestedOpportunities(
+  suggestedOpportunities,
+  opportunitiesBySuggestionId,
+) {
+  if (
+    !Array.isArray(suggestedOpportunities) ||
+    !suggestedOpportunities.length
+  ) {
+    return [];
+  }
+
+  return suggestedOpportunities.map((opportunity) => {
+    const suggestionId = String(opportunity?.suggestionId || "").trim();
+    if (!suggestionId || !opportunitiesBySuggestionId.has(suggestionId)) {
+      return {
+        ...opportunity,
+        selectedOpportunityId: opportunity?.selectedOpportunityId || null,
+      };
+    }
+
+    return {
+      ...opportunity,
+      selectedOpportunityId: Number(
+        opportunitiesBySuggestionId.get(suggestionId),
+      ),
+    };
+  });
+}
+
+function mergeSuggestedOpportunityResolutions(
+  suggestedOpportunities,
+  opportunitiesBySuggestionId,
+  opportunityResolutions,
+) {
+  const resolutionsBySuggestionId = new Map(
+    Array.isArray(opportunityResolutions)
+      ? opportunityResolutions.map((resolution) => [
+          String(resolution?.suggestionId || "").trim(),
+          resolution,
+        ])
+      : [],
+  );
+
+  return mergeResolvedSuggestedOpportunities(
+    suggestedOpportunities,
+    opportunitiesBySuggestionId,
+  ).map((opportunity) => {
+    const suggestionId = String(opportunity?.suggestionId || "").trim();
+    const resolution = suggestionId
+      ? resolutionsBySuggestionId.get(suggestionId)
+      : null;
+
+    return {
+      ...opportunity,
+      resolutionMode: resolution?.mode || opportunity?.resolutionMode || null,
+    };
+  });
+}
+
+function assertFrozenSuggestedAccountResolution(
+  persistedSuggestion,
+  accountResolution,
+) {
+  if (!persistedSuggestion?.selectedAccountId) {
+    return;
+  }
+
+  const persistedAccountId = Number(persistedSuggestion.selectedAccountId);
+  const requestedAccountId = Number(accountResolution?.accountId || 0);
+  if (
+    accountResolution?.mode !== "link_existing" ||
+    requestedAccountId !== persistedAccountId
+  ) {
+    throw Object.assign(
+      new Error(
+        "La cuenta sugerida ya fue materializada y no puede modificarse desde este lead",
+      ),
+      { status: 409 },
+    );
+  }
+}
+
+function assertFrozenSuggestedContactResolution(
+  persistedSuggestion,
+  contactResolution,
+) {
+  if (!persistedSuggestion?.selectedContactId) {
+    return;
+  }
+
+  const persistedContactId = Number(persistedSuggestion.selectedContactId);
+  const requestedContactId = Number(contactResolution?.contactId || 0);
+  if (
+    contactResolution?.mode !== "link_existing" ||
+    requestedContactId !== persistedContactId
+  ) {
+    throw Object.assign(
+      new Error(
+        "El contacto sugerido ya fue materializado y no puede modificarse desde este lead",
+      ),
+      { status: 409 },
+    );
+  }
+}
+
+function assertFrozenSuggestedOpportunityResolution(
+  persistedSuggestion,
+  opportunityResolution,
+) {
+  if (!persistedSuggestion?.selectedOpportunityId) {
+    return;
+  }
+
+  const persistedOpportunityId = Number(
+    persistedSuggestion.selectedOpportunityId,
+  );
+  const requestedOpportunityId = Number(
+    opportunityResolution?.opportunityId || 0,
+  );
+  if (
+    opportunityResolution?.mode !== "link_existing" ||
+    requestedOpportunityId !== persistedOpportunityId
+  ) {
+    throw Object.assign(
+      new Error(
+        "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
+      ),
+      { status: 409 },
+    );
+  }
 }
 
 async function validateLinkedContactForAccount(contactId, accountId) {
@@ -191,7 +424,11 @@ async function validateLinkedOpportunityForAccount(opportunityId, accountId) {
   return rows.length > 0;
 }
 
-async function validateSellerOwnerForAccount(accountId, sellerUserId, conn = null) {
+async function validateSellerOwnerForAccount(
+  accountId,
+  sellerUserId,
+  conn = null,
+) {
   const executor = conn || { query };
   const [rows] = conn
     ? await executor.query(
@@ -249,13 +486,56 @@ function hasPermission(user, permission) {
 function hasSellerRole(user) {
   return Array.isArray(user?.roles)
     ? user.roles.some(
-        (role) => String(role?.name || "").trim().toLowerCase() === "vendedor",
+        (role) =>
+          String(role?.name || "")
+            .trim()
+            .toLowerCase() === "vendedor",
       )
     : false;
 }
 
 function hasGlobalReadScope(user) {
   return hasPermission(user, "interacciones.read_all");
+}
+
+function buildInteractionCommercialAssignmentPolicy(user, detail) {
+  if (!detail || !user) {
+    return {
+      mode: "none",
+      locked: true,
+      allowedSellerUserId: null,
+      reason: "missing_context",
+    };
+  }
+
+  if (hasPermission(user, interactionResolveAssignAnyPermission)) {
+    return {
+      mode: "any",
+      locked: false,
+      allowedSellerUserId: null,
+      reason: null,
+    };
+  }
+
+  const createdByCurrentUser = Number(detail.createdById) === Number(user.id);
+  if (
+    hasPermission(user, interactionResolveAssignSelfPermission) &&
+    createdByCurrentUser
+  ) {
+    return {
+      mode: "self_only",
+      locked: true,
+      allowedSellerUserId: Number(user.id),
+      reason: "creator_self_only",
+    };
+  }
+
+  return {
+    mode: "none",
+    locked: true,
+    allowedSellerUserId: null,
+    reason: "no_assignment_permission",
+  };
 }
 
 function normalizeForStorage(value) {
@@ -309,9 +589,12 @@ async function loadAccessibleAccounts(user) {
   });
 
   return query(
-    `SELECT DISTINCT a.id, a.name, a.country_id, a.website, a.phone
+    `SELECT DISTINCT a.id, a.name, a.country_id, a.website, a.phone,
+            aas.code AS activation_status_code
      FROM accounts a
+     INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
      ${ownershipJoin}
+     WHERE aas.code = 'activada'
      ORDER BY a.name`,
     params,
   );
@@ -332,9 +615,12 @@ async function loadAccessibleContacts(user) {
             c.email,
             c.phone,
             c.mobile,
-            c.position_title
+            c.position_title,
+            cas.code AS activation_status_code
      FROM contacts c
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
      ${ownershipJoin}
+     WHERE cas.code = 'activado'
      ORDER BY full_name`,
     params,
   );
@@ -349,9 +635,12 @@ async function loadAccessibleOpportunities(user) {
   });
 
   return query(
-    `SELECT DISTINCT o.id, o.account_id, o.contact_id, o.name, o.amount_usd, o.close_date
+    `SELECT DISTINCT o.id, o.account_id, o.contact_id, o.name, o.amount_usd, o.close_date,
+            oas.code AS activation_status_code
      FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
      ${ownershipJoin}
+     WHERE oas.code = 'activada'
      ORDER BY o.name`,
     params,
   );
@@ -433,12 +722,12 @@ async function loadSellerUsersByAccountIds(accountIds) {
 async function loadAccessibleContext(user) {
   const [accounts, contacts, opportunities, businessLines, presalesUsers] =
     await Promise.all([
-    loadAccessibleAccounts(user),
-    loadAccessibleContacts(user),
-    loadAccessibleOpportunities(user),
-    loadBusinessLines(),
-    loadPresalesUsers(),
-  ]);
+      loadAccessibleAccounts(user),
+      loadAccessibleContacts(user),
+      loadAccessibleOpportunities(user),
+      loadBusinessLines(),
+      loadPresalesUsers(),
+    ]);
   const sellerUsersByAccountId = await loadSellerUsersByAccountIds(
     accounts.map((account) => account.id),
   );
@@ -547,7 +836,7 @@ async function fetchInteractionDocuments(interactionId) {
   }));
 }
 
-async function fetchInteractionDetail(interactionId) {
+async function fetchInteractionDetail(interactionId, user = null) {
   const rows = await query(
     `SELECT i.*, a.name AS account_name,
             po.name AS primary_opportunity_name,
@@ -591,7 +880,7 @@ async function fetchInteractionDetail(interactionId) {
     fetchInteractionDocuments(interactionId),
   ]);
 
-  return {
+  const detail = {
     id: Number(row.id),
     publicId: row.public_id,
     title: row.title,
@@ -647,12 +936,20 @@ async function fetchInteractionDetail(interactionId) {
       isPrimary: Boolean(opportunity.is_primary),
     })),
     documents,
+    createdById: Number(row.created_by),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     analyzedAt: row.analyzed_at,
     resolvedAt: row.resolved_at,
     createdByName: row.created_by_name,
     updatedByName: row.updated_by_name,
+  };
+
+  return {
+    ...detail,
+    commercialAssignmentPolicy: user
+      ? buildInteractionCommercialAssignmentPolicy(user, detail)
+      : null,
   };
 }
 
@@ -899,9 +1196,7 @@ function buildInteractionAnalysisFingerprintSnapshot(detail) {
 }
 
 function hashInteractionAnalysisSnapshot(snapshot) {
-  return createHash("sha256")
-    .update(JSON.stringify(snapshot))
-    .digest("hex");
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
 function buildInteractionAnalysisJobResponse(row) {
@@ -1257,7 +1552,9 @@ export function queueInteractionAnalysisProcessing() {
   interactionAnalysisWorkerQueued = true;
 }
 
-export async function processPendingInteractionAnalysisJobs({ limit = 1 } = {}) {
+export async function processPendingInteractionAnalysisJobs({
+  limit = 1,
+} = {}) {
   let processed = 0;
   while (processed < limit) {
     const row = await claimNextPendingInteractionAnalysisJob();
@@ -1327,6 +1624,76 @@ async function createAccountFromDraft(conn, user, draft) {
   );
   const countryId =
     draft.countryId || (countryRows.length ? Number(countryRows[0].id) : null);
+  const normalizedDraftAccountName = normalizeOpportunityDuplicateText(
+    draft.name,
+  );
+  const exactAccountDuplicateRows = countryId
+    ? await query(
+        `SELECT id, name
+         FROM accounts
+         WHERE country_id = ?`,
+        [countryId],
+      )
+    : [];
+  const exactAccountDuplicates = exactAccountDuplicateRows
+    .filter(
+      (row) =>
+        normalizeOpportunityDuplicateText(row.name) ===
+        normalizedDraftAccountName,
+    )
+    .map((row) => ({
+      accountId: Number(row.id),
+      accountName: row.name,
+      matchReason: "normalized_name_same_country",
+      reasonLabel: "Mismo nombre comercial en el pais seleccionado",
+      severity: "high",
+      severityMessage:
+        "Coincidencia fuerte. Conviene detener la creacion y revisar si la cuenta ya existe.",
+    }));
+  if (exactAccountDuplicates.length) {
+    throw Object.assign(
+      new Error(
+        "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado.",
+      ),
+      {
+        status: 409,
+        payload: {
+          code: "ACCOUNT_DUPLICATE_REVIEW_REQUIRED",
+          message:
+            "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado.",
+          duplicateDecision: "review_required",
+          duplicateWarnings: exactAccountDuplicates,
+          duplicateReview: null,
+          duplicateValidationSource: "heuristic",
+        },
+      },
+    );
+  }
+  const duplicateValidation = await validateAccountDuplicates({
+    draft: {
+      name: draft.name,
+      registrationCode: "",
+      phone: draft.phone || "",
+      website: draft.website || "",
+      city: draft.city || "",
+      stateRegion: draft.stateRegion || "",
+      countryId,
+      companyDescription: draft.description || "",
+      description: draft.description || "",
+      addressLine: "",
+      postalCode: "",
+    },
+    user,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(buildAccountDuplicateResponse(duplicateValidation).message),
+      {
+        status: 409,
+        payload: buildAccountDuplicateResponse(duplicateValidation),
+      },
+    );
+  }
   const now = new Date();
   const registrationCode =
     `INT-${Date.now()}-${Math.floor(Math.random() * 10000)}`.slice(0, 80);
@@ -1392,6 +1759,39 @@ async function createContactFromDraft(conn, user, accountId, draft) {
   ]);
   const [accountRows] = accountQueryResult;
   const accountCountryId = accountRows[0]?.country_id || null;
+  const duplicateValidation = await validateContactDuplicates({
+    draft: {
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      accountId: Number(accountId),
+      positionTitle: draft.positionTitle || "",
+      phone: draft.phone || "",
+      phoneExtension: "",
+      mobile: draft.mobile || "",
+      email: draft.email || "",
+      department: draft.department || "",
+      countryId: draft.countryId || accountCountryId,
+      stateRegion: draft.stateRegion || "",
+      city: draft.city || "",
+      addressLine: "",
+      postalCode: "",
+      purchaseParticipationId,
+      relationshipTypeId,
+      employmentStatusId,
+      activationStatusId,
+      managerContactId: null,
+      influencesContactId: null,
+    },
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(buildContactDuplicateResponse(duplicateValidation).message),
+      {
+        status: 409,
+        payload: buildContactDuplicateResponse(duplicateValidation),
+      },
+    );
+  }
   const now = new Date();
 
   const [insertResult] = await conn.query(
@@ -1469,6 +1869,232 @@ async function ensureAccountOwner(conn, accountId, userId, assignedBy) {
   );
 }
 
+function normalizeOpportunityDuplicateText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const OPPORTUNITY_DUPLICATE_STOPWORDS = new Set([
+  "a",
+  "al",
+  "con",
+  "de",
+  "del",
+  "el",
+  "en",
+  "la",
+  "las",
+  "los",
+  "para",
+  "por",
+  "y",
+]);
+
+function buildOpportunityDuplicateTokens(value) {
+  return normalizeOpportunityDuplicateText(value).split(" ").filter(Boolean);
+}
+
+function buildOpportunityDuplicateCoreName(value) {
+  return buildOpportunityDuplicateTokens(value)
+    .filter((token) => !OPPORTUNITY_DUPLICATE_STOPWORDS.has(token))
+    .join(" ");
+}
+
+function getOpportunityLevenshteinDistance(left, right) {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  const previousRow = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    let diagonal = previousRow[0];
+    previousRow[0] = leftIndex + 1;
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      const current = previousRow[rightIndex + 1];
+      const substitutionCost = left[leftIndex] === right[rightIndex] ? 0 : 1;
+      previousRow[rightIndex + 1] = Math.min(
+        previousRow[rightIndex + 1] + 1,
+        previousRow[rightIndex] + 1,
+        diagonal + substitutionCost,
+      );
+      diagonal = current;
+    }
+  }
+  return previousRow[right.length];
+}
+
+function getOpportunityNameSimilarity(left, right) {
+  const normalizedLeft = normalizeOpportunityDuplicateText(left);
+  const normalizedRight = normalizeOpportunityDuplicateText(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return {
+      similarityScore: 0,
+      tokenOverlap: 0,
+      containsOther: false,
+      exactMatch: false,
+    };
+  }
+
+  const leftTokens = buildOpportunityDuplicateTokens(normalizedLeft);
+  const rightTokens = buildOpportunityDuplicateTokens(normalizedRight);
+  const leftTokenSet = new Set(leftTokens);
+  const rightTokenSet = new Set(rightTokens);
+  const sharedTokenCount = [...leftTokenSet].filter((token) =>
+    rightTokenSet.has(token),
+  ).length;
+  const tokenOverlap =
+    sharedTokenCount / Math.max(leftTokenSet.size, rightTokenSet.size, 1);
+  const containsOther =
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft);
+  const levenshteinDistance = getOpportunityLevenshteinDistance(
+    normalizedLeft,
+    normalizedRight,
+  );
+  const similarityScore =
+    1 -
+    levenshteinDistance /
+      Math.max(normalizedLeft.length, normalizedRight.length, 1);
+
+  return {
+    similarityScore,
+    tokenOverlap,
+    containsOther,
+    exactMatch: normalizedLeft === normalizedRight,
+  };
+}
+
+function classifyOpportunityDuplicateMatch(draftName, existingName) {
+  const similarity = getOpportunityNameSimilarity(draftName, existingName);
+  const draftCoreName = buildOpportunityDuplicateCoreName(draftName);
+  const existingCoreName = buildOpportunityDuplicateCoreName(existingName);
+  const coreSimilarity = getOpportunityNameSimilarity(
+    draftCoreName,
+    existingCoreName,
+  );
+  if (similarity.exactMatch) {
+    return {
+      matched: true,
+      reasonLabel: "Mismo nombre en la misma cuenta",
+      severity: "high",
+      similarityScore: 1,
+    };
+  }
+
+  if (
+    draftCoreName &&
+    existingCoreName &&
+    draftCoreName === existingCoreName &&
+    draftCoreName.length >= 16
+  ) {
+    return {
+      matched: true,
+      reasonLabel: "Nombre muy parecido en la misma cuenta",
+      severity: "high",
+      similarityScore: Number(coreSimilarity.similarityScore.toFixed(2)),
+    };
+  }
+
+  if (
+    draftCoreName &&
+    existingCoreName &&
+    coreSimilarity.containsOther &&
+    Math.min(draftCoreName.length, existingCoreName.length) >= 18
+  ) {
+    return {
+      matched: true,
+      reasonLabel: "Nombre muy parecido en la misma cuenta",
+      severity: "high",
+      similarityScore: Number(coreSimilarity.similarityScore.toFixed(2)),
+    };
+  }
+
+  if (
+    coreSimilarity.similarityScore >= 0.9 &&
+    coreSimilarity.tokenOverlap >= 0.75 &&
+    buildOpportunityDuplicateTokens(draftCoreName).length >= 4 &&
+    buildOpportunityDuplicateTokens(existingCoreName).length >= 4
+  ) {
+    return {
+      matched: true,
+      reasonLabel: "Nombre muy parecido en la misma cuenta",
+      severity: "high",
+      similarityScore: Number(coreSimilarity.similarityScore.toFixed(2)),
+    };
+  }
+
+  return {
+    matched: false,
+    reasonLabel: null,
+    severity: null,
+    similarityScore: Number(similarity.similarityScore.toFixed(2)),
+  };
+}
+
+async function validateOpportunityDuplicatesForLeadCreate({
+  accountId,
+  draft,
+}) {
+  const normalizedDraftName = normalizeOpportunityDuplicateText(draft?.name);
+  if (!normalizedDraftName) {
+    return {
+      duplicateDecision: "clear",
+      duplicateWarnings: [],
+    };
+  }
+
+  const rows = await query(
+    `SELECT o.id, o.name, o.contact_id, c.first_name, c.last_name
+     FROM opportunities o
+     LEFT JOIN contacts c ON c.id = o.contact_id
+     WHERE o.account_id = ?
+     ORDER BY o.id DESC
+     LIMIT 25`,
+    [Number(accountId)],
+  );
+
+  const duplicateWarnings = rows
+    .map((row) => {
+      const match = classifyOpportunityDuplicateMatch(draft?.name, row.name);
+      if (!match.matched) return null;
+      return {
+        opportunityId: Number(row.id),
+        opportunityName: row.name,
+        contactId: row.contact_id ? Number(row.contact_id) : null,
+        contactName: String(
+          `${row.first_name || ""} ${row.last_name || ""}`,
+        ).trim(),
+        reasonLabel: match.reasonLabel,
+        severity: match.severity,
+        similarityScore: match.similarityScore,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    duplicateDecision: duplicateWarnings.length ? "blocked" : "clear",
+    duplicateWarnings,
+  };
+}
+
+function buildOpportunityDuplicateResponse(validation) {
+  return {
+    code: "OPPORTUNITY_DUPLICATE_BLOCKED",
+    message:
+      "No se creó la oportunidad porque detectamos una coincidencia con oportunidades existentes en la cuenta seleccionada.",
+    duplicateDecision: validation.duplicateDecision,
+    duplicateWarnings: validation.duplicateWarnings,
+  };
+}
+
 async function createOpportunityFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = resolveCreationStatusCode(
     user,
@@ -1489,6 +2115,19 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
         ? Promise.resolve(Number(draft.businessLineId))
         : getIdByCode("opportunity_business_lines", "otros"),
     ]);
+  const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
+    accountId,
+    draft,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(buildOpportunityDuplicateResponse(duplicateValidation).message),
+      {
+        status: 409,
+        payload: buildOpportunityDuplicateResponse(duplicateValidation),
+      },
+    );
+  }
   const now = new Date();
 
   const [insertResult] = await conn.query(
@@ -1753,7 +2392,9 @@ router.post(
         detail: "Interaccion creada y analizada",
       });
 
-      return res.status(201).json(await fetchInteractionDetail(interactionId));
+      return res
+        .status(201)
+        .json(await fetchInteractionDetail(interactionId, req.user));
     } catch (error) {
       return res.status(error.status || 500).json({
         message:
@@ -1782,7 +2423,7 @@ router.get(
     if (!access.ok) {
       return res.status(access.response.status).json(access.response.body);
     }
-    const detail = await fetchInteractionDetail(interactionId);
+    const detail = await fetchInteractionDetail(interactionId, req.user);
     return res.json(detail);
   },
 );
@@ -1812,8 +2453,7 @@ router.post(
       }
       if (isQualifiedLeadStatus(detail.analysisStatus)) {
         return res.status(409).json({
-          message:
-            "No puedes agregar archivos a un lead calificado",
+          message: "No puedes agregar archivos a un lead calificado",
         });
       }
 
@@ -1875,7 +2515,9 @@ router.post(
         detail: "Interaccion creada",
       });
 
-      return res.status(201).json(await fetchInteractionDetail(interactionId));
+      return res
+        .status(201)
+        .json(await fetchInteractionDetail(interactionId, req.user));
     } catch (error) {
       return res.status(error.status || 500).json({
         message:
@@ -1950,7 +2592,7 @@ router.delete(
       detail: `Documento eliminado de la interaccion (${req.params.documentPublicId})`,
     });
 
-    return res.json(await fetchInteractionDetail(interactionId));
+    return res.json(await fetchInteractionDetail(interactionId, req.user));
   },
 );
 
@@ -2080,7 +2722,7 @@ router.put(
       detail: "Interaccion actualizada",
     });
 
-    return res.json(await fetchInteractionDetail(interactionId));
+    return res.json(await fetchInteractionDetail(interactionId, req.user));
   },
 );
 
@@ -2177,7 +2819,7 @@ router.post(
       req,
     });
 
-    return res.json(await fetchInteractionDetail(interactionId));
+    return res.json(await fetchInteractionDetail(interactionId, req.user));
   },
 );
 
@@ -2206,18 +2848,66 @@ router.post(
 
     const options = await loadAccessibleContext(req.user);
     const detail = await fetchInteractionDetail(interactionId);
+    const commercialAssignmentPolicy =
+      buildInteractionCommercialAssignmentPolicy(req.user, detail);
 
     try {
       const result = await withTransaction(async (conn) => {
         let resolvedAccountId = null;
         const linkedContactIds = [];
         const resolvedOpportunityIds = [];
+        const resolvedContactIdsBySuggestionId = new Map();
+        const resolvedOpportunityIdsBySuggestionId = new Map();
+        const existingSuggestedAccount = detail.suggestedAccount || null;
+        const contactResolutionsBySuggestionId = new Map(
+          (parsed.data.contactResolutions || []).map((resolution) => [
+            String(resolution?.suggestionId || "").trim(),
+            resolution,
+          ]),
+        );
+        const opportunityResolutionsBySuggestionId = new Map(
+          (parsed.data.opportunityResolutions || []).map((resolution) => [
+            String(resolution?.suggestionId || "").trim(),
+            resolution,
+          ]),
+        );
+
+        assertFrozenSuggestedAccountResolution(
+          existingSuggestedAccount,
+          parsed.data.accountResolution,
+        );
+
+        for (const persistedSuggestion of detail.suggestedContacts || []) {
+          assertFrozenSuggestedContactResolution(
+            persistedSuggestion,
+            contactResolutionsBySuggestionId.get(
+              String(persistedSuggestion?.suggestionId || "").trim(),
+            ),
+          );
+        }
+
+        for (const persistedSuggestion of detail.suggestedOpportunities || []) {
+          assertFrozenSuggestedOpportunityResolution(
+            persistedSuggestion,
+            opportunityResolutionsBySuggestionId.get(
+              String(persistedSuggestion?.suggestionId || "").trim(),
+            ),
+          );
+        }
 
         if (parsed.data.accountResolution.mode === "link_existing") {
           resolvedAccountId = Number(
             parsed.data.accountResolution.accountId || 0,
           );
         } else if (parsed.data.accountResolution.mode === "create_new") {
+          if (existingSuggestedAccount?.selectedAccountId) {
+            throw Object.assign(
+              new Error(
+                "La cuenta sugerida ya fue materializada y no puede crearse nuevamente",
+              ),
+              { status: 409 },
+            );
+          }
           resolvedAccountId = await createAccountFromDraft(
             conn,
             req.user,
@@ -2228,9 +2918,14 @@ router.post(
         const contactsBySuggestionId = new Map();
         for (const resolution of parsed.data.contactResolutions) {
           if (resolution.mode === "ignore") continue;
+          const persistedSuggestion = (detail.suggestedContacts || []).find(
+            (item) => item?.suggestionId === resolution.suggestionId,
+          );
           if (!resolvedAccountId) {
             throw Object.assign(
-              new Error("Debes vincular una cuenta antes de vincular contactos"),
+              new Error(
+                "Debes vincular una cuenta antes de vincular contactos",
+              ),
               { status: 400 },
             );
           }
@@ -2250,6 +2945,14 @@ router.post(
               );
             }
           } else if (resolution.mode === "create_new") {
+            if (persistedSuggestion?.selectedContactId) {
+              throw Object.assign(
+                new Error(
+                  "El contacto sugerido ya fue materializado y no puede crearse nuevamente",
+                ),
+                { status: 409 },
+              );
+            }
             contactId = await createContactFromDraft(
               conn,
               req.user,
@@ -2260,6 +2963,10 @@ router.post(
           if (contactId) {
             linkedContactIds.push(contactId);
             contactsBySuggestionId.set(resolution.suggestionId, contactId);
+            resolvedContactIdsBySuggestionId.set(
+              resolution.suggestionId,
+              contactId,
+            );
           }
         }
 
@@ -2270,13 +2977,26 @@ router.post(
         let assignedSellerUserId = parsed.data.sellerUserId
           ? Number(parsed.data.sellerUserId)
           : null;
+        let shouldAssignCurrentUserAsOwnerSeller = Boolean(
+          parsed.data.assignCurrentUserAsOwnerSeller,
+        );
 
-        if (
-          parsed.data.assignCurrentUserAsOwnerSeller &&
-          !assignedSellerUserId &&
-          hasSellerRole(req.user)
-        ) {
-          assignedSellerUserId = Number(req.user.id);
+        if (commercialAssignmentPolicy.mode === "none") {
+          if (
+            parsed.data.sellerUserId ||
+            parsed.data.assignCurrentUserAsOwnerSeller
+          ) {
+            throw Object.assign(
+              new Error(
+                "No autorizado para modificar la asignacion comercial del lead",
+              ),
+              { status: 403 },
+            );
+          }
+          assignedSellerUserId = detail.sellerUserId
+            ? Number(detail.sellerUserId)
+            : null;
+          shouldAssignCurrentUserAsOwnerSeller = false;
         }
 
         if (assignedSellerUserId && !hasMinimumCommercialLinks) {
@@ -2288,10 +3008,52 @@ router.post(
           );
         }
 
+        if (commercialAssignmentPolicy.mode === "self_only") {
+          if (
+            detail.sellerUserId &&
+            Number(detail.sellerUserId) !== Number(req.user.id)
+          ) {
+            throw Object.assign(
+              new Error(
+                "No puedes modificar la asignacion comercial existente de este lead",
+              ),
+              { status: 403 },
+            );
+          }
+
+          if (
+            parsed.data.sellerUserId &&
+            Number(parsed.data.sellerUserId) !== Number(req.user.id)
+          ) {
+            throw Object.assign(
+              new Error(
+                "Solo puedes asignarte a ti mismo en leads creados por ti",
+              ),
+              { status: 403 },
+            );
+          }
+
+          assignedSellerUserId = hasMinimumCommercialLinks
+            ? Number(req.user.id)
+            : null;
+          shouldAssignCurrentUserAsOwnerSeller = hasMinimumCommercialLinks;
+        } else if (
+          shouldAssignCurrentUserAsOwnerSeller &&
+          !assignedSellerUserId &&
+          hasSellerRole(req.user)
+        ) {
+          assignedSellerUserId = Number(req.user.id);
+        }
+
         if (assignedSellerUserId) {
+          const canForceSelfAssignmentAsOwnerSeller =
+            commercialAssignmentPolicy.mode === "self_only" &&
+            Number(assignedSellerUserId) === Number(req.user.id) &&
+            shouldAssignCurrentUserAsOwnerSeller;
+
           if (
             Number(assignedSellerUserId) === Number(req.user.id) &&
-            parsed.data.assignCurrentUserAsOwnerSeller
+            shouldAssignCurrentUserAsOwnerSeller
           ) {
             if (!hasSellerRole(req.user)) {
               throw Object.assign(
@@ -2310,7 +3072,11 @@ router.post(
               (sellerOwner) => Number(sellerOwner.id) === Number(req.user.id),
             );
 
-            if (!currentUserAlreadyOwner && currentSellerOwners.length > 0) {
+            if (
+              !currentUserAlreadyOwner &&
+              currentSellerOwners.length > 0 &&
+              !canForceSelfAssignmentAsOwnerSeller
+            ) {
               throw Object.assign(
                 new Error(
                   "La cuenta ya tiene owners vendedores; debes seleccionar uno de ellos",
@@ -2350,7 +3116,10 @@ router.post(
             (resolution) => resolution.mode !== "ignore",
           );
 
-        if (effectiveOpportunityResolutions.length && !hasMinimumCommercialLinks) {
+        if (
+          effectiveOpportunityResolutions.length &&
+          !hasMinimumCommercialLinks
+        ) {
           throw Object.assign(
             new Error(
               "Debes vincular cuenta y al menos un contacto antes de vincular una oportunidad",
@@ -2374,6 +3143,9 @@ router.post(
 
         for (const resolution of effectiveOpportunityResolutions) {
           let opportunityId = null;
+          const persistedSuggestion = (
+            detail.suggestedOpportunities || []
+          ).find((item) => item?.suggestionId === resolution.suggestionId);
           if (resolution.mode === "link_existing") {
             opportunityId = Number(resolution.opportunityId || 0);
             const belongsToAccount = await validateLinkedOpportunityForAccount(
@@ -2389,6 +3161,14 @@ router.post(
               );
             }
           } else if (resolution.mode === "create_new") {
+            if (persistedSuggestion?.selectedOpportunityId) {
+              throw Object.assign(
+                new Error(
+                  "La oportunidad sugerida ya fue materializada y no puede crearse nuevamente",
+                ),
+                { status: 409 },
+              );
+            }
             const suggestion = (parsed.data.suggestedOpportunities || []).find(
               (item) => item?.suggestionId === resolution.suggestionId,
             );
@@ -2445,6 +3225,10 @@ router.post(
           }
 
           if (opportunityId) {
+            resolvedOpportunityIdsBySuggestionId.set(
+              resolution.suggestionId,
+              opportunityId,
+            );
             resolvedOpportunityIds.push({
               id: opportunityId,
               isPrimary:
@@ -2469,6 +3253,23 @@ router.post(
           ),
         });
 
+        const persistedSuggestedAccount = mergeSuggestedAccountResolution(
+          parsed.data.suggestedAccount,
+          parsed.data.accountResolution,
+          resolvedAccountId,
+        );
+        const persistedSuggestedContacts = mergeSuggestedContactResolutions(
+          parsed.data.suggestedContacts,
+          resolvedContactIdsBySuggestionId,
+          parsed.data.contactResolutions,
+        );
+        const persistedSuggestedOpportunities =
+          mergeSuggestedOpportunityResolutions(
+            parsed.data.suggestedOpportunities,
+            resolvedOpportunityIdsBySuggestionId,
+            parsed.data.opportunityResolutions,
+          );
+
         await conn.query(
           `UPDATE interactions
            SET title = ?, source_notes = ?, summary = ?, analysis_status = ?,
@@ -2487,9 +3288,9 @@ router.post(
             normalizeForStorage(parsed.data.topics),
             normalizeForStorage(parsed.data.actionsTaken),
             normalizeForStorage(parsed.data.nextSteps),
-            normalizeForStorage(parsed.data.suggestedAccount),
-            normalizeForStorage(parsed.data.suggestedContacts),
-            normalizeForStorage(parsed.data.suggestedOpportunities),
+            normalizeForStorage(persistedSuggestedAccount),
+            normalizeForStorage(persistedSuggestedContacts),
+            normalizeForStorage(persistedSuggestedOpportunities),
             resolvedAccountId,
             primaryOpportunityId,
             assignedSellerUserId,
@@ -2551,8 +3352,18 @@ router.post(
         after: result,
       });
 
-      return res.json(await fetchInteractionDetail(interactionId));
+      return res.json(await fetchInteractionDetail(interactionId, req.user));
     } catch (error) {
+      if (error?.payload && typeof error.payload === "object") {
+        return res.status(error.status || 500).json({
+          ...error.payload,
+          message:
+            error.payload.message ||
+            (error.status && error.status < 500
+              ? error.message
+              : "No fue posible guardar el lead"),
+        });
+      }
       return res.status(error.status || 500).json({
         message:
           error.status && error.status < 500

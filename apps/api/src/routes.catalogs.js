@@ -679,7 +679,9 @@ router.get(
     const rows = await query(
       `SELECT a.id, a.name, a.country_id, a.state_region, a.city, a.address_line, a.postal_code
        FROM accounts a
+       INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
        ${ownershipJoin}
+       WHERE aas.code = 'activada'
        ORDER BY a.name`,
       params,
     );
@@ -817,7 +819,9 @@ router.get(
     const rows = await query(
       `SELECT a.id, a.name
        FROM accounts a
+       INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
        ${ownershipJoin}
+       WHERE aas.code = 'activada'
        ORDER BY a.name`,
       params,
     );
@@ -840,7 +844,12 @@ router.get(
       `SELECT c.id, c.account_id,
               CONCAT(c.first_name, ' ', c.last_name) AS full_name
        FROM contacts c
+       INNER JOIN accounts a ON a.id = c.account_id
+       INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        ${ownershipJoin}
+       WHERE aas.code = 'activada'
+         AND cas.code = 'activado'
        ORDER BY full_name`,
       params,
     );

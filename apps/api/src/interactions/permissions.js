@@ -37,6 +37,18 @@ const INTERACTION_PERMISSIONS = [
     action: "resolve",
     description: "Resolver interacciones",
   },
+  {
+    code: "interacciones.resolve.assign_self",
+    module: "interacciones",
+    action: "resolve_assign_self",
+    description: "Resolver interacciones asignando solo al usuario actual",
+  },
+  {
+    code: "interacciones.resolve.assign_any",
+    module: "interacciones",
+    action: "resolve_assign_any",
+    description: "Resolver interacciones asignando cualquier vendedor",
+  },
 ];
 
 export async function ensureInteractionPermissions() {
