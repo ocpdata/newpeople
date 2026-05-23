@@ -4375,7 +4375,7 @@ describe("API integration baseline", () => {
     expect(detailResponse.body.documents).toHaveLength(0);
   });
 
-  test("interacciones solo permite asignar un vendedor owner de la cuenta", async () => {
+  test("interacciones assign_any permite asignar un vendedor activo aunque no sea owner de la cuenta", async () => {
     const sellerAltEmail = `${TEST_PREFIX}.lead.alt.owner@example.com`;
     const sellerAltUserId = await createUser({
       fullName: "Lead Alt Seller",
@@ -4455,8 +4455,13 @@ describe("API integration baseline", () => {
         opportunityResolutions: [],
       });
 
-    expect(resolveResponse.status).toBe(400);
-    expect(resolveResponse.body.message).toContain("owners vendedores");
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.sellerUserId).toBe(sellerAltUserId);
+    expect(resolveResponse.body.commercialAssignmentPolicy).toMatchObject({
+      mode: "any",
+      locked: false,
+      allowedSellerUserId: null,
+    });
   });
 
   test("interacciones permite autoasignar al vendedor editor cuando la cuenta no tiene owners vendedores", async () => {
@@ -5274,6 +5279,287 @@ describe("API integration baseline", () => {
       locked: true,
       allowedSellerUserId: ctx.interactionsSelfAssignUserId,
     });
+  });
+
+  test("interacciones resolution-options expone todos los vendedores activos para usuarios con assign_any", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const response = await request(app)
+      .get(
+        `/api/interactions/resolution-options?accountId=${ctx.fixtureAccountId}`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.sellerUsers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: ctx.sellerUserId }),
+        expect.objectContaining({ id: ctx.sellerAltUserId }),
+      ]),
+    );
+  });
+
+  test("interacciones assign_any permite reasignar el lead a cualquier vendedor activo", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead assign any ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Assign Any",
+            "Contacto: Laura Admin",
+            "Correo: laura.admin@assign-any.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_assign_any_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const resolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerAltUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(resolveResponse.status).toBe(200);
+    expect(resolveResponse.body.sellerUserId).toBe(ctx.sellerAltUserId);
+    expect(resolveResponse.body.commercialAssignmentPolicy).toMatchObject({
+      mode: "any",
+      locked: false,
+      allowedSellerUserId: null,
+    });
+  });
+
+  test("interacciones assign_any bloquea desasignar un lead que ya tenia vendedor", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead assign any keep seller ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Assign Any Keep Seller",
+            "Contacto: Laura Keep",
+            "Correo: laura.keep@assign-any.example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_assign_any_keep_seller_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.sellerAltUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(initialResolveResponse.status).toBe(200);
+    expect(initialResolveResponse.body.sellerUserId).toBe(ctx.sellerAltUserId);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        title: initialResolveResponse.body.title,
+        sourceNotes: initialResolveResponse.body.sourceNotes || "",
+        summary: initialResolveResponse.body.summary,
+        topics: initialResolveResponse.body.topics,
+        actionsTaken: initialResolveResponse.body.actionsTaken,
+        nextSteps: initialResolveResponse.body.nextSteps,
+        suggestedAccount: initialResolveResponse.body.suggestedAccount,
+        suggestedContacts: initialResolveResponse.body.suggestedContacts,
+        suggestedOpportunities:
+          initialResolveResponse.body.suggestedOpportunities,
+        sellerUserId: null,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toContain(
+      "no puede eliminarse desde este lead",
+    );
+  });
+
+  test("interacciones oculta en la lista al creador un lead ya asignado a otro vendedor y lo muestra al vendedor asignado", async () => {
+    const creatorLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const creatorToken = creatorLoginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${creatorToken}`)
+      .field("title", `Lead assigned visibility ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Assigned Visibility",
+            "Contacto: Andrea Scope",
+            "Correo: andrea.scope@example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_assigned_visibility_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+
+    const assignResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${creatorToken}`)
+      .send({
+        title: createResponse.body.title,
+        sourceNotes: createResponse.body.sourceNotes || "",
+        summary: createResponse.body.summary,
+        topics: createResponse.body.topics,
+        actionsTaken: createResponse.body.actionsTaken,
+        nextSteps: createResponse.body.nextSteps,
+        suggestedAccount: createResponse.body.suggestedAccount,
+        suggestedContacts: createResponse.body.suggestedContacts,
+        suggestedOpportunities: createResponse.body.suggestedOpportunities,
+        sellerUserId: ctx.interactionsSelfAssignUserId,
+        accountResolution: {
+          mode: "link_existing",
+          accountId: ctx.fixtureAccountId,
+        },
+        contactResolutions: [
+          {
+            suggestionId: firstContactSuggestion.suggestionId,
+            mode: "link_existing",
+            contactId: ctx.fixtureContactId,
+          },
+        ],
+        opportunityResolutions: [],
+      });
+
+    expect(assignResponse.status).toBe(200);
+    expect(assignResponse.body.sellerUserId).toBe(
+      ctx.interactionsSelfAssignUserId,
+    );
+    expect(assignResponse.body.analysisStatus).toBe("lead_assigned");
+
+    const creatorListResponse = await request(app)
+      .get("/api/interactions")
+      .set("Authorization", `Bearer ${creatorToken}`);
+
+    expect(creatorListResponse.status).toBe(200);
+    expect(
+      creatorListResponse.body.items.some(
+        (item) => Number(item.id) === interactionId,
+      ),
+    ).toBe(false);
+
+    const assignedSellerLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.self@example.com`,
+    );
+    const assignedSellerToken = assignedSellerLoginResponse.body.token;
+
+    const assignedSellerListResponse = await request(app)
+      .get("/api/interactions")
+      .set("Authorization", `Bearer ${assignedSellerToken}`);
+
+    expect(assignedSellerListResponse.status).toBe(200);
+    expect(
+      assignedSellerListResponse.body.items.some(
+        (item) => Number(item.id) === interactionId,
+      ),
+    ).toBe(true);
   });
 
   test("interacciones self_only autoasigna al vendedor creador y bloquea cambiar asignacion al reabrir", async () => {

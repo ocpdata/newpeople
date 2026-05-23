@@ -462,6 +462,36 @@ async function validateSellerOwnerForAccount(
   return rows.length > 0;
 }
 
+async function validateActiveSellerUser(sellerUserId, conn = null) {
+  const executor = conn || { query };
+  const [rows] = conn
+    ? await executor.query(
+        `SELECT u.id
+         FROM users u
+         INNER JOIN user_roles ur ON ur.user_id = u.id
+         INNER JOIN roles r ON r.id = ur.role_id
+         WHERE u.id = ?
+           AND u.status = 'active'
+           AND LOWER(TRIM(r.name)) = 'vendedor'
+         LIMIT 1`,
+        [Number(sellerUserId)],
+      )
+    : [
+        await executor.query(
+          `SELECT u.id
+           FROM users u
+           INNER JOIN user_roles ur ON ur.user_id = u.id
+           INNER JOIN roles r ON r.id = ur.role_id
+           WHERE u.id = ?
+             AND u.status = 'active'
+             AND LOWER(TRIM(r.name)) = 'vendedor'
+           LIMIT 1`,
+          [Number(sellerUserId)],
+        ),
+      ];
+  return rows.length > 0;
+}
+
 function parseJsonField(value, fallback) {
   if (value === null || value === undefined || value === "") return fallback;
   if (typeof value === "string") {
@@ -496,6 +526,29 @@ function hasSellerRole(user) {
 
 function hasGlobalReadScope(user) {
   return hasPermission(user, "interacciones.read_all");
+}
+
+function buildInteractionAccessJoin(user, alias = "i") {
+  if (hasGlobalReadScope(user)) {
+    return "";
+  }
+  return `LEFT JOIN account_owners ao_scope ON ao_scope.account_id = ${alias}.account_id AND ao_scope.user_id = ?`;
+}
+
+function buildInteractionListAccessCondition(user, alias = "i") {
+  if (hasGlobalReadScope(user)) {
+    return { sql: "1 = 1", params: [] };
+  }
+
+  const userId = Number(user.id);
+  return {
+    sql: `(
+      (${alias}.seller_user_id IS NOT NULL AND ${alias}.seller_user_id = ?)
+      OR
+      (${alias}.seller_user_id IS NULL AND (ao_scope.user_id IS NOT NULL OR ${alias}.created_by = ?))
+    )`,
+    params: [userId, userId],
+  };
 }
 
 function buildInteractionCommercialAssignmentPolicy(user, detail) {
@@ -731,6 +784,9 @@ async function loadAccessibleContext(user) {
   const sellerUsersByAccountId = await loadSellerUsersByAccountIds(
     accounts.map((account) => account.id),
   );
+  const sellerUsers = hasPermission(user, interactionResolveAssignAnyPermission)
+    ? await loadSellerUsers()
+    : [];
 
   return {
     accounts,
@@ -738,7 +794,7 @@ async function loadAccessibleContext(user) {
     opportunities,
     businessLines,
     sellerUsersByAccountId,
-    sellerUsers: [],
+    sellerUsers,
     presalesUsers,
   };
 }
@@ -766,7 +822,7 @@ function resolveCreationStatusCode(user, createPermission, requestPermission) {
 
 async function requireAccessibleInteractionOr404({ user, interactionId }) {
   const params = [];
-  const ownershipJoin = hasGlobalReadScope(user)
+  const accessJoin = hasGlobalReadScope(user)
     ? ""
     : "LEFT JOIN account_owners ao_scope ON ao_scope.account_id = i.account_id AND ao_scope.user_id = ?";
   if (!hasGlobalReadScope(user)) {
@@ -774,16 +830,16 @@ async function requireAccessibleInteractionOr404({ user, interactionId }) {
   }
   params.push(Number(interactionId));
   if (!hasGlobalReadScope(user)) {
-    params.push(Number(user.id));
+    params.push(Number(user.id), Number(user.id));
   }
 
   const rows = await query(
     `SELECT i.id
      FROM interactions i
-     ${ownershipJoin}
+     ${accessJoin}
      WHERE i.id = ?
        AND (
-         ${hasGlobalReadScope(user) ? "1 = 1" : "ao_scope.user_id IS NOT NULL OR i.created_by = ?"}
+         ${hasGlobalReadScope(user) ? "1 = 1" : "i.seller_user_id = ? OR ao_scope.user_id IS NOT NULL OR i.created_by = ?"}
        )
      LIMIT 1`,
     params,
@@ -2210,18 +2266,15 @@ router.get(
     const queryText = String(req.query.query || "").trim();
     const statusFilter = String(req.query.status || "all").trim();
     const params = [];
-    const ownershipJoin = hasGlobalReadScope(req.user)
-      ? ""
-      : "LEFT JOIN account_owners ao_scope ON ao_scope.account_id = i.account_id AND ao_scope.user_id = ?";
+    const accessJoin = buildInteractionAccessJoin(req.user, "i");
+    const accessCondition = buildInteractionListAccessCondition(req.user, "i");
     if (!hasGlobalReadScope(req.user)) {
       params.push(Number(req.user.id));
     }
 
     const where = [];
-    if (!hasGlobalReadScope(req.user)) {
-      where.push("(ao_scope.user_id IS NOT NULL OR i.created_by = ?)");
-      params.push(Number(req.user.id));
-    }
+    where.push(accessCondition.sql);
+    params.push(...accessCondition.params);
     if (queryText) {
       where.push("(i.title LIKE ? OR i.summary LIKE ? OR a.name LIKE ?)");
       params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
@@ -2236,7 +2289,7 @@ router.get(
       `SELECT COUNT(*) AS total
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
-       ${ownershipJoin}
+       ${accessJoin}
        ${whereClause}`,
       params,
     );
@@ -2250,7 +2303,7 @@ router.get(
        LEFT JOIN accounts a ON a.id = i.account_id
        LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
        LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
-       ${ownershipJoin}
+      ${accessJoin}
        ${whereClause}
        GROUP BY i.id, i.public_id, i.title, i.summary, i.analysis_status, i.account_id,
                 i.primary_opportunity_id, i.created_at, a.name, po.name
@@ -2299,9 +2352,14 @@ router.get(
           (opportunity) => Number(opportunity.account_id) === accountId,
         )
       : accessibleContext.opportunities;
-    const sellerUsers = accountId
-      ? accessibleContext.sellerUsersByAccountId[String(accountId)] || []
-      : [];
+    const sellerUsers = hasPermission(
+      req.user,
+      interactionResolveAssignAnyPermission,
+    )
+      ? accessibleContext.sellerUsers
+      : accountId
+        ? accessibleContext.sellerUsersByAccountId[String(accountId)] || []
+        : [];
     return res.json({
       accounts: accessibleContext.accounts,
       contacts: filteredContacts,
@@ -3008,6 +3066,19 @@ router.post(
           );
         }
 
+        if (
+          detail.sellerUserId &&
+          hasMinimumCommercialLinks &&
+          !assignedSellerUserId
+        ) {
+          throw Object.assign(
+            new Error(
+              "La asignacion comercial existente no puede eliminarse desde este lead",
+            ),
+            { status: 409 },
+          );
+        }
+
         if (commercialAssignmentPolicy.mode === "self_only") {
           if (
             detail.sellerUserId &&
@@ -3095,18 +3166,33 @@ router.post(
             }
           }
 
-          const isValidSellerOwner = await validateSellerOwnerForAccount(
-            resolvedAccountId,
-            assignedSellerUserId,
-            conn,
-          );
-          if (!isValidSellerOwner) {
-            throw Object.assign(
-              new Error(
-                "El vendedor asignado debe ser uno de los owners vendedores de la cuenta",
-              ),
-              { status: 400 },
+          if (commercialAssignmentPolicy.mode === "any") {
+            const preservesExistingSeller =
+              detail.sellerUserId &&
+              Number(detail.sellerUserId) === Number(assignedSellerUserId);
+            const isValidActiveSeller = preservesExistingSeller
+              ? true
+              : await validateActiveSellerUser(assignedSellerUserId, conn);
+            if (!isValidActiveSeller) {
+              throw Object.assign(
+                new Error("El vendedor asignado debe ser un vendedor activo"),
+                { status: 400 },
+              );
+            }
+          } else {
+            const isValidSellerOwner = await validateSellerOwnerForAccount(
+              resolvedAccountId,
+              assignedSellerUserId,
+              conn,
             );
+            if (!isValidSellerOwner) {
+              throw Object.assign(
+                new Error(
+                  "El vendedor asignado debe ser uno de los owners vendedores de la cuenta",
+                ),
+                { status: 400 },
+              );
+            }
           }
         }
 

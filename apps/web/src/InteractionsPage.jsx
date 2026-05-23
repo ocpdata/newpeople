@@ -80,10 +80,22 @@ function isSellerUser(user) {
     : false;
 }
 
+function buildLegacySellerOption(detail) {
+  if (!detail?.sellerUserId) return null;
+  return {
+    id: Number(detail.sellerUserId),
+    full_name:
+      detail?.seller?.fullName ||
+      detail?.seller?.email ||
+      `Usuario ${Number(detail.sellerUserId)}`,
+  };
+}
+
 function buildEffectiveResolutionForm(
   resolutionForm,
   currentUser,
   commercialAssignmentPolicy = null,
+  detail = null,
 ) {
   if (!resolutionForm) return null;
 
@@ -126,9 +138,31 @@ function buildEffectiveResolutionForm(
     (item) => item.mode !== "ignore",
   );
   const assignmentMode = commercialAssignmentPolicy?.mode || "none";
+  const hasPersistedLinkedOpportunity = Boolean(
+    detail?.primaryOpportunityId ||
+    (Array.isArray(detail?.suggestedOpportunities)
+      ? detail.suggestedOpportunities.some(
+          (item) => item?.selectedOpportunityId,
+        )
+      : false),
+  );
 
   if (!hasResolvedContacts) {
     effectiveSellerUserId = "";
+    assignCurrentUserAsOwnerSeller = false;
+  } else if (
+    !effectiveSellerUserId &&
+    detail?.sellerUserId &&
+    hasResolvedContacts
+  ) {
+    effectiveSellerUserId = String(detail.sellerUserId);
+    assignCurrentUserAsOwnerSeller = false;
+  } else if (
+    !effectiveSellerUserId &&
+    hasPersistedLinkedOpportunity &&
+    detail?.sellerUserId
+  ) {
+    effectiveSellerUserId = String(detail.sellerUserId);
     assignCurrentUserAsOwnerSeller = false;
   } else if (
     assignmentMode === "self_only" &&
@@ -182,6 +216,7 @@ function buildResolveConfirmationPreview(
     resolutionForm,
     currentUser,
     detail?.commercialAssignmentPolicy,
+    detail,
   );
   if (!detail || !effectiveResolutionForm || !options) return null;
 
@@ -291,13 +326,11 @@ function buildResolveConfirmationPreview(
   const targetStatus =
     !hasAccount || !hasContacts
       ? "Creado"
-      : hasOpportunities
-        ? effectiveResolutionForm.sellerUserId
+      : !effectiveResolutionForm.sellerUserId
+        ? "Lead no asignado"
+        : hasOpportunities
           ? "Lead Calificado"
-          : "Creado"
-        : effectiveResolutionForm.sellerUserId
-          ? "Lead Asignado"
-          : "Lead no asignado";
+          : "Lead Asignado";
 
   return {
     interactionTitle: detail.title || "Interacción sin título",
@@ -1195,9 +1228,33 @@ function InteractionDetailModal({
         (opportunity) => Number(opportunity.account_id) === resolvedAccountId,
       )
     : options.opportunities;
-  const availableSellerUsers = resolvedAccountId
-    ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
-    : [];
+  const hasPersistedLinkedOpportunity = Boolean(
+    detail?.primaryOpportunityId ||
+    (editForm?.suggestedOpportunities || []).some(
+      (opportunity) => opportunity?.selectedOpportunityId,
+    ),
+  );
+  const hasPersistedSellerAssignment = Boolean(detail?.sellerUserId);
+  const commercialAssignmentPolicy = detail?.commercialAssignmentPolicy || {
+    mode: "none",
+    locked: true,
+    allowedSellerUserId: null,
+    reason: null,
+  };
+  const canEditCommercialAssignment = commercialAssignmentPolicy.mode === "any";
+  const availableSellerUsers = canEditCommercialAssignment
+    ? options.sellerUsers || []
+    : resolvedAccountId
+      ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
+      : [];
+  const legacySellerOption = buildLegacySellerOption(detail);
+  const sellerOptionList =
+    legacySellerOption &&
+    !availableSellerUsers.some(
+      (user) => Number(user.id) === Number(legacySellerOption.id),
+    )
+      ? [legacySellerOption, ...availableSellerUsers]
+      : availableSellerUsers;
   const commercialSellerUserId = resolutionForm.assignCurrentUserAsOwnerSeller
     ? currentUser?.id
       ? String(currentUser.id)
@@ -1206,18 +1263,11 @@ function InteractionDetailModal({
   const commercialSellerLabel = commercialSellerUserId
     ? Number(commercialSellerUserId) === Number(currentUser?.id)
       ? currentUser?.full_name || currentUser?.email || "Usuario actual"
-      : getOptionLabel(availableSellerUsers, commercialSellerUserId, [
+      : getOptionLabel(sellerOptionList, commercialSellerUserId, [
           "full_name",
           "name",
         ])
     : "";
-  const commercialAssignmentPolicy = detail?.commercialAssignmentPolicy || {
-    mode: "none",
-    locked: true,
-    allowedSellerUserId: null,
-    reason: null,
-  };
-  const canEditCommercialAssignment = commercialAssignmentPolicy.mode === "any";
   const isCommercialAssignmentSelfOnly =
     commercialAssignmentPolicy.mode === "self_only";
   const currentUserIsSeller = isSellerUser(currentUser);
@@ -1918,8 +1968,9 @@ function InteractionDetailModal({
                       <div>
                         <h4>Asignación comercial</h4>
                         <p className="field-hint">
-                          El vendedor debe ser uno de los owners vendedores de
-                          la cuenta vinculada.
+                          {canEditCommercialAssignment
+                            ? "Puedes asignar cualquier vendedor activo."
+                            : "El vendedor debe ser uno de los owners vendedores de la cuenta vinculada."}
                         </p>
                       </div>
                     </div>
@@ -1939,8 +1990,11 @@ function InteractionDetailModal({
                               }
                               disabled={!hasMinimumCommercialLinks}
                             >
-                              <option value="">Sin asignar</option>
-                              {availableSellerUsers.map((user) => (
+                              {!hasPersistedLinkedOpportunity &&
+                              !hasPersistedSellerAssignment ? (
+                                <option value="">Sin asignar</option>
+                              ) : null}
+                              {sellerOptionList.map((user) => (
                                 <option key={user.id} value={user.id}>
                                   {user.full_name}
                                 </option>
@@ -1950,6 +2004,12 @@ function InteractionDetailModal({
                               <span className="field-hint">
                                 Vincula cuenta y al menos un contacto para poder
                                 asignar vendedor.
+                              </span>
+                            ) : hasPersistedLinkedOpportunity ? (
+                              <span className="field-hint">
+                                Este lead ya tiene una oportunidad vinculada,
+                                por lo que no puede quedar sin vendedor
+                                asignado.
                               </span>
                             ) : canSelfAssignCurrentUserAsOwnerSeller ? (
                               <>
@@ -2012,6 +2072,15 @@ function InteractionDetailModal({
                           </>
                         )}
                       </div>
+                      {hasMinimumCommercialLinks &&
+                      hasPersistedSellerAssignment ? (
+                        <div className="field-group interaction-materialized-hint-field">
+                          <span className="field-hint">
+                            Este lead ya tiene vendedor asignado y no puede
+                            quedar sin vendedor desde este modal.
+                          </span>
+                        </div>
+                      ) : null}
                       {isCommercialAssignmentSelfOnly ? (
                         <div className="field-group interaction-materialized-hint-field">
                           <span className="field-hint">
@@ -2993,6 +3062,7 @@ function InteractionsPage({ can, currentUser }) {
       resolutionForm,
       currentUser,
       detail?.commercialAssignmentPolicy,
+      detail,
     );
     setShowResolveConfirmation(false);
     setResolving(true);
