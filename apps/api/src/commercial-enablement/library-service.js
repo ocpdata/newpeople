@@ -44,7 +44,8 @@ const STATIC_CATALOG_SEEDS = {
     {
       code: "infographic",
       name: "Infografia",
-      description: "Resumen visual para comunicar hallazgos, beneficios o cifras clave",
+      description:
+        "Resumen visual para comunicar hallazgos, beneficios o cifras clave",
       sortOrder: 15,
     },
     {
@@ -1274,6 +1275,36 @@ async function syncTags(conn, itemId, groupedTags) {
   }
 }
 
+const SINGLE_RESOURCE_VALIDATION_MESSAGE =
+  "Cada activo solo puede tener un archivo o una URL";
+const SINGLE_RESOURCE_ATTACH_MESSAGE =
+  "Cada activo solo puede tener un archivo o una URL. Elimina el recurso actual antes de agregar otro.";
+
+async function getItemResourceCounts(itemId) {
+  const [fileRows, linkRows] = await Promise.all([
+    query(
+      `SELECT COUNT(*) AS total
+       FROM commercial_enablement_item_files
+       WHERE item_id = ? AND is_deleted = 0`,
+      [Number(itemId)],
+    ),
+    query(
+      `SELECT COUNT(*) AS total
+       FROM commercial_enablement_item_links
+       WHERE item_id = ? AND is_deleted = 0`,
+      [Number(itemId)],
+    ),
+  ]);
+
+  const fileCount = Number(fileRows?.[0]?.total || 0);
+  const linkCount = Number(linkRows?.[0]?.total || 0);
+  return {
+    fileCount,
+    linkCount,
+    total: fileCount + linkCount,
+  };
+}
+
 export async function validateCommercialEnablementAssetPayload({ body }) {
   const payload = buildAssetSearchPayload(body);
   const issues = [];
@@ -1505,6 +1536,18 @@ export async function uploadCommercialEnablementFiles({
     error.status = 400;
     throw error;
   }
+  if (files.length > 1) {
+    const error = new Error("Solo se permite un archivo por activo");
+    error.status = 400;
+    throw error;
+  }
+
+  const resourceCounts = await getItemResourceCounts(Number(item.id));
+  if (resourceCounts.total > 0) {
+    const error = new Error(SINGLE_RESOURCE_ATTACH_MESSAGE);
+    error.status = 409;
+    throw error;
+  }
 
   try {
     await withTransaction(async (conn) => {
@@ -1546,13 +1589,107 @@ export async function uploadCommercialEnablementFiles({
         `UPDATE commercial_enablement_items
          SET source_type = ?, updated_by_user_id = ?, updated_at = NOW(3)
          WHERE id = ?`,
-        [
-          item.source_type === "url" ? "mixed" : "file",
-          Number(user.id),
-          Number(item.id),
-        ],
+        ["file", Number(user.id), Number(item.id)],
       );
     });
+  } finally {
+    await cleanupTempFiles(files).catch(() => undefined);
+  }
+
+  return getCommercialEnablementAssetDetail({ user, assetPublicId });
+}
+
+export async function updateCommercialEnablementFile({
+  req,
+  assetPublicId,
+  filePublicId,
+  user,
+}) {
+  const fileRow = await getItemFileRow({
+    itemPublicId: assetPublicId,
+    filePublicId,
+  });
+  if (!fileRow) {
+    const error = new Error("Archivo no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  const itemRows = await query(
+    `SELECT * FROM commercial_enablement_items WHERE id = ? AND is_deleted = 0 LIMIT 1`,
+    [Number(fileRow.item_id)],
+  );
+  const item = itemRows[0];
+  const canEdit =
+    canManageEnablement(user) ||
+    Number(item.owner_user_id || 0) === Number(user.id) ||
+    Number(item.created_by_user_id || 0) === Number(user.id);
+  if (!canEdit) {
+    const error = new Error("No autorizado para reemplazar este archivo");
+    error.status = 403;
+    throw error;
+  }
+
+  const { files } = await parseMultipartFiles(req);
+  if (!files.length) {
+    const error = new Error("No se recibio ningun archivo");
+    error.status = 400;
+    throw error;
+  }
+  if (files.length > 1) {
+    const error = new Error("Solo se permite un archivo por activo");
+    error.status = 400;
+    throw error;
+  }
+
+  const nextFile = files[0];
+  const previousStorageKey = fileRow.storage_key;
+  const previousStorageBucket = fileRow.storage_bucket;
+
+  try {
+    const buffer = await readFile(nextFile.filepath);
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    const extension = path
+      .extname(nextFile.originalFilename || "")
+      .toLowerCase();
+    const storageKey = `${storageKeyPrefix}/${assetPublicId}/${filePublicId}${extension}`;
+    const stored = await storage.save({ buffer, storageKey });
+
+    await query(
+      `UPDATE commercial_enablement_item_files
+       SET storage_provider = ?, storage_bucket = ?, storage_key = ?,
+           original_file_name = ?, stored_file_name = ?, mime_type = ?,
+           file_extension = ?, byte_size = ?, sha256 = ?, uploaded_by_user_id = ?,
+           updated_at = NOW(3)
+       WHERE public_id = ? AND item_id = ? AND is_deleted = 0`,
+      [
+        stored.storageProvider,
+        stored.storageBucket,
+        stored.storageKey,
+        nextFile.originalFilename || path.basename(nextFile.filepath),
+        stored.storedFileName,
+        nextFile.mimetype || "application/octet-stream",
+        extension,
+        Number(nextFile.size || 0),
+        sha256,
+        Number(user.id),
+        filePublicId,
+        Number(item.id),
+      ],
+    );
+
+    if (
+      previousStorageKey &&
+      (previousStorageKey !== stored.storageKey ||
+        previousStorageBucket !== stored.storageBucket)
+    ) {
+      await storage
+        .delete({
+          storageKey: previousStorageKey,
+          storageBucket: previousStorageBucket,
+        })
+        .catch(() => undefined);
+    }
   } finally {
     await cleanupTempFiles(files).catch(() => undefined);
   }
@@ -1586,6 +1723,15 @@ export async function deleteCommercialEnablementFile({
   if (!canEdit) {
     const error = new Error("No autorizado para eliminar este archivo");
     error.status = 403;
+    throw error;
+  }
+
+  const resourceCounts = await getItemResourceCounts(Number(item.id));
+  if (resourceCounts.total <= 1) {
+    const error = new Error(
+      "No puedes eliminar el unico recurso del activo. Modifica el activo o reemplaza el recurso en su lugar.",
+    );
+    error.status = 409;
     throw error;
   }
 
@@ -1673,6 +1819,11 @@ export async function createCommercialEnablementLink({
     error.status = 400;
     throw error;
   }
+  if (asset.files.length + asset.links.length > 0) {
+    const error = new Error(SINGLE_RESOURCE_ATTACH_MESSAGE);
+    error.status = 409;
+    throw error;
+  }
 
   await withTransaction(async (conn) => {
     await conn.query(
@@ -1697,11 +1848,7 @@ export async function createCommercialEnablementLink({
       `UPDATE commercial_enablement_items
        SET source_type = ?, updated_by_user_id = ?, updated_at = NOW(3)
        WHERE id = ?`,
-      [
-        asset.sourceType === "file" ? "mixed" : "url",
-        Number(user.id),
-        Number(asset.id),
-      ],
+      ["url", Number(user.id), Number(asset.id)],
     );
   });
 
@@ -1766,6 +1913,13 @@ export async function deleteCommercialEnablementLink({
     error.status = 403;
     throw error;
   }
+  if (asset.files.length + asset.links.length <= 1) {
+    const error = new Error(
+      "No puedes eliminar el unico recurso del activo. Modifica el activo o reemplaza el recurso en su lugar.",
+    );
+    error.status = 409;
+    throw error;
+  }
   await query(
     `UPDATE commercial_enablement_item_links
      SET is_deleted = 1, updated_at = NOW(3)
@@ -1807,6 +1961,9 @@ export async function validateCommercialEnablementAsset({
     !asset.catalogs.some((catalog) => catalog.catalogType === "solution")
   ) {
     issues.push("Debes indicar al menos un fabricante o una solucion");
+  }
+  if (asset.files.length + asset.links.length > 1) {
+    issues.push(SINGLE_RESOURCE_VALIDATION_MESSAGE);
   }
   if (!asset.files.length && !asset.links.length) {
     issues.push("Debes adjuntar al menos un archivo o una URL");
@@ -1915,6 +2072,13 @@ export async function duplicateCommercialEnablementAsset({
   if (!(canManageEnablement(user) || asset.canEdit)) {
     const error = new Error("No autorizado para duplicar este activo");
     error.status = 403;
+    throw error;
+  }
+  if (asset.files.length + asset.links.length > 1) {
+    const error = new Error(
+      "No se puede duplicar un activo con multiples recursos. Deja un solo archivo o una sola URL antes de duplicarlo.",
+    );
+    error.status = 409;
     throw error;
   }
   const duplicatePublicId = buildPublicId("cea");

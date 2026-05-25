@@ -6,7 +6,7 @@ import { Blob } from "node:buffer";
 import formidable from "formidable";
 import { simpleParser } from "mailparser";
 import mammoth from "mammoth";
-import * as pdfParseModule from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 import XLSX from "xlsx";
 import { parseBuffer as parseAudioBuffer } from "music-metadata";
 import { getUserAuthContext } from "../auth.js";
@@ -15,7 +15,6 @@ import { config } from "../config.js";
 import { createDocumentStorage } from "./storage.js";
 
 const storage = createDocumentStorage();
-const pdfParse = pdfParseModule.default || pdfParseModule;
 const PIPELINE_VERSION = "v1";
 
 const FILE_LIMITS = {
@@ -531,9 +530,14 @@ export async function extractContentFromBuffer({
   fileName,
   extension,
 }) {
-  const detectedFormat = extension.replace(/^\./, "") || mimeType || "unknown";
+  const resolvedExtension =
+    String(extension || "")
+      .trim()
+      .toLowerCase() || detectExtension(fileName);
+  const detectedFormat =
+    resolvedExtension.replace(/^\./, "") || mimeType || "unknown";
 
-  if (extension === ".txt") {
+  if (resolvedExtension === ".txt") {
     const text = buffer.toString("utf8");
     return {
       extractionStatus: "completed",
@@ -551,7 +555,7 @@ export async function extractContentFromBuffer({
     };
   }
 
-  if (extension === ".eml") {
+  if (resolvedExtension === ".eml") {
     const text = await extractEmailContent(buffer);
     return {
       extractionStatus: "completed",
@@ -569,7 +573,11 @@ export async function extractContentFromBuffer({
     };
   }
 
-  if (extension === ".csv" || extension === ".xlsx" || extension === ".xls") {
+  if (
+    resolvedExtension === ".csv" ||
+    resolvedExtension === ".xlsx" ||
+    resolvedExtension === ".xls"
+  ) {
     const workbook = XLSX.read(buffer, { type: "buffer" });
     const sheets = workbook.SheetNames.map((sheetName) => {
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
@@ -605,7 +613,7 @@ export async function extractContentFromBuffer({
     };
   }
 
-  if (extension === ".docx") {
+  if (resolvedExtension === ".docx") {
     const result = await mammoth.extractRawText({ buffer });
     const text = String(result.value || "").trim();
     return {
@@ -624,8 +632,10 @@ export async function extractContentFromBuffer({
     };
   }
 
-  if (extension === ".pdf") {
-    const result = await pdfParse(buffer);
+  if (resolvedExtension === ".pdf") {
+    const parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    await parser.destroy().catch(() => undefined);
     const text = String(result.text || "").trim();
     return {
       extractionStatus: "completed",
@@ -638,12 +648,16 @@ export async function extractContentFromBuffer({
       transcriptionLanguage: null,
       transcriptionConfidence: null,
       durationSeconds: null,
-      pageCount: Number(result.numpages || 0) || null,
+      pageCount: Number(result.total || 0) || null,
       contentSummary: summarizeForPrompt(text, 300),
     };
   }
 
-  if (extension === ".png" || extension === ".jpg" || extension === ".jpeg") {
+  if (
+    resolvedExtension === ".png" ||
+    resolvedExtension === ".jpg" ||
+    resolvedExtension === ".jpeg"
+  ) {
     const text = await extractImageText(buffer, mimeType);
     return {
       extractionStatus: "completed",
@@ -661,7 +675,11 @@ export async function extractContentFromBuffer({
     };
   }
 
-  if (extension === ".mp3" || extension === ".wav" || extension === ".m4a") {
+  if (
+    resolvedExtension === ".mp3" ||
+    resolvedExtension === ".wav" ||
+    resolvedExtension === ".m4a"
+  ) {
     const metadata = await parseAudioBuffer(buffer, mimeType, {
       duration: true,
     });
@@ -684,7 +702,11 @@ export async function extractContentFromBuffer({
     };
   }
 
-  throw new Error("Tipo de archivo no soportado para extraccion");
+  const error = new Error(
+    `El tipo de archivo ${resolvedExtension || "desconocido"} no esta soportado para extraccion`,
+  );
+  error.status = 400;
+  throw error;
 }
 
 export function buildStorageKey({
@@ -965,7 +987,7 @@ function validateSessionQuota(existingDocuments, incomingFiles) {
   }
 }
 
-function validateSingleFile(file) {
+export function validateSingleFile(file) {
   const originalFileName = String(
     file.originalFilename || file.newFilename || "archivo",
   );

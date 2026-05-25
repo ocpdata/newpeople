@@ -26,6 +26,99 @@ const EMPTY_TEMPORARY_FEATURE_SETTINGS = {
   updatedByUserName: "",
 };
 
+const EMPTY_PROPOSAL_CONTENT_CONFIG = {
+  id: null,
+  status: "active",
+  publishedAt: null,
+  updatedAt: null,
+  components: [],
+};
+
+function normalizeInstitutionalAsset(asset) {
+  if (!asset) return null;
+  return {
+    id: Number(asset.id),
+    code: String(asset.code || ""),
+    name: String(asset.name || ""),
+    description: String(asset.description || ""),
+    category: String(asset.category || "generic_proposal_media"),
+    mediaType: String(asset.mediaType || "image"),
+    status: String(asset.status || "active"),
+    tags: Array.isArray(asset.tags) ? asset.tags : [],
+    currentVersionId: asset.currentVersionId
+      ? Number(asset.currentVersionId)
+      : null,
+    currentVersion: asset.currentVersion
+      ? {
+          id: Number(asset.currentVersion.id),
+          versionNumber: Number(asset.currentVersion.versionNumber || 1),
+          fileUrl: String(asset.currentVersion.fileUrl || ""),
+          fileName: String(asset.currentVersion.fileName || ""),
+          mimeType: String(asset.currentVersion.mimeType || ""),
+          fileSizeBytes:
+            asset.currentVersion.fileSizeBytes == null
+              ? null
+              : Number(asset.currentVersion.fileSizeBytes),
+          width:
+            asset.currentVersion.width == null
+              ? null
+              : Number(asset.currentVersion.width),
+          height:
+            asset.currentVersion.height == null
+              ? null
+              : Number(asset.currentVersion.height),
+          altText: String(asset.currentVersion.altText || ""),
+          caption: String(asset.currentVersion.caption || ""),
+        }
+      : null,
+    versions: Array.isArray(asset.versions)
+      ? asset.versions.map((version) => ({
+          id: Number(version.id),
+          versionNumber: Number(version.versionNumber || 1),
+          fileUrl: String(version.fileUrl || ""),
+          fileName: String(version.fileName || ""),
+          mimeType: String(version.mimeType || ""),
+          altText: String(version.altText || ""),
+          caption: String(version.caption || ""),
+        }))
+      : [],
+  };
+}
+
+function normalizeProposalContentConfig(config) {
+  if (!config) return { ...EMPTY_PROPOSAL_CONTENT_CONFIG };
+  return {
+    id: config.id ? Number(config.id) : null,
+    status: String(config.status || "active"),
+    publishedAt: config.publishedAt || null,
+    updatedAt: config.updatedAt || null,
+    components: Array.isArray(config.components)
+      ? config.components.map((component) => ({
+          id: Number(component.id),
+          componentCode: String(component.componentCode || ""),
+          title: String(component.title || ""),
+          displayOrder: Number(component.displayOrder || 0),
+          status: String(component.status || "active"),
+          layoutConfig: component.layoutConfig || null,
+          resolvedLayoutMode: String(component.resolvedLayoutMode || ""),
+          blocks: Array.isArray(component.blocks)
+            ? component.blocks.map((block) => ({
+                id: block.id ? Number(block.id) : null,
+                type: String(block.type || "paragraph"),
+                text: String(block.text || ""),
+                items: Array.isArray(block.items) ? block.items : [],
+                assetId: block.assetId ? Number(block.assetId) : null,
+                assetVersionId: block.assetVersionId
+                  ? Number(block.assetVersionId)
+                  : null,
+                image: block.image || null,
+              }))
+            : [],
+        }))
+      : [],
+  };
+}
+
 const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
 
 function isValidHttpUrl(value) {
@@ -191,10 +284,13 @@ export function useConfigurationPage() {
   const [initialSnapshot, setInitialSnapshot] = useState(
     serializeForm(EMPTY_FORM),
   );
-  const [savingTemporaryFeatures, setSavingTemporaryFeatures] =
-    useState(false);
-  const [initialTemporaryFeaturesSnapshot, setInitialTemporaryFeaturesSnapshot] =
-    useState(serializeTemporaryFeatureSettings(EMPTY_TEMPORARY_FEATURE_SETTINGS));
+  const [savingTemporaryFeatures, setSavingTemporaryFeatures] = useState(false);
+  const [
+    initialTemporaryFeaturesSnapshot,
+    setInitialTemporaryFeaturesSnapshot,
+  ] = useState(
+    serializeTemporaryFeatureSettings(EMPTY_TEMPORARY_FEATURE_SETTINGS),
+  );
   const [auditEntries, setAuditEntries] = useState([]);
   const [workspacePlaybooks, setWorkspacePlaybooks] = useState([]);
   const [workspacePlaybookDetail, setWorkspacePlaybookDetail] = useState(null);
@@ -202,6 +298,16 @@ export function useConfigurationPage() {
     useState(null);
   const [savingWorkspacePlaybookKey, setSavingWorkspacePlaybookKey] =
     useState("");
+  const [proposalContentConfig, setProposalContentConfig] = useState(
+    EMPTY_PROPOSAL_CONTENT_CONFIG,
+  );
+  const [proposalComponentDefinitions, setProposalComponentDefinitions] =
+    useState([]);
+  const [institutionalAssets, setInstitutionalAssets] = useState([]);
+  const [savingProposalContent, setSavingProposalContent] = useState(false);
+  const [publishingProposalContent, setPublishingProposalContent] =
+    useState(false);
+  const [assetActionKey, setAssetActionKey] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -216,6 +322,8 @@ export function useConfigurationPage() {
           countriesResponse,
           auditResponse,
           playbooksResponse,
+          proposalContentResponse,
+          institutionalAssetsResponse,
         ] = await Promise.all([
           api.get("/api/settings/company-profile"),
           api
@@ -225,6 +333,12 @@ export function useConfigurationPage() {
           api.get("/api/settings/audit?limit=25"),
           api
             .get("/api/opportunities/workspace-playbooks")
+            .catch(() => ({ data: { items: [] } })),
+          api.get("/api/settings/proposal-content-config").catch(() => ({
+            data: { config: null, componentDefinitions: [] },
+          })),
+          api
+            .get("/api/settings/institutional-assets")
             .catch(() => ({ data: { items: [] } })),
         ]);
 
@@ -251,6 +365,21 @@ export function useConfigurationPage() {
         setWorkspacePlaybooks(
           Array.isArray(playbooksResponse.data?.items)
             ? playbooksResponse.data.items
+            : [],
+        );
+        setProposalContentConfig(
+          normalizeProposalContentConfig(proposalContentResponse.data?.config),
+        );
+        setProposalComponentDefinitions(
+          Array.isArray(proposalContentResponse.data?.componentDefinitions)
+            ? proposalContentResponse.data.componentDefinitions
+            : [],
+        );
+        setInstitutionalAssets(
+          Array.isArray(institutionalAssetsResponse.data?.items)
+            ? institutionalAssetsResponse.data.items
+                .map(normalizeInstitutionalAsset)
+                .filter(Boolean)
             : [],
         );
         const activePlaybook = Array.isArray(playbooksResponse.data?.items)
@@ -609,6 +738,154 @@ export function useConfigurationPage() {
     }`;
   }, [temporaryFeatureSettings]);
 
+  const latestProposalContentUpdateText = useMemo(() => {
+    if (!proposalContentConfig.updatedAt) {
+      return proposalContentConfig.publishedAt
+        ? formatDateTime(proposalContentConfig.publishedAt)
+        : "Sin cambios publicados";
+    }
+    return formatDateTime(proposalContentConfig.updatedAt);
+  }, [proposalContentConfig]);
+
+  async function reloadProposalContentWorkspace() {
+    const [configResponse, assetsResponse] = await Promise.all([
+      api.get("/api/settings/proposal-content-config"),
+      api.get("/api/settings/institutional-assets"),
+    ]);
+    setProposalContentConfig(
+      normalizeProposalContentConfig(configResponse.data?.config),
+    );
+    setProposalComponentDefinitions(
+      Array.isArray(configResponse.data?.componentDefinitions)
+        ? configResponse.data.componentDefinitions
+        : [],
+    );
+    setInstitutionalAssets(
+      Array.isArray(assetsResponse.data?.items)
+        ? assetsResponse.data.items
+            .map(normalizeInstitutionalAsset)
+            .filter(Boolean)
+        : [],
+    );
+  }
+
+  async function saveProposalContentComponent(componentCode, payload) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        `/api/settings/proposal-content-config/components/${componentCode}`,
+        payload,
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Componente actualizado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar el contenido default de la propuesta",
+        ),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function publishProposalContent() {
+    setPublishingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        "/api/settings/proposal-content-config/publish",
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Configuracion publicada");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible publicar la configuracion de propuestas",
+        ),
+      );
+      throw err;
+    } finally {
+      setPublishingProposalContent(false);
+    }
+  }
+
+  async function createProposalAsset(payload) {
+    setAssetActionKey("create");
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        "/api/settings/institutional-assets",
+        payload,
+      );
+      await reloadProposalContentWorkspace();
+      setSuccess(response.data?.message || "Asset creado");
+      return response.data?.asset || null;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible crear el asset institucional"),
+      );
+      throw err;
+    } finally {
+      setAssetActionKey("");
+    }
+  }
+
+  async function addProposalAssetVersion(assetId, payload) {
+    setAssetActionKey(`version:${assetId}`);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/institutional-assets/${assetId}/versions`,
+        payload,
+      );
+      await reloadProposalContentWorkspace();
+      setSuccess(response.data?.message || "Version registrada");
+      return response.data?.asset || null;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible registrar la version del asset",
+        ),
+      );
+      throw err;
+    } finally {
+      setAssetActionKey("");
+    }
+  }
+
+  async function archiveProposalAsset(assetId) {
+    setAssetActionKey(`archive:${assetId}`);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/institutional-assets/${assetId}/archive`,
+      );
+      await reloadProposalContentWorkspace();
+      setSuccess(response.data?.message || "Asset archivado");
+      return response.data?.asset || null;
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible archivar el asset"));
+      throw err;
+    } finally {
+      setAssetActionKey("");
+    }
+  }
+
   const sectionItems = useMemo(
     () => [
       {
@@ -622,6 +899,12 @@ export function useConfigurationPage() {
         title: "Parametros globales",
         description: "Ajustes funcionales comunes a toda la aplicacion",
         dirty: temporaryFeaturesDirty,
+      },
+      {
+        id: "proposal_content",
+        title: "Propuestas comerciales",
+        description: "Assets institucionales y contenido default por seccion",
+        dirty: false,
       },
       {
         id: "modules",
@@ -654,6 +937,12 @@ export function useConfigurationPage() {
     workspacePlaybookDetail,
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
+    proposalContentConfig,
+    proposalComponentDefinitions,
+    institutionalAssets,
+    savingProposalContent,
+    publishingProposalContent,
+    assetActionKey,
     fieldErrors: saveAttempted ? validationErrors : {},
     isDirty,
     canSave,
@@ -662,6 +951,7 @@ export function useConfigurationPage() {
     temporaryFeaturesCanSave,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
+    latestProposalContentUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -675,5 +965,11 @@ export function useConfigurationPage() {
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
+    saveProposalContentComponent,
+    publishProposalContent,
+    createProposalAsset,
+    addProposalAssetVersion,
+    archiveProposalAsset,
+    reloadProposalContentWorkspace,
   };
 }

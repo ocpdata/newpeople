@@ -1101,6 +1101,13 @@ export function useQuotationsSection({
           statusCode: version.statusCode ?? version.status_code ?? "",
           statusName: version.statusName ?? version.status_name ?? "",
           statusUiKey: version.statusUiKey ?? version.status_ui_key ?? null,
+          proposalId:
+            Number(version.proposalId ?? version.proposal_id ?? 0) || null,
+          hasProposal: Boolean(
+            version.hasProposal ?? version.has_proposal ?? version.proposalId,
+          ),
+          proposalStatusCode:
+            version.proposalStatusCode ?? version.proposal_status_code ?? null,
           isLatestVersion: Number(version.id) === latestVersionId,
         }))
         .sort((leftVersion, rightVersion) => {
@@ -1441,7 +1448,8 @@ export function useQuotationsSection({
         setCreateSelectedOpportunityId(nextOpportunityId);
         setCreateQuotationForm((prev) => {
           const shouldPreserveQuotedContact =
-            String(prev.accountId || "") === String(createSelectedAccountId || "") &&
+            String(prev.accountId || "") ===
+              String(createSelectedAccountId || "") &&
             String(prev.opportunityId || "") === nextOpportunityId &&
             nextContacts.some(
               (contact) => String(contact.id) === String(prev.contactId),
@@ -2244,33 +2252,36 @@ export function useQuotationsSection({
     }));
   }, []);
 
-  const handleCreateOpportunityChange = useCallback((nextOpportunityId) => {
-    const nextSelectedOpportunity = createOpportunities.find(
-      (item) => String(item.id) === String(nextOpportunityId),
-    );
-    const inheritedContactId =
-      nextSelectedOpportunity?.contactId &&
-      createContactOptions.some(
-        (contact) =>
-          String(contact.id) === String(nextSelectedOpportunity.contactId),
-      )
-        ? String(nextSelectedOpportunity.contactId)
-        : "";
+  const handleCreateOpportunityChange = useCallback(
+    (nextOpportunityId) => {
+      const nextSelectedOpportunity = createOpportunities.find(
+        (item) => String(item.id) === String(nextOpportunityId),
+      );
+      const inheritedContactId =
+        nextSelectedOpportunity?.contactId &&
+        createContactOptions.some(
+          (contact) =>
+            String(contact.id) === String(nextSelectedOpportunity.contactId),
+        )
+          ? String(nextSelectedOpportunity.contactId)
+          : "";
 
-    setCreateCommercialContextConfirmed(false);
-    setCreateSelectedOpportunityId(nextOpportunityId);
-    setCreateQuotationForm((prev) => ({
-      ...prev,
-      opportunityId: String(nextOpportunityId || ""),
-      proposalName: nextSelectedOpportunity?.name || "",
-      sellerUserId: nextSelectedOpportunity?.sellerUserId
-        ? String(nextSelectedOpportunity.sellerUserId)
-        : "",
-      sellerUserName: nextSelectedOpportunity?.sellerUserName || "",
-      contextContactId: inheritedContactId,
-      contactId: inheritedContactId,
-    }));
-  }, [createContactOptions, createOpportunities]);
+      setCreateCommercialContextConfirmed(false);
+      setCreateSelectedOpportunityId(nextOpportunityId);
+      setCreateQuotationForm((prev) => ({
+        ...prev,
+        opportunityId: String(nextOpportunityId || ""),
+        proposalName: nextSelectedOpportunity?.name || "",
+        sellerUserId: nextSelectedOpportunity?.sellerUserId
+          ? String(nextSelectedOpportunity.sellerUserId)
+          : "",
+        sellerUserName: nextSelectedOpportunity?.sellerUserName || "",
+        contextContactId: inheritedContactId,
+        contactId: inheritedContactId,
+      }));
+    },
+    [createContactOptions, createOpportunities],
+  );
 
   const handleConfirmCreateCommercialContext = useCallback(() => {
     if (!canConfirmCreateCommercialContext) {

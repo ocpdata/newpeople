@@ -5,8 +5,17 @@ import { logAuditEvent } from "./audit.js";
 import { query } from "./db.js";
 import {
   buildCompanyDocumentBranding,
+  createInstitutionalAsset,
+  addInstitutionalAssetVersion,
+  archiveInstitutionalAsset,
   getCompanyDocumentBranding,
   getCompanyProfile,
+  getInstitutionalAsset,
+  getProposalContentConfiguration,
+  listInstitutionalAssets,
+  PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
+  publishProposalContentConfiguration,
+  saveProposalContentComponent,
   getTemporaryFeatureSettings,
   saveTemporaryFeatureSettings,
 } from "./settings.js";
@@ -14,32 +23,23 @@ import {
 const router = express.Router();
 
 const optionalTrimmedString = (maxLength) =>
-  z.preprocess(
-    (value) => {
-      if (typeof value !== "string") return value;
-      const trimmed = value.trim();
-      return trimmed === "" ? undefined : trimmed;
-    },
-    z.string().max(maxLength).optional(),
-  );
-
-const optionalEmail = z.preprocess(
-  (value) => {
+  z.preprocess((value) => {
     if (typeof value !== "string") return value;
     const trimmed = value.trim();
     return trimmed === "" ? undefined : trimmed;
-  },
-  z.string().email().max(190).optional(),
-);
+  }, z.string().max(maxLength).optional());
 
-const optionalUrl = z.preprocess(
-  (value) => {
-    if (typeof value !== "string") return value;
-    const trimmed = value.trim();
-    return trimmed === "" ? undefined : trimmed;
-  },
-  z.string().url().max(300).optional(),
-);
+const optionalEmail = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}, z.string().email().max(190).optional());
+
+const optionalUrl = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}, z.string().url().max(300).optional());
 
 const logoUrlValueSchema = z
   .string()
@@ -60,14 +60,11 @@ const companyProfileSchema = z.object({
   legalName: z.string().trim().min(3).max(190),
   commercialName: optionalTrimmedString(190),
   taxId: z.string().trim().min(3).max(120),
-  logoUrl: z.preprocess(
-    (value) => {
-      if (typeof value !== "string") return value;
-      const trimmed = value.trim();
-      return trimmed === "" ? undefined : trimmed;
-    },
-    logoUrlValueSchema.optional(),
-  ),
+  logoUrl: z.preprocess((value) => {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    return trimmed === "" ? undefined : trimmed;
+  }, logoUrlValueSchema.optional()),
   addressLine1: z.string().trim().min(3).max(255),
   addressLine2: optionalTrimmedString(255),
   city: z.string().trim().min(2).max(120),
@@ -86,6 +83,315 @@ const temporaryFeatureSettingsSchema = z.object({
   opportunitiesPendingEnabled: z.boolean(),
 });
 
+const institutionalAssetPayloadSchema = z.object({
+  name: z.string().trim().min(2).max(190),
+  description: optionalTrimmedString(5000),
+  category: z.string().trim().min(2).max(80),
+  status: z.enum(["draft", "active", "archived"]).optional(),
+  tags: z.array(z.string().trim().min(1).max(60)).optional().default([]),
+  fileUrl: logoUrlValueSchema,
+  fileName: optionalTrimmedString(255),
+  mimeType: optionalTrimmedString(120),
+  fileSizeBytes: z.number().int().nonnegative().optional().nullable(),
+  width: z.number().int().positive().optional().nullable(),
+  height: z.number().int().positive().optional().nullable(),
+  checksum: optionalTrimmedString(120),
+  altText: optionalTrimmedString(500),
+  caption: optionalTrimmedString(5000),
+});
+
+const proposalContentBlockSchema = z
+  .object({
+    id: z.number().int().positive().optional(),
+    type: z.enum(["heading", "paragraph", "list", "image"]),
+    text: z.string().optional().default(""),
+    items: z.array(z.string().trim().max(1000)).optional().default([]),
+    assetId: z.number().int().positive().optional().nullable(),
+    assetVersionId: z.number().int().positive().optional().nullable(),
+  })
+  .superRefine((value, context) => {
+    if (value.type === "image") {
+      if (!value.assetId || !value.assetVersionId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Los bloques de imagen requieren assetId y assetVersionId",
+          path: ["assetVersionId"],
+        });
+      }
+      return;
+    }
+
+    if (value.type === "list" && !Array.isArray(value.items)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Los bloques de lista requieren items",
+        path: ["items"],
+      });
+    }
+  });
+
+const proposalLayoutModeSchema = z.enum([
+  "stack",
+  "horizontal-gallery",
+  "manual-rows",
+]);
+
+const proposalLayoutRowSchema = z
+  .object({
+    blockIndexes: z.array(z.number().int().min(0)).default([]),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (!Array.isArray(value.blockIndexes) || value.blockIndexes.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "layoutConfig.rows[n].blockIndexes debe contener al menos un indice",
+        path: ["blockIndexes"],
+        params: {
+          issueCode: "layout_config_row_empty",
+        },
+      });
+      return;
+    }
+
+    if (new Set(value.blockIndexes).size !== value.blockIndexes.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "layoutConfig.rows[n].blockIndexes contiene indices duplicados",
+        path: ["blockIndexes"],
+        params: {
+          issueCode: "layout_config_duplicate_indexes_in_row",
+        },
+      });
+    }
+  });
+
+const proposalLayoutConfigSchema = z
+  .object({
+    mode: proposalLayoutModeSchema,
+    rows: z.array(proposalLayoutRowSchema).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.mode === "manual-rows") {
+      if (!Array.isArray(value.rows) || value.rows.length === 0) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "layoutConfig.rows es obligatorio cuando mode = manual-rows",
+          path: ["rows"],
+          params: {
+            issueCode: "layout_config_rows_required",
+          },
+        });
+        return;
+      }
+
+      const seenBlockIndexes = new Set();
+      for (let rowIndex = 0; rowIndex < value.rows.length; rowIndex += 1) {
+        const row = value.rows[rowIndex];
+        for (const blockIndex of row.blockIndexes || []) {
+          if (seenBlockIndexes.has(blockIndex)) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "layoutConfig.rows contiene indices repetidos entre filas",
+              path: ["rows", rowIndex, "blockIndexes"],
+              params: {
+                issueCode: "layout_config_duplicate_indexes_across_rows",
+              },
+            });
+            break;
+          }
+          seenBlockIndexes.add(blockIndex);
+        }
+      }
+      return;
+    }
+
+    if (
+      value.rows !== undefined &&
+      value.rows !== null &&
+      value.rows.length > 0
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "layoutConfig.rows solo se permite cuando mode = manual-rows",
+        path: ["rows"],
+        params: {
+          issueCode: "layout_config_rows_not_allowed",
+        },
+      });
+    }
+  });
+
+const proposalContentComponentPayloadSchema = z
+  .object({
+    title: z.string().trim().min(2).max(190).optional(),
+    layoutConfig: proposalLayoutConfigSchema.nullish(),
+    blocks: z.array(proposalContentBlockSchema).default([]),
+  })
+  .superRefine((value, context) => {
+    if (!value.layoutConfig || value.layoutConfig.mode !== "manual-rows") {
+      return;
+    }
+
+    const rows = Array.isArray(value.layoutConfig.rows)
+      ? value.layoutConfig.rows
+      : [];
+    const blocks = Array.isArray(value.blocks) ? value.blocks : [];
+
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      for (
+        let blockPositionInRow = 0;
+        blockPositionInRow < row.blockIndexes.length;
+        blockPositionInRow += 1
+      ) {
+        const blockIndex = row.blockIndexes[blockPositionInRow];
+        const block = blocks[blockIndex];
+
+        if (!block) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "layoutConfig.rows[n].blockIndexes[m] referencia un bloque inexistente",
+            path: [
+              "layoutConfig",
+              "rows",
+              rowIndex,
+              "blockIndexes",
+              blockPositionInRow,
+            ],
+            params: {
+              issueCode: "layout_config_block_index_out_of_range",
+              blockIndex,
+            },
+          });
+          continue;
+        }
+
+        if (block.type !== "image") {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "layoutConfig.rows[n].blockIndexes[m] referencia un bloque no compatible; solo se permiten imagenes",
+            path: [
+              "layoutConfig",
+              "rows",
+              rowIndex,
+              "blockIndexes",
+              blockPositionInRow,
+            ],
+            params: {
+              issueCode: "layout_config_block_not_compatible",
+              blockIndex,
+            },
+          });
+          continue;
+        }
+
+        if (!block.assetId || !block.assetVersionId) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "layoutConfig.rows[n].blockIndexes[m] referencia una imagen incompleta",
+            path: [
+              "layoutConfig",
+              "rows",
+              rowIndex,
+              "blockIndexes",
+              blockPositionInRow,
+            ],
+            params: {
+              issueCode: "layout_config_block_image_incomplete",
+              blockIndex,
+            },
+          });
+        }
+      }
+    }
+  });
+
+function inferValidationIssueCode(issue) {
+  const path = Array.isArray(issue.path) ? issue.path : [];
+  if (issue.params?.issueCode) {
+    return issue.params.issueCode;
+  }
+  if (path[0] === "layoutConfig" && path[1] === "mode") {
+    return "layout_config_invalid_mode";
+  }
+  if (
+    path[0] === "layoutConfig" &&
+    path.includes("blockIndexes") &&
+    (issue.code === z.ZodIssueCode.invalid_type ||
+      issue.code === z.ZodIssueCode.too_small ||
+      issue.code === z.ZodIssueCode.invalid_value)
+  ) {
+    return "layout_config_invalid_block_index";
+  }
+  return issue.code;
+}
+
+function buildValidationIssueLocation(path, payload, issue) {
+  const field = [...path]
+    .reverse()
+    .find((segment) => typeof segment === "string");
+
+  const location = {
+    scope:
+      path[0] === "blocks"
+        ? "blocks"
+        : path[0] === "title"
+          ? "title"
+          : "layoutConfig",
+    field,
+  };
+
+  if (path[0] === "blocks" && Number.isInteger(path[1])) {
+    location.blockIndex = Number(path[1]);
+  }
+
+  if (
+    path[0] === "layoutConfig" &&
+    path[1] === "rows" &&
+    Number.isInteger(path[2])
+  ) {
+    location.rowIndex = Number(path[2]);
+  }
+
+  if (
+    path[0] === "layoutConfig" &&
+    path[1] === "rows" &&
+    Number.isInteger(path[2]) &&
+    path[3] === "blockIndexes" &&
+    Number.isInteger(path[4])
+  ) {
+    location.blockPositionInRow = Number(path[4]);
+    const blockIndex =
+      payload?.layoutConfig?.rows?.[Number(path[2])]?.blockIndexes?.[
+        Number(path[4])
+      ];
+    if (Number.isInteger(blockIndex)) {
+      location.blockIndex = blockIndex;
+    } else if (Number.isInteger(issue?.params?.blockIndex)) {
+      location.blockIndex = Number(issue.params.blockIndex);
+    }
+  }
+
+  return location;
+}
+
+function buildValidationIssues(error, payload) {
+  return (error?.issues || []).map((issue) => ({
+    code: inferValidationIssueCode(issue),
+    message: issue.message,
+    path: Array.isArray(issue.path) ? issue.path : [],
+    location: buildValidationIssueLocation(issue.path, payload, issue),
+  }));
+}
+
 function parseChangedFields(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -96,10 +402,14 @@ function parseChangedFields(value) {
   }
 }
 
-router.get("/company-profile", requirePermission("configuracion.read"), async (_req, res) => {
-  const profile = await getCompanyProfile();
-  res.json({ profile });
-});
+router.get(
+  "/company-profile",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const profile = await getCompanyProfile();
+    res.json({ profile });
+  },
+);
 
 router.get(
   "/temporary-features",
@@ -110,118 +420,381 @@ router.get(
   },
 );
 
+router.get(
+  "/institutional-assets",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const assets = await listInstitutionalAssets({
+      status:
+        typeof req.query.status === "string" ? req.query.status : undefined,
+      category:
+        typeof req.query.category === "string" ? req.query.category : undefined,
+      search:
+        typeof req.query.search === "string" ? req.query.search : undefined,
+    });
+    res.json({ items: assets });
+  },
+);
+
+router.post(
+  "/institutional-assets",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = institutionalAssetPayloadSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const asset = await createInstitutionalAsset(
+      parsed.data,
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "created_institutional_asset",
+      entityType: "institutional_asset",
+      entityId: asset?.id || null,
+      detail: `Asset institucional ${parsed.data.name} creado`,
+      after: asset,
+    });
+
+    return res.status(201).json({
+      message: "Asset institucional creado",
+      asset,
+    });
+  },
+);
+
+router.get(
+  "/institutional-assets/:assetId",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isInteger(assetId) || assetId <= 0) {
+      return res.status(400).json({ message: "Id de asset invalido" });
+    }
+
+    const asset = await getInstitutionalAsset(assetId);
+    if (!asset) {
+      return res.status(404).json({ message: "Asset no encontrado" });
+    }
+
+    return res.json({ asset });
+  },
+);
+
+router.post(
+  "/institutional-assets/:assetId/versions",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isInteger(assetId) || assetId <= 0) {
+      return res.status(400).json({ message: "Id de asset invalido" });
+    }
+
+    const parsed = institutionalAssetPayloadSchema
+      .omit({
+        name: true,
+        description: true,
+        category: true,
+        status: true,
+        tags: true,
+      })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const before = await getInstitutionalAsset(assetId);
+    const asset = await addInstitutionalAssetVersion(
+      assetId,
+      parsed.data,
+      Number(req.user?.id) || null,
+    );
+    if (!asset) {
+      return res.status(404).json({ message: "Asset no encontrado" });
+    }
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "versioned_institutional_asset",
+      entityType: "institutional_asset",
+      entityId: asset.id,
+      detail: `Nueva version para asset ${asset.name}`,
+      before,
+      after: asset,
+    });
+
+    return res.json({
+      message: "Version registrada",
+      asset,
+    });
+  },
+);
+
+router.post(
+  "/institutional-assets/:assetId/archive",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isInteger(assetId) || assetId <= 0) {
+      return res.status(400).json({ message: "Id de asset invalido" });
+    }
+
+    const before = await getInstitutionalAsset(assetId);
+    if (!before) {
+      return res.status(404).json({ message: "Asset no encontrado" });
+    }
+
+    const asset = await archiveInstitutionalAsset(
+      assetId,
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "archived_institutional_asset",
+      entityType: "institutional_asset",
+      entityId: asset?.id || assetId,
+      detail: `Asset ${before.name} archivado`,
+      before,
+      after: asset,
+    });
+
+    return res.json({
+      message: "Asset archivado",
+      asset,
+    });
+  },
+);
+
+router.get(
+  "/proposal-content-config",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const config = await getProposalContentConfiguration();
+    res.json({
+      config,
+      componentDefinitions: PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
+    });
+  },
+);
+
+router.put(
+  "/proposal-content-config/components/:componentCode",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const componentCode = String(req.params.componentCode || "").trim();
+    if (
+      !PROPOSAL_CONTENT_COMPONENT_DEFINITIONS.some(
+        (component) => component.code === componentCode,
+      )
+    ) {
+      return res.status(404).json({ message: "Componente no encontrado" });
+    }
+
+    const parsed = proposalContentComponentPayloadSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+        issues: buildValidationIssues(parsed.error, req.body || {}),
+      });
+    }
+
+    const before = await getProposalContentConfiguration();
+    const config = await saveProposalContentComponent({
+      componentCode,
+      title: parsed.data.title,
+      layoutConfig: parsed.data.layoutConfig,
+      blocks: parsed.data.blocks,
+      actorUserId: Number(req.user?.id) || null,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "updated_proposal_content_component",
+      entityType: "proposal_content_component",
+      entityId:
+        config?.components.find(
+          (component) => component.componentCode === componentCode,
+        )?.id || null,
+      detail: `Contenido default actualizado para ${componentCode}`,
+      before:
+        before?.components.find(
+          (component) => component.componentCode === componentCode,
+        ) || null,
+      after:
+        config?.components.find(
+          (component) => component.componentCode === componentCode,
+        ) || null,
+    });
+
+    return res.json({
+      message: "Componente actualizado",
+      config,
+    });
+  },
+);
+
+router.post(
+  "/proposal-content-config/publish",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const before = await getProposalContentConfiguration();
+    const config = await publishProposalContentConfiguration(
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "published_proposal_content_config",
+      entityType: "proposal_content_config",
+      entityId: config?.id || null,
+      detail: "Configuracion de propuestas publicada",
+      before,
+      after: config,
+    });
+
+    return res.json({
+      message: "Configuracion publicada",
+      config,
+    });
+  },
+);
+
 router.get("/document-branding", async (_req, res) => {
   const company = await getCompanyDocumentBranding();
   res.json({ company });
 });
 
-router.put("/company-profile", requirePermission("configuracion.update"), async (req, res) => {
-  const parsed = companyProfileSchema.safeParse(req.body || {});
-  if (!parsed.success) {
-    return res.status(400).json({
-      message: "Datos invalidos",
-      errors: parsed.error.flatten(),
-    });
-  }
+router.put(
+  "/company-profile",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = companyProfileSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
 
-  const profileBefore = await getCompanyProfile();
-  const existingId = profileBefore.id ? Number(profileBefore.id) : null;
-  const actorUserId = Number(req.user?.id) || null;
-  const now = new Date();
-  const payload = {
-    legalName: parsed.data.legalName.trim(),
-    commercialName: parsed.data.commercialName || null,
-    taxId: parsed.data.taxId.trim(),
-    logoUrl: parsed.data.logoUrl || null,
-    addressLine1: parsed.data.addressLine1.trim(),
-    addressLine2: parsed.data.addressLine2 || null,
-    city: parsed.data.city.trim(),
-    stateRegion: parsed.data.stateRegion.trim(),
-    countryId: Number(parsed.data.countryId),
-    postalCode: parsed.data.postalCode.trim(),
-    email: parsed.data.email || null,
-    phone: parsed.data.phone || null,
-    website: parsed.data.website || null,
-    description: parsed.data.description || null,
-  };
+    const profileBefore = await getCompanyProfile();
+    const existingId = profileBefore.id ? Number(profileBefore.id) : null;
+    const actorUserId = Number(req.user?.id) || null;
+    const now = new Date();
+    const payload = {
+      legalName: parsed.data.legalName.trim(),
+      commercialName: parsed.data.commercialName || null,
+      taxId: parsed.data.taxId.trim(),
+      logoUrl: parsed.data.logoUrl || null,
+      addressLine1: parsed.data.addressLine1.trim(),
+      addressLine2: parsed.data.addressLine2 || null,
+      city: parsed.data.city.trim(),
+      stateRegion: parsed.data.stateRegion.trim(),
+      countryId: Number(parsed.data.countryId),
+      postalCode: parsed.data.postalCode.trim(),
+      email: parsed.data.email || null,
+      phone: parsed.data.phone || null,
+      website: parsed.data.website || null,
+      description: parsed.data.description || null,
+    };
 
-  if (existingId) {
-    await query(
-      `UPDATE company_profile
+    if (existingId) {
+      await query(
+        `UPDATE company_profile
        SET legal_name = ?, commercial_name = ?, tax_id = ?, logo_url = ?,
            address_line1 = ?, address_line2 = ?, city = ?, state_region = ?,
            country_id = ?, postal_code = ?, email = ?, phone = ?, website = ?,
            description = ?, updated_by_user_id = ?, updated_at = ?
        WHERE id = ?`,
-      [
-        payload.legalName,
-        payload.commercialName,
-        payload.taxId,
-        payload.logoUrl,
-        payload.addressLine1,
-        payload.addressLine2,
-        payload.city,
-        payload.stateRegion,
-        payload.countryId,
-        payload.postalCode,
-        payload.email,
-        payload.phone,
-        payload.website,
-        payload.description,
-        actorUserId,
-        now,
-        existingId,
-      ],
-    );
-  } else {
-    await query(
-      `INSERT INTO company_profile
+        [
+          payload.legalName,
+          payload.commercialName,
+          payload.taxId,
+          payload.logoUrl,
+          payload.addressLine1,
+          payload.addressLine2,
+          payload.city,
+          payload.stateRegion,
+          payload.countryId,
+          payload.postalCode,
+          payload.email,
+          payload.phone,
+          payload.website,
+          payload.description,
+          actorUserId,
+          now,
+          existingId,
+        ],
+      );
+    } else {
+      await query(
+        `INSERT INTO company_profile
         (singleton_key, legal_name, commercial_name, tax_id, logo_url,
          address_line1, address_line2, city, state_region, country_id,
          postal_code, email, phone, website, description,
          created_by_user_id, updated_by_user_id, created_at, updated_at)
        VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        payload.legalName,
-        payload.commercialName,
-        payload.taxId,
-        payload.logoUrl,
-        payload.addressLine1,
-        payload.addressLine2,
-        payload.city,
-        payload.stateRegion,
-        payload.countryId,
-        payload.postalCode,
-        payload.email,
-        payload.phone,
-        payload.website,
-        payload.description,
-        actorUserId,
-        actorUserId,
-        now,
-        now,
-      ],
-    );
-  }
+        [
+          payload.legalName,
+          payload.commercialName,
+          payload.taxId,
+          payload.logoUrl,
+          payload.addressLine1,
+          payload.addressLine2,
+          payload.city,
+          payload.stateRegion,
+          payload.countryId,
+          payload.postalCode,
+          payload.email,
+          payload.phone,
+          payload.website,
+          payload.description,
+          actorUserId,
+          actorUserId,
+          now,
+          now,
+        ],
+      );
+    }
 
-  const profile = await getCompanyProfile();
+    const profile = await getCompanyProfile();
 
-  await logAuditEvent({
-    req,
-    module: "configuracion",
-    action: existingId ? "updated_company_profile" : "created_company_profile",
-    entityType: "company_profile",
-    entityId: profile.id,
-    detail: "Perfil institucional actualizado",
-    before: buildCompanyDocumentBranding(profileBefore),
-    after: buildCompanyDocumentBranding(profile),
-  });
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: existingId
+        ? "updated_company_profile"
+        : "created_company_profile",
+      entityType: "company_profile",
+      entityId: profile.id,
+      detail: "Perfil institucional actualizado",
+      before: buildCompanyDocumentBranding(profileBefore),
+      after: buildCompanyDocumentBranding(profile),
+    });
 
-  res.json({
-    message: "Configuracion de empresa actualizada correctamente",
-    profile,
-  });
-});
+    res.json({
+      message: "Configuracion de empresa actualizada correctamente",
+      profile,
+    });
+  },
+);
 
 router.put(
   "/temporary-features",
@@ -259,29 +832,33 @@ router.put(
   },
 );
 
-router.get("/audit", requirePermission("configuracion.read"), async (req, res) => {
-  const rawLimit = Number(req.query.limit);
-  const limit = Number.isInteger(rawLimit)
-    ? Math.min(Math.max(rawLimit, 1), 100)
-    : 25;
+router.get(
+  "/audit",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isInteger(rawLimit)
+      ? Math.min(Math.max(rawLimit, 1), 100)
+      : 25;
 
-  const rows = await query(
-    `SELECT id, module, action, entity_type, entity_id, status, detail,
+    const rows = await query(
+      `SELECT id, module, action, entity_type, entity_id, status, detail,
             changed_fields, performed_by_user_id, performed_by_name,
             performed_by_email, created_at
      FROM audit_log
      WHERE module = 'configuracion'
      ORDER BY created_at DESC, id DESC
      LIMIT ?`,
-    [limit],
-  );
+      [limit],
+    );
 
-  res.json(
-    rows.map((row) => ({
-      ...row,
-      changed_fields: parseChangedFields(row.changed_fields),
-    })),
-  );
-});
+    res.json(
+      rows.map((row) => ({
+        ...row,
+        changed_fields: parseChangedFields(row.changed_fields),
+      })),
+    );
+  },
+);
 
 export default router;

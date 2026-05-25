@@ -1,6 +1,562 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useConfigurationPage } from "./configuration/useConfigurationPage";
 import "./configuration/configuration.css";
+
+const PROPOSAL_ASSET_CATEGORIES = [
+  "institutional",
+  "certification",
+  "partner",
+  "client",
+  "service",
+  "brochure",
+  "generic_proposal_media",
+];
+
+const PROPOSAL_ASSET_CATEGORY_LABELS = {
+  institutional: "Institucional",
+  certification: "Certificacion",
+  partner: "Partner",
+  client: "Cliente",
+  service: "Servicio",
+  brochure: "Folleto",
+  generic_proposal_media: "Multimedia general para propuesta",
+};
+
+function getProposalAssetCategoryLabel(category) {
+  return PROPOSAL_ASSET_CATEGORY_LABELS[category] || category;
+}
+
+function readLocalImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No fue posible leer la imagen"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function createEmptyProposalBlock(type = "paragraph") {
+  return {
+    type,
+    text: "",
+    items: type === "list" ? [""] : [],
+    assetId: null,
+    assetVersionId: null,
+  };
+}
+
+const PROPOSAL_BLOCK_TYPE_OPTIONS = [
+  ["heading", "Encabezado"],
+  ["paragraph", "Parrafo"],
+  ["list", "Lista"],
+  ["image", "Imagen"],
+];
+
+const PROPOSAL_LAYOUT_MODE_OPTIONS = [
+  ["stack", "Vertical"],
+  ["horizontal-gallery", "Horizontal automatico"],
+  ["manual-rows", "Manual por filas"],
+];
+
+let proposalEditorBlockSequence = 0;
+let proposalManualRowSequence = 0;
+
+function normalizeProposalLayoutMode(value) {
+  const mode = String(value || "")
+    .trim()
+    .toLowerCase();
+  return PROPOSAL_LAYOUT_MODE_OPTIONS.some(([option]) => option === mode)
+    ? mode
+    : "stack";
+}
+
+function createProposalEditorBlockKey(block, index = 0) {
+  if (block?.blockKey) {
+    return String(block.blockKey);
+  }
+
+  if (block?.id) {
+    return `proposal-block-${Number(block.id)}`;
+  }
+
+  proposalEditorBlockSequence += 1;
+  return `proposal-block-draft-${proposalEditorBlockSequence}-${index}-${
+    block?.type || "paragraph"
+  }`;
+}
+
+function createProposalEditorBlock(block, index = 0) {
+  return {
+    blockKey: createProposalEditorBlockKey(block, index),
+    id: block?.id || null,
+    type: block?.type || "paragraph",
+    text: block?.text || "",
+    items: Array.isArray(block?.items) ? block.items : [],
+    assetId: block?.assetId || null,
+    assetVersionId: block?.assetVersionId || null,
+    image: block?.image || null,
+  };
+}
+
+function createProposalManualRow(blockKeys = []) {
+  proposalManualRowSequence += 1;
+  return {
+    rowId: `proposal-row-${proposalManualRowSequence}`,
+    items: blockKeys.map((blockKey) => ({ blockKey })),
+  };
+}
+
+function createProposalLayoutDraft(mode = "stack", manualRows = []) {
+  return {
+    mode: normalizeProposalLayoutMode(mode),
+    manualRows: Array.isArray(manualRows) ? manualRows : [],
+  };
+}
+
+function isProposalManualRowCompatibleBlock(block) {
+  return (
+    block?.type === "image" &&
+    Boolean(block?.image?.fileUrl || (block?.assetId && block?.assetVersionId))
+  );
+}
+
+function areProposalManualRowsEqual(leftRows, rightRows) {
+  if (leftRows === rightRows) {
+    return true;
+  }
+
+  if (!Array.isArray(leftRows) || !Array.isArray(rightRows)) {
+    return false;
+  }
+
+  if (leftRows.length !== rightRows.length) {
+    return false;
+  }
+
+  for (let rowIndex = 0; rowIndex < leftRows.length; rowIndex += 1) {
+    const leftRow = leftRows[rowIndex];
+    const rightRow = rightRows[rowIndex];
+    if (leftRow?.rowId !== rightRow?.rowId) {
+      return false;
+    }
+
+    const leftItems = Array.isArray(leftRow?.items) ? leftRow.items : [];
+    const rightItems = Array.isArray(rightRow?.items) ? rightRow.items : [];
+    if (leftItems.length !== rightItems.length) {
+      return false;
+    }
+
+    for (let itemIndex = 0; itemIndex < leftItems.length; itemIndex += 1) {
+      if (leftItems[itemIndex]?.blockKey !== rightItems[itemIndex]?.blockKey) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function reconcileProposalLayoutDraftWithBlocks(layoutDraft, blocks) {
+  const compatibleBlockKeys = new Set(
+    (Array.isArray(blocks) ? blocks : [])
+      .filter((block) => isProposalManualRowCompatibleBlock(block))
+      .map((block) => block.blockKey),
+  );
+  const seenBlockKeys = new Set();
+  const nextManualRows = (
+    Array.isArray(layoutDraft?.manualRows) ? layoutDraft.manualRows : []
+  )
+    .map((row) => {
+      const nextItems = (Array.isArray(row?.items) ? row.items : []).filter(
+        (item) => {
+          if (!compatibleBlockKeys.has(item?.blockKey)) {
+            return false;
+          }
+          if (seenBlockKeys.has(item.blockKey)) {
+            return false;
+          }
+          seenBlockKeys.add(item.blockKey);
+          return true;
+        },
+      );
+
+      if (!nextItems.length) {
+        return null;
+      }
+
+      return {
+        rowId: row?.rowId || createProposalManualRow().rowId,
+        items: nextItems,
+      };
+    })
+    .filter(Boolean);
+
+  const normalizedMode = normalizeProposalLayoutMode(layoutDraft?.mode);
+  if (
+    normalizedMode === normalizeProposalLayoutMode(layoutDraft?.mode) &&
+    areProposalManualRowsEqual(layoutDraft?.manualRows, nextManualRows)
+  ) {
+    return layoutDraft;
+  }
+
+  return {
+    mode: normalizedMode,
+    manualRows: nextManualRows,
+  };
+}
+
+function buildProposalLayoutDraftFromComponent(component, blocks) {
+  const normalizedBlocks = Array.isArray(blocks) ? blocks : [];
+  const explicitMode = normalizeProposalLayoutMode(
+    component?.layoutConfig?.mode || component?.resolvedLayoutMode || "stack",
+  );
+
+  if (explicitMode !== "manual-rows") {
+    return createProposalLayoutDraft(explicitMode, []);
+  }
+
+  const manualRows = (
+    Array.isArray(component?.layoutConfig?.rows)
+      ? component.layoutConfig.rows
+      : []
+  )
+    .map((row) => {
+      const blockKeys = (
+        Array.isArray(row?.blockIndexes) ? row.blockIndexes : []
+      )
+        .map((blockIndex) => normalizedBlocks[Number(blockIndex)]?.blockKey)
+        .filter(Boolean);
+
+      return blockKeys.length ? createProposalManualRow(blockKeys) : null;
+    })
+    .filter(Boolean);
+
+  return reconcileProposalLayoutDraftWithBlocks(
+    createProposalLayoutDraft("manual-rows", manualRows),
+    normalizedBlocks,
+  );
+}
+
+function buildProposalLayoutConfigPayload(layoutDraft, blocks) {
+  const mode = normalizeProposalLayoutMode(layoutDraft?.mode);
+  if (mode !== "manual-rows") {
+    return { mode };
+  }
+
+  return {
+    mode,
+    rows: (Array.isArray(layoutDraft?.manualRows) ? layoutDraft.manualRows : [])
+      .map((row) => ({
+        blockIndexes: (Array.isArray(row?.items) ? row.items : [])
+          .map((item) =>
+            (Array.isArray(blocks) ? blocks : []).findIndex(
+              (block) => block.blockKey === item?.blockKey,
+            ),
+          )
+          .filter((index) => index >= 0),
+      }))
+      .filter((row) => row.blockIndexes.length > 0),
+  };
+}
+
+function getProposalManualRowLabel(rowIndex) {
+  return `Fila ${rowIndex + 1}`;
+}
+
+function getProposalManualRowBlockLabel(block) {
+  return (
+    block?.image?.caption ||
+    block?.image?.fileName ||
+    block?.text ||
+    "Imagen seleccionada"
+  );
+}
+
+function ProposalBlockAddIcon({ type }) {
+  if (type === "heading") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M5.75 5.5a.75.75 0 0 1 .75.75v4.5h5v-4.5a.75.75 0 0 1 1.5 0v11.5a.75.75 0 0 1-1.5 0v-5.5h-5v5.5a.75.75 0 0 1-1.5 0V6.25a.75.75 0 0 1 .75-.75Zm11 0a.75.75 0 0 1 .75.75v10.8h1a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1 0-1.5h1V7h-1a.75.75 0 0 1 0-1.5h1.75Z"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "paragraph") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M5 7.25c0-.41.34-.75.75-.75h12.5a.75.75 0 0 1 0 1.5H5.75A.75.75 0 0 1 5 7.25Zm0 4.25c0-.41.34-.75.75-.75h12.5a.75.75 0 0 1 0 1.5H5.75A.75.75 0 0 1 5 11.5Zm.75 3.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5Z"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "list") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M6.25 6.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Zm-3.5 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Zm-3.5 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Z"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.75 5A1.75 1.75 0 0 0 5 6.75v10.5C5 18.22 5.78 19 6.75 19h10.5A1.75 1.75 0 0 0 19 17.25V6.75C19 5.78 18.22 5 17.25 5H6.75Zm0 1.5h10.5c.14 0 .25.11.25.25v7.02l-2.74-2.74a1.75 1.75 0 0 0-2.47 0l-3.54 3.54-1.04-1.04a1.75 1.75 0 0 0-2.21-.22V6.75c0-.14.11-.25.25-.25Zm9 2a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5ZM6.5 17.25v-1.82l1.51-1.51a.25.25 0 0 1 .35 0l1.57 1.57 3.42-3.42a.25.25 0 0 1 .35 0l3.8 3.8v1.38a.25.25 0 0 1-.25.25H6.75a.25.25 0 0 1-.25-.25Z"
+      />
+    </svg>
+  );
+}
+
+function ProposalWizardActionIcon({ action }) {
+  if (action === "save-next") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M6.75 4A1.75 1.75 0 0 0 5 5.75v12.5C5 19.22 5.78 20 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V8.56a1.75 1.75 0 0 0-.51-1.24l-2.81-2.81A1.75 1.75 0 0 0 14.44 4H6.75Zm0 1.5h6.5v3.25h-5.5A1.75 1.75 0 0 0 6 10.5v8h-.25a.25.25 0 0 1-.25-.25V5.75c0-.14.11-.25.25-.25Zm8 .31 2.44 2.44h-2.19a.25.25 0 0 1-.25-.25V5.81Zm-7 4.44h9a.25.25 0 0 1 .25.25v8a.25.25 0 0 1-.25.25h-9a.25.25 0 0 1-.25-.25v-8c0-.14.11-.25.25-.25Zm5.72 2.22a.75.75 0 0 1 1.06 0l1.75 1.75a.75.75 0 0 1 0 1.06l-1.75 1.75a.75.75 0 1 1-1.06-1.06l.47-.47H9.75a.75.75 0 0 1 0-1.5h4.19l-.47-.47a.75.75 0 0 1 0-1.06Z"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.75 4A1.75 1.75 0 0 0 5 5.75v12.5C5 19.22 5.78 20 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V8.56a1.75 1.75 0 0 0-.51-1.24l-2.81-2.81A1.75 1.75 0 0 0 14.44 4H6.75Zm0 1.5h6.5v3.25h-5.5A1.75 1.75 0 0 0 6 10.5v8h-.25a.25.25 0 0 1-.25-.25V5.75c0-.14.11-.25.25-.25Zm8 .31 2.44 2.44h-2.19a.25.25 0 0 1-.25-.25V5.81Zm-7 4.44h9a.25.25 0 0 1 .25.25v8a.25.25 0 0 1-.25.25h-9a.25.25 0 0 1-.25-.25v-8c0-.14.11-.25.25-.25Zm1.5 1.5A.75.75 0 0 0 8.5 12.5v4a.75.75 0 0 0 1.5 0v-4a.75.75 0 0 0-.75-.75Zm2.75 0a.75.75 0 0 0 0 1.5h2a.75.75 0 0 0 0-1.5h-2Z"
+      />
+    </svg>
+  );
+}
+
+function CreateImageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.75 5A1.75 1.75 0 0 0 5 6.75v8.5C5 16.22 5.78 17 6.75 17h6.5A1.75 1.75 0 0 0 15 15.25V6.75C15 5.78 14.22 5 13.25 5H6.75Zm0 1.5h6.5c.14 0 .25.11.25.25v8.5a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25v-1.14l1.4-1.4a.25.25 0 0 1 .35 0l1.35 1.35 1.95-1.95a.25.25 0 0 1 .35 0l1.1 1.1v2.04a.75.75 0 0 0 1.5 0v-8.5C15 5.78 14.22 5 13.25 5H6.75Zm5.75 1.25a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM18 11.25a.75.75 0 0 1 .75.75v2h2a.75.75 0 0 1 0 1.5h-2v2a.75.75 0 0 1-1.5 0v-2h-2a.75.75 0 0 1 0-1.5h2v-2a.75.75 0 0 1 .75-.75Z"
+      />
+    </svg>
+  );
+}
+
+function DeactivateImageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M7.75 6.5a5.75 5.75 0 1 0 0 11.5h8.5a5.75 5.75 0 0 0 0-11.5h-8.5Zm0 1.5h8.5a4.25 4.25 0 0 1 0 8.5h-8.5a4.25 4.25 0 1 1 0-8.5Zm0 1.75a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"
+      />
+    </svg>
+  );
+}
+
+function SelectImageFileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 4.25a.75.75 0 0 1 .75.75v7.19l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 1 1 1.06-1.06l1.72 1.72V5a.75.75 0 0 1 .75-.75Zm-5.25 11a.75.75 0 0 1 .75.75v1.25c0 .14.11.25.25.25h8.5a.25.25 0 0 0 .25-.25V16a.75.75 0 0 1 1.5 0v1.25A1.75 1.75 0 0 1 16.25 19h-8.5A1.75 1.75 0 0 1 6 17.25V16a.75.75 0 0 1 .75-.75Z"
+      />
+    </svg>
+  );
+}
+
+const PROPOSAL_SECTION_QUICK_TEMPLATES = {
+  mission: [
+    {
+      id: "institutional_mission",
+      label: "Base institucional",
+      description: "Declara proposito, cliente y forma de trabajo.",
+      title: "Mision",
+      blocks: [
+        {
+          type: "paragraph",
+          text: "Acompanamos a nuestros clientes con soluciones comerciales y operativas que convierten objetivos de negocio en resultados sostenibles.",
+        },
+        {
+          type: "list",
+          items: [
+            "Entender el contexto real del cliente",
+            "Diseñar soluciones viables y medibles",
+            "Ejecutar con disciplina, cercania y seguimiento",
+          ],
+        },
+      ],
+    },
+    {
+      id: "customer_mission",
+      label: "Enfoque al cliente",
+      description: "Mas orientada a servicio y experiencia.",
+      title: "Mision",
+      blocks: [
+        {
+          type: "heading",
+          text: "Nuestra razon de ser",
+        },
+        {
+          type: "paragraph",
+          text: "Generamos valor para cada cliente a traves de propuestas claras, servicio confiable y una ejecucion consistente de punta a punta.",
+        },
+      ],
+    },
+  ],
+  vision: [
+    {
+      id: "growth_vision",
+      label: "Vision de crecimiento",
+      description: "Proyecta liderazgo y evolucion del negocio.",
+      title: "Vision",
+      blocks: [
+        {
+          type: "paragraph",
+          text: "Ser una organizacion referente por su capacidad de integrar estrategia comercial, conocimiento tecnico y ejecucion confiable en cada proyecto.",
+        },
+        {
+          type: "list",
+          items: [
+            "Construir relaciones de largo plazo",
+            "Elevar el estandar de servicio del sector",
+            "Expandir capacidades con foco en calidad y confianza",
+          ],
+        },
+      ],
+    },
+    {
+      id: "transformational_vision",
+      label: "Vision transformadora",
+      description: "Mas aspiracional y orientada a impacto.",
+      title: "Vision",
+      blocks: [
+        {
+          type: "heading",
+          text: "Hacia donde vamos",
+        },
+        {
+          type: "paragraph",
+          text: "Queremos ser el socio elegido cuando una empresa necesita transformar su operacion comercial con claridad, velocidad y resultados visibles.",
+        },
+      ],
+    },
+  ],
+  executive_summary: [
+    {
+      id: "problem_solution_summary",
+      label: "Problema - solucion",
+      description: "Resume contexto, solucion y resultado esperado.",
+      title: "Resumen ejecutivo",
+      blocks: [
+        {
+          type: "paragraph",
+          text: "Esta propuesta responde a la necesidad de fortalecer la operacion comercial del cliente mediante una solucion integral, alineada con sus objetivos y su contexto actual.",
+        },
+        {
+          type: "list",
+          items: [
+            "Situacion actual y oportunidad detectada",
+            "Solucion propuesta y alcance general",
+            "Beneficios esperados y siguientes pasos",
+          ],
+        },
+      ],
+    },
+    {
+      id: "decision_maker_summary",
+      label: "Para toma de decision",
+      description: "Mas breve y orientada a directivos.",
+      title: "Resumen ejecutivo",
+      blocks: [
+        {
+          type: "heading",
+          text: "Sintesis para decision",
+        },
+        {
+          type: "paragraph",
+          text: "Presentamos una propuesta enfocada en impacto, factibilidad y velocidad de implementacion, con una ruta clara para capturar valor desde las primeras etapas.",
+        },
+      ],
+    },
+  ],
+};
+
+const PROPOSAL_TEMPLATE_VARIABLES = [
+  ["{{client_name}}", "Nombre de la cuenta o cliente asociado"],
+  ["{{contact_name}}", "Nombre del contacto asociado"],
+  ["{{company_name}}", "Nombre visible de la empresa emisora"],
+];
+
+const PROPOSAL_TEMPLATE_VARIABLE_NAMES = new Set(
+  PROPOSAL_TEMPLATE_VARIABLES.map(([token]) =>
+    token.replaceAll("{{", "").replaceAll("}}", "").trim(),
+  ),
+);
+
+function getInvalidProposalPlaceholderTokens(text) {
+  const matches = String(text || "").matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g);
+  const invalidTokens = [];
+
+  for (const match of matches) {
+    const tokenName = String(match[1] || "").trim();
+    if (!PROPOSAL_TEMPLATE_VARIABLE_NAMES.has(tokenName)) {
+      invalidTokens.push(`{{${tokenName}}}`);
+    }
+  }
+
+  return [...new Set(invalidTokens)];
+}
+
+function getProposalBlockInvalidPlaceholderTokens(block) {
+  if (!block) return [];
+
+  if (block.type === "heading" || block.type === "paragraph") {
+    return getInvalidProposalPlaceholderTokens(block.text);
+  }
+
+  if (block.type === "list") {
+    return [
+      ...new Set(
+        (Array.isArray(block.items) ? block.items : []).flatMap((item) =>
+          getInvalidProposalPlaceholderTokens(item),
+        ),
+      ),
+    ];
+  }
+
+  return [];
+}
+
+function getProposalBlockTypeLabel(type) {
+  return (
+    PROPOSAL_BLOCK_TYPE_OPTIONS.find(([value]) => value === type)?.[1] ||
+    "Bloque"
+  );
+}
+
+function createProposalBlocksFromTemplate(template) {
+  return (template.blocks || []).map((block, index) =>
+    createProposalEditorBlock(
+      {
+        id: null,
+        type: block.type || "paragraph",
+        text: block.text || "",
+        items: Array.isArray(block.items) ? [...block.items] : [],
+        assetId: block.assetId || null,
+        assetVersionId: block.assetVersionId || null,
+        image: block.image || null,
+      },
+      index,
+    ),
+  );
+}
 
 function ConfigurationSummaryList({ items }) {
   return (
@@ -150,7 +706,9 @@ function TemporaryFeaturesCard({
       </div>
 
       <div className="configuration-temporary-footer">
-        <span className="field-hint">Ultima actualizacion: {latestUpdateText}</span>
+        <span className="field-hint">
+          Ultima actualizacion: {latestUpdateText}
+        </span>
         <button
           type="button"
           className="btn-primary"
@@ -515,6 +1073,1437 @@ function ConfigurationAuditList({
   );
 }
 
+function ProposalContentConfigurationPanel({
+  config,
+  componentDefinitions,
+  assets,
+  savingProposalContent,
+  assetActionKey,
+  latestUpdateText,
+  onSaveComponent,
+  onCreateAsset,
+  onAddAssetVersion,
+  onArchiveAsset,
+}) {
+  const orderedComponents = useMemo(() => {
+    if (Array.isArray(config?.components) && config.components.length > 0) {
+      return [...config.components].sort(
+        (left, right) => left.displayOrder - right.displayOrder,
+      );
+    }
+    return Array.isArray(componentDefinitions)
+      ? [...componentDefinitions].sort(
+          (left, right) => left.displayOrder - right.displayOrder,
+        )
+      : [];
+  }, [componentDefinitions, config]);
+
+  const [selectedComponentCode, setSelectedComponentCode] = useState("");
+  const [editorTitle, setEditorTitle] = useState("");
+  const [editorBlocks, setEditorBlocks] = useState([]);
+  const [layoutDraft, setLayoutDraft] = useState(createProposalLayoutDraft());
+  const [assetDraft, setAssetDraft] = useState({
+    name: "",
+    category: "institutional",
+    description: "",
+    altText: "",
+    caption: "",
+    fileUrl: "",
+    fileName: "",
+    mimeType: "",
+    fileSizeBytes: null,
+  });
+  const [assetCreateAttempted, setAssetCreateAttempted] = useState(false);
+  const [assetListFilter, setAssetListFilter] = useState("all");
+
+  useEffect(() => {
+    if (!selectedComponentCode && orderedComponents[0]?.componentCode) {
+      setSelectedComponentCode(orderedComponents[0].componentCode);
+    }
+  }, [orderedComponents, selectedComponentCode]);
+
+  const selectedComponent = useMemo(
+    () =>
+      orderedComponents.find(
+        (component) => component.componentCode === selectedComponentCode,
+      ) ||
+      orderedComponents[0] ||
+      null,
+    [orderedComponents, selectedComponentCode],
+  );
+
+  const selectedComponentIndex = useMemo(
+    () =>
+      orderedComponents.findIndex(
+        (component) =>
+          component.componentCode === selectedComponent?.componentCode,
+      ),
+    [orderedComponents, selectedComponent],
+  );
+
+  const completedComponentsCount = useMemo(
+    () =>
+      orderedComponents.filter(
+        (component) =>
+          Array.isArray(component.blocks) && component.blocks.length,
+      ).length,
+    [orderedComponents],
+  );
+
+  const activeAssets = useMemo(
+    () => assets.filter((asset) => asset.status === "active"),
+    [assets],
+  );
+
+  const visibleAssets = useMemo(() => {
+    if (assetListFilter === "active") {
+      return assets.filter((asset) => asset.status === "active");
+    }
+    if (assetListFilter === "archived") {
+      return assets.filter((asset) => asset.status === "archived");
+    }
+    return assets;
+  }, [assets, assetListFilter]);
+
+  const invalidPlaceholderByBlock = useMemo(
+    () =>
+      editorBlocks.map((block) =>
+        getProposalBlockInvalidPlaceholderTokens(block),
+      ),
+    [editorBlocks],
+  );
+
+  const invalidPlaceholderTokens = useMemo(
+    () => [...new Set(invalidPlaceholderByBlock.flat())],
+    [invalidPlaceholderByBlock],
+  );
+
+  const hasInvalidPlaceholders = invalidPlaceholderTokens.length > 0;
+
+  const canCreateImage = Boolean(
+    assetDraft.name && assetDraft.fileUrl && assetActionKey !== "create",
+  );
+  const assetCreateError = useMemo(() => {
+    if (!assetCreateAttempted || canCreateImage) return "";
+    if (!assetDraft.name && !assetDraft.fileUrl) {
+      return "Captura un nombre y carga una imagen antes de crearla.";
+    }
+    if (!assetDraft.name) {
+      return "Captura un nombre para la imagen antes de crearla.";
+    }
+    return "Carga una imagen antes de crearla.";
+  }, [
+    assetCreateAttempted,
+    canCreateImage,
+    assetDraft.name,
+    assetDraft.fileUrl,
+  ]);
+
+  const availableQuickTemplates = useMemo(
+    () =>
+      PROPOSAL_SECTION_QUICK_TEMPLATES[selectedComponent?.componentCode] || [],
+    [selectedComponent],
+  );
+
+  const compatibleImageBlocks = useMemo(
+    () =>
+      editorBlocks.filter((block) => isProposalManualRowCompatibleBlock(block)),
+    [editorBlocks],
+  );
+
+  const manualRowAssignments = useMemo(() => {
+    const assignments = new Map();
+    (Array.isArray(layoutDraft.manualRows)
+      ? layoutDraft.manualRows
+      : []
+    ).forEach((row, rowIndex) => {
+      (Array.isArray(row?.items) ? row.items : []).forEach((item) => {
+        assignments.set(item.blockKey, rowIndex);
+      });
+    });
+    return assignments;
+  }, [layoutDraft.manualRows]);
+
+  const availableManualRowBlocks = useMemo(
+    () =>
+      compatibleImageBlocks.filter(
+        (block) => !manualRowAssignments.has(block.blockKey),
+      ),
+    [compatibleImageBlocks, manualRowAssignments],
+  );
+
+  const manualRowsWithBlocks = useMemo(
+    () =>
+      (Array.isArray(layoutDraft.manualRows) ? layoutDraft.manualRows : []).map(
+        (row, rowIndex) => ({
+          ...row,
+          label: getProposalManualRowLabel(rowIndex),
+          blocks: (Array.isArray(row?.items) ? row.items : [])
+            .map((item) =>
+              editorBlocks.find((block) => block.blockKey === item.blockKey),
+            )
+            .filter(Boolean),
+        }),
+      ),
+    [editorBlocks, layoutDraft.manualRows],
+  );
+
+  const layoutHelpText = useMemo(() => {
+    if (layoutDraft.mode === "horizontal-gallery") {
+      return "Las imagenes compatibles se agrupan automaticamente en una galeria horizontal y el resto del contenido conserva su orden arriba o abajo.";
+    }
+    if (layoutDraft.mode === "manual-rows") {
+      return "Elige exactamente que imagenes comparten fila. Los bloques no asignados seguiran en vertical.";
+    }
+    return "Todos los bloques se muestran uno debajo de otro.";
+  }, [layoutDraft.mode]);
+
+  const manualRowsValidationMessage = useMemo(() => {
+    if (layoutDraft.mode !== "manual-rows") {
+      return "";
+    }
+    if (!compatibleImageBlocks.length) {
+      return "Necesitas al menos una imagen compatible para usar filas manuales.";
+    }
+    if (!manualRowsWithBlocks.length) {
+      return "Agrega al menos una fila horizontal con una imagen asignada.";
+    }
+    return "";
+  }, [
+    compatibleImageBlocks.length,
+    layoutDraft.mode,
+    manualRowsWithBlocks.length,
+  ]);
+
+  function updateEditorBlocks(updater) {
+    setEditorBlocks((current) => {
+      const nextBlocks =
+        typeof updater === "function" ? updater(current) : updater;
+      setLayoutDraft((currentLayoutDraft) =>
+        reconcileProposalLayoutDraftWithBlocks(currentLayoutDraft, nextBlocks),
+      );
+      return nextBlocks;
+    });
+  }
+
+  useEffect(() => {
+    if (!selectedComponent) return;
+    setEditorTitle(selectedComponent.title || "");
+    const nextBlocks = Array.isArray(selectedComponent.blocks)
+      ? selectedComponent.blocks.map((block, index) =>
+          createProposalEditorBlock(block, index),
+        )
+      : [];
+    setEditorBlocks(nextBlocks);
+    setLayoutDraft(
+      buildProposalLayoutDraftFromComponent(selectedComponent, nextBlocks),
+    );
+  }, [selectedComponent]);
+
+  async function handleCreateAsset() {
+    setAssetCreateAttempted(false);
+    await onCreateAsset(assetDraft);
+    setAssetDraft({
+      name: "",
+      category: "institutional",
+      description: "",
+      altText: "",
+      caption: "",
+      fileUrl: "",
+      fileName: "",
+      mimeType: "",
+      fileSizeBytes: null,
+    });
+  }
+
+  async function handleAssetFile(event, mode, assetId = null) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const fileUrl = await readLocalImage(file);
+    const payload = {
+      fileUrl,
+      fileName: file.name,
+      mimeType: file.type || "image/png",
+      fileSizeBytes: file.size,
+      altText: assetDraft.altText,
+      caption: assetDraft.caption,
+    };
+    if (mode === "create") {
+      setAssetDraft((current) => ({
+        ...current,
+        ...payload,
+      }));
+      return;
+    }
+    await onAddAssetVersion(assetId, payload);
+    event.target.value = "";
+  }
+
+  function updateBlock(index, changes) {
+    updateEditorBlocks((current) =>
+      current.map((block, currentIndex) =>
+        currentIndex === index ? { ...block, ...changes } : block,
+      ),
+    );
+  }
+
+  function handleSelectImageAsset(index, assetId) {
+    const asset = assets.find((item) => Number(item.id) === Number(assetId));
+    updateBlock(index, {
+      assetId: asset?.id || null,
+      assetVersionId: asset?.currentVersion?.id || null,
+      image: asset?.currentVersion
+        ? {
+            assetId: asset.id,
+            assetVersionId: asset.currentVersion.id,
+            fileUrl: asset.currentVersion.fileUrl,
+            altText: asset.currentVersion.altText,
+            caption: asset.currentVersion.caption,
+            fileName: asset.currentVersion.fileName,
+            width: asset.currentVersion.width,
+            height: asset.currentVersion.height,
+          }
+        : null,
+    });
+  }
+
+  function goToComponent(componentCode) {
+    setSelectedComponentCode(componentCode);
+  }
+
+  function goToRelativeComponent(offset) {
+    if (!orderedComponents.length) return;
+    const nextIndex = Math.min(
+      Math.max(selectedComponentIndex + offset, 0),
+      orderedComponents.length - 1,
+    );
+    goToComponent(orderedComponents[nextIndex].componentCode);
+  }
+
+  function applyQuickTemplate(template) {
+    setEditorTitle(template.title || selectedComponent?.title || "");
+    updateEditorBlocks(createProposalBlocksFromTemplate(template));
+  }
+
+  function handleLayoutModeChange(nextMode) {
+    setLayoutDraft((current) => ({
+      ...current,
+      mode: normalizeProposalLayoutMode(nextMode),
+    }));
+  }
+
+  function handleAddManualRow() {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: [...current.manualRows, createProposalManualRow()],
+    }));
+  }
+
+  function handleRemoveManualRow(rowId) {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: current.manualRows.filter((row) => row.rowId !== rowId),
+    }));
+  }
+
+  function handleAssignBlockToManualRow(blockKey, rowId) {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: current.manualRows
+        .map((row) => ({
+          ...row,
+          items: row.items.filter((item) => item.blockKey !== blockKey),
+        }))
+        .map((row) =>
+          row.rowId === rowId
+            ? {
+                ...row,
+                items: [...row.items, { blockKey }],
+              }
+            : row,
+        )
+        .filter((row) => row.items.length > 0),
+    }));
+  }
+
+  function handleAssignBlockToNewManualRow(blockKey) {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: [
+        ...current.manualRows
+          .map((row) => ({
+            ...row,
+            items: row.items.filter((item) => item.blockKey !== blockKey),
+          }))
+          .filter((row) => row.items.length > 0),
+        createProposalManualRow([blockKey]),
+      ],
+    }));
+  }
+
+  function handleRemoveBlockFromManualRow(rowId, blockKey) {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: current.manualRows
+        .map((row) =>
+          row.rowId === rowId
+            ? {
+                ...row,
+                items: row.items.filter((item) => item.blockKey !== blockKey),
+              }
+            : row,
+        )
+        .filter((row) => row.items.length > 0),
+    }));
+  }
+
+  function handleMoveManualRowBlock(rowId, blockKey, offset) {
+    setLayoutDraft((current) => ({
+      ...current,
+      manualRows: current.manualRows.map((row) => {
+        if (row.rowId !== rowId) {
+          return row;
+        }
+
+        const currentIndex = row.items.findIndex(
+          (item) => item.blockKey === blockKey,
+        );
+        const targetIndex = currentIndex + offset;
+        if (
+          currentIndex < 0 ||
+          targetIndex < 0 ||
+          targetIndex >= row.items.length
+        ) {
+          return row;
+        }
+
+        const nextItems = [...row.items];
+        [nextItems[currentIndex], nextItems[targetIndex]] = [
+          nextItems[targetIndex],
+          nextItems[currentIndex],
+        ];
+        return {
+          ...row,
+          items: nextItems,
+        };
+      }),
+    }));
+  }
+
+  async function handleSaveComponent() {
+    if (!selectedComponent) return false;
+    if (hasInvalidPlaceholders) return false;
+    if (manualRowsValidationMessage) return false;
+    const payload = {
+      title: editorTitle,
+      layoutConfig: buildProposalLayoutConfigPayload(layoutDraft, editorBlocks),
+      blocks: editorBlocks.map((block) => ({
+        type: block.type,
+        text: block.text,
+        items: Array.isArray(block.items) ? block.items.filter(Boolean) : [],
+        assetId: block.assetId,
+        assetVersionId: block.assetVersionId,
+      })),
+    };
+    await onSaveComponent(selectedComponent.componentCode, payload);
+    return true;
+  }
+
+  async function handleSaveAndContinue() {
+    const saved = await handleSaveComponent();
+    if (saved && selectedComponentIndex < orderedComponents.length - 1) {
+      goToRelativeComponent(1);
+    }
+  }
+
+  return (
+    <div className="configuration-section-stack">
+      <section className="configuration-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Contenido institucional de propuestas</h4>
+            <p>
+              Edita cada componente de la estructura fija de la propuesta con
+              bloques de texto e imagen.
+            </p>
+          </div>
+          <div className="configuration-inline-actions">
+            <span className="configuration-inline-pill">
+              {latestUpdateText}
+            </span>
+          </div>
+        </div>
+
+        <div className="configuration-proposal-intro">
+          <div className="configuration-proposal-metrics">
+            <article className="configuration-proposal-metric-card">
+              <strong>{completedComponentsCount}</strong>
+              <span>secciones con contenido</span>
+            </article>
+            <article className="configuration-proposal-metric-card">
+              <strong>
+                {orderedComponents.length - completedComponentsCount}
+              </strong>
+              <span>secciones pendientes</span>
+            </article>
+            <article className="configuration-proposal-metric-card">
+              <strong>{activeAssets.length}</strong>
+              <span>assets activos</span>
+            </article>
+          </div>
+
+          <div className="configuration-proposal-steps">
+            <article className="configuration-proposal-step-card">
+              <strong>1. Recorre la estructura</strong>
+              <p>
+                Avanza seccion por seccion con el wizard. Cada paso corresponde
+                a una parte fija de la propuesta.
+              </p>
+            </article>
+            <article className="configuration-proposal-step-card">
+              <strong>2. Usa una base o crea bloques</strong>
+              <p>
+                En Mision, Vision y Resumen ejecutivo ya tienes plantillas
+                rapidas para partir de un texto inicial.
+              </p>
+            </article>
+            <article className="configuration-proposal-step-card">
+              <strong>3. Guarda cada seccion</strong>
+              <p>
+                Guarda cada seccion para dejar actualizada la base con la que
+                nacen las nuevas propuestas.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div className="configuration-proposal-wizard">
+          <div className="configuration-proposal-wizard-progress">
+            {orderedComponents.map((component, index) => {
+              const isActive =
+                component.componentCode === selectedComponent?.componentCode;
+              const isComplete = Array.isArray(component.blocks)
+                ? component.blocks.length > 0
+                : false;
+
+              return (
+                <button
+                  key={component.componentCode}
+                  type="button"
+                  className={
+                    isActive
+                      ? "configuration-proposal-step-chip is-active"
+                      : isComplete
+                        ? "configuration-proposal-step-chip is-complete"
+                        : "configuration-proposal-step-chip"
+                  }
+                  onClick={() => goToComponent(component.componentCode)}
+                >
+                  <span>{`Paso ${index + 1}`}</span>
+                  <strong>{component.title}</strong>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="configuration-proposal-editor configuration-proposal-editor-shell">
+            {selectedComponent ? (
+              <>
+                <div className="configuration-proposal-wizard-header">
+                  <div>
+                    <span className="configuration-status-pill">
+                      {`Seccion ${selectedComponentIndex + 1} de ${orderedComponents.length}`}
+                    </span>
+                    <h5>{selectedComponent.title}</h5>
+                    <p>
+                      Completa esta seccion y avanza con Siguiente. Puedes
+                      saltar a otra seccion desde los pasos superiores si lo
+                      necesitas.
+                    </p>
+                  </div>
+                  <div className="configuration-inline-actions">
+                    <button
+                      type="button"
+                      className="configuration-step-icon-button"
+                      disabled={selectedComponentIndex <= 0}
+                      onClick={() => goToRelativeComponent(-1)}
+                      aria-label="Anterior"
+                      title="Anterior"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        <path d="M14.78 6.47a.75.75 0 0 1 0 1.06L11.31 11l3.47 3.47a.75.75 0 1 1-1.06 1.06l-4-4a.75.75 0 0 1 0-1.06l4-4a.75.75 0 0 1 1.06 0Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="configuration-step-icon-button"
+                      disabled={
+                        selectedComponentIndex >= orderedComponents.length - 1
+                      }
+                      onClick={() => goToRelativeComponent(1)}
+                      aria-label="Siguiente"
+                      title="Siguiente"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        <path d="M9.22 6.47a.75.75 0 0 1 1.06 0l4 4a.75.75 0 0 1 0 1.06l-4 4a.75.75 0 1 1-1.06-1.06L12.69 11 9.22 7.53a.75.75 0 0 1 0-1.06Z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="configuration-proposal-editor-header">
+                  <div>
+                    <strong>Paso 1. Ajusta el titulo de la seccion</strong>
+                    <p>
+                      Este titulo aparecera como base cuando se clone el
+                      contenido a una propuesta nueva.
+                    </p>
+                  </div>
+                  <span className="configuration-inline-pill">
+                    {editorBlocks.length} bloques en esta seccion
+                  </span>
+                </div>
+
+                <label className="field-group">
+                  <span>Titulo de la seccion</span>
+                  <input
+                    type="text"
+                    value={editorTitle}
+                    onChange={(event) => setEditorTitle(event.target.value)}
+                  />
+                </label>
+
+                <div className="configuration-proposal-layout-panel">
+                  <div className="configuration-proposal-editor-header">
+                    <div>
+                      <strong>Paso 2. Define la disposicion</strong>
+                      <p>
+                        Elige como se acomoda el contenido visual de esta
+                        seccion.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="field-group">
+                    <span>Disposicion de la seccion</span>
+                    <select
+                      value={layoutDraft.mode}
+                      onChange={(event) =>
+                        handleLayoutModeChange(event.target.value)
+                      }
+                    >
+                      {PROPOSAL_LAYOUT_MODE_OPTIONS.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="configuration-proposal-layout-help">
+                    <strong>Ayuda contextual</strong>
+                    <p>{layoutHelpText}</p>
+                  </div>
+
+                  {layoutDraft.mode === "manual-rows" ? (
+                    <div className="configuration-proposal-manual-layout">
+                      <section className="configuration-proposal-manual-layout-panel">
+                        <div className="configuration-subsection-heading">
+                          <div>
+                            <strong>Imagenes disponibles para filas</strong>
+                            <p>
+                              Solo se muestran imagenes compatibles no
+                              asignadas.
+                            </p>
+                          </div>
+                        </div>
+
+                        {availableManualRowBlocks.length ? (
+                          <div className="configuration-proposal-manual-layout-blocks">
+                            {availableManualRowBlocks.map((block) => (
+                              <article
+                                key={block.blockKey}
+                                className="configuration-proposal-manual-layout-card"
+                              >
+                                <div className="configuration-proposal-manual-layout-card-preview">
+                                  {block.image?.fileUrl ? (
+                                    <img
+                                      src={block.image.fileUrl}
+                                      alt={
+                                        block.image.altText ||
+                                        getProposalManualRowBlockLabel(block)
+                                      }
+                                    />
+                                  ) : (
+                                    <div className="configuration-logo-empty">
+                                      Sin preview
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="configuration-proposal-manual-layout-card-copy">
+                                  <span className="configuration-proposal-block-badge">
+                                    Imagen
+                                  </span>
+                                  <strong>
+                                    {getProposalManualRowBlockLabel(block)}
+                                  </strong>
+                                </div>
+                                <div className="configuration-proposal-manual-layout-card-actions">
+                                  {manualRowsWithBlocks.map((row) => (
+                                    <button
+                                      key={`${row.rowId}-${block.blockKey}`}
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() =>
+                                        handleAssignBlockToManualRow(
+                                          block.blockKey,
+                                          row.rowId,
+                                        )
+                                      }
+                                    >
+                                      {`Mover a ${row.label.toLowerCase()}`}
+                                    </button>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() =>
+                                      handleAssignBlockToNewManualRow(
+                                        block.blockKey,
+                                      )
+                                    }
+                                  >
+                                    Mover a nueva fila
+                                  </button>
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="field-hint">
+                            No hay imagenes disponibles para agrupar.
+                          </p>
+                        )}
+                      </section>
+
+                      <section className="configuration-proposal-manual-layout-panel">
+                        <div className="configuration-subsection-heading">
+                          <div>
+                            <strong>Filas horizontales</strong>
+                            <p>
+                              Estas filas se renderizan en horizontal en la
+                              propuesta.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={handleAddManualRow}
+                          >
+                            Agregar fila
+                          </button>
+                        </div>
+
+                        {manualRowsWithBlocks.length ? (
+                          <div className="configuration-proposal-manual-row-list">
+                            {manualRowsWithBlocks.map((row, rowIndex) => (
+                              <article
+                                key={row.rowId}
+                                className="configuration-proposal-manual-row-card"
+                              >
+                                <div className="configuration-proposal-manual-row-header">
+                                  <strong>
+                                    {getProposalManualRowLabel(rowIndex)}
+                                  </strong>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() =>
+                                      handleRemoveManualRow(row.rowId)
+                                    }
+                                  >
+                                    Eliminar fila
+                                  </button>
+                                </div>
+
+                                <div className="configuration-proposal-manual-row-items">
+                                  {row.blocks.map((block, blockIndex) => (
+                                    <article
+                                      key={`${row.rowId}-${block.blockKey}`}
+                                      className="configuration-proposal-manual-layout-card is-assigned"
+                                    >
+                                      <div className="configuration-proposal-manual-layout-card-preview">
+                                        {block.image?.fileUrl ? (
+                                          <img
+                                            src={block.image.fileUrl}
+                                            alt={
+                                              block.image.altText ||
+                                              getProposalManualRowBlockLabel(
+                                                block,
+                                              )
+                                            }
+                                          />
+                                        ) : (
+                                          <div className="configuration-logo-empty">
+                                            Sin preview
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="configuration-proposal-manual-layout-card-copy">
+                                        <strong>
+                                          {getProposalManualRowBlockLabel(
+                                            block,
+                                          )}
+                                        </strong>
+                                      </div>
+                                      <div className="configuration-proposal-manual-layout-card-actions">
+                                        <button
+                                          type="button"
+                                          className="btn-secondary"
+                                          disabled={blockIndex <= 0}
+                                          onClick={() =>
+                                            handleMoveManualRowBlock(
+                                              row.rowId,
+                                              block.blockKey,
+                                              -1,
+                                            )
+                                          }
+                                        >
+                                          Mover a la izquierda
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="btn-secondary"
+                                          disabled={
+                                            blockIndex >= row.blocks.length - 1
+                                          }
+                                          onClick={() =>
+                                            handleMoveManualRowBlock(
+                                              row.rowId,
+                                              block.blockKey,
+                                              1,
+                                            )
+                                          }
+                                        >
+                                          Mover a la derecha
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="btn-secondary"
+                                          onClick={() =>
+                                            handleRemoveBlockFromManualRow(
+                                              row.rowId,
+                                              block.blockKey,
+                                            )
+                                          }
+                                        >
+                                          Quitar
+                                        </button>
+                                      </div>
+                                    </article>
+                                  ))}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="field-hint">
+                            Aun no hay filas manuales definidas.
+                          </p>
+                        )}
+
+                        {manualRowsValidationMessage ? (
+                          <p className="field-error-text">
+                            {manualRowsValidationMessage}
+                          </p>
+                        ) : null}
+                      </section>
+                    </div>
+                  ) : null}
+                </div>
+
+                <section className="configuration-proposal-variable-help">
+                  <strong>Variables permitidas en bloques de texto</strong>
+                  <p className="field-hint">
+                    Estos placeholders se resuelven al previsualizar o generar
+                    el PDF de la propuesta.
+                  </p>
+                  <ul className="configuration-bullet-list">
+                    {PROPOSAL_TEMPLATE_VARIABLES.map(([token, description]) => (
+                      <li key={token}>
+                        <strong>{token}</strong>: {description}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                {availableQuickTemplates.length ? (
+                  <div className="configuration-proposal-template-panel">
+                    <div className="configuration-proposal-editor-header">
+                      <div>
+                        <strong>
+                          Paso 2. Usa una plantilla rapida si quieres empezar
+                          con una base
+                        </strong>
+                        <p>
+                          Esto reemplaza el borrador actual de la seccion por un
+                          texto inicial editable.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="configuration-proposal-template-grid">
+                      {availableQuickTemplates.map((template) => (
+                        <article
+                          key={template.id}
+                          className="configuration-proposal-template-card"
+                        >
+                          <strong>{template.label}</strong>
+                          <p>{template.description}</p>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => applyQuickTemplate(template)}
+                          >
+                            Usar plantilla
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="configuration-proposal-editor-header">
+                  <div>
+                    <strong>
+                      {availableQuickTemplates.length
+                        ? "Paso 3. Ajusta o agrega bloques"
+                        : "Paso 2. Agrega los bloques que necesita esta seccion"}
+                    </strong>
+                    <p>
+                      Puedes mezclar texto e imagen. El orden en pantalla sera
+                      el mismo orden de esta lista.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="configuration-proposal-block-toolbar">
+                  {PROPOSAL_BLOCK_TYPE_OPTIONS.map(([type, label]) => (
+                    <button
+                      key={type}
+                      type="button"
+                      className="configuration-block-add-icon-button"
+                      onClick={() =>
+                        updateEditorBlocks((current) => [
+                          ...current,
+                          createProposalEditorBlock(
+                            createEmptyProposalBlock(type),
+                            current.length,
+                          ),
+                        ])
+                      }
+                      aria-label={`Agregar ${label.toLowerCase()}`}
+                      title={`Agregar ${label.toLowerCase()}`}
+                    >
+                      <ProposalBlockAddIcon type={type} />
+                    </button>
+                  ))}
+                </div>
+
+                <div className="configuration-proposal-block-list">
+                  {!editorBlocks.length ? (
+                    <article className="configuration-proposal-empty-state">
+                      <strong>Esta seccion aun no tiene contenido</strong>
+                      <p>
+                        Agrega un encabezado o un parrafo para empezar. Si la
+                        seccion requiere imagen, primero asegurate de tener un
+                        asset creado en la biblioteca de abajo.
+                      </p>
+                    </article>
+                  ) : null}
+
+                  {editorBlocks.map((block, index) => (
+                    <article
+                      key={block.blockKey || `${block.type}-${index}`}
+                      className="configuration-proposal-block-card"
+                    >
+                      <div className="configuration-proposal-block-head">
+                        <div>
+                          <div className="configuration-proposal-block-title-row">
+                            <span className="configuration-proposal-block-index">
+                              {index + 1}.
+                            </span>
+                            <span className="configuration-proposal-block-badge">
+                              {getProposalBlockTypeLabel(block.type)}
+                            </span>
+                          </div>
+                          <span className="field-hint">
+                            {block.type === "heading"
+                              ? "Texto breve para abrir o separar contenido"
+                              : block.type === "paragraph"
+                                ? "Parrafo libre para explicar contexto o narrativa"
+                                : block.type === "list"
+                                  ? "Un elemento por linea"
+                                  : "Selecciona una imagen reutilizable desde la biblioteca institucional"}
+                          </span>
+                          {block.type === "image" &&
+                          layoutDraft.mode === "manual-rows" ? (
+                            <span className="field-hint">
+                              {manualRowAssignments.has(block.blockKey)
+                                ? `En ${getProposalManualRowLabel(manualRowAssignments.get(block.blockKey))}`
+                                : "Sin fila horizontal"}
+                            </span>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          className="configuration-block-remove-icon-button"
+                          onClick={() =>
+                            updateEditorBlocks((current) =>
+                              current.filter(
+                                (_, currentIndex) => currentIndex !== index,
+                              ),
+                            )
+                          }
+                          aria-label="Quitar bloque"
+                          title="Quitar bloque"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            focusable="false"
+                            aria-hidden="true"
+                          >
+                            <path
+                              fill="currentColor"
+                              d="M9.75 4.5a.75.75 0 0 1 .6-.3h3.3a.75.75 0 0 1 .6.3l.9 1.2h3.1a.75.75 0 0 1 0 1.5h-.57l-.78 10.13A2.25 2.25 0 0 1 13.66 19.5h-3.32a2.25 2.25 0 0 1-2.24-2.17L7.32 7.2h-.57a.75.75 0 0 1 0-1.5h3.1l.9-1.2Zm1.0 1.2h2.5l-.15-.2h-2.2l-.15.2Zm-1.15 1.5.74 9.99a.75.75 0 0 0 .75.71h3.32a.75.75 0 0 0 .75-.71l.74-9.99H9.6Zm1.65 2.05a.75.75 0 0 1 .75.75v5.2a.75.75 0 0 1-1.5 0V10a.75.75 0 0 1 .75-.75Zm3.0 0A.75.75 0 0 1 15 10v5.2a.75.75 0 0 1-1.5 0V10a.75.75 0 0 1 .75-.75Z"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {block.type === "heading" ||
+                      block.type === "paragraph" ? (
+                        <>
+                          <textarea
+                            className={
+                              invalidPlaceholderByBlock[index]?.length
+                                ? "field-input-error"
+                                : undefined
+                            }
+                            rows={
+                              block.type === "heading"
+                                ? 2
+                                : selectedComponent.componentCode ===
+                                    "document_rights"
+                                  ? 16
+                                  : 8
+                            }
+                            value={block.text}
+                            onChange={(event) =>
+                              updateBlock(index, { text: event.target.value })
+                            }
+                          />
+                          <InlineFieldError
+                            message={
+                              invalidPlaceholderByBlock[index]?.length
+                                ? `Variables no permitidas: ${invalidPlaceholderByBlock[index].join(", ")}`
+                                : ""
+                            }
+                          />
+                        </>
+                      ) : null}
+
+                      {block.type === "list" ? (
+                        <>
+                          <textarea
+                            className={
+                              invalidPlaceholderByBlock[index]?.length
+                                ? "field-input-error"
+                                : undefined
+                            }
+                            rows={5}
+                            placeholder="Un item por linea"
+                            value={(block.items || []).join("\n")}
+                            onChange={(event) =>
+                              updateBlock(index, {
+                                items: event.target.value
+                                  .split("\n")
+                                  .map((value) => value.trim())
+                                  .filter(Boolean),
+                              })
+                            }
+                          />
+                          <InlineFieldError
+                            message={
+                              invalidPlaceholderByBlock[index]?.length
+                                ? `Variables no permitidas: ${invalidPlaceholderByBlock[index].join(", ")}`
+                                : ""
+                            }
+                          />
+                        </>
+                      ) : null}
+
+                      {block.type === "image" ? (
+                        <div className="configuration-proposal-image-editor">
+                          <select
+                            value={block.assetId || ""}
+                            onChange={(event) =>
+                              handleSelectImageAsset(index, event.target.value)
+                            }
+                          >
+                            <option value="">Selecciona un asset</option>
+                            {activeAssets.map((asset) => (
+                              <option key={asset.id} value={asset.id}>
+                                {asset.name} · v
+                                {asset.currentVersion?.versionNumber || 1}
+                              </option>
+                            ))}
+                          </select>
+                          {!activeAssets.length ? (
+                            <p className="field-hint">
+                              Todavia no hay assets activos. Crealos en la
+                              biblioteca institucional de abajo y luego vuelve a
+                              este bloque.
+                            </p>
+                          ) : (
+                            <p className="field-hint">
+                              La propuesta guardara una copia historica de la
+                              version actual de la imagen.
+                            </p>
+                          )}
+                          {block.image?.fileUrl ? (
+                            <div className="configuration-proposal-image-preview">
+                              <img
+                                src={block.image.fileUrl}
+                                alt={block.image.altText || editorTitle}
+                              />
+                              <span>
+                                {block.image.caption ||
+                                  block.image.fileName ||
+                                  "Imagen seleccionada"}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+
+                <div className="configuration-proposal-editor-actions configuration-proposal-wizard-actions">
+                  <div className="configuration-inline-actions">
+                    <button
+                      type="button"
+                      className="configuration-wizard-save-icon-button"
+                      disabled={
+                        savingProposalContent ||
+                        !selectedComponent ||
+                        hasInvalidPlaceholders ||
+                        Boolean(manualRowsValidationMessage)
+                      }
+                      onClick={handleSaveComponent}
+                      aria-label={
+                        savingProposalContent
+                          ? "Guardando seccion"
+                          : "Guardar seccion"
+                      }
+                      title={
+                        savingProposalContent
+                          ? "Guardando seccion"
+                          : "Guardar seccion"
+                      }
+                    >
+                      <ProposalWizardActionIcon action="save" />
+                    </button>
+                    <button
+                      type="button"
+                      className="configuration-wizard-save-icon-button is-primary"
+                      disabled={
+                        savingProposalContent ||
+                        !selectedComponent ||
+                        hasInvalidPlaceholders ||
+                        Boolean(manualRowsValidationMessage) ||
+                        selectedComponentIndex >= orderedComponents.length - 1
+                      }
+                      onClick={handleSaveAndContinue}
+                      aria-label={
+                        savingProposalContent
+                          ? "Guardando y continuando"
+                          : "Guardar y seguir"
+                      }
+                      title={
+                        savingProposalContent
+                          ? "Guardando y continuando"
+                          : "Guardar y seguir"
+                      }
+                    >
+                      <ProposalWizardActionIcon action="save-next" />
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="field-hint">
+                Selecciona una seccion para editarla.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="configuration-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Biblioteca de imagenes</h4>
+            <p>
+              Administra las imagenes reutilizables que pueden insertarse en las
+              propuestas comerciales.
+            </p>
+          </div>
+          <span className="configuration-inline-pill">
+            {assets.length} assets
+          </span>
+        </div>
+
+        <section className="configuration-assets-subsection">
+          <div className="configuration-subsection-heading">
+            <div>
+              <strong>Nueva imagen</strong>
+              <p>
+                Completa los datos y crea una imagen reutilizable para
+                propuestas.
+              </p>
+            </div>
+          </div>
+
+          <div className="configuration-assets-form-grid">
+            <input
+              type="text"
+              className={getFieldClassName(
+                assetCreateError && !assetDraft.name,
+              )}
+              value={assetDraft.name}
+              placeholder="Nombre de la imagen"
+              onChange={(event) =>
+                setAssetDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+            />
+            <select
+              value={assetDraft.category}
+              onChange={(event) =>
+                setAssetDraft((current) => ({
+                  ...current,
+                  category: event.target.value,
+                }))
+              }
+            >
+              {PROPOSAL_ASSET_CATEGORIES.map((category) => (
+                <option key={category} value={category}>
+                  {getProposalAssetCategoryLabel(category)}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={assetDraft.altText}
+              placeholder="Texto alternativo"
+              onChange={(event) =>
+                setAssetDraft((current) => ({
+                  ...current,
+                  altText: event.target.value,
+                }))
+              }
+            />
+            <input
+              type="text"
+              value={assetDraft.caption}
+              placeholder="Texto visible o pie de imagen"
+              onChange={(event) =>
+                setAssetDraft((current) => ({
+                  ...current,
+                  caption: event.target.value,
+                }))
+              }
+            />
+            <textarea
+              rows={2}
+              className="configuration-assets-form-span"
+              value={assetDraft.description}
+              placeholder="Descripción de la imagen"
+              onChange={(event) =>
+                setAssetDraft((current) => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+            />
+            <div className="configuration-assets-form-actions configuration-assets-form-span">
+              <span className="field-hint">
+                Primero carga una imagen, luego crea el asset para que aparezca
+                en el selector de bloques.
+              </span>
+              <div className="configuration-assets-file-picker">
+                <label
+                  className={`configuration-asset-file-trigger${
+                    assetCreateError && !assetDraft.fileUrl
+                      ? " field-input-error"
+                      : ""
+                  }`}
+                  htmlFor="create-asset-image-file"
+                >
+                  <SelectImageFileIcon />
+                  <span>Seleccionar</span>
+                </label>
+                <input
+                  id="create-asset-image-file"
+                  type="file"
+                  accept="image/*"
+                  className="configuration-asset-file-input"
+                  onChange={(event) => handleAssetFile(event, "create")}
+                />
+                <span className="configuration-assets-file-name">
+                  {assetDraft.fileName || "Ningun archivo seleccionado"}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="configuration-create-image-icon-button"
+                disabled={assetActionKey === "create"}
+                onClick={() => {
+                  if (!canCreateImage) {
+                    setAssetCreateAttempted(true);
+                    return;
+                  }
+                  handleCreateAsset();
+                }}
+                aria-label="Crear imagen"
+                title="Crear imagen"
+              >
+                <CreateImageIcon />
+              </button>
+              <InlineFieldError message={assetCreateError} />
+            </div>
+          </div>
+        </section>
+
+        <section className="configuration-assets-subsection">
+          <div className="configuration-subsection-heading">
+            <div>
+              <strong>Listado de imágenes</strong>
+              <p>Consulta, filtra y desactiva las imágenes disponibles.</p>
+            </div>
+            <span className="configuration-inline-pill">
+              {visibleAssets.length} imagenes
+            </span>
+          </div>
+
+          <div className="configuration-assets-toolbar">
+            <div
+              className="configuration-assets-filter"
+              role="group"
+              aria-label="Filtro de imagenes"
+            >
+              {[
+                ["all", "Todas"],
+                ["active", "Activas"],
+                ["archived", "Desactivadas"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    assetListFilter === value
+                      ? "configuration-assets-filter-badge is-active"
+                      : "configuration-assets-filter-badge"
+                  }
+                  aria-pressed={assetListFilter === value}
+                  onClick={() => setAssetListFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="configuration-assets-grid">
+            {visibleAssets.map((asset) => (
+              <article key={asset.id} className="configuration-asset-card">
+                <div className="configuration-asset-preview">
+                  {asset.currentVersion?.fileUrl ? (
+                    <img
+                      src={asset.currentVersion.fileUrl}
+                      alt={asset.currentVersion.altText || asset.name}
+                    />
+                  ) : (
+                    <div className="configuration-logo-empty">Sin preview</div>
+                  )}
+                </div>
+                <div className="configuration-asset-copy">
+                  <strong>{asset.name}</strong>
+                  <span>{getProposalAssetCategoryLabel(asset.category)}</span>
+                  <span>
+                    Estado: {asset.status} · v
+                    {asset.currentVersion?.versionNumber || 1}
+                  </span>
+                </div>
+                <div className="configuration-asset-actions">
+                  <button
+                    type="button"
+                    className="configuration-asset-deactivate-icon-button"
+                    disabled={
+                      asset.status === "archived" ||
+                      assetActionKey === `archive:${asset.id}`
+                    }
+                    onClick={() => onArchiveAsset(asset.id)}
+                    aria-label={
+                      assetActionKey === `archive:${asset.id}`
+                        ? "Desactivando imagen"
+                        : "Desactivar imagen"
+                    }
+                    title={
+                      assetActionKey === `archive:${asset.id}`
+                        ? "Desactivando imagen"
+                        : "Desactivar imagen"
+                    }
+                  >
+                    <DeactivateImageIcon />
+                  </button>
+                  <label
+                    className="configuration-asset-file-trigger"
+                    htmlFor={`asset-version-file-${asset.id}`}
+                  >
+                    <SelectImageFileIcon />
+                    <span>Seleccionar</span>
+                  </label>
+                  <input
+                    id={`asset-version-file-${asset.id}`}
+                    className="configuration-asset-file-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) =>
+                      handleAssetFile(event, "version", asset.id)
+                    }
+                  />
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+    </div>
+  );
+}
+
 export default function ConfigurationPage() {
   const {
     loading,
@@ -531,6 +2520,11 @@ export default function ConfigurationPage() {
     workspacePlaybookDetail,
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
+    proposalContentConfig,
+    proposalComponentDefinitions,
+    institutionalAssets,
+    savingProposalContent,
+    assetActionKey,
     fieldErrors,
     isDirty,
     canSave,
@@ -539,6 +2533,7 @@ export default function ConfigurationPage() {
     temporaryFeaturesCanSave,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
+    latestProposalContentUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -552,6 +2547,10 @@ export default function ConfigurationPage() {
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
+    saveProposalContentComponent,
+    createProposalAsset,
+    addProposalAssetVersion,
+    archiveProposalAsset,
   } = useConfigurationPage();
 
   const activeSectionMeta = useMemo(
@@ -1189,6 +3188,21 @@ export default function ConfigurationPage() {
                 onOpenAudit={() => changeSection("audit")}
               />
             </div>
+          ) : null}
+
+          {activeSection === "proposal_content" ? (
+            <ProposalContentConfigurationPanel
+              config={proposalContentConfig}
+              componentDefinitions={proposalComponentDefinitions}
+              assets={institutionalAssets}
+              savingProposalContent={savingProposalContent}
+              assetActionKey={assetActionKey}
+              latestUpdateText={latestProposalContentUpdateText}
+              onSaveComponent={saveProposalContentComponent}
+              onCreateAsset={createProposalAsset}
+              onAddAssetVersion={addProposalAssetVersion}
+              onArchiveAsset={archiveProposalAsset}
+            />
           ) : null}
 
           {activeSection === "audit" ? (

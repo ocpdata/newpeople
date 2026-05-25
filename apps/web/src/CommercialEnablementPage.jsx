@@ -81,6 +81,9 @@ const ASSET_FIELD_MESSAGES = {
   summary: "Resumen requerido",
 };
 
+const SINGLE_RESOURCE_MESSAGE =
+  "Cada activo solo puede tener un archivo o una URL. Quita el recurso actual antes de agregar otro.";
+
 function emptyLinkDraft() {
   return {
     url: "",
@@ -97,10 +100,10 @@ function emptyDraft() {
     summary: "",
     internalDescription: "",
     assetTypeCode: "presentation",
-    status: "draft",
+    status: "published",
     sourceType: "mixed",
-    visibilityLevel: "internal_sales",
-    audienceCode: "seller",
+    visibilityLevel: "client_safe",
+    audienceCode: "mixed",
     languageCode: "es",
     manufacturerCodes: [],
     solutionCodes: [],
@@ -112,7 +115,7 @@ function emptyDraft() {
     themeTags: [],
     personaTags: [],
     recommendedRoleTags: [],
-    isInternal: true,
+    isInternal: false,
     isDownloadable: true,
   };
 }
@@ -197,10 +200,10 @@ function buildDraftFromAsset(asset) {
     summary: asset.summary || "",
     internalDescription: asset.internalDescription || "",
     assetTypeCode: asset.assetTypeCode || "presentation",
-    status: asset.status || "draft",
+    status: asset.status || "published",
     sourceType: asset.sourceType || "mixed",
-    visibilityLevel: asset.visibilityLevel || "internal_sales",
-    audienceCode: asset.audienceCode || "seller",
+    visibilityLevel: asset.visibilityLevel || "client_safe",
+    audienceCode: asset.audienceCode || "mixed",
     languageCode: asset.languageCode || "es",
     manufacturerCodes: getCatalogCodes(asset, "manufacturer"),
     solutionCodes: getCatalogCodes(asset, "solution"),
@@ -237,10 +240,22 @@ function buildAssetPayload(draftValue) {
   };
 }
 
+function buildDraftFromIntakeSession(session) {
+  const payload = session?.acceptedPayload || session?.draftPayload || {};
+  return {
+    ...emptyDraft(),
+    ...payload,
+    sourceType: "file",
+    isInternal: payload?.visibilityLevel !== "client_safe",
+  };
+}
+
 function buildPendingFileId(file) {
-  return [file?.name || "archivo", file?.size || 0, file?.lastModified || 0].join(
-    "::",
-  );
+  return [
+    file?.name || "archivo",
+    file?.size || 0,
+    file?.lastModified || 0,
+  ].join("::");
 }
 
 function deriveSourceType(baseSourceType, fileCount, linkCount) {
@@ -359,6 +374,17 @@ function SummaryCard({ label, value, helper, tone = "default" }) {
   );
 }
 
+function AnalyzeDocumentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        d="M12 3l1.55 3.95L17.5 8.5l-3.95 1.55L12 14l-1.55-3.95L6.5 8.5l3.95-1.55L12 3zm6 8l.9 2.1L21 14l-2.1.9L18 17l-.9-2.1L15 14l2.1-.9L18 11zM7 14l1.2 2.8L11 18l-2.8 1.2L7 22l-1.2-2.8L3 18l2.8-1.2L7 14z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function emptyCatalogAdminDrafts() {
   return CATALOG_ADMIN_TYPES.reduce((accumulator, entry) => {
     accumulator[entry.type] = {
@@ -374,6 +400,29 @@ function buildCatalogAdminEditor(entry) {
     name: entry?.name || "",
     description: entry?.description || "",
   };
+}
+
+function getIntakeStatusLabel(status) {
+  switch (String(status || "").trim()) {
+    case "analysis_pending":
+      return "Analisis pendiente";
+    case "pending":
+      return "Pendiente";
+    case "completed":
+      return "Completado";
+    case "failed":
+      return "Fallido";
+    default:
+      return String(status || "").trim();
+  }
+}
+
+function getIntakeAnalysisModelLabel(model) {
+  const normalizedModel = String(model || "").trim();
+  if (!normalizedModel || normalizedModel === "heuristic_prefill") {
+    return "";
+  }
+  return normalizedModel;
 }
 
 function OptionPicker({
@@ -612,6 +661,7 @@ export default function CommercialEnablementPage({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [working, setWorking] = useState(false);
+  const [workingMessage, setWorkingMessage] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [assetSaveFeedback, setAssetSaveFeedback] = useState(null);
@@ -629,8 +679,14 @@ export default function CommercialEnablementPage({ currentUser }) {
   const [openCatalogAdminMenuId, setOpenCatalogAdminMenuId] = useState(null);
   const [openGovernanceMenuId, setOpenGovernanceMenuId] = useState(null);
   const [linkDraft, setLinkDraft] = useState(emptyLinkDraft);
+  const [editingLinkPublicId, setEditingLinkPublicId] = useState(null);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [pendingLinks, setPendingLinks] = useState([]);
+  const [creationMode, setCreationMode] = useState("manual");
+  const [intakeSession, setIntakeSession] = useState(null);
+  const [intakeHint, setIntakeHint] = useState("");
+  const [intakeExtractedText, setIntakeExtractedText] = useState("");
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
   const [governance, setGovernance] = useState(EMPTY_GOVERNANCE);
   const [publishSectionErrors, setPublishSectionErrors] = useState(
@@ -713,20 +769,54 @@ export default function CommercialEnablementPage({ currentUser }) {
   function handleSelectAsset(publicId) {
     setIsCreatingNewAsset(false);
     setSelectedAssetPublicId(publicId);
+    setEditingLinkPublicId(null);
+    setCreationMode("manual");
+    setIntakeSession(null);
+    setIntakeHint("");
+    setIntakeExtractedText("");
+    setReviewConfirmed(false);
   }
 
   function handleStartNewAsset() {
     setIsCreatingNewAsset(true);
     setSelectedAssetPublicId(null);
     setAssetDetail(null);
+    setEditingLinkPublicId(null);
     setDraft(emptyDraft());
     setPublishSectionErrors(EMPTY_PUBLISH_SECTION_ERRORS);
     setAssetSaveFeedback(null);
     setPendingFiles([]);
     setPendingLinks([]);
+    setCreationMode("manual");
+    setIntakeSession(null);
+    setIntakeHint("");
+    setIntakeExtractedText("");
+    setReviewConfirmed(false);
     setLinkDraft(emptyLinkDraft());
     setSuccess("");
     setError("");
+  }
+
+  function handleChangeCreationMode(nextMode) {
+    setCreationMode(nextMode);
+    setEditingLinkPublicId(null);
+    setAssetSaveFeedback(null);
+    setSuccess("");
+    setError("");
+    setPendingFiles([]);
+    setPendingLinks([]);
+    setLinkDraft(emptyLinkDraft());
+
+    if (nextMode === "manual") {
+      setIntakeSession(null);
+      setIntakeHint("");
+      setIntakeExtractedText("");
+      setReviewConfirmed(false);
+      setDraft(emptyDraft());
+      return;
+    }
+
+    setDraft(emptyDraft());
   }
 
   const loadBootstrap = useCallback(async () => {
@@ -1046,6 +1136,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     const onSuccessMessage = options.onSuccessMessage;
     const onErrorMessage = options.onErrorMessage;
     const trackAssetResult = options.trackAssetResult !== false;
+    setWorkingMessage(options.workingMessage || "Procesando cambios...");
     setWorking(true);
     setError("");
     try {
@@ -1111,6 +1202,193 @@ export default function CommercialEnablementPage({ currentUser }) {
       }
       return null;
     } finally {
+      setWorkingMessage("");
+      setWorking(false);
+    }
+  }
+
+  async function handleCreateIntakeSession(event) {
+    const inputElement = event.target;
+    const file = inputElement.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("files", file);
+
+    setWorking(true);
+    setError("");
+    setSuccess("");
+    setAssetSaveFeedback(null);
+    try {
+      const response = await api.post(
+        `/api/commercial-enablement/intake-sessions?hint=${encodeURIComponent(intakeHint)}`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 60000,
+        },
+      );
+      const createdSession = response.data || null;
+      setIntakeSession(createdSession);
+      setDraft(buildDraftFromIntakeSession(createdSession));
+      setReviewConfirmed(Boolean(createdSession?.reviewConfirmed));
+      setIntakeExtractedText("");
+      setPendingFiles([]);
+      setPendingLinks([]);
+      setLinkDraft(emptyLinkDraft());
+      setAssetSaveFeedback({
+        tone: "success",
+        message:
+          "Documento cargado. Usa Analizar documento para generar sugerencias antes de crear el activo.",
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible cargar el documento para la sesion asistida",
+      );
+      setError(message);
+      setAssetSaveFeedback({ tone: "error", message });
+    } finally {
+      inputElement.value = "";
+      setWorking(false);
+    }
+  }
+
+  async function handleRefreshIntakeAnalysis(forceRegenerate = false) {
+    if (!intakeSession?.publicId) return;
+    setWorkingMessage(
+      forceRegenerate
+        ? "La IA esta reanalizando el documento..."
+        : "La IA esta analizando el documento...",
+    );
+    setWorking(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/analyze`,
+        {
+          hint: intakeHint,
+          forceRegenerate,
+        },
+        {
+          timeout: 120000,
+        },
+      );
+      const nextSession = response.data || null;
+      setIntakeSession(nextSession);
+      setDraft(buildDraftFromIntakeSession(nextSession));
+      setReviewConfirmed(Boolean(nextSession?.reviewConfirmed));
+      setAssetSaveFeedback({
+        tone: "success",
+        message: forceRegenerate
+          ? "Documento reanalizado. Verifica los cambios antes de continuar."
+          : "Documento analizado. Revisa las sugerencias antes de continuar.",
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible volver a analizar el documento",
+      );
+      setError(message);
+      setAssetSaveFeedback({ tone: "error", message });
+    } finally {
+      setWorkingMessage("");
+      setWorking(false);
+    }
+  }
+
+  async function handleLoadExtractedContent() {
+    if (!intakeSession?.publicId || intakeExtractedText) return;
+    setWorking(true);
+    setError("");
+    try {
+      const response = await api.get(
+        `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/extracted-content`,
+      );
+      const combined = Array.isArray(response.data?.contents)
+        ? response.data.contents.map((entry) => entry.textContent).join("\n\n")
+        : "";
+      setIntakeExtractedText(combined);
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar el texto extraido",
+        ),
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function handleSaveIntakeReview() {
+    if (!intakeSession?.publicId) return;
+
+    setWorking(true);
+    setError("");
+    try {
+      const acceptedPayload = buildAssetPayload({
+        ...draft,
+        sourceType: "file",
+      });
+      const response = await api.patch(
+        `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/review`,
+        {
+          acceptedPayload,
+          reviewConfirmed,
+        },
+      );
+      setIntakeSession(response.data || null);
+      setAssetSaveFeedback({
+        tone: "success",
+        message: reviewConfirmed
+          ? "Revision asistida guardada. Ya puedes crear el activo."
+          : "Cambios guardados en la revision asistida.",
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible guardar la revision asistida",
+      );
+      setError(message);
+      setAssetSaveFeedback({ tone: "error", message });
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function handleCancelIntakeSession() {
+    if (!intakeSession?.publicId) {
+      handleChangeCreationMode("manual");
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    try {
+      await api.post(
+        `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/cancel`,
+      );
+      setCreationMode("manual");
+      setIntakeSession(null);
+      setIntakeHint("");
+      setIntakeExtractedText("");
+      setReviewConfirmed(false);
+      setDraft(emptyDraft());
+      setAssetSaveFeedback({
+        tone: "success",
+        message:
+          "Sesion asistida cancelada. Puedes volver a crear el activo manualmente o cargar otro documento.",
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible cancelar la sesion asistida",
+      );
+      setError(message);
+      setAssetSaveFeedback({ tone: "error", message });
+    } finally {
       setWorking(false);
     }
   }
@@ -1118,9 +1396,117 @@ export default function CommercialEnablementPage({ currentUser }) {
   async function handleSaveAsset(event) {
     event?.preventDefault?.();
     setAssetSaveFeedback(null);
+
+    if (
+      creationMode === "assisted" &&
+      !selectedAsset?.publicId &&
+      intakeSession?.publicId
+    ) {
+      const payload = buildAssetPayload({
+        ...draft,
+        sourceType: "file",
+      });
+      const nextPublishSectionErrors =
+        payload.status === "published"
+          ? getPublishSectionErrors(payload)
+          : EMPTY_PUBLISH_SECTION_ERRORS;
+
+      if (!payload.title || payload.title.length < 3) {
+        setError(ASSET_FIELD_MESSAGES.title);
+        setAssetSaveFeedback({
+          tone: "error",
+          message: ASSET_FIELD_MESSAGES.title,
+        });
+        focusFirstMissingAssetField(payload, {
+          fieldErrors: { title: true, summary: false },
+          sectionErrors: nextPublishSectionErrors,
+        });
+        return;
+      }
+
+      if (payload.status === "published" && !payload.summary) {
+        setError(ASSET_FIELD_MESSAGES.summary);
+        setAssetSaveFeedback({
+          tone: "error",
+          message: ASSET_FIELD_MESSAGES.summary,
+        });
+        focusFirstMissingAssetField(payload, {
+          fieldErrors: { title: false, summary: true },
+          sectionErrors: nextPublishSectionErrors,
+        });
+        return;
+      }
+
+      if (hasPublishSectionErrors(nextPublishSectionErrors)) {
+        setPublishSectionErrors(nextPublishSectionErrors);
+        const validationMessage = buildPublishSectionErrorMessage(
+          nextPublishSectionErrors,
+        );
+        setError(validationMessage);
+        setAssetSaveFeedback({
+          tone: "error",
+          message: validationMessage,
+        });
+        focusFirstMissingAssetField(payload, {
+          fieldErrors: { title: false, summary: false },
+          sectionErrors: nextPublishSectionErrors,
+        });
+        return;
+      }
+
+      if (!reviewConfirmed) {
+        setError(
+          "Debes confirmar la revision manual antes de crear el activo.",
+        );
+        setAssetSaveFeedback({
+          tone: "error",
+          message:
+            "Confirma la revision manual para registrar las sugerencias aceptadas.",
+        });
+        return;
+      }
+
+      const saved = await runAssetMutation(
+        async () => {
+          await api.patch(
+            `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/review`,
+            {
+              acceptedPayload: payload,
+              reviewConfirmed: true,
+            },
+          );
+          return api.post(
+            `/api/commercial-enablement/intake-sessions/${intakeSession.publicId}/create-asset`,
+            {
+              finalPayload: payload,
+              reviewConfirmed: true,
+            },
+          );
+        },
+        "Activo creado desde documento",
+        {
+          onSuccessMessage: (message) =>
+            setAssetSaveFeedback({ tone: "success", message }),
+          onErrorMessage: (message) =>
+            setAssetSaveFeedback({ tone: "error", message }),
+        },
+      );
+
+      if (saved?.publicId) {
+        setCreationMode("manual");
+        setIntakeSession(null);
+        setIntakeHint("");
+        setIntakeExtractedText("");
+        setReviewConfirmed(false);
+      }
+      return;
+    }
+
     const isCreating = !selectedAsset?.publicId;
     const pendingFilesToUpload = isCreating ? pendingFiles : [];
     const pendingLinksToCreate = isCreating ? pendingLinks : [];
+    const pendingResourceCount =
+      pendingFilesToUpload.length + pendingLinksToCreate.length;
     const payload = buildAssetPayload({
       ...draft,
       sourceType: deriveSourceType(
@@ -1129,6 +1515,16 @@ export default function CommercialEnablementPage({ currentUser }) {
         pendingLinksToCreate.length,
       ),
     });
+
+    if (isCreating && pendingResourceCount > 1) {
+      setSuccess("");
+      setError(SINGLE_RESOURCE_MESSAGE);
+      setAssetSaveFeedback({
+        tone: "error",
+        message: SINGLE_RESOURCE_MESSAGE,
+      });
+      return;
+    }
 
     const nextPublishSectionErrors =
       payload.status === "published"
@@ -1277,7 +1673,7 @@ export default function CommercialEnablementPage({ currentUser }) {
           tone: "success",
           message:
             attachedCount > 0
-              ? `Activo creado con ${attachedCount} recurso(s) adjuntos`
+              ? "Activo creado con su recurso adjunto"
               : "Activo creado",
         });
         return;
@@ -1287,8 +1683,8 @@ export default function CommercialEnablementPage({ currentUser }) {
         tone: "error",
         message:
           attachedCount > 0
-            ? `Activo creado y ${attachedCount} recurso(s) adjuntos, pero ${failedFiles.length + failedLinks.length} quedaron pendientes`
-            : `Activo creado, pero ${failedFiles.length + failedLinks.length} recurso(s) quedaron pendientes`,
+            ? "Activo creado, pero el recurso adicional no pudo adjuntarse"
+            : "Activo creado, pero el recurso no pudo adjuntarse",
       });
     } finally {
       setWorking(false);
@@ -1299,6 +1695,29 @@ export default function CommercialEnablementPage({ currentUser }) {
     const inputElement = event.target;
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
+    const currentResourceCount = selectedAsset?.publicId
+      ? (selectedAsset.files?.length || 0) + (selectedAsset.links?.length || 0)
+      : pendingFiles.length + pendingLinks.length;
+
+    if (files.length > 1) {
+      inputElement.value = "";
+      setError("Solo se permite un archivo por activo");
+      setAssetSaveFeedback({
+        tone: "error",
+        message: "Solo se permite un archivo por activo",
+      });
+      return;
+    }
+
+    if (currentResourceCount > 0) {
+      inputElement.value = "";
+      setError(SINGLE_RESOURCE_MESSAGE);
+      setAssetSaveFeedback({
+        tone: "error",
+        message: SINGLE_RESOURCE_MESSAGE,
+      });
+      return;
+    }
 
     if (!selectedAsset?.publicId) {
       setPendingFiles((current) => [
@@ -1308,11 +1727,34 @@ export default function CommercialEnablementPage({ currentUser }) {
           file,
         })),
       ]);
-      inputElement.value = "";
-      setAssetSaveFeedback({
-        tone: "success",
-        message: `${files.length} archivo(s) listo(s) para guardarse con el activo`,
-      });
+      setWorkingMessage("Subiendo archivo...");
+      setWorking(true);
+      setError("");
+      try {
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+        inputElement.value = "";
+        setAssetSaveFeedback({
+          tone: "success",
+          message: "Archivo listo para guardarse con el activo",
+        });
+      } catch (selectionError) {
+        setError(
+          getApiErrorMessage(
+            selectionError,
+            "No fue posible preparar el archivo para el activo",
+          ),
+        );
+        setAssetSaveFeedback({
+          tone: "error",
+          message: "No fue posible preparar el archivo para el activo",
+        });
+      } finally {
+        inputElement.value = "";
+        setWorkingMessage("");
+        setWorking(false);
+      }
       return;
     }
 
@@ -1327,13 +1769,17 @@ export default function CommercialEnablementPage({ currentUser }) {
             headers: { "Content-Type": "multipart/form-data" },
           },
         ),
-      "Archivos cargados",
+      "Archivo cargado",
+      { workingMessage: "Subiendo archivo..." },
     );
     inputElement.value = "";
   }
 
   async function handleCreateLink(event) {
     event?.preventDefault?.();
+    const currentResourceCount = selectedAsset?.publicId
+      ? (selectedAsset.files?.length || 0) + (selectedAsset.links?.length || 0)
+      : pendingFiles.length + pendingLinks.length;
     const normalizedUrl = String(linkDraft.url || "").trim();
     if (!normalizedUrl) {
       setError("Debes indicar una URL valida");
@@ -1351,6 +1797,15 @@ export default function CommercialEnablementPage({ currentUser }) {
       setAssetSaveFeedback({
         tone: "error",
         message: "Debes indicar una URL valida",
+      });
+      return;
+    }
+
+    if (currentResourceCount > 0) {
+      setError(SINGLE_RESOURCE_MESSAGE);
+      setAssetSaveFeedback({
+        tone: "error",
+        message: SINGLE_RESOURCE_MESSAGE,
       });
       return;
     }
@@ -1388,6 +1843,130 @@ export default function CommercialEnablementPage({ currentUser }) {
     if (result) {
       setLinkDraft(emptyLinkDraft());
     }
+  }
+
+  function handleStartEditLink(link) {
+    setLinkDraft({
+      url: link?.url || "",
+      linkType: link?.linkType || "external",
+      label: link?.label || "",
+      description: link?.description || "",
+      isPrimary: Boolean(link?.isPrimary),
+    });
+    setEditingLinkPublicId(link?.publicId || link?.id || null);
+  }
+
+  function handleCancelEditLink() {
+    setEditingLinkPublicId(null);
+    setLinkDraft(emptyLinkDraft());
+  }
+
+  async function handleSaveLinkEdit(linkPublicId) {
+    if (!linkPublicId) return;
+
+    const normalizedUrl = String(linkDraft.url || "").trim();
+    if (!normalizedUrl) {
+      setError("Debes indicar una URL valida");
+      setAssetSaveFeedback({
+        tone: "error",
+        message: "Debes indicar una URL valida",
+      });
+      return;
+    }
+
+    try {
+      new URL(normalizedUrl);
+    } catch {
+      setError("Debes indicar una URL valida");
+      setAssetSaveFeedback({
+        tone: "error",
+        message: "Debes indicar una URL valida",
+      });
+      return;
+    }
+
+    const payload = {
+      ...linkDraft,
+      url: normalizedUrl,
+      label: linkDraft.label || normalizedUrl,
+    };
+
+    if (!selectedAsset?.publicId) {
+      setPendingLinks((current) =>
+        current.map((link) =>
+          link.id === linkPublicId
+            ? {
+                ...link,
+                ...payload,
+              }
+            : link,
+        ),
+      );
+      setEditingLinkPublicId(null);
+      setLinkDraft(emptyLinkDraft());
+      setError("");
+      setAssetSaveFeedback({
+        tone: "success",
+        message: "URL actualizada",
+      });
+      return;
+    }
+
+    const result = await runAssetMutation(
+      () =>
+        api.put(
+          `/api/commercial-enablement/assets/${selectedAsset.publicId}/links/${linkPublicId}`,
+          payload,
+        ),
+      "URL actualizada",
+    );
+
+    if (result) {
+      setEditingLinkPublicId(null);
+      setLinkDraft(emptyLinkDraft());
+    }
+  }
+
+  async function handleReplaceFile(filePublicId, event) {
+    if (!filePublicId) return;
+    const inputElement = event.target;
+    const file = inputElement.files?.[0];
+    if (!file) return;
+
+    if (!selectedAsset?.publicId) {
+      setPendingFiles((current) =>
+        current.map((pendingFile) =>
+          pendingFile.id === filePublicId
+            ? {
+                id: buildPendingFileId(file),
+                file,
+              }
+            : pendingFile,
+        ),
+      );
+      inputElement.value = "";
+      setError("");
+      setAssetSaveFeedback({
+        tone: "success",
+        message: "Archivo reemplazado",
+      });
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("files", file);
+    await runAssetMutation(
+      () =>
+        api.put(
+          `/api/commercial-enablement/assets/${selectedAsset.publicId}/files/${filePublicId}`,
+          formData,
+          {
+            headers: { "Content-Type": "multipart/form-data" },
+          },
+        ),
+      "Archivo reemplazado",
+    );
+    inputElement.value = "";
   }
 
   function handleRemovePendingFile(fileId) {
@@ -1769,7 +2348,23 @@ export default function CommercialEnablementPage({ currentUser }) {
   const displayedLinks = selectedAsset?.publicId
     ? selectedAsset.links || []
     : pendingLinks;
+  const isAssistedCreateMode =
+    !selectedAsset?.publicId &&
+    isCreatingNewAsset &&
+    creationMode === "assisted";
+  const currentResourceCount = displayedFiles.length + displayedLinks.length;
+  const canAttachResource = !isAssistedCreateMode && currentResourceCount === 0;
+  const hasExistingResource = currentResourceCount > 0;
+  const canRemoveExistingResource =
+    Boolean(selectedAsset?.publicId) && currentResourceCount > 1;
+  const isEditingExistingLink = Boolean(editingLinkPublicId);
+  const resourceHelperMessage = canAttachResource
+    ? "Cada activo solo admite un recurso: un archivo o una URL."
+    : "Este activo ya tiene un recurso configurado. Para cambiarlo, usa los controles del recurso actual.";
   const pendingResourceCount = pendingFiles.length + pendingLinks.length;
+  const intakeWarnings = Array.isArray(intakeSession?.warnings)
+    ? intakeSession.warnings
+    : [];
 
   return (
     <div className="enablement-library-page">
@@ -1821,6 +2416,24 @@ export default function CommercialEnablementPage({ currentUser }) {
       {loading ? (
         <div className="enablement-library-loading">
           Cargando biblioteca comercial...
+        </div>
+      ) : null}
+
+      {working ? (
+        <div
+          className="enablement-library-working-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={workingMessage || "Procesando operacion"}
+        >
+          <div className="enablement-library-working-dialog">
+            <div
+              className="enablement-library-working-spinner"
+              aria-hidden="true"
+            />
+            <strong>{workingMessage || "Procesando operacion..."}</strong>
+            <p>Espera a que termine el proceso actual antes de continuar.</p>
+          </div>
         </div>
       ) : null}
 
@@ -2121,6 +2734,200 @@ export default function CommercialEnablementPage({ currentUser }) {
                 onSubmit={handleSaveAsset}
               >
                 <div className="enablement-library-editor-shell">
+                  {!selectedAsset && isCreatingNewAsset ? (
+                    <section className="enablement-library-editor-section is-primary">
+                      <div className="enablement-library-editor-section-header">
+                        <div>
+                          <span className="enablement-library-editor-kicker">
+                            Ingreso
+                          </span>
+                          <h3>Modo de creacion</h3>
+                          <p>
+                            El flujo manual conserva el editor actual. El flujo
+                            asistido crea un borrador desde un documento y exige
+                            revision humana antes de guardar.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="enablement-library-mode-switch">
+                        <button
+                          type="button"
+                          className={`enablement-library-chip ${creationMode === "manual" ? "is-active" : ""}`}
+                          onClick={() => handleChangeCreationMode("manual")}
+                        >
+                          Carga manual
+                        </button>
+                        <button
+                          type="button"
+                          className={`enablement-library-chip ${creationMode === "assisted" ? "is-active" : ""}`}
+                          onClick={() => handleChangeCreationMode("assisted")}
+                        >
+                          Desde documento
+                        </button>
+                      </div>
+                      {isAssistedCreateMode ? (
+                        <div className="enablement-library-intake-stack">
+                          {!intakeSession?.publicId ? (
+                            <>
+                              <label>
+                                Contexto para la sugerencia
+                                <textarea
+                                  rows={3}
+                                  value={intakeHint}
+                                  onChange={(event) =>
+                                    setIntakeHint(event.target.value)
+                                  }
+                                  placeholder="Ejemplo: brochure para sector salud, orientado a discovery con CIO"
+                                />
+                              </label>
+                              <label className="enablement-library-upload-field">
+                                <span>Cargar documento fuente</span>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.docx,.txt,.csv,.xlsx,.xls,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+                                  onChange={handleCreateIntakeSession}
+                                />
+                              </label>
+                              <p className="enablement-library-muted">
+                                Se extrae el texto, se sugieren campos iniciales
+                                y luego debes confirmar manualmente antes de
+                                crear el activo.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <div className="enablement-library-intake-summary">
+                                <div>
+                                  <strong>
+                                    {intakeSession.sourceFileName}
+                                  </strong>
+                                  {getIntakeAnalysisModelLabel(
+                                    intakeSession.analysisModel,
+                                  ) ? (
+                                    <span>
+                                      {getIntakeAnalysisModelLabel(
+                                        intakeSession.analysisModel,
+                                      )}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="enablement-library-card-topline">
+                                  <span>
+                                    {getIntakeStatusLabel(intakeSession.status)}
+                                  </span>
+                                  <span>
+                                    {getIntakeStatusLabel(
+                                      intakeSession.analysisStatus,
+                                    )}
+                                  </span>
+                                  <span>
+                                    {intakeSession.languageDetected ||
+                                      draft.languageCode}
+                                  </span>
+                                </div>
+                              </div>
+                              {intakeSession.extractionPreview ? (
+                                <div className="enablement-library-note-box">
+                                  <strong>
+                                    Vista previa del texto extraido
+                                  </strong>
+                                  <p>{intakeSession.extractionPreview}</p>
+                                </div>
+                              ) : null}
+                              {intakeWarnings.length ? (
+                                <div className="enablement-library-warning-list">
+                                  {intakeWarnings.map((warning, index) => (
+                                    <div
+                                      key={`intake-warning-${index}`}
+                                      className="enablement-library-picker-helper is-error"
+                                    >
+                                      {warning.message || warning.code}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="enablement-library-inline-actions">
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={() =>
+                                    handleRefreshIntakeAnalysis(
+                                      intakeSession.analysisStatus ===
+                                        "completed",
+                                    )
+                                  }
+                                  disabled={working}
+                                  aria-label={
+                                    intakeSession.analysisStatus === "completed"
+                                      ? "Reanalizar documento"
+                                      : "Analizar documento"
+                                  }
+                                >
+                                  <AnalyzeDocumentIcon />
+                                  <span>
+                                    {intakeSession.analysisStatus ===
+                                    "completed"
+                                      ? "Reanalizar documento"
+                                      : "Analizar documento"}
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={handleLoadExtractedContent}
+                                  disabled={working}
+                                >
+                                  Ver extraccion completa
+                                </button>
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={handleCancelIntakeSession}
+                                  disabled={working}
+                                >
+                                  Cancelar borrador asistido
+                                </button>
+                              </div>
+                              {intakeExtractedText ? (
+                                <label>
+                                  Texto extraido
+                                  <textarea
+                                    rows={8}
+                                    value={intakeExtractedText}
+                                    readOnly
+                                  />
+                                </label>
+                              ) : null}
+                              <label className="enablement-library-check enablement-library-check-review">
+                                <input
+                                  type="checkbox"
+                                  checked={reviewConfirmed}
+                                  onChange={(event) =>
+                                    setReviewConfirmed(event.target.checked)
+                                  }
+                                />
+                                <span>
+                                  Confirmo que revise y corregi este borrador
+                                  antes de crear el activo.
+                                </span>
+                              </label>
+                              <div className="enablement-library-inline-actions">
+                                <button
+                                  type="button"
+                                  className="enablement-library-inline-button"
+                                  onClick={handleSaveIntakeReview}
+                                  disabled={working}
+                                >
+                                  Guardar revision antes de crear
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
                   <section className="enablement-library-editor-section is-primary">
                     <div className="enablement-library-editor-section-header">
                       <div>
@@ -2133,9 +2940,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </p>
                       </div>
                       <div className="enablement-library-card-topline">
-                        <span>{draft.status || "draft"}</span>
-                        <span>{draft.visibilityLevel || "internal_sales"}</span>
-                        <span>{draft.audienceCode || "seller"}</span>
+                        <span>{draft.status || "published"}</span>
+                        <span>{draft.visibilityLevel || "client_safe"}</span>
+                        <span>{draft.audienceCode || "mixed"}</span>
                       </div>
                     </div>
                     <div className="enablement-library-form-grid enablement-library-editor-meta-grid">
@@ -2156,7 +2963,10 @@ export default function CommercialEnablementPage({ currentUser }) {
                         <select
                           value={draft.assetTypeCode}
                           onChange={(event) =>
-                            updateDraftField("assetTypeCode", event.target.value)
+                            updateDraftField(
+                              "assetTypeCode",
+                              event.target.value,
+                            )
                           }
                         >
                           {(catalogs.asset_type || []).map((option) => (
@@ -2185,7 +2995,10 @@ export default function CommercialEnablementPage({ currentUser }) {
                         <select
                           value={draft.visibilityLevel}
                           onChange={(event) =>
-                            updateDraftField("visibilityLevel", event.target.value)
+                            updateDraftField(
+                              "visibilityLevel",
+                              event.target.value,
+                            )
                           }
                         >
                           {(catalogs.visibility || []).map((option) => (
@@ -2219,7 +3032,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                           }
                         >
                           {(
-                            catalogs.language || [{ code: "es", name: "Espanol" }]
+                            catalogs.language || [
+                              { code: "es", name: "Espanol" },
+                            ]
                           ).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.name}
@@ -2238,7 +3053,8 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </span>
                         <h3>Contenido del activo</h3>
                         <p>
-                          Resume el valor comercial y agrega notas internas para el equipo.
+                          Resume el valor comercial y agrega notas internas para
+                          el equipo.
                         </p>
                       </div>
                     </div>
@@ -2278,7 +3094,8 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </span>
                         <h3>Clasificacion comercial</h3>
                         <p>
-                          Relaciona el material con fabricantes, soluciones, industrias y momentos de uso.
+                          Relaciona el material con fabricantes, soluciones,
+                          industrias y momentos de uso.
                         </p>
                       </div>
                     </div>
@@ -2385,172 +3202,295 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </span>
                         <h3>Distribucion y recursos</h3>
                         <p>
-                          Define si el material es descargable y agrega archivos o URLs desde este mismo bloque.
+                          Define si el material es descargable y agrega archivos
+                          o URLs desde este mismo bloque.
                         </p>
                       </div>
                       <div className="enablement-library-card-topline">
                         <span>
-                          {selectedAsset?.title || "Se guardaran junto con el activo"}
+                          {selectedAsset?.title ||
+                            "Se guardaran junto con el activo"}
                         </span>
                       </div>
                     </div>
                     <div className="enablement-library-check-grid">
-                      <label className="enablement-library-check">
+                      <label className="enablement-library-check enablement-library-check-review">
                         <input
                           type="checkbox"
                           checked={draft.isDownloadable}
                           onChange={(event) =>
-                            updateDraftField("isDownloadable", event.target.checked)
+                            updateDraftField(
+                              "isDownloadable",
+                              event.target.checked,
+                            )
                           }
+                          disabled={isAssistedCreateMode}
                         />
-                        Permitir descarga
+                        <span>Permitir descarga</span>
                       </label>
                     </div>
-                    {!selectedAsset ? (
+                    {isAssistedCreateMode ? (
+                      <div className="enablement-library-note-box">
+                        <strong>
+                          Documento fuente adjunto automaticamente
+                        </strong>
+                        <p>
+                          En el flujo asistido el archivo cargado se adjunta al
+                          crear el activo. Si necesitas reemplazarlo por otro
+                          archivo o por una URL, primero elimina el recurso
+                          actual despues de guardar el activo.
+                        </p>
+                      </div>
+                    ) : null}
+                    {!selectedAsset && !isAssistedCreateMode ? (
                       <p className="enablement-library-muted">
-                        Agrega archivos y URLs al mismo formulario. Cuando guardes,
-                        el activo se creara y estos recursos se registraran en la misma accion.
+                        Agrega un archivo o una URL al formulario. Cuando
+                        guardes, el activo se creara con ese recurso en la misma
+                        accion.
+                      </p>
+                    ) : null}
+                    {hasExistingResource ? (
+                      <p className="enablement-library-muted">
+                        Este activo ya tiene un recurso asignado. Los controles
+                        para agregar archivo o URL se ocultan mientras exista
+                        ese recurso.
+                      </p>
+                    ) : null}
+                    {!isAssistedCreateMode ? (
+                      <p className="enablement-library-muted">
+                        {resourceHelperMessage}
                       </p>
                     ) : null}
                     <div className="enablement-library-stack">
-                      <label className="enablement-library-upload-field">
-                        <span>Subir archivos</span>
-                        <input type="file" multiple onChange={handleUploadFiles} />
-                      </label>
-                      <div className="enablement-library-mini-list">
-                        {displayedFiles.length ? (
-                          displayedFiles.map((file) => (
-                            <div
-                              key={file.publicId || file.id}
-                              className="enablement-library-resource-row"
-                            >
-                              <div>
-                                <strong>
-                                  {file.originalFileName || file.file?.name}
-                                </strong>
-                                <span>
-                                  {file.mimeType || file.file?.type || "Pendiente"}
-                                </span>
-                              </div>
-                              <div className="enablement-library-inline-actions">
-                                {selectedAsset ? (
-                                  <button
-                                    type="button"
-                                    className="enablement-library-inline-button"
-                                    disabled={file.isAvailable === false}
-                                    onClick={() =>
-                                      selectedAsset &&
-                                      handleOpenFile(selectedAsset.publicId, file)
-                                    }
-                                  >
-                                    {file.isAvailable === false
-                                      ? "No disponible"
-                                      : "Abrir"}
-                                  </button>
-                                ) : null}
+                      {!hasExistingResource && !isAssistedCreateMode ? (
+                        <label className="enablement-library-upload-field">
+                          <span>Subir archivo</span>
+                          <input
+                            type="file"
+                            onChange={handleUploadFiles}
+                            disabled={!canAttachResource}
+                          />
+                        </label>
+                      ) : null}
+                      {!isAssistedCreateMode ? (
+                        <>
+                          <div className="enablement-library-mini-list">
+                            {displayedFiles.length ? (
+                              displayedFiles.map((file) => (
+                                <div
+                                  key={file.publicId || file.id}
+                                  className="enablement-library-resource-row"
+                                >
+                                  <div>
+                                    <strong>
+                                      {file.originalFileName || file.file?.name}
+                                    </strong>
+                                    <span>
+                                      {file.mimeType ||
+                                        file.file?.type ||
+                                        "Pendiente"}
+                                    </span>
+                                  </div>
+                                  <div className="enablement-library-inline-actions">
+                                    {selectedAsset ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        disabled={file.isAvailable === false}
+                                        onClick={() =>
+                                          selectedAsset &&
+                                          handleOpenFile(
+                                            selectedAsset.publicId,
+                                            file,
+                                          )
+                                        }
+                                      >
+                                        {file.isAvailable === false
+                                          ? "No disponible"
+                                          : "Abrir"}
+                                      </button>
+                                    ) : null}
+                                    {selectedAsset ? (
+                                      <label className="enablement-library-inline-button">
+                                        Reemplazar archivo
+                                        <input
+                                          type="file"
+                                          hidden
+                                          onChange={(event) =>
+                                            handleReplaceFile(
+                                              file.publicId,
+                                              event,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    ) : null}
+                                    {!selectedAsset ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          handleRemovePendingFile(file.id)
+                                        }
+                                      >
+                                        Quitar
+                                      </button>
+                                    ) : null}
+                                    {canRemoveExistingResource ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          handleDeleteFile(file.publicId)
+                                        }
+                                      >
+                                        Quitar
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="enablement-library-muted">
+                                Sin archivo cargado.
+                              </p>
+                            )}
+                          </div>
+                          {!hasExistingResource || isEditingExistingLink ? (
+                            <div className="enablement-library-link-form">
+                              <input
+                                value={linkDraft.url}
+                                onChange={(event) =>
+                                  setLinkDraft((current) => ({
+                                    ...current,
+                                    url: event.target.value,
+                                  }))
+                                }
+                                placeholder="https://..."
+                              />
+                              <input
+                                value={linkDraft.label}
+                                onChange={(event) =>
+                                  setLinkDraft((current) => ({
+                                    ...current,
+                                    label: event.target.value,
+                                  }))
+                                }
+                                placeholder="Etiqueta visible"
+                              />
+                              <input
+                                value={linkDraft.description}
+                                onChange={(event) =>
+                                  setLinkDraft((current) => ({
+                                    ...current,
+                                    description: event.target.value,
+                                  }))
+                                }
+                                placeholder="Descripcion corta"
+                              />
+                              <button
+                                type="button"
+                                className="enablement-library-action subtle"
+                                onClick={
+                                  isEditingExistingLink
+                                    ? () =>
+                                        handleSaveLinkEdit(editingLinkPublicId)
+                                    : handleCreateLink
+                                }
+                                disabled={
+                                  isEditingExistingLink
+                                    ? false
+                                    : !canAttachResource
+                                }
+                              >
+                                {isEditingExistingLink
+                                  ? "Guardar cambios de URL"
+                                  : selectedAsset
+                                    ? "Guardar URL"
+                                    : "Preparar URL"}
+                              </button>
+                              {isEditingExistingLink ? (
                                 <button
                                   type="button"
-                                  className="enablement-library-inline-button"
-                                  onClick={() =>
-                                    selectedAsset
-                                      ? handleDeleteFile(file.publicId)
-                                      : handleRemovePendingFile(file.id)
-                                  }
+                                  className="enablement-library-action subtle"
+                                  onClick={handleCancelEditLink}
                                 >
-                                  Quitar
+                                  Cancelar
                                 </button>
-                              </div>
+                              ) : null}
                             </div>
-                          ))
-                        ) : (
-                          <p className="enablement-library-muted">
-                            Sin archivos cargados.
-                          </p>
-                        )}
-                      </div>
-                      <div className="enablement-library-link-form">
-                        <input
-                          value={linkDraft.url}
-                          onChange={(event) =>
-                            setLinkDraft((current) => ({
-                              ...current,
-                              url: event.target.value,
-                            }))
-                          }
-                          placeholder="https://..."
-                        />
-                        <input
-                          value={linkDraft.label}
-                          onChange={(event) =>
-                            setLinkDraft((current) => ({
-                              ...current,
-                              label: event.target.value,
-                            }))
-                          }
-                          placeholder="Etiqueta visible"
-                        />
-                        <input
-                          value={linkDraft.description}
-                          onChange={(event) =>
-                            setLinkDraft((current) => ({
-                              ...current,
-                              description: event.target.value,
-                            }))
-                          }
-                          placeholder="Descripcion corta"
-                        />
-                        <button
-                          type="button"
-                          className="enablement-library-action subtle"
-                          onClick={handleCreateLink}
-                        >
-                          {selectedAsset ? "Agregar URL" : "Preparar URL"}
-                        </button>
-                      </div>
-                      <div className="enablement-library-mini-list">
-                        {displayedLinks.length ? (
-                          displayedLinks.map((link) => (
-                            <div
-                              key={link.publicId || link.id}
-                              className="enablement-library-resource-row"
-                            >
-                              <div>
-                                <strong>{link.label}</strong>
-                                <span>{link.url}</span>
-                              </div>
-                              <div className="enablement-library-inline-actions">
-                                {selectedAsset ? (
-                                  <button
-                                    type="button"
-                                    className="enablement-library-inline-button"
-                                    onClick={() =>
-                                      selectedAsset &&
-                                      handleOpenLink(selectedAsset.publicId, link)
-                                    }
-                                  >
-                                    Abrir URL
-                                  </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="enablement-library-inline-button"
-                                  onClick={() =>
-                                    selectedAsset
-                                      ? handleDeleteLink(link.publicId)
-                                      : handleRemovePendingLink(link.id)
-                                  }
+                          ) : null}
+                          <div className="enablement-library-mini-list">
+                            {displayedLinks.length ? (
+                              displayedLinks.map((link) => (
+                                <div
+                                  key={link.publicId || link.id}
+                                  className="enablement-library-resource-row"
                                 >
-                                  Quitar
-                                </button>
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="enablement-library-muted">
-                            Sin URLs registradas.
-                          </p>
-                        )}
-                      </div>
+                                  <div>
+                                    <strong>{link.label}</strong>
+                                    <span>{link.url}</span>
+                                  </div>
+                                  <div className="enablement-library-inline-actions">
+                                    {selectedAsset ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          selectedAsset &&
+                                          handleOpenLink(
+                                            selectedAsset.publicId,
+                                            link,
+                                          )
+                                        }
+                                      >
+                                        Abrir URL
+                                      </button>
+                                    ) : null}
+                                    {selectedAsset ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          handleStartEditLink(link)
+                                        }
+                                      >
+                                        Editar URL
+                                      </button>
+                                    ) : null}
+                                    {!selectedAsset ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          handleRemovePendingLink(link.id)
+                                        }
+                                      >
+                                        Quitar
+                                      </button>
+                                    ) : null}
+                                    {canRemoveExistingResource ? (
+                                      <button
+                                        type="button"
+                                        className="enablement-library-inline-button"
+                                        onClick={() =>
+                                          handleDeleteLink(link.publicId)
+                                        }
+                                      >
+                                        Quitar
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="enablement-library-muted">
+                                Sin URL registrada.
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   </section>
                 </div>
@@ -2564,9 +3504,11 @@ export default function CommercialEnablementPage({ currentUser }) {
                       ? "Guardando..."
                       : selectedAsset
                         ? "Guardar cambios"
-                        : pendingResourceCount > 0
-                          ? `Crear activo con ${pendingResourceCount} recurso(s)`
-                          : "Crear activo"}
+                        : isAssistedCreateMode
+                          ? "Crear activo desde documento"
+                          : pendingResourceCount > 0
+                            ? `Crear activo con ${pendingResourceCount} recurso(s)`
+                            : "Crear activo"}
                   </button>
                 </div>
               </form>
@@ -2616,7 +3558,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <div className="enablement-library-panel-header">
                   <h2>Catalogos administrables</h2>
                   <div className="enablement-library-stack">
-                    <span>Crea opciones para Fabricante, Solucion e Industria</span>
+                    <span>
+                      Crea opciones para Fabricante, Solucion e Industria
+                    </span>
                     <div className="enablement-library-inline-actions">
                       <button
                         type="button"

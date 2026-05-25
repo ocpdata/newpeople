@@ -4,10 +4,21 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
-import { requireAnyPermission } from "./auth.js";
+import { getUserAuthContext, requireAnyPermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { buildProposalPdfBuffer } from "./proposalPdf.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
-import { getCompanyDocumentBranding } from "./settings.js";
+import {
+  cloneProposalComponents,
+  getProposalContentConfiguration,
+  getCompanyDocumentBranding,
+  listInstitutionalAssets,
+  listProposalComponents,
+  PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
+  replaceProposalComponentImage,
+  saveProposalComponentBlocks,
+  summarizeProposalComponents,
+} from "./settings.js";
 import { config } from "./config.js";
 import {
   ensureProductTypesCatalog,
@@ -17,9 +28,14 @@ import {
 import {
   cleanupTempFiles,
   getDocumentContentStream,
+  listOpportunityDocuments,
   parseMultipartFiles,
 } from "./opportunity-documents/service.js";
 import { createDocumentStorage } from "./opportunity-documents/storage.js";
+import {
+  getCommercialEnablementCatalogs,
+  listCommercialEnablementAssets,
+} from "./commercial-enablement/service.js";
 
 const router = express.Router();
 const documentStorage = createDocumentStorage();
@@ -158,7 +174,271 @@ const quotationPdfRenderSchema = z.object({
 });
 
 const quotationExchangeRateQuerySchema = z.object({
-  currency: z.string().trim().regex(/^[A-Za-z]{3}$/),
+  currency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/),
+});
+
+const proposalStatusCodes = ["active", "archived"];
+const proposalStatusInputCodes = ["draft", "ready", ...proposalStatusCodes];
+
+function normalizeProposalStatusCode(value, fallback = "active") {
+  const safeValue = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (safeValue === "archived") {
+    return "archived";
+  }
+
+  if (
+    safeValue === "draft" ||
+    safeValue === "ready" ||
+    safeValue === "active"
+  ) {
+    return "active";
+  }
+
+  return fallback === "archived" ? "archived" : "active";
+}
+
+const proposalContentSchema = z.object({
+  heroTitle: z.string().trim().max(180).optional().default(""),
+  heroSubtitle: z.string().trim().max(5000).optional().default(""),
+  executiveSummary: z.string().trim().max(50000).optional().default(""),
+  solutionOverview: z.string().trim().max(50000).optional().default(""),
+  valueHighlights: z.array(z.string().trim().max(500)).optional().default([]),
+  closingMessage: z.string().trim().max(50000).optional().default(""),
+});
+
+const proposalTemplateSectionCodes = [
+  "hero",
+  "highlights",
+  "executive_summary",
+  "solution_overview",
+  "pricing",
+  "closing",
+];
+
+const proposalTemplateCoverStyles = ["corporate", "premium", "technical"];
+const proposalTemplateStatusCodes = ["draft", "active", "archived"];
+const proposalTemplateApplyModes = ["preserve_content", "replace_content"];
+const PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE = "executive_summary";
+const PROPOSAL_EXEC_SUMMARY_JOB_TYPE = "generate_parallel_suggestion";
+const PROPOSAL_EXEC_SUMMARY_JOB_POLL_INTERVAL_MS = 3000;
+const PROPOSAL_EXEC_SUMMARY_JOB_LEASE_SECONDS = 150;
+const PROPOSAL_EXEC_SUMMARY_JOB_RESULT_TTL_MINUTES = 180;
+const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS = 4;
+const PROPOSAL_EXEC_SUMMARY_MAX_ANSWERS = 16;
+const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS = 4;
+const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS = 1500;
+const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS = 500;
+const PROPOSAL_EXEC_SUMMARY_MAX_SECTION_ITEMS = 8;
+const PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS = 120000;
+
+const proposalTemplateThemeSchema = z
+  .object({
+    accentColor: z.string().trim().max(32).optional().default(""),
+    surfaceTint: z.string().trim().max(32).optional().default(""),
+    textColor: z.string().trim().max(32).optional().default(""),
+  })
+  .optional()
+  .default({});
+
+const proposalTemplateSnapshotSchema = z.object({
+  code: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(180),
+  description: z.string().trim().max(5000).optional().default(""),
+  previewTitle: z.string().trim().max(180).optional().default(""),
+  coverStyle: z
+    .enum(proposalTemplateCoverStyles)
+    .optional()
+    .default("corporate"),
+  themeTokens: proposalTemplateThemeSchema,
+  contentDefaults: proposalContentSchema.optional().default({}),
+  sectionSchema: z
+    .array(z.enum(proposalTemplateSectionCodes))
+    .optional()
+    .default(proposalTemplateSectionCodes),
+  highlightPresets: z.array(z.string().trim().max(500)).optional().default([]),
+  placeholderRules: z.array(z.string().trim().max(80)).optional().default([]),
+});
+
+const proposalCreateSchema = z.object({
+  sourceProposalId: z.number().int().positive().optional().nullable(),
+  templateId: z.number().int().positive().optional().nullable(),
+});
+
+const proposalUpdateSchema = z.object({
+  title: z.string().trim().min(2).max(180).optional(),
+  statusCode: z.enum(proposalStatusInputCodes).optional(),
+  content: proposalContentSchema.optional(),
+});
+
+const proposalPdfImageSchema = z.object({
+  fileUrl: z.string().trim().min(1).max(10_000_000),
+  altText: z.string().trim().max(500).optional().default(""),
+  caption: z.string().trim().max(5000).optional().default(""),
+  fileName: z.string().trim().max(255).optional().default(""),
+});
+
+const proposalPdfBlockSchema = z
+  .object({
+    type: z.enum(["heading", "paragraph", "list", "image"]),
+    text: z.string().trim().max(50_000).optional().default(""),
+    items: z.array(z.string().trim().max(1000)).optional().default([]),
+    image: proposalPdfImageSchema.optional().nullable(),
+  })
+  .superRefine((value, context) => {
+    if (
+      (value.type === "heading" || value.type === "paragraph") &&
+      !value.text
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "El bloque requiere texto",
+        path: ["text"],
+      });
+    }
+
+    if (value.type === "list" && value.items.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La lista requiere al menos un item",
+        path: ["items"],
+      });
+    }
+
+    if (value.type === "image" && !value.image?.fileUrl) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La imagen requiere fileUrl",
+        path: ["image", "fileUrl"],
+      });
+    }
+  });
+
+const proposalPdfLayoutModeSchema = z.enum([
+  "stack",
+  "horizontal-gallery",
+  "manual-rows",
+]);
+
+const proposalPdfLayoutRowSchema = z.object({
+  blockIndexes: z.array(z.number().int().min(0)).optional().default([]),
+});
+
+const proposalPdfLayoutConfigSchema = z
+  .object({
+    mode: proposalPdfLayoutModeSchema,
+    rows: z.array(proposalPdfLayoutRowSchema).optional(),
+  })
+  .nullable();
+
+const proposalPdfSectionSchema = z.object({
+  title: z.string().trim().min(1).max(180),
+  subtitle: z.string().trim().max(180).optional().default(""),
+  layout: proposalPdfLayoutModeSchema.optional().default("stack"),
+  layoutConfig: proposalPdfLayoutConfigSchema.optional().default(null),
+  blocks: z.array(proposalPdfBlockSchema).optional().default([]),
+});
+
+const proposalPdfPricingItemSchema = z.object({
+  productCode: z.string().trim().max(120).optional().default(""),
+  productDescription: z.string().trim().max(5000).optional().default(""),
+  quantity: z.number().nonnegative().optional().default(0),
+  salePriceTotal: z.number().nonnegative().optional().default(0),
+});
+
+const proposalPdfPricingSectionSchema = z.object({
+  title: z.string().trim().min(1).max(180),
+  items: z.array(proposalPdfPricingItemSchema).optional().default([]),
+});
+
+const proposalPdfRenderSchema = z.object({
+  header: z.object({
+    proposalTitle: z.string().trim().max(180).optional().default(""),
+    accountName: z.string().trim().max(180).optional().default(""),
+    contactName: z.string().trim().max(180).optional().default(""),
+    quotationNumber: z.string().trim().max(80).optional().default(""),
+    quotationVersionNumber: z.string().trim().max(80).optional().default(""),
+    updatedAtLabel: z.string().trim().max(120).optional().default(""),
+    statusLabel: z.string().trim().max(120).optional().default(""),
+    templateName: z.string().trim().max(180).optional().default(""),
+  }),
+  theme: z
+    .object({
+      coverStyle: z
+        .enum(proposalTemplateCoverStyles)
+        .optional()
+        .default("corporate"),
+    })
+    .optional()
+    .default({}),
+  sections: z.array(proposalPdfSectionSchema).optional().default([]),
+  pricing: z.object({
+    summary: z.object({
+      subtotal: z.number().nonnegative().optional().default(0),
+      total: z.number().nonnegative().optional().default(0),
+      currencyCode: z.string().trim().min(1).max(20).optional().default("USD"),
+    }),
+    sections: z.array(proposalPdfPricingSectionSchema).optional().default([]),
+  }),
+  quotationAttachmentRef: z.object({
+    quotationVersionId: z.number().int().positive(),
+  }),
+});
+
+const proposalTemplateApplySchema = z.object({
+  templateId: z.number().int().positive(),
+  mode: z.enum(proposalTemplateApplyModes),
+});
+
+const proposalRebaseSchema = z.object({
+  quotationVersionId: z.number().int().positive(),
+});
+
+const proposalComponentBlockSchema = z
+  .object({
+    id: z.number().int().positive().optional(),
+    type: z.enum(["heading", "paragraph", "list", "image"]),
+    text: z.string().optional().default(""),
+    items: z.array(z.string().trim().max(1000)).optional().default([]),
+    assetId: z.number().int().positive().optional().nullable(),
+    assetVersionId: z.number().int().positive().optional().nullable(),
+  })
+  .superRefine((value, context) => {
+    if (value.type === "image") {
+      if (!value.assetId || !value.assetVersionId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Los bloques de imagen requieren assetId y assetVersionId",
+          path: ["assetVersionId"],
+        });
+      }
+    }
+  });
+
+const proposalComponentUpdateSchema = z.object({
+  title: z.string().trim().min(2).max(190).optional(),
+  blocks: z.array(proposalComponentBlockSchema).default([]),
+});
+
+const proposalReplaceImageSchema = z.object({
+  blockId: z.number().int().positive(),
+  assetId: z.number().int().positive(),
+  assetVersionId: z.number().int().positive(),
+});
+
+const proposalExecutiveSummaryGenerationSchema = z.object({
+  mode: z
+    .enum([PROPOSAL_EXEC_SUMMARY_JOB_TYPE])
+    .optional()
+    .default(PROPOSAL_EXEC_SUMMARY_JOB_TYPE),
+  languageCode: z.string().trim().max(10).optional().default("es"),
+  instructions: z.string().trim().max(1000).optional().default(""),
+  maxLibraryAssets: z.number().int().positive().max(4).optional().default(4),
 });
 
 const quotationProductListsQuerySchema = z.object({
@@ -340,6 +620,169 @@ let ensureQuotationSectionItemsSchemaPromise;
 let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
 let ensureQuotationVersionDocumentsSchemaPromise;
+let ensureProposalSchemaPromise;
+
+const defaultProposalTemplateSeedRows = [
+  {
+    code: "corporate_core",
+    name: "Corporativa sobria",
+    status: "active",
+    scope: "global",
+    description:
+      "Presentacion limpia y formal para propuestas comerciales generales.",
+    previewTitle: "Corporate",
+    coverStyle: "corporate",
+    themeTokens: {
+      accentColor: "#173259",
+      surfaceTint: "#eef6ff",
+      textColor: "#0f2540",
+    },
+    contentDefaults: {
+      heroTitle: "{{proposalName}}",
+      heroSubtitle:
+        "Presentacion comercial para {{contactName}} en {{accountName}}, basada en la cotizacion aprobada {{quotationNumber}} v{{versionNumber}}.",
+      executiveSummary:
+        "Compartimos una propuesta estructurada para {{opportunityName}}, alineada al alcance aprobado y al contexto comercial actual.",
+      solutionOverview:
+        "La propuesta organiza la cotizacion en una narrativa ejecutiva, clara y accionable para facilitar su revision.",
+      valueHighlights: [
+        "Contexto comercial ya alineado con {{accountName}}",
+        "Base economica heredada de la cotizacion aprobada",
+        "Presentacion lista para revision con {{contactName}}",
+      ],
+      closingMessage:
+        "Quedamos atentos para revisar esta propuesta con {{contactName}} y acordar los siguientes pasos.",
+    },
+    sectionSchema: proposalTemplateSectionCodes,
+    highlightPresets: [
+      "Narrativa comercial mas clara",
+      "Pricing heredado sin retrabajo",
+      "Formato listo para presentar",
+    ],
+    placeholderRules: [
+      "accountName",
+      "contactName",
+      "opportunityName",
+      "proposalName",
+      "quotationNumber",
+      "versionNumber",
+      "currencyCode",
+      "subtotal",
+      "total",
+    ],
+    isDefault: 1,
+  },
+  {
+    code: "executive_premium",
+    name: "Ejecutiva premium",
+    status: "active",
+    scope: "global",
+    description:
+      "Portada mas editorial para comites, direccion o audiencias ejecutivas.",
+    previewTitle: "Executive",
+    coverStyle: "premium",
+    themeTokens: {
+      accentColor: "#7a4d16",
+      surfaceTint: "#fff7ea",
+      textColor: "#2f2418",
+    },
+    contentDefaults: {
+      heroTitle: "{{proposalName}}",
+      heroSubtitle:
+        "Una propuesta ejecutiva para {{accountName}} con base en la cotizacion aprobada {{quotationNumber}} v{{versionNumber}}.",
+      executiveSummary:
+        "Resumimos la iniciativa {{opportunityName}} en una pieza mas cuidada para su presentacion y toma de decision.",
+      solutionOverview:
+        "El alcance se presenta con mejor jerarquia visual, foco en valor y continuidad con la base economica ya aprobada.",
+      valueHighlights: [
+        "Lectura mas ejecutiva para {{accountName}}",
+        "Total heredado: {{total}}",
+        "Version aprobada: {{quotationNumber}} v{{versionNumber}}",
+      ],
+      closingMessage:
+        "Estamos listos para presentar esta propuesta, resolver preguntas y acordar el siguiente paso comercial.",
+    },
+    sectionSchema: proposalTemplateSectionCodes,
+    highlightPresets: [
+      "Enfoque ejecutivo",
+      "Narrativa premium",
+      "Cierre mas claro",
+    ],
+    placeholderRules: [
+      "accountName",
+      "contactName",
+      "opportunityName",
+      "proposalName",
+      "quotationNumber",
+      "versionNumber",
+      "total",
+    ],
+    isDefault: 0,
+  },
+  {
+    code: "technical_solution",
+    name: "Solucion tecnica",
+    status: "active",
+    scope: "global",
+    description:
+      "Mas enfasis en alcance, frentes de solucion y claridad tecnica.",
+    previewTitle: "Technical",
+    coverStyle: "technical",
+    themeTokens: {
+      accentColor: "#13636a",
+      surfaceTint: "#edf8f8",
+      textColor: "#0d3035",
+    },
+    contentDefaults: {
+      heroTitle: "{{proposalName}}",
+      heroSubtitle:
+        "Propuesta de solucion para {{opportunityName}} en {{accountName}}, construida desde la cotizacion aprobada.",
+      executiveSummary:
+        "La propuesta organiza el alcance aprobado para facilitar su revision tecnica y comercial con {{contactName}}.",
+      solutionOverview:
+        "El documento destaca frentes de solucion, componentes principales y continuidad con la version aprobada {{versionNumber}}.",
+      valueHighlights: [
+        "Frentes tecnicos visibles desde el inicio",
+        "Continuidad con la cotizacion aprobada",
+        "Presentacion clara para revision conjunta",
+      ],
+      closingMessage:
+        "Podemos revisar juntos esta propuesta tecnica, resolver supuestos y confirmar el siguiente paso de ejecucion.",
+    },
+    sectionSchema: proposalTemplateSectionCodes,
+    highlightPresets: [
+      "Mayor foco en solucion",
+      "Aterrizada para revision tecnica",
+      "Pricing intacto",
+    ],
+    placeholderRules: [
+      "accountName",
+      "contactName",
+      "opportunityName",
+      "proposalName",
+      "versionNumber",
+      "subtotal",
+      "total",
+    ],
+    isDefault: 0,
+  },
+];
+
+async function ensureTableColumn(tableName, columnName, ddl) {
+  const rows = await query(
+    `SELECT 1
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [tableName, columnName],
+  );
+
+  if (!rows.length) {
+    await query(ddl);
+  }
+}
 
 async function ensureQuotationStatusesSchema() {
   if (!ensureQuotationStatusesSchemaPromise) {
@@ -558,6 +1001,156 @@ async function ensureQuotationVersionDocumentsSchema() {
   await ensureQuotationVersionDocumentsSchemaPromise;
 }
 
+async function ensureProposalSchema() {
+  if (!ensureProposalSchemaPromise) {
+    ensureProposalSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS proposal_templates (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(80) NOT NULL,
+          name VARCHAR(180) NOT NULL,
+          status VARCHAR(40) NOT NULL DEFAULT 'draft',
+          scope VARCHAR(40) NOT NULL DEFAULT 'global',
+          description TEXT NULL,
+          preview_title VARCHAR(180) NULL,
+          cover_style VARCHAR(40) NOT NULL DEFAULT 'corporate',
+          theme_tokens_json LONGTEXT NULL,
+          content_defaults_json LONGTEXT NULL,
+          section_schema_json LONGTEXT NULL,
+          highlight_presets_json LONGTEXT NULL,
+          placeholder_rules_json LONGTEXT NULL,
+          is_default TINYINT(1) NOT NULL DEFAULT 0,
+          created_by_user_id BIGINT UNSIGNED NULL,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          archived_at DATETIME(3) NULL,
+          CONSTRAINT uq_proposal_templates_code UNIQUE (code),
+          INDEX idx_proposal_templates_status (status, is_default, updated_at),
+          CONSTRAINT fk_proposal_templates_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          CONSTRAINT fk_proposal_templates_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+        )`,
+      );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS proposals (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          quotation_id BIGINT UNSIGNED NOT NULL,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          account_id BIGINT UNSIGNED NOT NULL,
+          contact_id BIGINT UNSIGNED NOT NULL,
+          opportunity_id BIGINT UNSIGNED NOT NULL,
+          owner_user_id BIGINT UNSIGNED NOT NULL,
+          title VARCHAR(180) NOT NULL,
+          status_code VARCHAR(40) NOT NULL DEFAULT 'active',
+          content_json LONGTEXT NULL,
+          pricing_snapshot_json LONGTEXT NULL,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          updated_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          archived_at DATETIME(3) NULL,
+          CONSTRAINT fk_proposals_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+          CONSTRAINT fk_proposals_quotation_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_proposals_account FOREIGN KEY (account_id) REFERENCES accounts(id),
+          CONSTRAINT fk_proposals_contact FOREIGN KEY (contact_id) REFERENCES contacts(id),
+          CONSTRAINT fk_proposals_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id),
+          CONSTRAINT fk_proposals_owner FOREIGN KEY (owner_user_id) REFERENCES users(id),
+          CONSTRAINT fk_proposals_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          CONSTRAINT fk_proposals_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+          INDEX idx_proposals_quotation (quotation_id, created_at),
+          INDEX idx_proposals_quotation_version (quotation_version_id),
+          INDEX idx_proposals_owner (owner_user_id, updated_at),
+          INDEX idx_proposals_status (status_code, updated_at)
+        )`,
+      );
+
+      await ensureTableColumn(
+        "proposals",
+        "template_id",
+        `ALTER TABLE proposals
+         ADD COLUMN template_id BIGINT UNSIGNED NULL
+         AFTER owner_user_id`,
+      );
+      await ensureTableColumn(
+        "proposals",
+        "template_snapshot_json",
+        `ALTER TABLE proposals
+         ADD COLUMN template_snapshot_json LONGTEXT NULL
+         AFTER pricing_snapshot_json`,
+      );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS proposal_revisions (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          proposal_id BIGINT UNSIGNED NOT NULL,
+          revision_number INT NOT NULL,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          title VARCHAR(180) NOT NULL,
+          status_code VARCHAR(40) NOT NULL,
+          content_json LONGTEXT NULL,
+          pricing_snapshot_json LONGTEXT NULL,
+          change_type VARCHAR(40) NOT NULL,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT fk_proposal_revisions_proposal FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE,
+          CONSTRAINT fk_proposal_revisions_quotation_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_proposal_revisions_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          CONSTRAINT uq_proposal_revisions_number UNIQUE (proposal_id, revision_number),
+          INDEX idx_proposal_revisions_created_at (proposal_id, created_at)
+        )`,
+      );
+
+      for (const template of defaultProposalTemplateSeedRows) {
+        await query(
+          `INSERT INTO proposal_templates
+            (code, name, status, scope, description, preview_title, cover_style,
+             theme_tokens_json, content_defaults_json, section_schema_json,
+             highlight_presets_json, placeholder_rules_json, is_default,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             status = VALUES(status),
+             scope = VALUES(scope),
+             description = VALUES(description),
+             preview_title = VALUES(preview_title),
+             cover_style = VALUES(cover_style),
+             theme_tokens_json = VALUES(theme_tokens_json),
+             content_defaults_json = VALUES(content_defaults_json),
+             section_schema_json = VALUES(section_schema_json),
+             highlight_presets_json = VALUES(highlight_presets_json),
+             placeholder_rules_json = VALUES(placeholder_rules_json),
+             is_default = VALUES(is_default),
+             updated_at = NOW(3)`,
+          [
+            template.code,
+            template.name,
+            template.status,
+            template.scope,
+            template.description,
+            template.previewTitle,
+            template.coverStyle,
+            JSON.stringify(template.themeTokens || {}),
+            JSON.stringify(template.contentDefaults || {}),
+            JSON.stringify(
+              template.sectionSchema || proposalTemplateSectionCodes,
+            ),
+            JSON.stringify(template.highlightPresets || []),
+            JSON.stringify(template.placeholderRules || []),
+            Number(template.isDefault ? 1 : 0),
+          ],
+        );
+      }
+    })().catch((error) => {
+      ensureProposalSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureProposalSchemaPromise;
+}
+
 async function fetchFrankfurterExchangeRate({ targetCurrency }) {
   const baseCurrency = String(config.exchangeRates.baseCurrency || "USD")
     .trim()
@@ -580,7 +1173,10 @@ async function fetchFrankfurterExchangeRate({ targetCurrency }) {
   }
 
   const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), config.exchangeRates.timeoutMs);
+  const timeoutHandle = setTimeout(
+    () => controller.abort(),
+    config.exchangeRates.timeoutMs,
+  );
 
   try {
     const response = await fetch(
@@ -601,7 +1197,9 @@ async function fetchFrankfurterExchangeRate({ targetCurrency }) {
     const payload = await response.json();
     const exchangeRate = Number(payload?.rates?.[normalizedTargetCurrency]);
     if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-      throw new Error("Frankfurter request failed: invalid exchange rate payload");
+      throw new Error(
+        "Frankfurter request failed: invalid exchange rate payload",
+      );
     }
 
     return {
@@ -632,7 +1230,12 @@ async function ensureQuotationSectionItemsColumn(columnName, ddl) {
   }
 }
 
-function buildQuotationDocumentStorageKey({ quotationId, versionId, sha256, fileName }) {
+function buildQuotationDocumentStorageKey({
+  quotationId,
+  versionId,
+  sha256,
+  fileName,
+}) {
   const safeFileName = String(fileName || "documento")
     .replace(/[^a-zA-Z0-9._-]+/g, "_")
     .replace(/_+/g, "_")
@@ -732,12 +1335,10 @@ async function listQuotationDocuments({ quotationId }) {
   return rows.map(buildQuotationVersionDocumentPayload);
 }
 
-async function copyQuotationVersionDocuments(conn, {
-  sourceVersionId,
-  targetVersionId,
-  createdByUserId,
-  createdAt,
-}) {
+async function copyQuotationVersionDocuments(
+  conn,
+  { sourceVersionId, targetVersionId, createdByUserId, createdAt },
+) {
   await conn.query(
     `INSERT INTO quotation_version_documents
       (quotation_version_id, document_id, created_by_user_id, created_at)
@@ -776,18 +1377,16 @@ async function getQuotationVersionDocumentLink({ linkId }) {
   return rows[0] || null;
 }
 
-async function createQuotationVersionDocuments(conn, {
-  files,
-  quotationId,
-  versionId,
-  userId,
-}) {
+async function createQuotationVersionDocuments(
+  conn,
+  { files, quotationId, versionId, userId },
+) {
   const createdDocuments = [];
 
   for (const file of files) {
-    const originalFileName = String(
-      file.originalFilename || file.newFilename || "documento",
-    ).trim() || "documento";
+    const originalFileName =
+      String(file.originalFilename || file.newFilename || "documento").trim() ||
+      "documento";
     const mimeType =
       String(file.mimetype || "application/octet-stream").trim() ||
       "application/octet-stream";
@@ -977,6 +1576,7 @@ router.use(async (_req, _res, next) => {
     await ensureQuotationStatusesSchema();
     await ensureQuotationVersionsSchema();
     await ensureQuotationSectionItemsSchema();
+    await ensureProposalSchema();
     next();
   } catch (error) {
     next(error);
@@ -1727,15 +2327,23 @@ async function getAccessibleQuotationVersion({ user, versionId }) {
             qv.created_at, qv.updated_at,
             qv.created_by_user_id, qv.updated_by_user_id,
             q.latest_version_id, q.opportunity_id,
-            o.account_id, o.name AS opportunity_name,
+                 o.account_id, o.name AS opportunity_name,
+                 a.name AS account_name,
+            su.full_name AS seller_user_name,
+            su.email AS seller_user_email,
+            su.mobile AS seller_user_phone,
             qs.code AS status_code, qs.name AS status_name,
             qs.ui_key AS status_ui_key,
             qas.code AS activation_status_code, qas.name AS activation_status_name,
-            CONCAT(c.first_name, ' ', c.last_name) AS contact_name
+            CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+            c.email AS contact_email,
+            COALESCE(NULLIF(TRIM(c.phone), ''), NULLIF(TRIM(c.mobile), '')) AS contact_phone
      FROM quotation_versions qv
      INNER JOIN quotations q ON q.id = qv.quotation_id
      INNER JOIN opportunities o ON o.id = q.opportunity_id
      ${ownershipJoin}
+               INNER JOIN accounts a ON a.id = o.account_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
      INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
      INNER JOIN quotation_activation_statuses qas ON qas.id = qv.activation_status_id
      INNER JOIN contacts c ON c.id = qv.contact_id
@@ -1846,7 +2454,12 @@ function mapQuotationProductRow(row, componentMap = new Map()) {
   };
 }
 
-async function getQuotationProductRows({ providerId, priceListId, searchQuery, limit }) {
+async function getQuotationProductRows({
+  providerId,
+  priceListId,
+  searchQuery,
+  limit,
+}) {
   const params = [];
   let whereClause = "";
 
@@ -2079,6 +2692,8 @@ async function getQuotationVersionSummaryRows(quotationId) {
             qv.currency_code,
             qv.exchange_rate,
             qv.quotation_notes,
+            lp.id AS proposal_id,
+            lp.status_code AS proposal_status_code,
             qas.code AS activation_status_code,
             qas.name AS activation_status_name,
             qv.created_at, qv.updated_at,
@@ -2087,10 +2702,2124 @@ async function getQuotationVersionSummaryRows(quotationId) {
      INNER JOIN contacts c ON c.id = qv.contact_id
      INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
      INNER JOIN quotation_activation_statuses qas ON qas.id = qv.activation_status_id
+     LEFT JOIN (
+       SELECT p.id, p.quotation_version_id, p.status_code
+       FROM proposals p
+       INNER JOIN (
+         SELECT quotation_version_id, MAX(id) AS latest_proposal_id
+         FROM proposals
+         GROUP BY quotation_version_id
+       ) latest_proposals
+         ON latest_proposals.latest_proposal_id = p.id
+     ) lp ON lp.quotation_version_id = qv.id
      WHERE qv.quotation_id = ?
      ORDER BY qv.version_number DESC, qv.id DESC`,
     [Number(quotationId)],
   );
+}
+
+function safeParseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === "object") {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeParseJsonArray(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeProposalContent(content) {
+  const parsed = proposalContentSchema.safeParse(content || {});
+  if (!parsed.success) {
+    return {
+      heroTitle: "",
+      heroSubtitle: "",
+      executiveSummary: "",
+      solutionOverview: "",
+      valueHighlights: [],
+      closingMessage: "",
+    };
+  }
+
+  return {
+    heroTitle: parsed.data.heroTitle || "",
+    heroSubtitle: parsed.data.heroSubtitle || "",
+    executiveSummary: parsed.data.executiveSummary || "",
+    solutionOverview: parsed.data.solutionOverview || "",
+    valueHighlights: Array.isArray(parsed.data.valueHighlights)
+      ? parsed.data.valueHighlights.filter(Boolean)
+      : [],
+    closingMessage: parsed.data.closingMessage || "",
+  };
+}
+
+function sanitizeProposalTemplateSnapshot(snapshot) {
+  const parsed = proposalTemplateSnapshotSchema.safeParse(snapshot || {});
+  if (!parsed.success) {
+    return {
+      code: "legacy_minimal",
+      name: "Sin plantilla",
+      description: "Propuesta legacy sin plantilla aplicada.",
+      previewTitle: "Legacy",
+      coverStyle: "corporate",
+      themeTokens: {},
+      contentDefaults: sanitizeProposalContent({}),
+      sectionSchema: proposalTemplateSectionCodes,
+      highlightPresets: [],
+      placeholderRules: [],
+    };
+  }
+
+  return {
+    ...parsed.data,
+    contentDefaults: sanitizeProposalContent(parsed.data.contentDefaults || {}),
+    highlightPresets: Array.isArray(parsed.data.highlightPresets)
+      ? parsed.data.highlightPresets.filter(Boolean)
+      : [],
+    sectionSchema: Array.isArray(parsed.data.sectionSchema)
+      ? parsed.data.sectionSchema.filter(Boolean)
+      : proposalTemplateSectionCodes,
+  };
+}
+
+function serializeProposalTemplateRow(templateRow) {
+  const templateSnapshot = sanitizeProposalTemplateSnapshot({
+    code: templateRow.code,
+    name: templateRow.name,
+    description: templateRow.description || "",
+    previewTitle: templateRow.preview_title || "",
+    coverStyle: templateRow.cover_style || "corporate",
+    themeTokens: safeParseJsonObject(templateRow.theme_tokens_json) || {},
+    contentDefaults:
+      safeParseJsonObject(templateRow.content_defaults_json) || {},
+    sectionSchema:
+      safeParseJsonArray(templateRow.section_schema_json) ||
+      proposalTemplateSectionCodes,
+    highlightPresets:
+      safeParseJsonArray(templateRow.highlight_presets_json) || [],
+    placeholderRules:
+      safeParseJsonArray(templateRow.placeholder_rules_json) || [],
+  });
+
+  return {
+    id: Number(templateRow.id),
+    code: templateRow.code,
+    name: templateRow.name,
+    status: templateRow.status,
+    scope: templateRow.scope || "global",
+    description: templateRow.description || "",
+    previewTitle: templateRow.preview_title || "",
+    coverStyle: templateSnapshot.coverStyle,
+    themeTokens: templateSnapshot.themeTokens,
+    contentDefaults: templateSnapshot.contentDefaults,
+    sectionSchema: templateSnapshot.sectionSchema,
+    highlightPresets: templateSnapshot.highlightPresets,
+    placeholderRules: templateSnapshot.placeholderRules,
+    isDefault: Boolean(Number(templateRow.is_default || 0)),
+  };
+}
+
+async function getAvailableProposalTemplates() {
+  const rows = await query(
+    `SELECT *
+     FROM proposal_templates
+     WHERE archived_at IS NULL
+       AND status = 'active'
+     ORDER BY is_default DESC, name ASC, id ASC`,
+  );
+
+  return rows.map(serializeProposalTemplateRow);
+}
+
+async function getProposalTemplateById(templateId) {
+  const rows = await query(
+    `SELECT *
+     FROM proposal_templates
+     WHERE id = ?
+       AND archived_at IS NULL
+     LIMIT 1`,
+    [Number(templateId)],
+  );
+
+  return rows.length ? serializeProposalTemplateRow(rows[0]) : null;
+}
+
+async function getDefaultProposalTemplate() {
+  const rows = await query(
+    `SELECT *
+     FROM proposal_templates
+     WHERE archived_at IS NULL
+       AND status = 'active'
+     ORDER BY is_default DESC, id ASC
+     LIMIT 1`,
+  );
+
+  return rows.length ? serializeProposalTemplateRow(rows[0]) : null;
+}
+
+function buildProposalTemplateSnapshot(template) {
+  return sanitizeProposalTemplateSnapshot({
+    code: template?.code || "legacy_minimal",
+    name: template?.name || "Sin plantilla",
+    description: template?.description || "",
+    previewTitle: template?.previewTitle || template?.name || "",
+    coverStyle: template?.coverStyle || "corporate",
+    themeTokens: template?.themeTokens || {},
+    contentDefaults: template?.contentDefaults || {},
+    sectionSchema: template?.sectionSchema || proposalTemplateSectionCodes,
+    highlightPresets: template?.highlightPresets || [],
+    placeholderRules: template?.placeholderRules || [],
+  });
+}
+
+function replaceProposalTemplatePlaceholders(value, context) {
+  return String(value || "").replace(
+    /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,
+    (_match, key) => {
+      const nextValue = context[key];
+      return nextValue == null ? "" : String(nextValue);
+    },
+  );
+}
+
+function buildProposalTemplateContext({ versionRow, sections }) {
+  const snapshot = buildProposalPricingSnapshot({ versionRow, sections });
+  return {
+    accountName: versionRow.account_name || "",
+    contactName: versionRow.contact_name || "",
+    opportunityName: versionRow.opportunity_name || "",
+    proposalName:
+      versionRow.proposal_name ||
+      `Propuesta comercial v${Number(versionRow.version_number || 1)}`,
+    quotationNumber: String(versionRow.quotation_id || ""),
+    versionNumber: String(versionRow.version_number || ""),
+    currencyCode:
+      snapshot.summary?.currencyCode || versionRow.currency_code || "",
+    subtotal: formatCurrency(
+      snapshot.summary?.subtotal,
+      snapshot.summary?.currencyCode,
+    ),
+    total: formatCurrency(
+      snapshot.summary?.total,
+      snapshot.summary?.currencyCode,
+    ),
+  };
+}
+
+function resolveTemplateContentDefaults({
+  templateSnapshot,
+  versionRow,
+  sections,
+}) {
+  const template = sanitizeProposalTemplateSnapshot(templateSnapshot || {});
+  const context = buildProposalTemplateContext({ versionRow, sections });
+  const defaults = sanitizeProposalContent(template.contentDefaults || {});
+
+  return sanitizeProposalContent({
+    heroTitle: replaceProposalTemplatePlaceholders(defaults.heroTitle, context),
+    heroSubtitle: replaceProposalTemplatePlaceholders(
+      defaults.heroSubtitle,
+      context,
+    ),
+    executiveSummary: replaceProposalTemplatePlaceholders(
+      defaults.executiveSummary,
+      context,
+    ),
+    solutionOverview: replaceProposalTemplatePlaceholders(
+      defaults.solutionOverview,
+      context,
+    ),
+    valueHighlights: (defaults.valueHighlights || []).map((value) =>
+      replaceProposalTemplatePlaceholders(value, context),
+    ),
+    closingMessage: replaceProposalTemplatePlaceholders(
+      defaults.closingMessage,
+      context,
+    ),
+  });
+}
+
+function mergeProposalContentWithTemplateDefaults(content, templateDefaults) {
+  const currentContent = sanitizeProposalContent(content || {});
+  const defaults = sanitizeProposalContent(templateDefaults || {});
+
+  return sanitizeProposalContent({
+    heroTitle: currentContent.heroTitle || defaults.heroTitle,
+    heroSubtitle: currentContent.heroSubtitle || defaults.heroSubtitle,
+    executiveSummary:
+      currentContent.executiveSummary || defaults.executiveSummary,
+    solutionOverview:
+      currentContent.solutionOverview || defaults.solutionOverview,
+    valueHighlights:
+      currentContent.valueHighlights?.length > 0
+        ? currentContent.valueHighlights
+        : defaults.valueHighlights,
+    closingMessage: currentContent.closingMessage || defaults.closingMessage,
+  });
+}
+
+function formatCurrency(value, currencyCode) {
+  if (value == null || value === "") return "";
+  try {
+    return Number(value).toLocaleString("es-MX", {
+      style: "currency",
+      currency: currencyCode || "USD",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+function calculateProposalSalePrice(item) {
+  if (!item || item.itemType === "grupo_productos") {
+    return {
+      discountedListPriceUnit: 0,
+      costUnit: 0,
+      salePriceUnit: 0,
+      salePriceTotal: 0,
+    };
+  }
+
+  const listPriceUnit = Number(item.listPriceUnit || 0);
+  const quantity = Number(item.quantity || 0);
+  const manufacturerDiscountPct = Number(item.manufacturerDiscountPct || 0);
+  const importCostPct = Number(item.importCostPct || 0);
+  const profitMarginPct = Number(item.profitMarginPct || 0);
+  const finalDiscountPct = Number(item.finalDiscountPct || 0);
+  const discountedListPriceUnit =
+    listPriceUnit * (1 - manufacturerDiscountPct / 100);
+  const costUnit = discountedListPriceUnit * (1 + importCostPct / 100);
+  const salePriceUnit =
+    profitMarginPct >= 100
+      ? 0
+      : (costUnit / (1 - profitMarginPct / 100)) * (1 - finalDiscountPct / 100);
+
+  return {
+    discountedListPriceUnit,
+    costUnit,
+    salePriceUnit,
+    salePriceTotal: salePriceUnit * quantity,
+  };
+}
+
+function buildProposalPricingSummary({ versionRow, items }) {
+  const baseSubtotal = items.reduce((total, item) => {
+    if (item.itemType === "grupo_productos") {
+      return total;
+    }
+    return total + Number(item.salePriceTotal || 0);
+  }, 0);
+  const vatPct = Number(
+    versionRow.summary_vat_pct || DEFAULT_QUOTATION_VAT_PCT,
+  );
+  const totalWithPerItemVat =
+    versionRow.summary_vat_mode === "per_item"
+      ? baseSubtotal * (1 + vatPct / 100)
+      : baseSubtotal;
+
+  let discountedSubtotal = totalWithPerItemVat;
+  if (versionRow.summary_distribution_mode !== "per_item") {
+    if (versionRow.summary_discount_mode === "amount") {
+      const discountValue = Math.max(
+        0,
+        Math.min(
+          Number(versionRow.summary_discount_value || 0),
+          totalWithPerItemVat,
+        ),
+      );
+      discountedSubtotal = Math.max(totalWithPerItemVat - discountValue, 0);
+    } else if (versionRow.summary_discount_mode === "percentage") {
+      const discountPct = Math.min(
+        Math.max(Number(versionRow.summary_discount_value || 0), 0),
+        100,
+      );
+      discountedSubtotal = totalWithPerItemVat * (1 - discountPct / 100);
+    }
+  }
+
+  const total =
+    versionRow.summary_vat_mode === "total"
+      ? discountedSubtotal * (1 + vatPct / 100)
+      : discountedSubtotal;
+
+  return {
+    subtotal: Number(baseSubtotal.toFixed(6)),
+    discountedSubtotal: Number(discountedSubtotal.toFixed(6)),
+    total: Number(total.toFixed(6)),
+    vatAmount: Number((total - discountedSubtotal).toFixed(6)),
+    vatMode: versionRow.summary_vat_mode || null,
+    vatPct,
+    discountMode: versionRow.summary_discount_mode || null,
+    discountValue:
+      versionRow.summary_discount_value == null
+        ? null
+        : Number(versionRow.summary_discount_value),
+    currencyCode: versionRow.currency_code || null,
+  };
+}
+
+function buildDefaultProposalContent({
+  versionRow,
+  sections,
+  templateSnapshot,
+}) {
+  if (templateSnapshot) {
+    return resolveTemplateContentDefaults({
+      templateSnapshot,
+      versionRow,
+      sections,
+    });
+  }
+
+  const sectionTitles = sections
+    .map((section) => String(section.title || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  return sanitizeProposalContent({
+    heroTitle:
+      versionRow.proposal_name ||
+      `Propuesta comercial v${Number(versionRow.version_number || 1)}`,
+    heroSubtitle:
+      versionRow.contact_name && versionRow.opportunity_name
+        ? `Presentacion comercial basada en la cotizacion aprobada para ${versionRow.contact_name} sobre ${versionRow.opportunity_name}.`
+        : "Presentacion comercial basada en una cotizacion aprobada.",
+    executiveSummary: versionRow.introduction || "",
+    solutionOverview:
+      sectionTitles.length > 0
+        ? `La propuesta desarrolla los siguientes frentes: ${sectionTitles.join(", ")}.`
+        : "La propuesta organiza la cotizacion en una presentacion comercial mas clara.",
+    valueHighlights: sectionTitles,
+    closingMessage:
+      "Quedamos atentos para revisar esta propuesta y resolver cualquier ajuste de presentacion requerido.",
+  });
+}
+
+function buildProposalPricingSnapshot({ versionRow, sections }) {
+  const snapshotSections = sections.map((section) => ({
+    id: Number(section.id),
+    title: section.title || "",
+    inclusionName: section.inclusionName || "",
+    items: section.items.map((item) => {
+      const computed = calculateProposalSalePrice(item);
+      return {
+        id: Number(item.id),
+        productCode: item.productCode,
+        productDescription: item.productDescription,
+        itemType: item.itemType,
+        bundleParentItemId: item.bundleParentItemId,
+        quantity: Number(item.quantity || 0),
+        listPriceUnit: Number(item.listPriceUnit || 0),
+        salePriceUnit: Number(computed.salePriceUnit.toFixed(6)),
+        salePriceTotal: Number(computed.salePriceTotal.toFixed(6)),
+        displayOrder: Number(item.displayOrder || 0),
+      };
+    }),
+  }));
+
+  const flatItems = snapshotSections.flatMap((section) => section.items);
+
+  return {
+    quotationId: Number(versionRow.quotation_id),
+    quotationVersionId: Number(versionRow.id),
+    versionNumber: Number(versionRow.version_number),
+    proposalName: versionRow.proposal_name || "",
+    quotationDate: formatDateOnly(versionRow.quotation_date),
+    currencyCode: versionRow.currency_code || null,
+    sections: snapshotSections,
+    summary: buildProposalPricingSummary({
+      versionRow,
+      items: flatItems,
+    }),
+  };
+}
+
+function buildQuotationPdfSections(sections) {
+  return (Array.isArray(sections) ? sections : [])
+    .map((section) => {
+      const rows = (Array.isArray(section.items) ? section.items : [])
+        .filter((item) => item.itemType !== "grupo_productos")
+        .map((item) => {
+          const computed = calculateProposalSalePrice(item);
+          return {
+            displayOrder:
+              item.displayOrder == null ? null : Number(item.displayOrder),
+            productCode: item.productCode || "",
+            productDescription: item.productDescription || "",
+            quantity: Number(item.quantity || 0),
+            quantityDisplay: String(Number(item.quantity || 0)),
+            salePriceUnit: Number(computed.salePriceUnit.toFixed(6)),
+            salePriceTotal: Number(computed.salePriceTotal.toFixed(6)),
+          };
+        });
+
+      return {
+        title: section.title || "",
+        subtotal: Number(
+          rows.reduce(
+            (total, row) => total + Number(row.salePriceTotal || 0),
+            0,
+          ),
+        ),
+        rows,
+      };
+    })
+    .filter((section) => section.rows.length > 0);
+}
+
+function buildQuotationPdfSummaryFromVersion({ versionRow, sections }) {
+  const rows = sections.flatMap((section) => section.rows || []);
+  const subtotal = rows.reduce(
+    (total, row) => total + Number(row.salePriceTotal || 0),
+    0,
+  );
+  const vatPct = Number(
+    versionRow.summary_vat_pct || DEFAULT_QUOTATION_VAT_PCT,
+  );
+  const totalWithPerItemVat =
+    versionRow.summary_vat_mode === "per_item"
+      ? subtotal * (1 + vatPct / 100)
+      : subtotal;
+
+  let discount = 0;
+  let discountedSubtotal = totalWithPerItemVat;
+  if (versionRow.summary_distribution_mode !== "per_item") {
+    if (versionRow.summary_discount_mode === "amount") {
+      discount = Math.max(
+        0,
+        Math.min(
+          Number(versionRow.summary_discount_value || 0),
+          totalWithPerItemVat,
+        ),
+      );
+      discountedSubtotal = Math.max(totalWithPerItemVat - discount, 0);
+    } else if (versionRow.summary_discount_mode === "percentage") {
+      const discountPct = Math.min(
+        Math.max(Number(versionRow.summary_discount_value || 0), 0),
+        100,
+      );
+      discount = totalWithPerItemVat * (discountPct / 100);
+      discountedSubtotal = totalWithPerItemVat - discount;
+    }
+  }
+
+  const total =
+    versionRow.summary_vat_mode === "total"
+      ? discountedSubtotal * (1 + vatPct / 100)
+      : discountedSubtotal;
+
+  return {
+    subtotal: Number(subtotal.toFixed(6)),
+    discount: Number(discount.toFixed(6)),
+    discountedSubtotal: Number(discountedSubtotal.toFixed(6)),
+    vatAmount: Number((total - discountedSubtotal).toFixed(6)),
+    total: Number(total.toFixed(6)),
+    showVat: versionRow.summary_vat_mode === "total",
+    vatMode:
+      versionRow.summary_vat_mode === "total" ||
+      versionRow.summary_vat_mode === "per_item"
+        ? versionRow.summary_vat_mode
+        : "without_vat",
+    currencyCode: versionRow.currency_code || "USD",
+  };
+}
+
+async function getAccessibleQuotationVersionPdfContext({
+  user,
+  quotationVersionId,
+}) {
+  const versionRow = await getAccessibleQuotationVersion({
+    user,
+    versionId: quotationVersionId,
+  });
+  if (!versionRow) {
+    return null;
+  }
+
+  const sections = await getQuotationVersionSections(quotationVersionId);
+  return { versionRow, sections };
+}
+
+function buildQuotationPdfModelFromVersionContext({
+  company,
+  versionRow,
+  sections,
+}) {
+  const quotationSections = buildQuotationPdfSections(sections);
+  return {
+    company,
+    header: {
+      quotationNumber: String(versionRow.quotation_id || ""),
+      versionNumber: String(versionRow.version_number || ""),
+      quotationDate: formatDateOnly(versionRow.quotation_date),
+      proposalName: versionRow.proposal_name || "",
+      accountName: versionRow.account_name || "",
+      contactName: versionRow.contact_name || "",
+      contactEmail: versionRow.contact_email || "",
+      contactPhone: versionRow.contact_phone || "",
+      sellerName: versionRow.seller_user_name || "",
+      sellerEmail: versionRow.seller_user_email || "",
+      sellerPhone: versionRow.seller_user_phone || "",
+    },
+    introduction: versionRow.introduction || "",
+    sections: quotationSections,
+    summary: buildQuotationPdfSummaryFromVersion({
+      versionRow,
+      sections: quotationSections,
+    }),
+    commercialTerms: {
+      deliveryTime: versionRow.delivery_time || "",
+      quotationValidity: versionRow.quotation_validity || "",
+      warranty: versionRow.warranty_term || "",
+      paymentTerms: versionRow.payment_terms || "",
+      currency: versionRow.currency_code || "",
+    },
+    notes: versionRow.quotation_notes || "",
+  };
+}
+
+async function resolveProposalQuotationAttachment({
+  user,
+  company,
+  quotationVersionId,
+}) {
+  const context = await getAccessibleQuotationVersionPdfContext({
+    user,
+    quotationVersionId,
+  });
+  if (!context) {
+    throw new Error("No fue posible resolver la cotizacion heredada");
+  }
+
+  return buildQuotationPdfModelFromVersionContext({
+    company,
+    versionRow: context.versionRow,
+    sections: context.sections,
+  });
+}
+
+async function getLatestApprovedQuotationVersion({ quotationId }) {
+  const rows = await query(
+    `SELECT qv.id, qv.version_number
+     FROM quotation_versions qv
+     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+     WHERE qv.quotation_id = ?
+       AND qs.code = 'aprobada'
+     ORDER BY qv.version_number DESC, qv.id DESC
+     LIMIT 1`,
+    [Number(quotationId)],
+  );
+
+  return rows.length
+    ? {
+        id: Number(rows[0].id),
+        versionNumber: Number(rows[0].version_number),
+      }
+    : null;
+}
+
+async function createProposalRevision({
+  proposalId,
+  quotationVersionId,
+  title,
+  statusCode,
+  content,
+  pricingSnapshot,
+  changeType,
+  userId,
+}) {
+  const rows = await query(
+    `SELECT COALESCE(MAX(revision_number), 0) AS max_revision
+     FROM proposal_revisions
+     WHERE proposal_id = ?`,
+    [Number(proposalId)],
+  );
+  const revisionNumber = Number(rows[0]?.max_revision || 0) + 1;
+  await query(
+    `INSERT INTO proposal_revisions
+      (proposal_id, revision_number, quotation_version_id, title, status_code,
+       content_json, pricing_snapshot_json, change_type, created_by_user_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3))`,
+    [
+      Number(proposalId),
+      revisionNumber,
+      Number(quotationVersionId),
+      title,
+      statusCode,
+      JSON.stringify(content || {}),
+      JSON.stringify(pricingSnapshot || {}),
+      changeType,
+      Number(userId),
+    ],
+  );
+}
+
+const AUTO_SYNC_PROPOSAL_CHANGE_TYPES = new Set([
+  "create_from_version",
+  "create_from_version_clone",
+  "rebase_to_quotation_version",
+  "sync_from_current_config_on_create",
+  "sync_from_current_config_on_read",
+]);
+
+function buildProposalComponentSyncFingerprint(components) {
+  return JSON.stringify(
+    Array.isArray(components)
+      ? components.map((component) => ({
+          componentCode: component.componentCode || "",
+          title: component.title || "",
+          displayOrder: Number(component.displayOrder || 0),
+          status: component.status || "active",
+          layoutConfig: component.layoutConfig
+            ? {
+                mode: component.layoutConfig.mode || null,
+                rows: Array.isArray(component.layoutConfig.rows)
+                  ? component.layoutConfig.rows.map((row) => ({
+                      blockIndexes: Array.isArray(row.blockIndexes)
+                        ? row.blockIndexes.filter((index) =>
+                            Number.isInteger(index),
+                          )
+                        : [],
+                    }))
+                  : undefined,
+              }
+            : null,
+          blocks: Array.isArray(component.blocks)
+            ? component.blocks.map((block) => ({
+                type: block.type || "paragraph",
+                text: block.text || "",
+                items: Array.isArray(block.items) ? block.items : [],
+                assetId: block.assetId ? Number(block.assetId) : null,
+                assetVersionId: block.assetVersionId
+                  ? Number(block.assetVersionId)
+                  : null,
+              }))
+            : [],
+        }))
+      : [],
+  );
+}
+
+async function syncProposalFromCurrentConfigIfEligible({
+  proposalId,
+  proposalTitle,
+  userId,
+  user,
+}) {
+  const canAutoSync = await canAutoSyncProposalFromCurrentConfig(proposalId);
+  if (!canAutoSync) {
+    return false;
+  }
+
+  const [proposalComponents, proposalContentConfig] = await Promise.all([
+    listProposalComponents(Number(proposalId)),
+    getProposalContentConfiguration(),
+  ]);
+
+  const currentFingerprint =
+    buildProposalComponentSyncFingerprint(proposalComponents);
+  const sourceFingerprint = buildProposalComponentSyncFingerprint(
+    proposalContentConfig?.components || [],
+  );
+
+  if (currentFingerprint === sourceFingerprint) {
+    return false;
+  }
+
+  await cloneProposalComponents({
+    proposalId,
+    actorUserId: Number(userId),
+  });
+  const synchronizedContent = await refreshProposalLegacyContentFromComponents({
+    proposalId,
+    proposalTitle,
+    userId: Number(userId),
+  });
+
+  const refreshedProposal = await getAccessibleProposal({
+    user,
+    proposalId,
+  });
+
+  if (!refreshedProposal) {
+    return true;
+  }
+
+  await createProposalRevision({
+    proposalId,
+    quotationVersionId: Number(refreshedProposal.quotation_version_id),
+    title: refreshedProposal.title || proposalTitle,
+    statusCode: normalizeProposalStatusCode(
+      refreshedProposal.status_code,
+      refreshedProposal.archived_at ? "archived" : "active",
+    ),
+    content: synchronizedContent.content,
+    pricingSnapshot:
+      safeParseJsonObject(refreshedProposal.pricing_snapshot_json) || {},
+    changeType: "sync_from_current_config_on_read",
+    userId,
+  });
+
+  return true;
+}
+
+async function canAutoSyncProposalFromCurrentConfig(proposalId) {
+  const rows = await query(
+    `SELECT change_type
+     FROM proposal_revisions
+     WHERE proposal_id = ?
+     ORDER BY revision_number ASC`,
+    [Number(proposalId)],
+  );
+
+  if (!rows.length) {
+    return false;
+  }
+
+  return rows.every((row) =>
+    AUTO_SYNC_PROPOSAL_CHANGE_TYPES.has(String(row.change_type || "").trim()),
+  );
+}
+
+async function getAccessibleProposal({ user, proposalId }) {
+  const params = [];
+  const ownershipJoin = applyOwnedAccountScope({
+    user,
+    accountExpression: "o.account_id",
+    params,
+  });
+  params.push(Number(proposalId));
+  const rows = await query(
+    `SELECT p.*, a.name AS account_name,
+            o.name AS opportunity_name,
+            CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+          pt.name AS template_name,
+          pt.status AS template_status,
+          pt.code AS template_code,
+            qv.version_number AS quotation_version_number,
+            qv.proposal_name AS quotation_version_proposal_name,
+            qv.status_id AS quotation_version_status_id,
+            qvs.code AS quotation_version_status_code,
+            qvs.name AS quotation_version_status_name,
+            q.latest_version_id,
+            (
+              SELECT qv2.id
+              FROM quotation_versions qv2
+              INNER JOIN quotation_statuses qs2 ON qs2.id = qv2.status_id
+              WHERE qv2.quotation_id = q.id
+                AND qs2.code = 'aprobada'
+              ORDER BY qv2.version_number DESC, qv2.id DESC
+              LIMIT 1
+            ) AS latest_approved_version_id,
+            (
+              SELECT qv2.version_number
+              FROM quotation_versions qv2
+              INNER JOIN quotation_statuses qs2 ON qs2.id = qv2.status_id
+              WHERE qv2.quotation_id = q.id
+                AND qs2.code = 'aprobada'
+              ORDER BY qv2.version_number DESC, qv2.id DESC
+              LIMIT 1
+            ) AS latest_approved_version_number
+     FROM proposals p
+     INNER JOIN quotations q ON q.id = p.quotation_id
+     INNER JOIN quotation_versions qv ON qv.id = p.quotation_version_id
+     INNER JOIN quotation_statuses qvs ON qvs.id = qv.status_id
+     INNER JOIN opportunities o ON o.id = p.opportunity_id
+     ${ownershipJoin}
+     INNER JOIN accounts a ON a.id = p.account_id
+     INNER JOIN contacts c ON c.id = p.contact_id
+     LEFT JOIN proposal_templates pt ON pt.id = p.template_id
+     WHERE p.id = ?
+     LIMIT 1`,
+    params,
+  );
+
+  return rows.length ? rows[0] : null;
+}
+
+function serializeProposalRow(proposalRow, options = {}) {
+  const content = sanitizeProposalContent(
+    safeParseJsonObject(proposalRow.content_json) || {},
+  );
+  const pricingSnapshot =
+    safeParseJsonObject(proposalRow.pricing_snapshot_json) || {};
+  const templateSnapshot = proposalRow.template_snapshot_json
+    ? sanitizeProposalTemplateSnapshot(
+        safeParseJsonObject(proposalRow.template_snapshot_json) || {},
+      )
+    : null;
+  const latestApprovedVersionId = proposalRow.latest_approved_version_id
+    ? Number(proposalRow.latest_approved_version_id)
+    : null;
+  const quotationVersionId = Number(proposalRow.quotation_version_id);
+
+  return {
+    id: Number(proposalRow.id),
+    quotationId: Number(proposalRow.quotation_id),
+    quotationVersionId,
+    quotationVersionNumber: Number(proposalRow.quotation_version_number || 0),
+    quotationVersionStatusCode:
+      proposalRow.quotation_version_status_code || null,
+    quotationVersionStatusName:
+      proposalRow.quotation_version_status_name || null,
+    quotationProposalName: proposalRow.quotation_version_proposal_name || "",
+    accountId: Number(proposalRow.account_id),
+    accountName: proposalRow.account_name || "",
+    contactId: Number(proposalRow.contact_id),
+    contactName: proposalRow.contact_name || "",
+    opportunityId: Number(proposalRow.opportunity_id),
+    opportunityName: proposalRow.opportunity_name || "",
+    ownerUserId: Number(proposalRow.owner_user_id),
+    templateId: proposalRow.template_id
+      ? Number(proposalRow.template_id)
+      : null,
+    templateName: proposalRow.template_name || "",
+    templateStatus: proposalRow.template_status || null,
+    templateCode: proposalRow.template_code || null,
+    templateSnapshot,
+    isLegacyTemplate: !proposalRow.template_id,
+    title: proposalRow.title || "",
+    statusCode: normalizeProposalStatusCode(
+      proposalRow.status_code,
+      proposalRow.archived_at ? "archived" : "active",
+    ),
+    createdAt: proposalRow.created_at,
+    updatedAt: proposalRow.updated_at,
+    archivedAt: proposalRow.archived_at || null,
+    content,
+    pricingSnapshot,
+    latestApprovedVersionId,
+    latestApprovedVersionNumber: proposalRow.latest_approved_version_number
+      ? Number(proposalRow.latest_approved_version_number)
+      : null,
+    updateAvailable:
+      Boolean(latestApprovedVersionId) &&
+      latestApprovedVersionId !== quotationVersionId,
+    components: Array.isArray(options.components) ? options.components : [],
+  };
+}
+
+async function serializeProposalDetail(proposalRow) {
+  const components = await listProposalComponents(Number(proposalRow.id));
+  return serializeProposalRow(proposalRow, { components });
+}
+
+async function refreshProposalLegacyContentFromComponents({
+  proposalId,
+  proposalTitle,
+  userId,
+}) {
+  const components = await listProposalComponents(Number(proposalId));
+  const summary = summarizeProposalComponents(components, proposalTitle);
+  const nextContent = sanitizeProposalContent(summary);
+  await query(
+    `UPDATE proposals
+     SET content_json = ?, updated_by_user_id = ?, updated_at = NOW(3)
+     WHERE id = ?`,
+    [JSON.stringify(nextContent), Number(userId), Number(proposalId)],
+  );
+  return { components, content: nextContent };
+}
+
+function getProposalComponentDefinitionOrNull(componentCode) {
+  return (
+    PROPOSAL_CONTENT_COMPONENT_DEFINITIONS.find(
+      (component) => component.code === componentCode,
+    ) || null
+  );
+}
+
+function normalizeProposalAiText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeProposalAiText(value, maxChars) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxChars);
+}
+
+function extractJsonObject(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function getOpenAiOutputText(responseData) {
+  const output = Array.isArray(responseData?.output) ? responseData.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (part?.type === "output_text" && part?.text) {
+        return String(part.text);
+      }
+    }
+  }
+  return "";
+}
+
+function buildProposalExecutiveSummaryJobPublicId() {
+  return `paj_${randomUUID().replace(/-/g, "")}`;
+}
+
+function hashProposalExecutiveSummarySnapshot(snapshot) {
+  return createHash("sha256")
+    .update(JSON.stringify(snapshot || {}))
+    .digest("hex");
+}
+
+let ensureProposalExecutiveSummaryGenerationJobSchemaPromise = null;
+let proposalExecutiveSummaryWorkerQueued = false;
+let proposalExecutiveSummaryWorkerStarted = false;
+
+export async function ensureProposalExecutiveSummaryGenerationJobSchema() {
+  if (!ensureProposalExecutiveSummaryGenerationJobSchemaPromise) {
+    ensureProposalExecutiveSummaryGenerationJobSchemaPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS proposal_ai_jobs (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          public_id VARCHAR(64) NOT NULL,
+          proposal_id BIGINT UNSIGNED NOT NULL,
+          component_code VARCHAR(80) NOT NULL,
+          job_type VARCHAR(80) NOT NULL,
+          requested_by_user_id BIGINT UNSIGNED NOT NULL,
+          status ENUM('pending','running','completed','failed','canceled') NOT NULL DEFAULT 'pending',
+          request_fingerprint CHAR(64) NOT NULL,
+          language_code VARCHAR(10) NOT NULL DEFAULT 'es',
+          instructions_text TEXT NULL,
+          max_library_assets INT UNSIGNED NOT NULL DEFAULT 4,
+          progress_phase VARCHAR(80) NULL,
+          progress_label VARCHAR(255) NULL,
+          progress_percent INT UNSIGNED NOT NULL DEFAULT 0,
+          source_snapshot_json JSON NULL,
+          result_json JSON NULL,
+          error_code VARCHAR(64) NULL,
+          error_message TEXT NULL,
+          attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+          lease_token VARCHAR(64) NULL,
+          lease_expires_at DATETIME(3) NULL,
+          started_at DATETIME(3) NULL,
+          finished_at DATETIME(3) NULL,
+          expires_at DATETIME(3) NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (id),
+          UNIQUE KEY uq_proposal_ai_jobs_public_id (public_id),
+          KEY idx_proposal_ai_jobs_lookup (proposal_id, component_code, status, created_at),
+          KEY idx_proposal_ai_jobs_process (status, lease_expires_at, created_at),
+          CONSTRAINT fk_proposal_ai_jobs_proposal
+            FOREIGN KEY (proposal_id) REFERENCES proposals(id)
+            ON DELETE CASCADE,
+          CONSTRAINT fk_proposal_ai_jobs_requested_by
+            FOREIGN KEY (requested_by_user_id) REFERENCES users(id)
+            ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+    })();
+  }
+
+  return ensureProposalExecutiveSummaryGenerationJobSchemaPromise;
+}
+
+function buildProposalExecutiveSummaryJobResponse(row) {
+  if (!row) return null;
+  return {
+    publicId: row.public_id,
+    proposalId: Number(row.proposal_id),
+    componentCode: row.component_code,
+    jobType: row.job_type,
+    status: row.status,
+    createdAt: row.created_at,
+    startedAt: row.started_at || null,
+    finishedAt: row.finished_at || null,
+    updatedAt: row.updated_at,
+    requestedBy: {
+      userId: Number(row.requested_by_user_id),
+    },
+    progress: {
+      phase:
+        row.progress_phase ||
+        (row.status === "pending" ? "queued" : row.status),
+      label:
+        row.progress_label ||
+        (row.status === "pending"
+          ? "Trabajo en cola"
+          : row.status === "running"
+            ? "Procesando"
+            : row.status === "completed"
+              ? "Sugerencia lista"
+              : row.status === "canceled"
+                ? "Generacion cancelada"
+                : "No fue posible generar la sugerencia"),
+      percent: Number(row.progress_percent || 0),
+    },
+    result: safeParseJsonObject(row.result_json) || null,
+    error:
+      row.error_code || row.error_message
+        ? {
+            code: row.error_code || "generation_failed",
+            message:
+              row.error_message ||
+              "No fue posible generar la sugerencia del resumen ejecutivo",
+            retryable: row.status !== "canceled",
+          }
+        : null,
+  };
+}
+
+async function getProposalExecutiveSummaryGenerationJob({
+  publicId,
+  proposalId,
+}) {
+  const rows = await query(
+    `SELECT *
+     FROM proposal_ai_jobs
+     WHERE public_id = ?
+       AND proposal_id = ?
+       AND component_code = ?
+       AND job_type = ?
+     LIMIT 1`,
+    [
+      publicId,
+      Number(proposalId),
+      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+    ],
+  );
+  return rows.length ? buildProposalExecutiveSummaryJobResponse(rows[0]) : null;
+}
+
+async function getLatestProposalExecutiveSummaryGenerationJob({ proposalId }) {
+  const rows = await query(
+    `SELECT *
+     FROM proposal_ai_jobs
+     WHERE proposal_id = ?
+       AND component_code = ?
+       AND job_type = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [
+      Number(proposalId),
+      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+    ],
+  );
+  return rows.length ? buildProposalExecutiveSummaryJobResponse(rows[0]) : null;
+}
+
+function buildProposalExecutiveSummaryFingerprintSnapshot({
+  proposal,
+  component,
+  instructions,
+  languageCode,
+  maxLibraryAssets,
+}) {
+  return {
+    proposalId: Number(proposal?.id || 0),
+    proposalUpdatedAt: proposal?.updated_at || null,
+    quotationVersionId: Number(proposal?.quotation_version_id || 0),
+    componentCode: PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+    componentTitle: component?.title || "",
+    componentBlocks: Array.isArray(component?.blocks)
+      ? component.blocks.map((block) => ({
+          type: block.type || "paragraph",
+          text: block.text || "",
+          items: Array.isArray(block.items) ? block.items : [],
+        }))
+      : [],
+    instructions: String(instructions || "").trim(),
+    languageCode: String(languageCode || "es")
+      .trim()
+      .toLowerCase(),
+    maxLibraryAssets: Number(maxLibraryAssets || 0),
+  };
+}
+
+async function createOrReuseProposalExecutiveSummaryGenerationJob({
+  proposal,
+  requestedByUserId,
+  instructions,
+  languageCode,
+  maxLibraryAssets,
+}) {
+  const proposalDetail = await serializeProposalDetail(proposal);
+  const component = Array.isArray(proposalDetail.components)
+    ? proposalDetail.components.find(
+        (entry) =>
+          entry.componentCode === PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      )
+    : null;
+
+  if (!component) {
+    const error = new Error("Componente no encontrado");
+    error.status = 422;
+    error.body = {
+      message: "La propuesta no tiene el componente Resumen ejecutivo",
+      error: { code: "unsupported_component", retryable: false },
+    };
+    throw error;
+  }
+
+  const snapshot = buildProposalExecutiveSummaryFingerprintSnapshot({
+    proposal,
+    component,
+    instructions,
+    languageCode,
+    maxLibraryAssets,
+  });
+  const fingerprint = hashProposalExecutiveSummarySnapshot(snapshot);
+
+  const reusableRows = await query(
+    `SELECT *
+     FROM proposal_ai_jobs
+     WHERE proposal_id = ?
+       AND component_code = ?
+       AND job_type = ?
+       AND status IN ('pending', 'running')
+     ORDER BY id DESC
+     LIMIT 1`,
+    [
+      Number(proposal.id),
+      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+    ],
+  );
+
+  if (reusableRows.length) {
+    return {
+      wasReused: true,
+      response: buildProposalExecutiveSummaryJobResponse(reusableRows[0]),
+    };
+  }
+
+  const publicId = buildProposalExecutiveSummaryJobPublicId();
+  await query(
+    `INSERT INTO proposal_ai_jobs (
+       public_id, proposal_id, component_code, job_type,
+       requested_by_user_id, status, request_fingerprint,
+       language_code, instructions_text, max_library_assets,
+       progress_phase, progress_label, progress_percent,
+       source_snapshot_json
+     ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, 'queued', 'Trabajo en cola', 0, ?)`,
+    [
+      publicId,
+      Number(proposal.id),
+      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+      Number(requestedByUserId),
+      fingerprint,
+      String(languageCode || "es")
+        .trim()
+        .toLowerCase() || "es",
+      String(instructions || "").trim() || null,
+      Math.min(
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
+        Number(maxLibraryAssets || PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS),
+      ),
+      JSON.stringify(snapshot),
+    ],
+  );
+
+  const rows = await query(
+    `SELECT *
+     FROM proposal_ai_jobs
+     WHERE public_id = ?
+     LIMIT 1`,
+    [publicId],
+  );
+
+  return {
+    wasReused: false,
+    response: buildProposalExecutiveSummaryJobResponse(rows[0]),
+  };
+}
+
+async function updateProposalExecutiveSummaryJobProgress({
+  jobId,
+  leaseToken,
+  phase,
+  label,
+  percent,
+}) {
+  await query(
+    `UPDATE proposal_ai_jobs
+     SET progress_phase = ?,
+         progress_label = ?,
+         progress_percent = ?,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [phase, label, Number(percent || 0), Number(jobId), leaseToken],
+  );
+}
+
+async function claimNextPendingProposalExecutiveSummaryGenerationJob() {
+  const candidates = await query(
+    `SELECT id
+     FROM proposal_ai_jobs
+     WHERE component_code = ?
+       AND job_type = ?
+       AND (
+         status = 'pending'
+         OR (
+           status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= NOW(3)
+         )
+       )
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY created_at ASC, id ASC
+     LIMIT 20`,
+    [PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE, PROPOSAL_EXEC_SUMMARY_JOB_TYPE],
+  );
+
+  for (const candidate of candidates) {
+    const leaseToken = randomUUID().replace(/-/g, "");
+    const row = await withTransaction(async (conn) => {
+      const [updateResult] = await conn.query(
+        `UPDATE proposal_ai_jobs
+         SET status = 'running',
+             attempt_count = attempt_count + 1,
+             lease_token = ?,
+             lease_expires_at = DATE_ADD(NOW(3), INTERVAL ? SECOND),
+             started_at = COALESCE(started_at, NOW(3)),
+             progress_phase = 'loading_proposal_context',
+             progress_label = 'Cargando contexto de la propuesta',
+             progress_percent = 10,
+             updated_at = NOW(3)
+         WHERE id = ?
+           AND (
+             status = 'pending'
+             OR (
+               status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at <= NOW(3)
+             )
+           )`,
+        [
+          leaseToken,
+          PROPOSAL_EXEC_SUMMARY_JOB_LEASE_SECONDS,
+          Number(candidate.id),
+        ],
+      );
+      if (!updateResult.affectedRows) {
+        return null;
+      }
+      const [rows] = await conn.query(
+        `SELECT * FROM proposal_ai_jobs WHERE id = ? LIMIT 1`,
+        [Number(candidate.id)],
+      );
+      return rows[0] || null;
+    });
+
+    if (row) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
+async function finalizeProposalExecutiveSummaryGenerationJob({
+  jobId,
+  leaseToken,
+  status,
+  result,
+  errorCode,
+  errorMessage,
+}) {
+  await query(
+    `UPDATE proposal_ai_jobs
+     SET status = ?,
+         result_json = ?,
+         error_code = ?,
+         error_message = ?,
+         progress_phase = ?,
+         progress_label = ?,
+         progress_percent = ?,
+         finished_at = NOW(3),
+         expires_at = DATE_ADD(NOW(3), INTERVAL ? MINUTE),
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      status,
+      result ? JSON.stringify(result) : null,
+      errorCode || null,
+      errorMessage || null,
+      status === "completed" ? "completed" : "failed",
+      status === "completed"
+        ? "Sugerencia lista"
+        : status === "canceled"
+          ? "Generacion cancelada"
+          : "No fue posible generar la sugerencia",
+      100,
+      PROPOSAL_EXEC_SUMMARY_JOB_RESULT_TTL_MINUTES,
+      Number(jobId),
+      leaseToken,
+    ],
+  );
+}
+
+async function getProposalOpportunityContext(opportunityId) {
+  const rows = await query(
+    `SELECT o.id, o.name, o.account_id, o.contact_id,
+            oss.code AS sales_stage_code, oss.name AS sales_stage_name,
+            oas.code AS activation_status_code, oas.name AS activation_status_name
+     FROM opportunities o
+     LEFT JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+     LEFT JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE o.id = ?
+     LIMIT 1`,
+    [Number(opportunityId)],
+  );
+  return rows[0] || null;
+}
+
+async function listLatestOpportunityAnswersForProposalContext(opportunityId) {
+  return query(
+    `SELECT a.id,
+            a.sales_stage_id,
+            a.question_id,
+            a.answer_value,
+            a.answered_at,
+            oss.code AS sales_stage_code,
+            oss.name AS sales_stage_name,
+            oss.stage_order,
+            q.code AS question_code,
+            q.prompt,
+            q.display_order
+     FROM opportunity_stage_question_answers a
+     INNER JOIN (
+       SELECT MAX(id) AS id
+       FROM opportunity_stage_question_answers
+       WHERE opportunity_id = ?
+       GROUP BY sales_stage_id, question_id
+     ) latest_answers ON latest_answers.id = a.id
+     INNER JOIN opportunity_sales_stages oss ON oss.id = a.sales_stage_id
+     INNER JOIN opportunity_stage_questions q ON q.id = a.question_id
+     ORDER BY oss.stage_order ASC, q.display_order ASC, a.id ASC`,
+    [Number(opportunityId)],
+  );
+}
+
+function pickMatchingCatalogCodes(text, entries, minimumTokenSize = 1) {
+  const normalizedSource = ` ${normalizeProposalAiText(text)} `;
+  if (!normalizedSource.trim()) return [];
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => {
+      const tokens = normalizeProposalAiText(
+        [entry?.code, entry?.name].filter(Boolean).join(" "),
+      )
+        .split(" ")
+        .filter((token) => token.length >= minimumTokenSize);
+      return tokens.some((token) => normalizedSource.includes(` ${token} `));
+    })
+    .map((entry) => String(entry.code || "").trim())
+    .filter(Boolean);
+}
+
+function buildExecutiveSummarySourceText({
+  proposal,
+  currentComponent,
+  opportunity,
+  answers,
+  documents,
+  quotationSections,
+}) {
+  return [
+    proposal?.title,
+    proposal?.opportunity_name,
+    opportunity?.sales_stage_name,
+    currentComponent?.title,
+    ...(Array.isArray(currentComponent?.blocks)
+      ? currentComponent.blocks.flatMap((block) => [
+          block.text,
+          ...(block.items || []),
+        ])
+      : []),
+    ...(Array.isArray(answers)
+      ? answers.flatMap((answer) => [answer.prompt, answer.answer_value])
+      : []),
+    ...(Array.isArray(documents)
+      ? documents.flatMap((document) => [
+          document.originalFileName,
+          document.contentSummary,
+          document.transcriptText,
+          document.rawText,
+          document.normalizedText,
+        ])
+      : []),
+    ...(Array.isArray(quotationSections)
+      ? quotationSections.flatMap((section) => [
+          section.title,
+          ...(Array.isArray(section.items)
+            ? section.items.flatMap((item) => [
+                item.productCode,
+                item.productDescription,
+              ])
+            : []),
+        ])
+      : []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function scoreLibraryAssetForProposalContext(item, context) {
+  let score = 0;
+  const reasons = [];
+  const catalogs = Array.isArray(item?.catalogs) ? item.catalogs : [];
+  const tags = Array.isArray(item?.tags) ? item.tags : [];
+  const hasCatalogMatch = (type, codes) =>
+    codes.some((code) =>
+      catalogs.some(
+        (catalog) =>
+          catalog.catalogType === type && String(catalog.code) === String(code),
+      ),
+    );
+  const hasTagMatch = (group, codes) =>
+    codes.some((code) =>
+      tags.some(
+        (tag) => tag.tagGroup === group && String(tag.code) === String(code),
+      ),
+    );
+
+  if (hasCatalogMatch("manufacturer", context.manufacturerCodes)) {
+    score += 5;
+    reasons.push("manufacturer");
+  }
+  if (hasCatalogMatch("solution", context.solutionCodes)) {
+    score += 5;
+    reasons.push("solution");
+  }
+  if (hasCatalogMatch("industry", context.industryCodes)) {
+    score += 3;
+    reasons.push("industry");
+  }
+  if (hasTagMatch("stage", context.stageCodes)) {
+    score += 2;
+    reasons.push("stage");
+  }
+
+  const searchText = normalizeProposalAiText(
+    [item?.title, item?.summary, item?.searchText].filter(Boolean).join(" "),
+  );
+  if (
+    context.opportunityNameNormalized &&
+    searchText.includes(context.opportunityNameNormalized)
+  ) {
+    score += 1;
+    reasons.push("text");
+  }
+
+  return { score, reasons: Array.from(new Set(reasons)) };
+}
+
+async function buildProposalExecutiveSummaryGenerationContext({
+  proposal,
+  user,
+  instructions,
+  languageCode,
+  maxLibraryAssets,
+}) {
+  const proposalDetail = await serializeProposalDetail(proposal);
+  const currentComponent = Array.isArray(proposalDetail.components)
+    ? proposalDetail.components.find(
+        (component) =>
+          component.componentCode === PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      )
+    : null;
+
+  const [opportunity, answers, documents, quotationSections, catalogs] =
+    await Promise.all([
+      getProposalOpportunityContext(Number(proposal.opportunity_id)),
+      listLatestOpportunityAnswersForProposalContext(
+        Number(proposal.opportunity_id),
+      ),
+      listOpportunityDocuments({
+        opportunityId: Number(proposal.opportunity_id),
+      }).catch(() => []),
+      getQuotationVersionSections(Number(proposal.quotation_version_id)),
+      getCommercialEnablementCatalogs(),
+    ]);
+
+  const sourceText = buildExecutiveSummarySourceText({
+    proposal,
+    currentComponent,
+    opportunity,
+    answers,
+    documents,
+    quotationSections,
+  });
+
+  const manufacturerCodes = pickMatchingCatalogCodes(
+    sourceText,
+    catalogs?.manufacturer,
+  );
+  const solutionCodes = pickMatchingCatalogCodes(
+    sourceText,
+    catalogs?.solution,
+  );
+  const industryCodes = pickMatchingCatalogCodes(
+    sourceText,
+    catalogs?.industry,
+    2,
+  );
+  const stageCodes = [
+    String(opportunity?.sales_stage_code || "").trim(),
+  ].filter(Boolean);
+
+  const libraryAssetsResponse = await listCommercialEnablementAssets({
+    user,
+    filters: {
+      status: "published",
+      onlyClientSafe: "true",
+    },
+  }).catch(() => null);
+
+  const libraryAssets = Array.isArray(libraryAssetsResponse?.items)
+    ? libraryAssetsResponse.items
+    : [];
+
+  const scoredAssets = libraryAssets
+    .map((item) => {
+      const scored = scoreLibraryAssetForProposalContext(item, {
+        manufacturerCodes,
+        solutionCodes,
+        industryCodes,
+        stageCodes,
+        opportunityNameNormalized: normalizeProposalAiText(
+          opportunity?.name || proposal.opportunity_name || "",
+        ),
+      });
+      return {
+        item,
+        score: scored.score,
+        reasons: scored.reasons,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.item.usageCount - left.item.usageCount ||
+        String(left.item.title).localeCompare(String(right.item.title), "es"),
+    );
+
+  const matchedAssets = scoredAssets
+    .slice(
+      0,
+      Math.min(PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS, maxLibraryAssets),
+    )
+    .map((entry) => ({
+      assetPublicId: entry.item.publicId,
+      title: entry.item.title,
+      summary: summarizeProposalAiText(
+        entry.item.summary,
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS,
+      ),
+      assetTypeCode: entry.item.assetTypeCode,
+      matchScore: entry.score,
+      matchReasons: entry.reasons,
+      manufacturerCodes: entry.item.catalogs
+        .filter((catalog) => catalog.catalogType === "manufacturer")
+        .map((catalog) => catalog.code),
+      solutionCodes: entry.item.catalogs
+        .filter((catalog) => catalog.catalogType === "solution")
+        .map((catalog) => catalog.code),
+      industryCodes: entry.item.catalogs
+        .filter((catalog) => catalog.catalogType === "industry")
+        .map((catalog) => catalog.code),
+      stageCodes: entry.item.tags
+        .filter((tag) => tag.tagGroup === "stage")
+        .map((tag) => tag.code),
+    }));
+
+  return {
+    proposal: {
+      id: Number(proposal.id),
+      title: proposal.title || "",
+      quotationVersionId: Number(proposal.quotation_version_id),
+      opportunityId: Number(proposal.opportunity_id),
+      currentComponentDraft: {
+        title: currentComponent?.title || "Resumen ejecutivo",
+        blocks: Array.isArray(currentComponent?.blocks)
+          ? currentComponent.blocks.map((block) => ({
+              type: block.type || "paragraph",
+              text: block.text || "",
+              items: Array.isArray(block.items) ? block.items : [],
+            }))
+          : [],
+      },
+      template: {
+        id: proposal.template_id ? Number(proposal.template_id) : null,
+        code: proposal.template_code || null,
+        name: proposal.template_name || "",
+      },
+    },
+    opportunity: {
+      id: Number(opportunity?.id || proposal.opportunity_id),
+      name: opportunity?.name || proposal.opportunity_name || "",
+      accountId: Number(opportunity?.account_id || proposal.account_id),
+      accountName: proposal.account_name || "",
+      contactId: Number(opportunity?.contact_id || proposal.contact_id),
+      contactName: proposal.contact_name || "",
+      salesStage: {
+        code: opportunity?.sales_stage_code || "",
+        name: opportunity?.sales_stage_name || "",
+      },
+      activationStatus: {
+        code: opportunity?.activation_status_code || "",
+        name: opportunity?.activation_status_name || "",
+      },
+      answers: (Array.isArray(answers) ? answers : [])
+        .filter((answer) => String(answer.answer_value || "").trim())
+        .slice(0, PROPOSAL_EXEC_SUMMARY_MAX_ANSWERS)
+        .map((answer) => ({
+          questionId: Number(answer.question_id),
+          questionLabel: answer.prompt || answer.question_code || "",
+          salesStageCode: answer.sales_stage_code || "",
+          salesStageName: answer.sales_stage_name || "",
+          answerText: summarizeProposalAiText(answer.answer_value, 1200),
+        })),
+      documents: (Array.isArray(documents) ? documents : [])
+        .slice(0, PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS)
+        .map((document) => ({
+          documentPublicId: document.publicId,
+          fileName: document.originalFileName,
+          mimeType: document.mimeType,
+          previewText: summarizeProposalAiText(
+            document.contentSummary ||
+              document.transcriptText ||
+              document.normalizedText ||
+              document.rawText,
+            PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS,
+          ),
+          linkedSalesStages: Array.isArray(document.stageSuggestions)
+            ? document.stageSuggestions
+                .map((entry) => entry.salesStageCode || entry.code || "")
+                .filter(Boolean)
+            : [],
+        })),
+      metadata: {
+        manufacturerCodes,
+        solutionCodes,
+        industryCodes,
+        stageCodes,
+      },
+    },
+    quotation: {
+      quotationId: Number(proposal.quotation_id),
+      quotationVersionId: Number(proposal.quotation_version_id),
+      versionNumber: Number(proposal.quotation_version_number || 0),
+      statusCode: proposal.quotation_version_status_code || "",
+      proposalName: proposal.quotation_version_proposal_name || "",
+      summary: {
+        subtotal: Number(
+          proposalDetail.pricingSnapshot?.summary?.subtotal || 0,
+        ),
+        total: Number(proposalDetail.pricingSnapshot?.summary?.total || 0),
+        currencyCode:
+          proposalDetail.pricingSnapshot?.summary?.currencyCode || "USD",
+      },
+      sections: (Array.isArray(quotationSections) ? quotationSections : []).map(
+        (section) => ({
+          title: section.title || "",
+          items: (Array.isArray(section.items) ? section.items : [])
+            .slice(0, PROPOSAL_EXEC_SUMMARY_MAX_SECTION_ITEMS)
+            .map((item) => ({
+              productCode: item.productCode || "",
+              productDescription: item.productDescription || "",
+              quantity: Number(item.quantity || 0),
+              salePriceTotal: Number(item.salePriceTotal || 0),
+            })),
+        }),
+      ),
+    },
+    libraryContext: {
+      filtersApplied: {
+        status: "published",
+        visibilityLevel: "client_safe",
+        manufacturerCodes,
+        solutionCodes,
+        industryCodes,
+        stageCodes,
+      },
+      matchedAssets,
+      limit: Math.min(
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
+        Number(maxLibraryAssets || PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS),
+      ),
+    },
+    generationPolicy: {
+      languageCode:
+        String(languageCode || "es")
+          .trim()
+          .toLowerCase() || "es",
+      mode: "parallel",
+      maxLibraryAssets: Math.min(
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
+        Number(maxLibraryAssets || PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS),
+      ),
+      allowOverwrite: false,
+      targetAudience: "client",
+      instructions: String(instructions || "").trim(),
+    },
+  };
+}
+
+async function requestProposalExecutiveSummarySuggestion(context) {
+  if (!config.openai.apiKey) {
+    const error = new Error(
+      "La generacion asistida no esta disponible en este momento",
+    );
+    error.code = "ai_generation_disabled";
+    throw error;
+  }
+
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          context,
+          expectedShape: {
+            title: "Resumen ejecutivo sugerido",
+            paragraphs: ["string"],
+            warnings: ["string"],
+          },
+        }),
+      },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openai.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    const parsed = extractJsonObject(getOpenAiOutputText(responseData));
+    if (!parsed) {
+      throw new Error("OpenAI request failed: invalid JSON response");
+    }
+
+    const paragraphs = Array.isArray(parsed.paragraphs)
+      ? parsed.paragraphs
+          .map((value) => summarizeProposalAiText(value, 2400))
+          .filter(Boolean)
+      : [];
+    if (!paragraphs.length) {
+      throw new Error(
+        "OpenAI request failed: empty executive summary suggestion",
+      );
+    }
+
+    return {
+      suggestion: {
+        mode: "parallel",
+        componentCode: PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+        title:
+          summarizeProposalAiText(
+            parsed.title || "Resumen ejecutivo sugerido",
+            180,
+          ) || "Resumen ejecutivo sugerido",
+        blocks: paragraphs.map((text) => ({ type: "paragraph", text })),
+        plainText: paragraphs.join("\n\n"),
+        suggestionMetadata: {
+          tone: "executive_commercial",
+          languageCode:
+            String(context?.generationPolicy?.languageCode || "es").trim() ||
+            "es",
+          generatedAt: new Date().toISOString(),
+        },
+      },
+      sourceSummary: {
+        opportunityAnswersUsed: Array.isArray(context?.opportunity?.answers)
+          ? context.opportunity.answers.length
+          : 0,
+        opportunityDocumentsUsed: Array.isArray(context?.opportunity?.documents)
+          ? context.opportunity.documents.length
+          : 0,
+        quotationSectionsUsed: Array.isArray(context?.quotation?.sections)
+          ? context.quotation.sections.length
+          : 0,
+        libraryAssetsUsed: Array.isArray(context?.libraryContext?.matchedAssets)
+          ? context.libraryContext.matchedAssets.length
+          : 0,
+      },
+      sources: {
+        proposal: {
+          proposalId: Number(context?.proposal?.id || 0),
+          quotationVersionId: Number(
+            context?.proposal?.quotationVersionId || 0,
+          ),
+          opportunityId: Number(context?.proposal?.opportunityId || 0),
+        },
+        opportunityAnswers: (context?.opportunity?.answers || []).map(
+          (answer) => ({
+            questionId: Number(answer.questionId || 0),
+            questionLabel: answer.questionLabel || "",
+            used: true,
+          }),
+        ),
+        opportunityDocuments: (context?.opportunity?.documents || []).map(
+          (document) => ({
+            documentPublicId: document.documentPublicId,
+            fileName: document.fileName,
+          }),
+        ),
+        libraryAssets: (context?.libraryContext?.matchedAssets || []).map(
+          (asset) => ({
+            assetPublicId: asset.assetPublicId,
+            title: asset.title,
+            matchReasons: Array.isArray(asset.matchReasons)
+              ? asset.matchReasons
+              : [],
+          }),
+        ),
+      },
+      warnings: Array.isArray(parsed.warnings)
+        ? parsed.warnings.map((message) => ({
+            code: "model_warning",
+            message: summarizeProposalAiText(message, 500),
+          }))
+        : [],
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function processProposalExecutiveSummaryGenerationJob(row) {
+  try {
+    const user = await getUserAuthContext(Number(row.requested_by_user_id));
+    if (!user) {
+      await finalizeProposalExecutiveSummaryGenerationJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "requester_not_found",
+        errorMessage: "No fue posible resolver el usuario solicitante del job",
+      });
+      return;
+    }
+
+    const proposal = await getAccessibleProposal({
+      user,
+      proposalId: Number(row.proposal_id),
+    });
+    if (!proposal) {
+      await finalizeProposalExecutiveSummaryGenerationJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "proposal_not_found",
+        errorMessage: "Propuesta no encontrada",
+      });
+      return;
+    }
+
+    const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
+    const proposalDetail = await serializeProposalDetail(proposal);
+    const currentComponent = Array.isArray(proposalDetail.components)
+      ? proposalDetail.components.find(
+          (component) =>
+            component.componentCode ===
+            PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+        )
+      : null;
+    const currentFingerprint = hashProposalExecutiveSummarySnapshot(
+      buildProposalExecutiveSummaryFingerprintSnapshot({
+        proposal,
+        component: currentComponent,
+        instructions: row.instructions_text,
+        languageCode: row.language_code,
+        maxLibraryAssets: row.max_library_assets,
+      }),
+    );
+
+    if (
+      snapshot?.proposalId &&
+      currentFingerprint !== row.request_fingerprint
+    ) {
+      await finalizeProposalExecutiveSummaryGenerationJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "stale_snapshot",
+        errorMessage:
+          "La propuesta cambio antes de completar la generacion. Vuelve a solicitar la sugerencia.",
+      });
+      return;
+    }
+
+    await updateProposalExecutiveSummaryJobProgress({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      phase: "loading_opportunity_context",
+      label: "Cargando contexto de la oportunidad",
+      percent: 25,
+    });
+
+    const context = await buildProposalExecutiveSummaryGenerationContext({
+      proposal,
+      user,
+      instructions: row.instructions_text,
+      languageCode: row.language_code,
+      maxLibraryAssets: row.max_library_assets,
+    });
+
+    await updateProposalExecutiveSummaryJobProgress({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      phase: "generating_text",
+      label: "La IA esta redactando el resumen ejecutivo",
+      percent: 80,
+    });
+
+    const result = await requestProposalExecutiveSummarySuggestion(context);
+    if (
+      Array.isArray(context?.libraryContext?.matchedAssets) &&
+      context.libraryContext.matchedAssets.length >= row.max_library_assets
+    ) {
+      result.warnings = [
+        ...(Array.isArray(result.warnings) ? result.warnings : []),
+        {
+          code: "library_assets_truncated",
+          message: `Se limitaron los activos relacionados a ${row.max_library_assets} elementos.`,
+        },
+      ];
+    }
+
+    await finalizeProposalExecutiveSummaryGenerationJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "completed",
+      result,
+    });
+  } catch (error) {
+    await finalizeProposalExecutiveSummaryGenerationJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "failed",
+      errorCode: error?.code || "ai_generation_failed",
+      errorMessage:
+        String(error?.message || "").trim() ||
+        "No fue posible generar el resumen ejecutivo con IA.",
+    });
+  }
+}
+
+export function queueProposalExecutiveSummaryGenerationProcessing() {
+  proposalExecutiveSummaryWorkerQueued = true;
+}
+
+export async function processPendingProposalExecutiveSummaryGenerationJobs({
+  limit = 1,
+} = {}) {
+  let processed = 0;
+  while (processed < limit) {
+    const row = await claimNextPendingProposalExecutiveSummaryGenerationJob();
+    if (!row) break;
+    processed += 1;
+    await processProposalExecutiveSummaryGenerationJob(row);
+  }
+  return processed;
+}
+
+export async function startProposalExecutiveSummaryGenerationWorker() {
+  if (proposalExecutiveSummaryWorkerStarted) {
+    return;
+  }
+  proposalExecutiveSummaryWorkerStarted = true;
+
+  const tick = async () => {
+    const shouldDrainQueue = proposalExecutiveSummaryWorkerQueued;
+    proposalExecutiveSummaryWorkerQueued = false;
+    try {
+      const processed =
+        await processPendingProposalExecutiveSummaryGenerationJobs({
+          limit: shouldDrainQueue ? 3 : 1,
+        });
+      if (processed > 0) {
+        proposalExecutiveSummaryWorkerQueued = true;
+      }
+    } catch (error) {
+      console.error(
+        "Proposal executive summary generation worker error:",
+        error?.message || error,
+      );
+    }
+  };
+
+  const interval = setInterval(() => {
+    tick();
+  }, PROPOSAL_EXEC_SUMMARY_JOB_POLL_INTERVAL_MS);
+  interval.unref?.();
+
+  queueProposalExecutiveSummaryGenerationProcessing();
+  await tick();
 }
 
 async function getAllowedQuotationActionCodes({ user, versionRow }) {
@@ -2479,7 +5208,9 @@ router.get(
         .map((row) => Number(row.id)),
     );
 
-    return res.json(rows.map((row) => mapQuotationProductRow(row, componentMap)));
+    return res.json(
+      rows.map((row) => mapQuotationProductRow(row, componentMap)),
+    );
   },
 );
 
@@ -2489,7 +5220,9 @@ router.post(
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
     if (!hasProviderPriceCreatePermission(req.user)) {
-      return res.status(403).json({ message: "No autorizado para crear productos" });
+      return res
+        .status(403)
+        .json({ message: "No autorizado para crear productos" });
     }
 
     const parsed = quotationQuickCreateProductSchema.safeParse(req.body || {});
@@ -2523,7 +5256,9 @@ router.post(
       Number(productType.is_active) !== 1 ||
       !activeStatusId
     ) {
-      return res.status(400).json({ message: "No fue posible resolver la configuracion de la lista" });
+      return res.status(400).json({
+        message: "No fue posible resolver la configuracion de la lista",
+      });
     }
 
     const now = new Date();
@@ -2553,7 +5288,10 @@ router.post(
       createdId = Number(insertResult.insertId);
     } catch (error) {
       if (
-        isUniqueViolation(error, "uq_provider_price_list_items_provider_code") ||
+        isUniqueViolation(
+          error,
+          "uq_provider_price_list_items_provider_code",
+        ) ||
         isUniqueViolation(error, "uq_provider_price_list_items_list_code")
       ) {
         return res.status(409).json({
@@ -3119,9 +5857,984 @@ router.get(
         exchangeRate:
           version.exchange_rate == null ? null : Number(version.exchange_rate),
         quotationNotes: version.quotation_notes || "",
+        proposalId: version.proposal_id ? Number(version.proposal_id) : null,
+        hasProposal: Boolean(version.proposal_id),
+        proposalStatusCode: version.proposal_status_code
+          ? normalizeProposalStatusCode(version.proposal_status_code)
+          : null,
         createdAt: version.created_at,
         updatedAt: version.updated_at,
       })),
+    });
+  },
+);
+
+router.get(
+  "/proposal-templates",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const templates = await getAvailableProposalTemplates();
+    return res.json(templates);
+  },
+);
+
+router.get(
+  "/proposal-assets",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const assets = await listInstitutionalAssets({ status: "active" });
+    return res.json({ items: assets });
+  },
+);
+
+router.get(
+  "/proposals",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const params = [];
+    const ownershipJoin = applyOwnedAccountScope({
+      user: req.user,
+      accountExpression: "o.account_id",
+      params,
+    });
+
+    const rows = await query(
+      `SELECT p.*, a.name AS account_name,
+              o.name AS opportunity_name,
+              CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+              pt.name AS template_name,
+              pt.status AS template_status,
+              pt.code AS template_code,
+              qv.version_number AS quotation_version_number,
+              qv.proposal_name AS quotation_version_proposal_name,
+              qvs.code AS quotation_version_status_code,
+              qvs.name AS quotation_version_status_name,
+              (
+                SELECT qv2.id
+                FROM quotation_versions qv2
+                INNER JOIN quotation_statuses qs2 ON qs2.id = qv2.status_id
+                WHERE qv2.quotation_id = q.id
+                  AND qs2.code = 'aprobada'
+                ORDER BY qv2.version_number DESC, qv2.id DESC
+                LIMIT 1
+              ) AS latest_approved_version_id,
+              (
+                SELECT qv2.version_number
+                FROM quotation_versions qv2
+                INNER JOIN quotation_statuses qs2 ON qs2.id = qv2.status_id
+                WHERE qv2.quotation_id = q.id
+                  AND qs2.code = 'aprobada'
+                ORDER BY qv2.version_number DESC, qv2.id DESC
+                LIMIT 1
+              ) AS latest_approved_version_number
+       FROM proposals p
+       INNER JOIN quotations q ON q.id = p.quotation_id
+       INNER JOIN quotation_versions qv ON qv.id = p.quotation_version_id
+       INNER JOIN quotation_statuses qvs ON qvs.id = qv.status_id
+       INNER JOIN opportunities o ON o.id = p.opportunity_id
+       ${ownershipJoin}
+       INNER JOIN accounts a ON a.id = p.account_id
+       INNER JOIN contacts c ON c.id = p.contact_id
+       LEFT JOIN proposal_templates pt ON pt.id = p.template_id
+       ORDER BY p.updated_at DESC, p.id DESC`,
+      params,
+    );
+
+    return res.json(rows.map(serializeProposalRow));
+  },
+);
+
+router.get(
+  "/proposals/:proposalId",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    let proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const didSyncFromConfig = await syncProposalFromCurrentConfigIfEligible({
+      proposalId,
+      proposalTitle: proposal.title,
+      userId: Number(req.user.id),
+      user: req.user,
+    });
+
+    if (didSyncFromConfig) {
+      proposal = await getAccessibleProposal({
+        user: req.user,
+        proposalId,
+      });
+      if (!proposal) {
+        return res.status(404).json({ message: "Propuesta no encontrada" });
+      }
+    }
+
+    return res.json(await serializeProposalDetail(proposal));
+  },
+);
+
+router.get(
+  "/proposals/:proposalId/components/executive_summary/generation-jobs/latest",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    return res.json({
+      job: await getLatestProposalExecutiveSummaryGenerationJob({ proposalId }),
+    });
+  },
+);
+
+router.get(
+  "/proposals/:proposalId/components/executive_summary/generation-jobs/:jobPublicId",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    const jobPublicId = String(req.params.jobPublicId || "").trim();
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+    if (!jobPublicId) {
+      return res.status(400).json({ message: "Id de job invalido" });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const job = await getProposalExecutiveSummaryGenerationJob({
+      publicId: jobPublicId,
+      proposalId,
+    });
+    if (!job) {
+      return res.status(404).json({
+        message: "Job no encontrado",
+        error: {
+          code: "job_not_found",
+          retryable: false,
+        },
+      });
+    }
+
+    return res.json({ job });
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/proposals",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const parsed = proposalCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    if (version.status_code !== "aprobada") {
+      return res.status(409).json({
+        message:
+          "Solo se puede crear una propuesta desde una version aprobada de cotizacion",
+      });
+    }
+
+    let content = null;
+    let selectedTemplate = null;
+    let templateSnapshot = null;
+    const sourceProposalId = Number(parsed.data.sourceProposalId || 0) || null;
+    const requestedTemplateId = Number(parsed.data.templateId || 0) || null;
+    if (sourceProposalId) {
+      const sourceProposal = await getAccessibleProposal({
+        user: req.user,
+        proposalId: sourceProposalId,
+      });
+      if (!sourceProposal) {
+        return res
+          .status(404)
+          .json({ message: "Propuesta origen no encontrada" });
+      }
+      if (
+        Number(sourceProposal.quotation_id) !== Number(version.quotation_id)
+      ) {
+        return res.status(400).json({
+          message:
+            "La propuesta origen debe pertenecer a la misma cotizacion base",
+        });
+      }
+      content = sanitizeProposalContent(
+        safeParseJsonObject(sourceProposal.content_json) || {},
+      );
+      if (!requestedTemplateId && Number(sourceProposal.template_id || 0) > 0) {
+        selectedTemplate = await getProposalTemplateById(
+          sourceProposal.template_id,
+        );
+      }
+      templateSnapshot = sourceProposal.template_snapshot_json
+        ? sanitizeProposalTemplateSnapshot(
+            safeParseJsonObject(sourceProposal.template_snapshot_json) || {},
+          )
+        : null;
+    }
+
+    if (requestedTemplateId) {
+      selectedTemplate = await getProposalTemplateById(requestedTemplateId);
+      if (!selectedTemplate || selectedTemplate.status !== "active") {
+        return res.status(404).json({ message: "Plantilla no encontrada" });
+      }
+    }
+
+    if (!selectedTemplate && !templateSnapshot) {
+      selectedTemplate = await getDefaultProposalTemplate();
+    }
+
+    const sections = await getQuotationVersionSections(versionId);
+    const pricingSnapshot = buildProposalPricingSnapshot({
+      versionRow: version,
+      sections,
+    });
+    const resolvedTemplateSnapshot = templateSnapshot
+      ? sanitizeProposalTemplateSnapshot(templateSnapshot)
+      : buildProposalTemplateSnapshot(selectedTemplate);
+    const normalizedContent =
+      content ||
+      buildDefaultProposalContent({
+        versionRow: version,
+        sections,
+        templateSnapshot: resolvedTemplateSnapshot,
+      });
+    const proposalTitle =
+      normalizedContent.heroTitle ||
+      version.proposal_name ||
+      `Propuesta comercial v${Number(version.version_number || 1)}`;
+
+    const creationResult = await withTransaction(async (conn) => {
+      await conn.query(
+        `SELECT id
+         FROM quotation_versions
+         WHERE id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [Number(version.id)],
+      );
+
+      const [existingRows] = await conn.query(
+        `SELECT id
+         FROM proposals
+         WHERE quotation_version_id = ?
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [Number(version.id)],
+      );
+
+      if (Array.isArray(existingRows) && existingRows.length > 0) {
+        return {
+          proposalId: Number(existingRows[0].id),
+          created: false,
+        };
+      }
+
+      const [result] = await conn.query(
+        `INSERT INTO proposals
+          (quotation_id, quotation_version_id, account_id, contact_id, opportunity_id,
+           owner_user_id, template_id, title, status_code, content_json, pricing_snapshot_json,
+           template_snapshot_json,
+           created_by_user_id, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+        [
+          Number(version.quotation_id),
+          Number(version.id),
+          Number(version.account_id),
+          Number(version.contact_id),
+          Number(version.opportunity_id),
+          Number(req.user.id),
+          selectedTemplate?.id ? Number(selectedTemplate.id) : null,
+          proposalTitle,
+          JSON.stringify(normalizedContent),
+          JSON.stringify(pricingSnapshot),
+          JSON.stringify(resolvedTemplateSnapshot),
+          Number(req.user.id),
+          Number(req.user.id),
+        ],
+      );
+
+      return {
+        proposalId: Number(result.insertId),
+        created: true,
+      };
+    });
+
+    const proposalId = Number(creationResult.proposalId);
+
+    if (creationResult.created) {
+      await cloneProposalComponents({
+        proposalId,
+        actorUserId: Number(req.user.id),
+        sourceProposalId: sourceProposalId || null,
+      });
+      const synchronizedContent =
+        await refreshProposalLegacyContentFromComponents({
+          proposalId,
+          proposalTitle,
+          userId: Number(req.user.id),
+        });
+
+      await createProposalRevision({
+        proposalId,
+        quotationVersionId: Number(version.id),
+        title: proposalTitle,
+        statusCode: "active",
+        content: synchronizedContent.content,
+        pricingSnapshot,
+        changeType: sourceProposalId
+          ? "create_from_version_clone"
+          : "create_from_version",
+        userId: req.user.id,
+      });
+
+      await logAuditEvent({
+        req,
+        module: "propuestas",
+        action: "create_from_quotation_version",
+        entityType: "proposal",
+        entityId: proposalId,
+        detail: `Propuesta creada desde la cotizacion ${version.quotation_id} v${version.version_number}`,
+        after: {
+          quotationId: Number(version.quotation_id),
+          quotationVersionId: Number(version.id),
+          templateId: selectedTemplate?.id ? Number(selectedTemplate.id) : null,
+          templateCode: resolvedTemplateSnapshot.code,
+        },
+      });
+    } else if (!sourceProposalId) {
+      const canAutoSync =
+        await canAutoSyncProposalFromCurrentConfig(proposalId);
+      if (canAutoSync) {
+        await cloneProposalComponents({
+          proposalId,
+          actorUserId: Number(req.user.id),
+        });
+
+        const existingProposal = await getAccessibleProposal({
+          user: req.user,
+          proposalId,
+        });
+        const synchronizedContent =
+          await refreshProposalLegacyContentFromComponents({
+            proposalId,
+            proposalTitle: existingProposal?.title || proposalTitle,
+            userId: Number(req.user.id),
+          });
+
+        await createProposalRevision({
+          proposalId,
+          quotationVersionId: Number(
+            existingProposal?.quotation_version_id || version.id,
+          ),
+          title: existingProposal?.title || proposalTitle,
+          statusCode: normalizeProposalStatusCode(
+            existingProposal?.status_code,
+            existingProposal?.archived_at ? "archived" : "active",
+          ),
+          content: synchronizedContent.content,
+          pricingSnapshot:
+            safeParseJsonObject(existingProposal?.pricing_snapshot_json) ||
+            pricingSnapshot,
+          changeType: "sync_from_current_config_on_create",
+          userId: req.user.id,
+        });
+      }
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+
+    return res.status(creationResult.created ? 201 : 200).json({
+      message: creationResult.created
+        ? "Propuesta creada"
+        : "Propuesta existente",
+      created: creationResult.created,
+      proposal: await serializeProposalDetail(proposal),
+    });
+  },
+);
+
+router.put(
+  "/proposals/:proposalId",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    const parsed = proposalUpdateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const currentContent = sanitizeProposalContent(
+      safeParseJsonObject(proposal.content_json) || {},
+    );
+    const nextContent = parsed.data.content
+      ? sanitizeProposalContent(parsed.data.content)
+      : currentContent;
+    const nextStatusCode = normalizeProposalStatusCode(
+      parsed.data.statusCode || proposal.status_code,
+      proposal.archived_at ? "archived" : "active",
+    );
+    const nextTitle =
+      parsed.data.title || proposal.title || currentContent.heroTitle;
+
+    await query(
+      `UPDATE proposals
+       SET title = ?, status_code = ?,
+           content_json = ?, updated_by_user_id = ?, updated_at = NOW(3),
+           archived_at = CASE WHEN ? = 'archived' THEN COALESCE(archived_at, NOW(3)) ELSE NULL END
+       WHERE id = ?`,
+      [
+        nextTitle,
+        nextStatusCode,
+        JSON.stringify(nextContent),
+        Number(req.user.id),
+        nextStatusCode,
+        proposalId,
+      ],
+    );
+
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(proposal.quotation_version_id),
+      title: nextTitle,
+      statusCode: nextStatusCode,
+      content: nextContent,
+      pricingSnapshot:
+        safeParseJsonObject(proposal.pricing_snapshot_json) || {},
+      changeType: "update_content",
+      userId: req.user.id,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "update",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: "Propuesta actualizada",
+    });
+
+    const refreshedProposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    return res.json({
+      message: "Propuesta actualizada",
+      proposal: await serializeProposalDetail(refreshedProposal),
+    });
+  },
+);
+
+router.put(
+  "/proposals/:proposalId/components/:componentCode",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+    if (!getProposalComponentDefinitionOrNull(componentCode)) {
+      return res.status(404).json({ message: "Componente no encontrado" });
+    }
+
+    const parsed = proposalComponentUpdateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    await saveProposalComponentBlocks({
+      proposalId,
+      componentCode,
+      title: parsed.data.title,
+      blocks: parsed.data.blocks,
+      actorUserId: Number(req.user.id),
+    });
+    const synced = await refreshProposalLegacyContentFromComponents({
+      proposalId,
+      proposalTitle: proposal.title,
+      userId: Number(req.user.id),
+    });
+
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(proposal.quotation_version_id),
+      title: proposal.title,
+      statusCode: normalizeProposalStatusCode(
+        proposal.status_code,
+        proposal.archived_at ? "archived" : "active",
+      ),
+      content: synced.content,
+      pricingSnapshot:
+        safeParseJsonObject(proposal.pricing_snapshot_json) || {},
+      changeType: `update_component_${componentCode}`,
+      userId: req.user.id,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "update_component",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: `Componente ${componentCode} actualizado`,
+    });
+
+    const refreshedProposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    return res.json({
+      message: "Componente actualizado",
+      proposal: await serializeProposalDetail(refreshedProposal),
+    });
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/components/executive_summary/generation-jobs",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    const parsed = proposalExecutiveSummaryGenerationSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    try {
+      const creation = await createOrReuseProposalExecutiveSummaryGenerationJob(
+        {
+          proposal,
+          requestedByUserId: Number(req.user.id),
+          instructions: parsed.data.instructions,
+          languageCode: parsed.data.languageCode,
+          maxLibraryAssets: parsed.data.maxLibraryAssets,
+        },
+      );
+
+      queueProposalExecutiveSummaryGenerationProcessing();
+
+      return res.status(202).json({
+        message: creation.wasReused
+          ? "Ya existe una generacion en progreso"
+          : "Generacion iniciada",
+        reused: creation.wasReused,
+        job: creation.response,
+      });
+    } catch (error) {
+      if (error?.body && error?.status) {
+        return res.status(error.status).json(error.body);
+      }
+      throw error;
+    }
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/components/:componentCode/replace-image",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+    if (!getProposalComponentDefinitionOrNull(componentCode)) {
+      return res.status(404).json({ message: "Componente no encontrado" });
+    }
+
+    const parsed = proposalReplaceImageSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const components = await replaceProposalComponentImage({
+      proposalId,
+      componentCode,
+      blockId: parsed.data.blockId,
+      assetId: parsed.data.assetId,
+      assetVersionId: parsed.data.assetVersionId,
+      actorUserId: Number(req.user.id),
+    });
+    if (!components) {
+      return res.status(404).json({ message: "Imagen no encontrada" });
+    }
+
+    const synced = await refreshProposalLegacyContentFromComponents({
+      proposalId,
+      proposalTitle: proposal.title,
+      userId: Number(req.user.id),
+    });
+
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(proposal.quotation_version_id),
+      title: proposal.title,
+      statusCode: normalizeProposalStatusCode(
+        proposal.status_code,
+        proposal.archived_at ? "archived" : "active",
+      ),
+      content: synced.content,
+      pricingSnapshot:
+        safeParseJsonObject(proposal.pricing_snapshot_json) || {},
+      changeType: `replace_component_image_${componentCode}`,
+      userId: req.user.id,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "replace_image",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: `Imagen de ${componentCode} reemplazada`,
+      after: {
+        blockId: parsed.data.blockId,
+        assetId: parsed.data.assetId,
+        assetVersionId: parsed.data.assetVersionId,
+      },
+    });
+
+    const refreshedProposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    return res.json({
+      message: "Imagen actualizada",
+      proposal: await serializeProposalDetail(refreshedProposal),
+    });
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/apply-template",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    const parsed = proposalTemplateApplySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const template = await getProposalTemplateById(parsed.data.templateId);
+    if (!template || template.status !== "active") {
+      return res.status(404).json({ message: "Plantilla no encontrada" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(proposal.quotation_version_id),
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version base no encontrada" });
+    }
+
+    const sections = await getQuotationVersionSections(Number(version.id));
+    const nextTemplateSnapshot = buildProposalTemplateSnapshot(template);
+    const templateDefaults = buildDefaultProposalContent({
+      versionRow: version,
+      sections,
+      templateSnapshot: nextTemplateSnapshot,
+    });
+    const currentContent = sanitizeProposalContent(
+      safeParseJsonObject(proposal.content_json) || {},
+    );
+    const nextContent =
+      parsed.data.mode === "replace_content"
+        ? templateDefaults
+        : mergeProposalContentWithTemplateDefaults(
+            currentContent,
+            templateDefaults,
+          );
+    const nextTitle = nextContent.heroTitle || proposal.title || template.name;
+
+    await query(
+      `UPDATE proposals
+       SET template_id = ?, template_snapshot_json = ?, title = ?, content_json = ?,
+           updated_by_user_id = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        Number(template.id),
+        JSON.stringify(nextTemplateSnapshot),
+        nextTitle,
+        JSON.stringify(nextContent),
+        Number(req.user.id),
+        proposalId,
+      ],
+    );
+
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(proposal.quotation_version_id),
+      title: nextTitle,
+      statusCode: normalizeProposalStatusCode(
+        proposal.status_code,
+        proposal.archived_at ? "archived" : "active",
+      ),
+      content: nextContent,
+      pricingSnapshot:
+        safeParseJsonObject(proposal.pricing_snapshot_json) || {},
+      changeType:
+        parsed.data.mode === "replace_content"
+          ? "apply_template_replace"
+          : "apply_template_preserve",
+      userId: req.user.id,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "apply_template",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: `Plantilla ${template.code} aplicada a la propuesta`,
+      after: {
+        templateId: Number(template.id),
+        templateCode: template.code,
+        mode: parsed.data.mode,
+      },
+    });
+
+    const refreshedProposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    return res.json({
+      message: "Plantilla aplicada",
+      proposal: await serializeProposalDetail(refreshedProposal),
+    });
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/rebase",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+
+    const parsed = proposalRebaseSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const nextVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: parsed.data.quotationVersionId,
+    });
+    if (!nextVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+    if (Number(nextVersion.quotation_id) !== Number(proposal.quotation_id)) {
+      return res.status(400).json({
+        message: "La nueva version debe pertenecer a la misma cotizacion base",
+      });
+    }
+    if (nextVersion.status_code !== "aprobada") {
+      return res.status(409).json({
+        message:
+          "Solo se puede actualizar una propuesta hacia una version aprobada de cotizacion",
+      });
+    }
+
+    const sections = await getQuotationVersionSections(Number(nextVersion.id));
+    const pricingSnapshot = buildProposalPricingSnapshot({
+      versionRow: nextVersion,
+      sections,
+    });
+    const content = sanitizeProposalContent(
+      safeParseJsonObject(proposal.content_json) || {},
+    );
+
+    await query(
+      `UPDATE proposals
+       SET quotation_version_id = ?, contact_id = ?, title = ?, pricing_snapshot_json = ?,
+           updated_by_user_id = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        Number(nextVersion.id),
+        Number(nextVersion.contact_id),
+        proposal.title,
+        JSON.stringify(pricingSnapshot),
+        Number(req.user.id),
+        proposalId,
+      ],
+    );
+
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(nextVersion.id),
+      title: proposal.title,
+      statusCode: normalizeProposalStatusCode(
+        proposal.status_code,
+        proposal.archived_at ? "archived" : "active",
+      ),
+      content,
+      pricingSnapshot,
+      changeType: "rebase_to_quotation_version",
+      userId: req.user.id,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "rebase",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: `Propuesta actualizada explicitamente a la cotizacion v${nextVersion.version_number}`,
+      after: {
+        quotationVersionId: Number(nextVersion.id),
+      },
+    });
+
+    const refreshedProposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    return res.json({
+      message: "Propuesta actualizada a la nueva version",
+      proposal: await serializeProposalDetail(refreshedProposal),
     });
   },
 );
@@ -3984,14 +7697,16 @@ router.post(
       actionCode: "modificar",
     });
     if (!canModify && !hasQuotationAdministration(req.user)) {
-      return res
-        .status(403)
-        .json({ message: "No autorizado para adjuntar documentos en la version" });
+      return res.status(403).json({
+        message: "No autorizado para adjuntar documentos en la version",
+      });
     }
 
     const { files } = await parseMultipartFiles(req);
     if (!files.length) {
-      return res.status(400).json({ message: "Selecciona al menos un archivo" });
+      return res
+        .status(400)
+        .json({ message: "Selecciona al menos un archivo" });
     }
 
     const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
@@ -4139,6 +7854,55 @@ router.post(
       after: {
         proposalName: parsed.data.header.proposalName || "",
         sectionCount: parsed.data.sections.length,
+      },
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(buffer.length));
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.send(buffer);
+  },
+);
+
+router.post(
+  "/proposals/render-pdf",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const parsed = proposalPdfRenderSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const company = await getCompanyDocumentBranding();
+    const quotationAttachment = await resolveProposalQuotationAttachment({
+      user: req.user,
+      company,
+      quotationVersionId: parsed.data.quotationAttachmentRef.quotationVersionId,
+    });
+    const { buffer, fileName } = await buildProposalPdfBuffer({
+      ...parsed.data,
+      company,
+      quotationAttachment,
+    });
+
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "generar_pdf",
+      entityType: "proposal_document",
+      detail: `Documento PDF generado: ${parsed.data.header.proposalTitle || "propuesta"}`,
+      after: {
+        proposalTitle: parsed.data.header.proposalTitle || "",
+        sectionCount: parsed.data.sections.length,
+        quotationVersionId:
+          parsed.data.quotationAttachmentRef.quotationVersionId,
       },
     });
 

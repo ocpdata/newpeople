@@ -39,6 +39,7 @@ import {
 describe("API integration baseline", () => {
   const cleanup = {
     stageQuestionIds: [],
+    proposalIds: [],
     quotationIds: [],
     opportunityIds: [],
     contactIds: [],
@@ -14883,6 +14884,83 @@ describe("API integration baseline", () => {
     expect(response.body.subarray(0, 4).toString("utf8")).toBe("%PDF");
   });
 
+  test("propuestas genera un PDF inline desde cambios no guardados", async () => {
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_proposal_pdf`);
+
+    const response = await request(app)
+      .post("/api/proposals/render-pdf")
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .buffer(true)
+      .parse(binaryParser)
+      .send({
+        header: {
+          proposalTitle: "Propuesta PDF Demo",
+          accountName: "Cuenta propuesta",
+          contactName: "Ana Contacto",
+          quotationNumber: String(fixture.quotationId),
+          quotationVersionNumber: String(fixture.latestVersionNumber),
+          updatedAtLabel: "26 abr 2026, 10:30",
+          statusLabel: "Lista para presentar",
+          templateName: "Premium demo",
+        },
+        theme: {
+          coverStyle: "premium",
+        },
+        sections: [
+          {
+            title: "Resumen ejecutivo",
+            subtitle: "executive_summary",
+            blocks: [
+              {
+                type: "paragraph",
+                text: "Documento PDF generado desde cambios locales de la propuesta.",
+              },
+              {
+                type: "list",
+                items: [
+                  "Incluye narrativa institucional",
+                  "Respeta pricing heredado",
+                ],
+              },
+            ],
+          },
+        ],
+        pricing: {
+          summary: {
+            subtotal: 60,
+            total: 69.6,
+            currencyCode: "USD",
+          },
+          sections: [
+            {
+              title: "Licencias",
+              items: [
+                {
+                  productCode: "SKU-1",
+                  productDescription: "Licencia anual",
+                  quantity: 4,
+                  salePriceTotal: 60,
+                },
+              ],
+            },
+          ],
+        },
+        quotationAttachmentRef: {
+          quotationVersionId: fixture.latestVersionId,
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/application\/pdf/);
+    expect(response.headers["content-disposition"]).toContain("inline;");
+    expect(response.headers["content-disposition"]).toContain(
+      "propuesta-pdf-demo.pdf",
+    );
+    expect(response.body instanceof Buffer).toBe(true);
+    expect(response.body.length).toBeGreaterThan(2000);
+    expect(response.body.subarray(0, 4).toString("utf8")).toBe("%PDF");
+  });
+
   test("cotizaciones.create persiste bundles reales y los conserva al clonar version", async () => {
     const suffix = `${TEST_PREFIX}_quote_bundle_persist`;
     const fixture = await createOwnedQuoteOpportunityFixture(suffix);
@@ -15247,6 +15325,969 @@ describe("API integration baseline", () => {
     expect(inactiveResponse.body.message).toBe(
       "Solo se puede crear una cotizacion desde una oportunidad activa",
     );
+  });
+
+  test("propuestas.create crea una propuesta desde una version aprobada y hereda contexto comercial", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_create_from_approved`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    const approveResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    expect(approveResponse.status).toBe(200);
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+    expect(createProposalResponse.body.proposal).toEqual(
+      expect.objectContaining({
+        quotationId: fixture.quotationId,
+        quotationVersionId: fixture.latestVersionId,
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        opportunityId: fixture.opportunityId,
+        statusCode: "active",
+        updateAvailable: false,
+      }),
+    );
+    expect(createProposalResponse.body.proposal.pricingSnapshot).toEqual(
+      expect.objectContaining({
+        quotationId: fixture.quotationId,
+        quotationVersionId: fixture.latestVersionId,
+      }),
+    );
+
+    const detailResponse = await request(app)
+      .get(`/api/proposals/${createProposalResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.title).toBeTruthy();
+    expect(detailResponse.body.content.executiveSummary).toBeDefined();
+    expect(detailResponse.body.templateCode).toBe("corporate_core");
+    expect(detailResponse.body.isLegacyTemplate).toBe(false);
+    expect(detailResponse.body.templateSnapshot).toEqual(
+      expect.objectContaining({
+        code: "corporate_core",
+        coverStyle: "corporate",
+      }),
+    );
+
+    const quotationDetailResponse = await request(app)
+      .get(`/api/quotations/${fixture.quotationId}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(quotationDetailResponse.status).toBe(200);
+    expect(quotationDetailResponse.body.versions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: fixture.latestVersionId,
+          proposalId: Number(createProposalResponse.body.proposal.id),
+          hasProposal: true,
+          proposalStatusCode: "active",
+        }),
+      ]),
+    );
+
+    const secondCreateProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(secondCreateProposalResponse.status).toBe(200);
+    expect(secondCreateProposalResponse.body.created).toBe(false);
+    expect(secondCreateProposalResponse.body.proposal.id).toBe(
+      createProposalResponse.body.proposal.id,
+    );
+
+    const proposalsListResponse = await request(app)
+      .get("/api/proposals")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(proposalsListResponse.status).toBe(200);
+    expect(
+      proposalsListResponse.body.filter(
+        (proposal) =>
+          Number(proposal.quotationVersionId) ===
+          Number(fixture.latestVersionId),
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("propuestas.create resincroniza certificaciones si la propuesta existente no fue editada", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_create_resyncs_certifications`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+
+    const approveResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    expect(approveResponse.status).toBe(200);
+
+    const imageDataUrlA =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sotM7wAAAAASUVORK5CYII=";
+    const imageDataUrlB =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAADZc7J/AAAADklEQVR42mP8z/CfBwADhgGJVM0A4QAAAABJRU5ErkJggg==";
+
+    const assetAResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_cert_create_sync_a`,
+        category: "certification",
+        fileUrl: imageDataUrlA,
+        fileName: "cert-a.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+        altText: "Certificacion A",
+      });
+
+    expect(assetAResponse.status).toBe(201);
+
+    const initialConfigResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        blocks: [
+          {
+            type: "image",
+            assetId: assetAResponse.body.asset.id,
+            assetVersionId: assetAResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(initialConfigResponse.status).toBe(200);
+
+    const firstCreateResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(firstCreateResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(firstCreateResponse.body.proposal.id));
+
+    const firstDetailResponse = await request(app)
+      .get(`/api/proposals/${firstCreateResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(firstDetailResponse.status).toBe(200);
+    expect(
+      firstDetailResponse.body.components
+        .find((component) => component.componentCode === "certifications")
+        .blocks.filter((block) => block.type === "image"),
+    ).toHaveLength(1);
+
+    const assetBResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_cert_create_sync_b`,
+        category: "certification",
+        fileUrl: imageDataUrlB,
+        fileName: "cert-b.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+        altText: "Certificacion B",
+      });
+
+    expect(assetBResponse.status).toBe(201);
+
+    const updatedConfigResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        blocks: [
+          {
+            type: "image",
+            assetId: assetAResponse.body.asset.id,
+            assetVersionId: assetAResponse.body.asset.currentVersion.id,
+          },
+          {
+            type: "image",
+            assetId: assetBResponse.body.asset.id,
+            assetVersionId: assetBResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(updatedConfigResponse.status).toBe(200);
+
+    const secondCreateResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(secondCreateResponse.status).toBe(200);
+    expect(secondCreateResponse.body.created).toBe(false);
+    expect(secondCreateResponse.body.proposal.id).toBe(
+      firstCreateResponse.body.proposal.id,
+    );
+
+    const secondDetailResponse = await request(app)
+      .get(`/api/proposals/${firstCreateResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(secondDetailResponse.status).toBe(200);
+    expect(
+      secondDetailResponse.body.components
+        .find((component) => component.componentCode === "certifications")
+        .blocks.filter((block) => block.type === "image"),
+    ).toHaveLength(2);
+  });
+
+  test("propuestas.templates lista plantillas activas y marca la predeterminada", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_templates_catalog`,
+    );
+
+    const response = await request(app)
+      .get("/api/proposal-templates")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body)).toBe(true);
+    expect(response.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "corporate_core",
+          isDefault: true,
+          coverStyle: "corporate",
+        }),
+        expect.objectContaining({
+          code: "executive_premium",
+          coverStyle: "premium",
+        }),
+        expect.objectContaining({
+          code: "technical_solution",
+          coverStyle: "technical",
+        }),
+      ]),
+    );
+  });
+
+  test("propuestas.create permite elegir plantilla explicita", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_create_with_template`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const templatesResponse = await request(app)
+      .get("/api/proposal-templates")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    const premiumTemplate = templatesResponse.body.find(
+      (template) => template.code === "executive_premium",
+    );
+    expect(premiumTemplate).toBeTruthy();
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ templateId: premiumTemplate.id });
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+    expect(createProposalResponse.body.proposal).toEqual(
+      expect.objectContaining({
+        templateId: Number(premiumTemplate.id),
+        templateCode: "executive_premium",
+        templateName: "Ejecutiva premium",
+      }),
+    );
+    expect(createProposalResponse.body.proposal.templateSnapshot).toEqual(
+      expect.objectContaining({
+        code: "executive_premium",
+        coverStyle: "premium",
+      }),
+    );
+  });
+
+  test("propuestas.apply-template reaplica plantilla sin tocar pricing heredado", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_apply_template`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const originalTotal =
+      createProposalResponse.body.proposal.pricingSnapshot.summary.total;
+
+    const templatesResponse = await request(app)
+      .get("/api/proposal-templates")
+      .set("Authorization", `Bearer ${fixture.token}`);
+    const technicalTemplate = templatesResponse.body.find(
+      (template) => template.code === "technical_solution",
+    );
+    expect(technicalTemplate).toBeTruthy();
+
+    const applyResponse = await request(app)
+      .post(
+        `/api/proposals/${createProposalResponse.body.proposal.id}/apply-template`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        templateId: technicalTemplate.id,
+        mode: "replace_content",
+      });
+
+    expect(applyResponse.status).toBe(200);
+    expect(applyResponse.body.proposal.templateCode).toBe("technical_solution");
+    expect(applyResponse.body.proposal.templateSnapshot).toEqual(
+      expect.objectContaining({
+        code: "technical_solution",
+        coverStyle: "technical",
+      }),
+    );
+    expect(applyResponse.body.proposal.pricingSnapshot.summary.total).toBe(
+      originalTotal,
+    );
+    expect(applyResponse.body.proposal.content.solutionOverview).toContain(
+      "frentes de solucion",
+    );
+  });
+
+  test("propuestas.create bloquea crear desde una version no aprobada", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_block_unapproved`,
+    );
+
+    const response = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(response.status).toBe(409);
+    expect(response.body.message).toBe(
+      "Solo se puede crear una propuesta desde una version aprobada de cotizacion",
+    );
+  });
+
+  test("propuestas.rebase actualiza explicitamente la propuesta hacia una nueva version aprobada", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_rebase`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    const approveV1Response = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    expect(approveV1Response.status).toBe(200);
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const createVersionResponse = await request(app)
+      .post(`/api/quotations/${fixture.quotationId}/versions`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createVersionResponse.status).toBe(201);
+
+    const approveV2Response = await request(app)
+      .post(
+        `/api/quotation-versions/${createVersionResponse.body.id}/transition`,
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    expect(approveV2Response.status).toBe(200);
+
+    const listBeforeRebase = await request(app)
+      .get("/api/proposals")
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(listBeforeRebase.status).toBe(200);
+    const pendingProposal = listBeforeRebase.body.find(
+      (proposal) =>
+        Number(proposal.id) === Number(createProposalResponse.body.proposal.id),
+    );
+    expect(pendingProposal.updateAvailable).toBe(true);
+    expect(pendingProposal.latestApprovedVersionId).toBe(
+      Number(createVersionResponse.body.id),
+    );
+
+    const rebaseResponse = await request(app)
+      .post(`/api/proposals/${createProposalResponse.body.proposal.id}/rebase`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ quotationVersionId: createVersionResponse.body.id });
+
+    expect(rebaseResponse.status).toBe(200);
+    expect(rebaseResponse.body.proposal.quotationVersionId).toBe(
+      Number(createVersionResponse.body.id),
+    );
+    expect(rebaseResponse.body.proposal.updateAvailable).toBe(false);
+  });
+
+  test("configuracion.proposal-content permite guardar defaults con assets institucionales", async () => {
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+    const imageDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sotM7wAAAAASUVORK5CYII=";
+
+    const createAssetResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_proposal_asset_default`,
+        category: "brochure",
+        description: "Brochure institucional para propuestas",
+        fileUrl: imageDataUrl,
+        fileName: "brochure-default.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+        altText: "Brochure default",
+        caption: "Brochure institucional",
+      });
+
+    expect(createAssetResponse.status).toBe(201);
+    expect(createAssetResponse.body.asset.currentVersion).toBeTruthy();
+
+    const saveComponentResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/product_brochures")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Folletos de los productos",
+        blocks: [
+          {
+            type: "paragraph",
+            text: "Incluimos los folletos mas relevantes para respaldar la solucion propuesta.",
+          },
+          {
+            type: "image",
+            assetId: createAssetResponse.body.asset.id,
+            assetVersionId: createAssetResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(saveComponentResponse.status).toBe(200);
+
+    const configResponse = await request(app)
+      .get("/api/settings/proposal-content-config")
+      .set("Authorization", `Bearer ${configLogin.body.token}`);
+
+    expect(configResponse.status).toBe(200);
+    const brochuresComponent = configResponse.body.config.components.find(
+      (component) => component.componentCode === "product_brochures",
+    );
+    expect(brochuresComponent).toBeTruthy();
+    expect(brochuresComponent.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "paragraph",
+        }),
+        expect.objectContaining({
+          type: "image",
+          assetId: Number(createAssetResponse.body.asset.id),
+          assetVersionId: Number(
+            createAssetResponse.body.asset.currentVersion.id,
+          ),
+        }),
+      ]),
+    );
+  });
+
+  test("configuracion.proposal-content guarda layoutConfig explicito y lo clona a propuestas nuevas", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_layout_config_clone`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+    const imageDataUrlA =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sotM7wAAAAASUVORK5CYII=";
+    const imageDataUrlB =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAADZc7J/AAAADklEQVR42mP8z/CfBwADhgGJVM0A4QAAAABJRU5ErkJggg==";
+
+    const assetAResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_layout_asset_a`,
+        category: "certification",
+        fileUrl: imageDataUrlA,
+        fileName: "layout-a.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+      });
+
+    const assetBResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_layout_asset_b`,
+        category: "certification",
+        fileUrl: imageDataUrlB,
+        fileName: "layout-b.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+      });
+
+    expect(assetAResponse.status).toBe(201);
+    expect(assetBResponse.status).toBe(201);
+
+    const saveComponentResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0, 1] }],
+        },
+        blocks: [
+          {
+            type: "image",
+            assetId: assetAResponse.body.asset.id,
+            assetVersionId: assetAResponse.body.asset.currentVersion.id,
+          },
+          {
+            type: "image",
+            assetId: assetBResponse.body.asset.id,
+            assetVersionId: assetBResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(saveComponentResponse.status).toBe(200);
+    expect(
+      saveComponentResponse.body.config.components.find(
+        (component) => component.componentCode === "certifications",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0, 1] }],
+        },
+        resolvedLayoutMode: "manual-rows",
+      }),
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const detailResponse = await request(app)
+      .get(`/api/proposals/${createProposalResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(
+      detailResponse.body.components.find(
+        (component) => component.componentCode === "certifications",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0, 1] }],
+        },
+        resolvedLayoutMode: "manual-rows",
+      }),
+    );
+  });
+
+  test("propuestas.detail resincroniza certificaciones manual-rows desde configuracion cuando la propuesta sigue intacta", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_layout_config_resync_on_detail`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+    const imageDataUrlA =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sotM7wAAAAASUVORK5CYII=";
+    const imageDataUrlB =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAADZc7J/AAAADklEQVR42mP8z/CfBwADhgGJVM0A4QAAAABJRU5ErkJggg==";
+    const imageDataUrlC =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAQAAABWKLW/AAAAD0lEQVR42mNk+M/QzwAEGgH+lmjSPwAAAABJRU5ErkJggg==";
+
+    const assetAResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_resync_layout_asset_a`,
+        category: "certification",
+        fileUrl: imageDataUrlA,
+        fileName: "resync-layout-a.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+      });
+
+    const assetBResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_resync_layout_asset_b`,
+        category: "certification",
+        fileUrl: imageDataUrlB,
+        fileName: "resync-layout-b.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+      });
+
+    const assetCResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_resync_layout_asset_c`,
+        category: "certification",
+        fileUrl: imageDataUrlC,
+        fileName: "resync-layout-c.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+      });
+
+    expect(assetAResponse.status).toBe(201);
+    expect(assetBResponse.status).toBe(201);
+    expect(assetCResponse.status).toBe(201);
+
+    const initialConfigResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        blocks: [
+          {
+            type: "image",
+            assetId: assetAResponse.body.asset.id,
+            assetVersionId: assetAResponse.body.asset.currentVersion.id,
+          },
+          {
+            type: "image",
+            assetId: assetBResponse.body.asset.id,
+            assetVersionId: assetBResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(initialConfigResponse.status).toBe(200);
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+    expect(
+      createProposalResponse.body.proposal.components.find(
+        (component) => component.componentCode === "certifications",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        resolvedLayoutMode: "horizontal-gallery",
+      }),
+    );
+
+    const updatedConfigResponse = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0, 1] }, { blockIndexes: [2] }],
+        },
+        blocks: [
+          {
+            type: "image",
+            assetId: assetAResponse.body.asset.id,
+            assetVersionId: assetAResponse.body.asset.currentVersion.id,
+          },
+          {
+            type: "image",
+            assetId: assetBResponse.body.asset.id,
+            assetVersionId: assetBResponse.body.asset.currentVersion.id,
+          },
+          {
+            type: "image",
+            assetId: assetCResponse.body.asset.id,
+            assetVersionId: assetCResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(updatedConfigResponse.status).toBe(200);
+
+    const detailResponse = await request(app)
+      .get(`/api/proposals/${createProposalResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(
+      detailResponse.body.components.find(
+        (component) => component.componentCode === "certifications",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0, 1] }, { blockIndexes: [2] }],
+        },
+        resolvedLayoutMode: "manual-rows",
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "image",
+            assetId: Number(assetAResponse.body.asset.id),
+          }),
+          expect.objectContaining({
+            type: "image",
+            assetId: Number(assetBResponse.body.asset.id),
+          }),
+          expect.objectContaining({
+            type: "image",
+            assetId: Number(assetCResponse.body.asset.id),
+          }),
+        ]),
+      }),
+    );
+    expect(
+      detailResponse.body.components.find(
+        (component) => component.componentCode === "certifications",
+      ).blocks,
+    ).toHaveLength(3);
+  });
+
+  test("configuracion.proposal-content devuelve issues detalladas para layoutConfig invalido", async () => {
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+
+    const response = await request(app)
+      .put("/api/settings/proposal-content-config/components/certifications")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        title: "Certificaciones",
+        layoutConfig: {
+          mode: "manual-rows",
+          rows: [{ blockIndexes: [0] }, { blockIndexes: [2] }],
+        },
+        blocks: [
+          {
+            type: "paragraph",
+            text: "Texto no compatible para galeria manual.",
+          },
+          {
+            type: "image",
+            assetId: 1,
+            assetVersionId: 1,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+    expect(Array.isArray(response.body.issues)).toBe(true);
+    expect(response.body.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "layout_config_block_not_compatible",
+          path: ["layoutConfig", "rows", 0, "blockIndexes", 0],
+          location: expect.objectContaining({
+            scope: "layoutConfig",
+            rowIndex: 0,
+            blockIndex: 0,
+            blockPositionInRow: 0,
+            field: "blockIndexes",
+          }),
+        }),
+        expect.objectContaining({
+          code: "layout_config_block_index_out_of_range",
+          path: ["layoutConfig", "rows", 1, "blockIndexes", 0],
+          location: expect.objectContaining({
+            scope: "layoutConfig",
+            rowIndex: 1,
+            blockIndex: 2,
+            blockPositionInRow: 0,
+            field: "blockIndexes",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  test("propuestas.components conserva la version historica de la imagen aunque el asset cambie", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_component_snapshot`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const imageV1 =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sotM7wAAAAASUVORK5CYII=";
+    const imageV2 =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAADZc7J/AAAADklEQVR42mP8z/CfBwADhgGJVM0A4QAAAABJRU5ErkJggg==";
+
+    const assetResponse = await request(app)
+      .post("/api/settings/institutional-assets")
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        name: `${TEST_PREFIX}_proposal_snapshot_asset`,
+        category: "institutional",
+        fileUrl: imageV1,
+        fileName: "snapshot-v1.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+        altText: "Version inicial",
+      });
+
+    expect(assetResponse.status).toBe(201);
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const saveComponentResponse = await request(app)
+      .put(
+        `/api/proposals/${createProposalResponse.body.proposal.id}/components/presentation`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        title: "Presentacion",
+        blocks: [
+          {
+            type: "paragraph",
+            text: "Presentacion institucional de la propuesta comercial.",
+          },
+          {
+            type: "image",
+            assetId: assetResponse.body.asset.id,
+            assetVersionId: assetResponse.body.asset.currentVersion.id,
+          },
+        ],
+      });
+
+    expect(saveComponentResponse.status).toBe(200);
+
+    const addVersionResponse = await request(app)
+      .post(
+        `/api/settings/institutional-assets/${assetResponse.body.asset.id}/versions`,
+      )
+      .set("Authorization", `Bearer ${configLogin.body.token}`)
+      .send({
+        fileUrl: imageV2,
+        fileName: "snapshot-v2.png",
+        mimeType: "image/png",
+        fileSizeBytes: 128,
+        altText: "Version nueva",
+      });
+
+    expect(addVersionResponse.status).toBe(200);
+
+    const detailResponse = await request(app)
+      .get(`/api/proposals/${createProposalResponse.body.proposal.id}`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    const presentationComponent = detailResponse.body.components.find(
+      (component) => component.componentCode === "presentation",
+    );
+    const imageBlock = presentationComponent.blocks.find(
+      (block) => block.type === "image",
+    );
+    expect(imageBlock.assetVersionId).toBe(
+      Number(assetResponse.body.asset.currentVersion.id),
+    );
+    expect(imageBlock.image.fileUrl).toBe(imageV1);
   });
 
   test("cotizaciones persiste modos de distribucion e IVA a nivel de version", async () => {

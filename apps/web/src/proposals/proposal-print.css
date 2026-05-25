@@ -1,0 +1,542 @@
+.proposal-print-preview-overlay {
+  z-index: 1500;
+}
+
+.proposal-print-page {
+  min-height: 100vh;
+  padding: 24px;
+  background: #edf3fb;
+}
+
+.proposal-print-page-shell {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.proposal-print-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 1180px;
+  margin: 0 auto 16px;
+}
+
+.proposal-print-page-preview-label {
+  margin-right: auto;
+  color: #4c627d;
+  font-weight: 600;
+}
+
+.proposal-print-page-empty {
+  display: grid;
+  place-items: center;
+  padding-inline: 16px;
+}
+
+.proposal-print-page-status-card {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid #d6e0ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 36px rgba(26, 43, 71, 0.12);
+}
+
+.proposal-print-page-status-card h1 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+}
+
+.proposal-print-page-status-card p {
+  margin: 0 0 18px;
+  line-height: 1.5;
+}
+
+.proposal-print-preview-modal {
+  width: min(1320px, calc(100vw - 32px));
+  max-width: 1320px;
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.proposal-print-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #d9e0ea;
+  background: #f8fbff;
+}
+
+.proposal-print-preview-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.proposal-print-preview-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid rgba(24, 50, 46, 0.14);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, #f1f5f9);
+  color: #18322e;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.proposal-print-preview-icon-button.is-primary {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: linear-gradient(180deg, #f8fbff, #edf4ff);
+  color: #2563eb;
+}
+
+.proposal-print-preview-icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.proposal-print-preview-icon-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(35, 55, 78, 0.08);
+}
+
+.proposal-print-preview-icon-button.is-primary:hover {
+  border-color: rgba(37, 99, 235, 0.38);
+  box-shadow: 0 10px 18px rgba(37, 99, 235, 0.14);
+}
+
+.proposal-print-preview-body {
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding: 24px;
+  background: #edf3fb;
+}
+
+.proposal-print-sheet {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 30px 32px 40px;
+  background: #fff;
+  color: #25313f;
+  box-shadow: 0 12px 36px rgba(26, 43, 71, 0.12);
+}
+
+.proposal-print-cover {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 24px;
+  padding: 30px;
+  border-radius: 24px;
+  color: #fff;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 255, 255, 0.18),
+      transparent 22%
+    ),
+    linear-gradient(135deg, #173259 0%, #204f7f 52%, #1d7b6b 100%);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+.proposal-print-cover.is-premium {
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 255, 255, 0.2),
+      transparent 22%
+    ),
+    linear-gradient(135deg, #4a3114 0%, #8e5c1b 52%, #d5a15a 100%);
+}
+
+.proposal-print-cover.is-technical {
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 255, 255, 0.18),
+      transparent 22%
+    ),
+    linear-gradient(135deg, #0d3b42 0%, #155d67 52%, #2e8f8a 100%);
+}
+
+.proposal-print-eyebrow {
+  display: inline-flex;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(243, 247, 255, 0.8);
+  margin-bottom: 0.8rem;
+}
+
+.proposal-print-cover h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 3vw, 3.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+}
+
+.proposal-print-cover p {
+  margin: 0.9rem 0 0;
+  max-width: 56ch;
+  line-height: 1.65;
+  color: rgba(243, 247, 255, 0.86);
+}
+
+.proposal-print-cover-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  color: rgba(243, 247, 255, 0.92);
+  font-weight: 700;
+}
+
+.proposal-print-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 24px 0;
+}
+
+.proposal-print-info-card,
+.proposal-print-pricing-card {
+  border: 1px solid #d6e0ec;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.proposal-print-info-card {
+  display: grid;
+  gap: 4px;
+  padding: 16px 18px;
+}
+
+.proposal-print-info-card small,
+.proposal-print-section-subtitle,
+.proposal-print-pricing-line-copy small {
+  color: #6c8095;
+}
+
+.proposal-print-sections {
+  display: grid;
+  gap: 18px;
+}
+
+.proposal-print-section {
+  padding: 20px 22px;
+  border: none;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.proposal-print-section-head {
+  display: flex;
+  align-items: flex-start;
+}
+
+.proposal-print-section-title,
+.proposal-print-summary-title {
+  margin: 0;
+  font-size: 1.14rem;
+  font-weight: 700;
+  color: #1f6fca;
+}
+
+.proposal-print-section-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.proposal-print-section-body {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.proposal-print-section-body.is-horizontal-gallery {
+  gap: 18px;
+}
+
+.proposal-print-section-blocks-leading,
+.proposal-print-section-blocks-trailing {
+  display: grid;
+  gap: 16px;
+}
+
+.proposal-print-section-body h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  color: #28405d;
+}
+
+.proposal-print-section-body p,
+.proposal-print-section-body li,
+.proposal-print-image figcaption {
+  color: #40566c;
+  line-height: 1.74;
+}
+
+.proposal-print-section-body p,
+.proposal-print-section-body ul,
+.proposal-print-image {
+  margin: 0;
+}
+
+.proposal-print-section-body ul {
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.proposal-print-image {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.proposal-print-image.is-compact {
+  width: 25%;
+  min-width: 96px;
+  max-width: 140px;
+}
+
+.proposal-print-image img {
+  width: 100%;
+  max-height: 460px;
+  object-fit: contain;
+  border-radius: 18px;
+  border: 1px solid rgba(24, 50, 46, 0.08);
+  background: #f8fbfd;
+}
+
+.proposal-print-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.proposal-print-gallery.is-manual-row {
+  grid-template-columns: repeat(
+    var(--proposal-gallery-columns, 1),
+    minmax(0, 1fr)
+  );
+}
+
+.proposal-print-gallery-item {
+  margin: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.proposal-print-gallery-item-image {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem;
+  border-radius: 18px;
+  border: 1px solid rgba(24, 50, 46, 0.08);
+  background: #f8fbfd;
+}
+
+.proposal-print-gallery-item-image img {
+  width: 100%;
+  max-height: 64px;
+  object-fit: contain;
+}
+
+.proposal-print-gallery-item-caption {
+  color: #40566c;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.proposal-print-section.is-certifications .proposal-print-section-body {
+  align-items: start;
+}
+
+.proposal-print-section.is-certifications .proposal-print-image figcaption,
+.proposal-print-section.is-certifications .proposal-print-gallery-item-caption {
+  text-align: center;
+}
+
+.proposal-print-pricing-card {
+  margin-top: 24px;
+  padding: 18px 20px;
+}
+
+.proposal-print-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0 20px;
+}
+
+.proposal-print-summary-row {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f7faff;
+  border: 1px solid #d8e4f2;
+}
+
+.proposal-print-summary-row.is-total {
+  color: #1f6fca;
+}
+
+.proposal-print-pricing-sections {
+  display: grid;
+  gap: 16px;
+}
+
+.proposal-print-pricing-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.proposal-print-pricing-section li {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.proposal-print-pricing-line-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (max-width: 1100px) {
+  .proposal-print-cover,
+  .proposal-print-metadata-grid,
+  .proposal-print-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-print-preview-header,
+  .proposal-print-preview-actions,
+  .proposal-print-section-head,
+  .proposal-print-page-toolbar {
+    display: grid;
+  }
+
+  .proposal-print-preview-modal {
+    width: min(100vw, 100vw);
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .proposal-print-preview-body,
+  .proposal-print-page {
+    padding: 16px;
+  }
+
+  .proposal-print-sheet {
+    padding: 22px 20px 30px;
+  }
+
+  .proposal-print-image.is-compact {
+    width: min(40%, 140px);
+  }
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: auto;
+    background: #fff;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .proposal-print-page,
+  .proposal-print-page * {
+    visibility: visible;
+  }
+
+  .proposal-print-page {
+    position: static;
+    min-height: auto;
+    padding: 0;
+    background: #fff;
+  }
+
+  .proposal-print-page-shell {
+    max-width: none;
+    margin: 0;
+  }
+
+  .screen-only {
+    display: none !important;
+  }
+
+  .proposal-print-sheet {
+    box-shadow: none;
+    max-width: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .proposal-print-cover,
+  .proposal-print-metadata-grid,
+  .proposal-print-summary-grid {
+    display: block;
+  }
+
+  .proposal-print-info-card,
+  .proposal-print-section,
+  .proposal-print-pricing-card {
+    margin-bottom: 16px;
+  }
+
+  .proposal-print-section-title,
+  .proposal-print-summary-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .proposal-print-section,
+  .proposal-print-pricing-card,
+  .proposal-print-info-card {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+}

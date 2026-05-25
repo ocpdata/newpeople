@@ -22,6 +22,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     contactOptions,
     currentUser,
     onOpportunityFocusChange,
+    onCreateProposalFromQuotationVersion,
     isOpen,
     showHeader = true,
     showCreateButton = true,
@@ -87,7 +88,12 @@ const QuotationsSection = forwardRef(function QuotationsSection(
           showDetails ? "quotation-layout" : "quotation-layout is-list-only"
         }
       >
-        <QuotationsListPanel {...listPanelProps} />
+        <QuotationsListPanel
+          {...listPanelProps}
+          onCreateProposalFromQuotationVersion={
+            onCreateProposalFromQuotationVersion
+          }
+        />
 
         {showDetails ? (
           <div className="quotation-content">

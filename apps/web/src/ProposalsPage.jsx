@@ -1,0 +1,2641 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
+import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
+import { createProposalPrintJob } from "./proposals/proposalPrintStorage";
+import { api, getApiErrorMessage } from "./api";
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("es-MX", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatMoney(value, currencyCode) {
+  if (value == null || value === "") return "-";
+  return Number(value).toLocaleString("es-MX", {
+    style: "currency",
+    currency: currencyCode || "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatProposalStatusLabel(statusCode) {
+  if (statusCode === "archived") return "Desactivada";
+  return "Activa";
+}
+
+function normalizeProposalStatusCode(statusCode) {
+  if (statusCode === "archived") return "archived";
+  if (statusCode === "draft" || statusCode === "ready") return "active";
+  if (statusCode === "active") return "active";
+  return "active";
+}
+
+function getProposalTemplateContext({
+  accountName,
+  contactName,
+  companyCommercialName,
+  companyLegalName,
+}) {
+  const companyName =
+    String(companyCommercialName || "").trim() ||
+    String(companyLegalName || "").trim() ||
+    "nuestra empresa";
+
+  return {
+    client_name: String(accountName || "").trim() || "cliente",
+    contact_name: String(contactName || "").trim() || "contacto",
+    company_name: companyName,
+  };
+}
+
+function resolveProposalTemplateText(text, context) {
+  return String(text || "").replace(
+    /\{\{\s*(client_name|contact_name|company_name)\s*\}\}/g,
+    (match, token) => context[token] || match,
+  );
+}
+
+function resolveProposalTemplateBlock(block, componentCode, context) {
+  if (block.type === "list") {
+    return {
+      ...block,
+      items: Array.isArray(block.items)
+        ? block.items.map((item) => resolveProposalTemplateText(item, context))
+        : [],
+    };
+  }
+
+  if (block.type === "heading" || block.type === "paragraph") {
+    return {
+      ...block,
+      text: resolveProposalTemplateText(block.text, context),
+    };
+  }
+
+  return block;
+}
+
+const PROPOSAL_SECTION_DISPLAY_TITLES = {
+  document_rights: "Derechos del documento",
+  certifications: "Certificaciones",
+  presentation: "Presentación",
+  mission: "Misión",
+  vision: "Visión",
+  key_partners: "Socios principales",
+  key_clients: "Principales clientes",
+  executive_summary: "Resumen ejecutivo",
+  background: "Antecedentes",
+  solution_description: "Descripción de la solución",
+  services: "Servicios",
+  product_brochures: "Folletos de los productos",
+  commercial_proposal: "Propuesta económica",
+  next_steps: "Siguientes pasos",
+};
+
+const PROPOSAL_BLOCK_TYPE_LABELS = {
+  heading: "Encabezado",
+  paragraph: "Párrafo",
+  list: "Lista",
+  image: "Imagen",
+};
+const EXECUTIVE_SUMMARY_COMPONENT_CODE = "executive_summary";
+
+function ProposalBlockAddIcon({ type }) {
+  if (type === "heading") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M5.75 5.5a.75.75 0 0 1 .75.75v4.5h5v-4.5a.75.75 0 0 1 1.5 0v11.5a.75.75 0 0 1-1.5 0v-5.5h-5v5.5a.75.75 0 0 1-1.5 0V6.25a.75.75 0 0 1 .75-.75Zm11 0a.75.75 0 0 1 .75.75v10.8h1a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1 0-1.5h1V7h-1a.75.75 0 0 1 0-1.5h1.75Z"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "paragraph") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M5 7.25c0-.41.34-.75.75-.75h12.5a.75.75 0 0 1 0 1.5H5.75A.75.75 0 0 1 5 7.25Zm0 4.25c0-.41.34-.75.75-.75h12.5a.75.75 0 0 1 0 1.5H5.75A.75.75 0 0 1 5 11.5Zm.75 3.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5Z"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "list") {
+    return (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M6.25 6.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Zm-3.5 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Zm-3.5 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm3.5.75c0-.41.34-.75.75-.75h7.75a.75.75 0 0 1 0 1.5H10.5a.75.75 0 0 1-.75-.75Z"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.75 5A1.75 1.75 0 0 0 5 6.75v10.5C5 18.22 5.78 19 6.75 19h10.5A1.75 1.75 0 0 0 19 17.25V6.75C19 5.78 18.22 5 17.25 5H6.75Zm0 1.5h10.5c.14 0 .25.11.25.25v7.02l-2.74-2.74a1.75 1.75 0 0 0-2.47 0l-3.54 3.54-1.04-1.04a1.75 1.75 0 0 0-2.21-.22V6.75c0-.14.11-.25.25-.25Zm9 2a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5ZM6.5 17.25v-1.82l1.51-1.51a.25.25 0 0 1 .35 0l1.57 1.57 3.42-3.42a.25.25 0 0 1 .35 0l3.8 3.8v1.38a.25.25 0 0 1-.25.25H6.75a.25.25 0 0 1-.25-.25Z"
+      />
+    </svg>
+  );
+}
+
+function normalizeComparableLabel(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getProposalSectionDisplayTitle(componentCode, currentTitle) {
+  const fallbackTitle = currentTitle || componentCode || "";
+  const canonicalTitle = PROPOSAL_SECTION_DISPLAY_TITLES[componentCode];
+  if (!canonicalTitle) {
+    return fallbackTitle;
+  }
+
+  const normalizedCurrentTitle = normalizeComparableLabel(currentTitle);
+  const normalizedCanonicalTitle = normalizeComparableLabel(canonicalTitle);
+  const normalizedComponentCode = normalizeComparableLabel(componentCode);
+
+  if (
+    !normalizedCurrentTitle ||
+    normalizedCurrentTitle === normalizedCanonicalTitle ||
+    normalizedCurrentTitle === normalizedComponentCode
+  ) {
+    return canonicalTitle;
+  }
+
+  return fallbackTitle;
+}
+
+function getProposalSectionLayout(component) {
+  if (component && typeof component === "object") {
+    const explicitMode = String(
+      component.resolvedLayoutMode || component.layoutConfig?.mode || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (explicitMode) {
+      return explicitMode;
+    }
+
+    return component.componentCode === "certifications"
+      ? "horizontal-gallery"
+      : "stack";
+  }
+
+  return component === "certifications" ? "horizontal-gallery" : "stack";
+}
+
+function getProposalBlockTypeLabel(type) {
+  return PROPOSAL_BLOCK_TYPE_LABELS[type] || type || "Bloque";
+}
+
+function normalizeProposalTemplateOption(template) {
+  return {
+    id: Number(template.id),
+    code: template.code || "",
+    name: template.name || "",
+    description: template.description || "",
+    previewTitle: template.previewTitle || template.preview_title || "",
+    coverStyle: template.coverStyle || template.cover_style || "corporate",
+    isDefault: Boolean(template.isDefault ?? template.is_default),
+  };
+}
+
+function normalizeAssetOption(asset) {
+  return {
+    id: Number(asset.id),
+    name: asset.name || "",
+    category: asset.category || "generic_proposal_media",
+    status: asset.status || "active",
+    currentVersion: asset.currentVersion
+      ? {
+          id: Number(asset.currentVersion.id),
+          versionNumber: Number(asset.currentVersion.versionNumber || 1),
+          fileUrl: asset.currentVersion.fileUrl || "",
+          fileName: asset.currentVersion.fileName || "",
+          altText: asset.currentVersion.altText || "",
+          caption: asset.currentVersion.caption || "",
+        }
+      : null,
+  };
+}
+
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === "object") {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProposalAiSuggestion(result) {
+  const parsedResult = parseJsonObject(result);
+  if (!parsedResult?.suggestion) return null;
+  return {
+    title: parsedResult.suggestion.title || "Resumen ejecutivo sugerido",
+    blocks: Array.isArray(parsedResult.suggestion.blocks)
+      ? parsedResult.suggestion.blocks.map((block) => ({
+          type: block.type || "paragraph",
+          text: block.text || "",
+          items: Array.isArray(block.items) ? block.items : [],
+          assetId: null,
+          assetVersionId: null,
+          image: null,
+        }))
+      : [],
+    plainText: parsedResult.suggestion.plainText || "",
+    sourceSummary: parsedResult.sourceSummary || null,
+    sources: parsedResult.sources || null,
+    warnings: Array.isArray(parsedResult.warnings) ? parsedResult.warnings : [],
+  };
+}
+
+function normalizeProposalAiJob(job) {
+  if (!job?.publicId) return null;
+  const parsedResult = parseJsonObject(job.result);
+  return {
+    publicId: job.publicId,
+    status: job.status || "pending",
+    createdAt: job.createdAt || null,
+    startedAt: job.startedAt || null,
+    finishedAt: job.finishedAt || null,
+    updatedAt: job.updatedAt || null,
+    progress: {
+      phase: job.progress?.phase || "queued",
+      label: job.progress?.label || "Trabajo en cola",
+      percent: Number(job.progress?.percent || 0),
+    },
+    result: parsedResult,
+    error: job.error || null,
+  };
+}
+
+function isProposalAiJobTerminal(job) {
+  return job?.status === "completed" || job?.status === "failed";
+}
+
+function ProposalAiIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path
+        d="M12 3.75a.75.75 0 0 1 .73.58l.52 2.21a3 3 0 0 0 2.23 2.23l2.21.52a.75.75 0 0 1 0 1.46l-2.21.52a3 3 0 0 0-2.23 2.23l-.52 2.21a.75.75 0 0 1-1.46 0l-.52-2.21a3 3 0 0 0-2.23-2.23l-2.21-.52a.75.75 0 0 1 0-1.46l2.21-.52a3 3 0 0 0 2.23-2.23l.52-2.21A.75.75 0 0 1 12 3.75Zm6.25 11.5a.75.75 0 0 1 .73.58l.18.77a1.5 1.5 0 0 0 1.11 1.11l.77.18a.75.75 0 0 1 0 1.46l-.77.18a1.5 1.5 0 0 0-1.11 1.11l-.18.77a.75.75 0 0 1-1.46 0l-.18-.77a1.5 1.5 0 0 0-1.11-1.11l-.77-.18a.75.75 0 0 1 0-1.46l.77-.18a1.5 1.5 0 0 0 1.11-1.11l.18-.77a.75.75 0 0 1 .73-.58Zm-12.5 2a.75.75 0 0 1 .73.58l.13.55a1.25 1.25 0 0 0 .92.92l.55.13a.75.75 0 0 1 0 1.46l-.55.13a1.25 1.25 0 0 0-.92.92l-.13.55a.75.75 0 0 1-1.46 0l-.13-.55a1.25 1.25 0 0 0-.92-.92l-.55-.13a.75.75 0 0 1 0-1.46l.55-.13a1.25 1.25 0 0 0 .92-.92l.13-.55a.75.75 0 0 1 .73-.58Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function cloneComponentDraft(component) {
+  return {
+    title: component.title || "",
+    blocks: Array.isArray(component.blocks)
+      ? component.blocks.map((block) => ({
+          id: block.id || null,
+          type: block.type || "paragraph",
+          text: block.text || "",
+          items: Array.isArray(block.items) ? block.items : [],
+          assetId: block.assetId || null,
+          assetVersionId: block.assetVersionId || null,
+          image: block.image || null,
+        }))
+      : [],
+  };
+}
+
+function buildComponentDraftMap(components) {
+  return Object.fromEntries(
+    (Array.isArray(components) ? components : []).map((component) => [
+      component.componentCode,
+      cloneComponentDraft(component),
+    ]),
+  );
+}
+
+function buildMetadataDraftFromProposal(proposal) {
+  return {
+    title: proposal?.title || "",
+    statusCode: normalizeProposalStatusCode(proposal?.statusCode),
+  };
+}
+
+function serializeComponentDraft(draft) {
+  return {
+    title: draft.title,
+    blocks: draft.blocks.map((block) => ({
+      type: block.type,
+      text: block.text || "",
+      items: Array.isArray(block.items) ? block.items.filter(Boolean) : [],
+      assetId: block.assetId || null,
+      assetVersionId: block.assetVersionId || null,
+    })),
+  };
+}
+
+function createEmptyBlock(type = "paragraph") {
+  return {
+    id: null,
+    type,
+    text: "",
+    items: type === "list" ? [""] : [],
+    assetId: null,
+    assetVersionId: null,
+    image: null,
+  };
+}
+
+function hasPreviewableBlockContent(block) {
+  if (!block) return false;
+  if (block.type === "image") {
+    return Boolean(
+      block.image?.fileUrl || block.assetId || block.assetVersionId,
+    );
+  }
+  if (block.type === "list") {
+    return Array.isArray(block.items) && block.items.filter(Boolean).length > 0;
+  }
+  return Boolean(String(block.text || "").trim());
+}
+
+function isProposalComponentDirty(component, componentDrafts) {
+  if (!component) return false;
+  const persisted = serializeComponentDraft(cloneComponentDraft(component));
+  const current = serializeComponentDraft(
+    componentDrafts[component.componentCode] || cloneComponentDraft(component),
+  );
+  return JSON.stringify(persisted) !== JSON.stringify(current);
+}
+
+function buildProposalPrintModel(
+  selectedProposal,
+  metadataDraft,
+  componentDrafts,
+  companyBranding,
+) {
+  if (!selectedProposal) return null;
+
+  const templateContext = getProposalTemplateContext({
+    accountName: selectedProposal.accountName,
+    contactName: selectedProposal.contactName,
+    companyCommercialName: companyBranding?.commercialName,
+    companyLegalName: companyBranding?.legalName,
+  });
+
+  const sections = (selectedProposal.components || [])
+    .map((component) => {
+      const draft = componentDrafts[component.componentCode];
+      const resolvedDraft = draft || cloneComponentDraft(component);
+      const blocks = (
+        Array.isArray(resolvedDraft.blocks) ? resolvedDraft.blocks : []
+      )
+        .map((block) => {
+          if (!hasPreviewableBlockContent(block)) return null;
+
+          if (block.type === "image") {
+            return block.image?.fileUrl
+              ? {
+                  type: "image",
+                  title: resolvedDraft.title || component.title || "",
+                  image: {
+                    fileUrl: block.image.fileUrl,
+                    fileName: block.image.fileName || "",
+                    altText:
+                      block.image.altText ||
+                      resolvedDraft.title ||
+                      component.title ||
+                      "Imagen de propuesta",
+                    caption: block.image.caption || "",
+                  },
+                }
+              : null;
+          }
+
+          if (block.type === "list") {
+            return {
+              type: "list",
+              items: Array.isArray(block.items)
+                ? resolveProposalTemplateBlock(
+                    {
+                      type: "list",
+                      items: block.items.filter(Boolean),
+                    },
+                    component.componentCode,
+                    templateContext,
+                  ).items
+                : [],
+            };
+          }
+
+          return resolveProposalTemplateBlock(
+            {
+              type: block.type || "paragraph",
+              text: block.text || "",
+            },
+            component.componentCode,
+            templateContext,
+          );
+        })
+        .filter(Boolean);
+
+      if (!blocks.length) {
+        return null;
+      }
+
+      return {
+        id: component.componentCode,
+        title: getProposalSectionDisplayTitle(
+          component.componentCode,
+          resolvedDraft.title || component.title || component.componentCode,
+        ),
+        subtitle: component.componentCode,
+        layout: getProposalSectionLayout(component),
+        layoutConfig: component.layoutConfig
+          ? {
+              mode: component.layoutConfig.mode,
+              rows: Array.isArray(component.layoutConfig.rows)
+                ? component.layoutConfig.rows.map((row) => ({
+                    blockIndexes: Array.isArray(row.blockIndexes)
+                      ? row.blockIndexes.filter((index) =>
+                          Number.isInteger(index),
+                        )
+                      : [],
+                  }))
+                : undefined,
+            }
+          : null,
+        blocks,
+      };
+    })
+    .filter(Boolean);
+
+  const pricingSummary = selectedProposal.pricingSnapshot?.summary || null;
+  const pricingSections = (
+    selectedProposal.pricingSnapshot?.sections || []
+  ).map((section) => ({
+    id: section.id,
+    title: section.title || "Seccion sin titulo",
+    items: (section.items || [])
+      .filter((item) => item.itemType !== "grupo_productos")
+      .map((item) => ({
+        id: item.id,
+        productCode: item.productCode || "-",
+        productDescription: item.productDescription || "Sin descripcion",
+        quantity: item.quantity || 0,
+        salePriceTotal: Number(item.salePriceTotal || 0),
+        totalLabel: formatMoney(
+          item.salePriceTotal,
+          pricingSummary?.currencyCode,
+        ),
+      })),
+  }));
+
+  return {
+    title: metadataDraft.title || selectedProposal.title || "",
+    statusCode: normalizeProposalStatusCode(
+      metadataDraft.statusCode || selectedProposal.statusCode || "active",
+    ),
+    statusLabel: formatProposalStatusLabel(
+      normalizeProposalStatusCode(
+        metadataDraft.statusCode || selectedProposal.statusCode || "active",
+      ),
+    ),
+    templateName: selectedProposal.templateName || "Sin plantilla",
+    coverStyle: selectedProposal.templateSnapshot?.coverStyle || "corporate",
+    updatedAtLabel: formatDateTime(selectedProposal.updatedAt),
+    accountName: selectedProposal.accountName || "Sin cuenta",
+    contactName: selectedProposal.contactName || "Sin contacto",
+    quotationId: selectedProposal.quotationId || "-",
+    quotationVersionNumber: selectedProposal.quotationVersionNumber || "-",
+    sections,
+    pricing: {
+      summary: {
+        subtotal: Number(pricingSummary?.subtotal || 0),
+        total: Number(pricingSummary?.total || 0),
+        currencyCode: pricingSummary?.currencyCode || "USD",
+        subtotalLabel: formatMoney(
+          pricingSummary?.subtotal,
+          pricingSummary?.currencyCode,
+        ),
+        totalLabel: formatMoney(
+          pricingSummary?.total,
+          pricingSummary?.currencyCode,
+        ),
+      },
+      sections: pricingSections,
+    },
+  };
+}
+
+function buildProposalQuotationAttachmentRef(selectedProposal) {
+  const quotationVersionId =
+    Number(selectedProposal?.quotationVersionId || 0) || null;
+  if (!quotationVersionId) {
+    return null;
+  }
+
+  return { quotationVersionId };
+}
+
+function buildProposalPdfPayload(printModel, selectedProposal) {
+  if (!printModel || typeof printModel !== "object") {
+    return null;
+  }
+
+  const quotationAttachmentRef =
+    buildProposalQuotationAttachmentRef(selectedProposal);
+  if (!quotationAttachmentRef) {
+    return null;
+  }
+
+  return {
+    header: {
+      proposalTitle: printModel.title || "",
+      accountName: printModel.accountName || "",
+      contactName: printModel.contactName || "",
+      quotationNumber: String(printModel.quotationId || ""),
+      quotationVersionNumber: String(printModel.quotationVersionNumber || ""),
+      updatedAtLabel: printModel.updatedAtLabel || "",
+      statusLabel: printModel.statusLabel || "",
+      templateName: printModel.templateName || "",
+    },
+    theme: {
+      coverStyle: printModel.coverStyle || "corporate",
+    },
+    sections: Array.isArray(printModel.sections)
+      ? printModel.sections.map((section) => ({
+          title: section.title || "Seccion sin titulo",
+          subtitle: section.subtitle || "",
+          layout: section.layout || "stack",
+          layoutConfig: section.layoutConfig
+            ? {
+                mode: section.layoutConfig.mode || section.layout || "stack",
+                rows: Array.isArray(section.layoutConfig.rows)
+                  ? section.layoutConfig.rows.map((row) => ({
+                      blockIndexes: Array.isArray(row.blockIndexes)
+                        ? row.blockIndexes.filter((index) =>
+                            Number.isInteger(index),
+                          )
+                        : [],
+                    }))
+                  : undefined,
+              }
+            : null,
+          blocks: Array.isArray(section.blocks)
+            ? section.blocks
+                .map((block) => {
+                  if (block.type === "image") {
+                    return block.image?.fileUrl
+                      ? {
+                          type: "image",
+                          image: {
+                            fileUrl: block.image.fileUrl,
+                            altText: block.image.altText || "",
+                            caption: block.image.caption || "",
+                            fileName: block.image.fileName || "",
+                          },
+                        }
+                      : null;
+                  }
+
+                  if (block.type === "list") {
+                    return {
+                      type: "list",
+                      items: Array.isArray(block.items)
+                        ? block.items.filter(Boolean)
+                        : [],
+                    };
+                  }
+
+                  return {
+                    type: block.type || "paragraph",
+                    text: block.text || "",
+                  };
+                })
+                .filter(Boolean)
+            : [],
+        }))
+      : [],
+    pricing: {
+      summary: {
+        subtotal: Number(printModel.pricing?.summary?.subtotal || 0),
+        total: Number(printModel.pricing?.summary?.total || 0),
+        currencyCode: printModel.pricing?.summary?.currencyCode || "USD",
+      },
+      sections: Array.isArray(printModel.pricing?.sections)
+        ? printModel.pricing.sections.map((section) => ({
+            title: section.title || "Seccion sin titulo",
+            items: Array.isArray(section.items)
+              ? section.items.map((item) => ({
+                  productCode: item.productCode || "",
+                  productDescription: item.productDescription || "",
+                  quantity: Number(item.quantity || 0),
+                  salePriceTotal: Number(item.salePriceTotal || 0),
+                }))
+              : [],
+          }))
+        : [],
+    },
+    quotationAttachmentRef,
+  };
+}
+
+function isProposalPreviewDirty(
+  selectedProposal,
+  metadataDraft,
+  componentDrafts,
+) {
+  if (!selectedProposal) return false;
+
+  if ((metadataDraft.title || "") !== (selectedProposal.title || "")) {
+    return true;
+  }
+  if (
+    normalizeProposalStatusCode(metadataDraft.statusCode || "active") !==
+    normalizeProposalStatusCode(selectedProposal.statusCode || "active")
+  ) {
+    return true;
+  }
+
+  const persistedComponents = (selectedProposal.components || []).map(
+    (component) => serializeComponentDraft(cloneComponentDraft(component)),
+  );
+  const currentComponents = (selectedProposal.components || []).map(
+    (component) =>
+      serializeComponentDraft(
+        componentDrafts[component.componentCode] ||
+          cloneComponentDraft(component),
+      ),
+  );
+
+  return (
+    JSON.stringify(persistedComponents) !== JSON.stringify(currentComponents)
+  );
+}
+
+function ProposalComponentCard({
+  component,
+  draft,
+  assets,
+  busy,
+  isDirty,
+  aiJob,
+  aiSuggestion,
+  onChangeDraft,
+  onSave,
+  onGenerateSuggestion,
+  onRefreshSuggestionStatus,
+  onApplySuggestion,
+  onDismissSuggestion,
+}) {
+  const displayTitle = getProposalSectionDisplayTitle(
+    component.componentCode,
+    draft.title || component.title || component.componentCode,
+  );
+  const isExecutiveSummaryComponent =
+    component.componentCode === EXECUTIVE_SUMMARY_COMPONENT_CODE;
+  const isGeneratingSuggestion =
+    aiJob && ["pending", "running"].includes(aiJob.status);
+
+  function updateBlock(index, changes) {
+    onChangeDraft(component.componentCode, {
+      ...draft,
+      blocks: draft.blocks.map((block, blockIndex) =>
+        blockIndex === index ? { ...block, ...changes } : block,
+      ),
+    });
+  }
+
+  function removeBlock(index) {
+    onChangeDraft(component.componentCode, {
+      ...draft,
+      blocks: draft.blocks.filter((_, blockIndex) => blockIndex !== index),
+    });
+  }
+
+  function selectImage(index, assetId) {
+    const asset = assets.find((item) => Number(item.id) === Number(assetId));
+    updateBlock(index, {
+      assetId: asset?.id || null,
+      assetVersionId: asset?.currentVersion?.id || null,
+      image: asset?.currentVersion
+        ? {
+            assetId: asset.id,
+            assetVersionId: asset.currentVersion.id,
+            fileUrl: asset.currentVersion.fileUrl,
+            fileName: asset.currentVersion.fileName,
+            altText: asset.currentVersion.altText,
+            caption: asset.currentVersion.caption,
+          }
+        : null,
+    });
+  }
+
+  return (
+    <section
+      className={
+        isDirty ? "proposal-component-card is-dirty" : "proposal-component-card"
+      }
+    >
+      <div className="proposal-component-card-head">
+        <div>
+          <div className="proposal-component-card-title-row">
+            <h4>{displayTitle}</h4>
+            {isDirty ? (
+              <span className="proposal-chip proposal-chip-soft">
+                Cambios sin guardar
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="proposal-component-card-head-actions">
+          {isExecutiveSummaryComponent ? (
+            <button
+              type="button"
+              className="proposal-component-ai-icon-button"
+              disabled={busy || isGeneratingSuggestion}
+              onClick={() => onGenerateSuggestion(component.componentCode)}
+              aria-label={
+                isGeneratingSuggestion
+                  ? "Generando sugerencia con IA"
+                  : "Generar sugerencia con IA"
+              }
+              title={
+                isGeneratingSuggestion
+                  ? aiJob?.progress?.label || "Generando sugerencia con IA"
+                  : "Generar sugerencia con IA"
+              }
+            >
+              <ProposalAiIcon />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="proposal-component-save-icon-button"
+            disabled={busy}
+            onClick={() => onSave(component.componentCode)}
+            aria-label={busy ? "Guardando seccion" : "Guardar seccion"}
+            title={busy ? "Guardando..." : "Guardar seccion"}
+          >
+            {busy ? (
+              <span aria-hidden="true">...</span>
+            ) : (
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M5 4.75A1.75 1.75 0 0 1 6.75 3h8.836c.464 0 .909.184 1.237.513l2.664 2.664c.329.328.513.773.513 1.237V19.25A1.75 1.75 0 0 1 18.25 21h-12.5A1.75 1.75 0 0 1 4 19.25zm2 0v4.5h8v-4.5zm0 8.5v5.75h10v-8.75h-2.25a1.75 1.75 0 0 1-1.75-1.75V5H9v4.5A1.75 1.75 0 0 1 7.25 11H7z" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <label className="proposal-component-title-field">
+        <span>Titulo visible</span>
+        <input
+          type="text"
+          value={draft.title}
+          onChange={(event) =>
+            onChangeDraft(component.componentCode, {
+              ...draft,
+              title: event.target.value,
+            })
+          }
+        />
+      </label>
+
+      {isExecutiveSummaryComponent ? (
+        <section className="proposal-component-ai-panel">
+          <div className="proposal-component-ai-panel-head">
+            <div>
+              <strong>Sugerencia paralela con IA</strong>
+              <p className="field-hint">
+                Usa contexto de oportunidad, cotizacion y biblioteca comercial
+                para proponer un texto alterno.
+              </p>
+            </div>
+            <div className="proposal-component-ai-panel-head-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() =>
+                  onRefreshSuggestionStatus(component.componentCode)
+                }
+              >
+                Actualizar estado
+              </button>
+              {aiJob ? (
+                <span
+                  className={
+                    isGeneratingSuggestion
+                      ? "proposal-chip proposal-chip-soft"
+                      : aiJob.status === "completed"
+                        ? "proposal-chip proposal-chip-outline"
+                        : "proposal-chip"
+                  }
+                >
+                  {aiJob.progress?.label || "Sugerencia IA"}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {aiSuggestion ? (
+            <div className="proposal-component-ai-suggestion-card">
+              <div className="proposal-component-ai-suggestion-copy">
+                {aiSuggestion.blocks.map((block, index) => (
+                  <p key={`${component.componentCode}-ai-${index}`}>
+                    {block.text}
+                  </p>
+                ))}
+              </div>
+
+              {aiSuggestion.sourceSummary ? (
+                <div className="proposal-component-ai-sources">
+                  <span>
+                    Respuestas:{" "}
+                    {aiSuggestion.sourceSummary.opportunityAnswersUsed || 0}
+                  </span>
+                  <span>
+                    Documentos:{" "}
+                    {aiSuggestion.sourceSummary.opportunityDocumentsUsed || 0}
+                  </span>
+                  <span>
+                    Secciones:{" "}
+                    {aiSuggestion.sourceSummary.quotationSectionsUsed || 0}
+                  </span>
+                  <span>
+                    Activos: {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
+                  </span>
+                </div>
+              ) : null}
+
+              <div className="proposal-component-ai-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => onApplySuggestion(component.componentCode)}
+                >
+                  Usar sugerencia
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => onDismissSuggestion(component.componentCode)}
+                >
+                  Descartar
+                </button>
+              </div>
+            </div>
+          ) : isGeneratingSuggestion ? (
+            <div className="proposal-component-ai-status-row">
+              <span
+                className="proposal-component-ai-spinner"
+                aria-hidden="true"
+              />
+              <span>{aiJob?.progress?.label || "Generando sugerencia..."}</span>
+            </div>
+          ) : aiJob?.status === "failed" ? (
+            <div className="proposal-component-ai-error">
+              {aiJob.error?.message ||
+                "No fue posible generar una sugerencia para este resumen."}
+            </div>
+          ) : (
+            <p className="field-hint">
+              Genera una version sugerida sin sobrescribir el contenido actual.
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      <div className="proposal-component-toolbar">
+        {["heading", "paragraph", "list", "image"].map((type) => (
+          <button
+            key={type}
+            type="button"
+            className="proposal-component-add-icon-button"
+            onClick={() =>
+              onChangeDraft(component.componentCode, {
+                ...draft,
+                blocks: [...draft.blocks, createEmptyBlock(type)],
+              })
+            }
+            aria-label={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
+            title={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
+          >
+            <ProposalBlockAddIcon type={type} />
+          </button>
+        ))}
+      </div>
+
+      <div className="proposal-component-block-list">
+        {draft.blocks.map((block, index) => (
+          <article
+            key={`${component.componentCode}-${index}`}
+            className="proposal-component-block-card"
+          >
+            <div className="proposal-component-block-head">
+              <strong>{getProposalBlockTypeLabel(block.type)}</strong>
+              <button
+                type="button"
+                className="proposal-component-remove-icon-button"
+                onClick={() => removeBlock(index)}
+                aria-label="Quitar bloque"
+                title="Quitar bloque"
+              >
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M9.75 4.75h4.5a1 1 0 0 1 .92.61l.39.89h3.19a.75.75 0 0 1 0 1.5h-.69l-.6 9.02A2.25 2.25 0 0 1 14.22 19H9.78a2.25 2.25 0 0 1-2.24-2.23l-.6-9.02h-.69a.75.75 0 0 1 0-1.5h3.19l.39-.89a1 1 0 0 1 .92-.61zm-1.3 3 .58 8.92a.75.75 0 0 0 .75.73h4.44a.75.75 0 0 0 .75-.73l.58-8.92zm2.8 2.1a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75zm2.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75z" />
+                </svg>
+              </button>
+            </div>
+
+            {block.type === "heading" || block.type === "paragraph" ? (
+              <textarea
+                rows={block.type === "heading" ? 2 : 8}
+                value={block.text}
+                onChange={(event) =>
+                  updateBlock(index, { text: event.target.value })
+                }
+              />
+            ) : null}
+
+            {block.type === "list" ? (
+              <textarea
+                rows={5}
+                value={(block.items || []).join("\n")}
+                placeholder="Un item por linea"
+                onChange={(event) =>
+                  updateBlock(index, {
+                    items: event.target.value
+                      .split("\n")
+                      .map((value) => value.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+            ) : null}
+
+            {block.type === "image" ? (
+              <div className="proposal-component-image-editor">
+                <select
+                  value={block.assetId || ""}
+                  onChange={(event) => selectImage(index, event.target.value)}
+                >
+                  <option value="">Selecciona un asset</option>
+                  {assets.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.name} · v{asset.currentVersion?.versionNumber || 1}
+                    </option>
+                  ))}
+                </select>
+                {block.image?.fileUrl ? (
+                  <div
+                    className={
+                      component.componentCode === "certifications"
+                        ? "proposal-component-image-preview is-certifications"
+                        : "proposal-component-image-preview"
+                    }
+                  >
+                    <img
+                      src={block.image.fileUrl}
+                      alt={block.image.altText || component.title}
+                    />
+                    <span>
+                      {block.image.caption ||
+                        block.image.fileName ||
+                        "Imagen seleccionada"}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProposalEditorModal({
+  isOpen,
+  proposal,
+  loading,
+  metadataDraft,
+  componentDrafts,
+  dirtyComponentCodes,
+  proposalAssets,
+  componentGenerationJobs,
+  componentSuggestions,
+  busyAction,
+  onClose,
+  onOpenPreview,
+  onOpenApplyTemplateModal,
+  onRebaseProposal,
+  onCreateNewProposalFromLatest,
+  onMetadataDraftChange,
+  onSaveMetadata,
+  onComponentDraftChange,
+  onSaveComponent,
+  onGenerateSuggestion,
+  onRefreshSuggestionStatus,
+  onApplySuggestion,
+  onDismissSuggestion,
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay modal-overlay-elevated" onClick={onClose}>
+      <div
+        className="modal-dialog modal-dialog-account modal-dialog-with-scroll-shell proposal-editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Editor de propuesta"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header proposal-editor-modal-header">
+          <div>
+            <h3 className="modal-title">Editar propuesta</h3>
+            <p className="modal-message">
+              Ajusta metadatos, contenido estructurado, plantilla visual y vista
+              previa desde un solo modal.
+            </p>
+          </div>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+
+        <div className="modal-dialog-scroll-shell proposal-editor-modal-body">
+          {loading ? <p className="field-hint">Cargando propuesta...</p> : null}
+
+          {!loading && !proposal ? (
+            <div className="proposal-empty-state proposal-editor-empty-state">
+              <h3>No fue posible abrir la propuesta</h3>
+              <p className="field-hint">
+                Intenta nuevamente desde el listado de propuestas.
+              </p>
+            </div>
+          ) : null}
+
+          {proposal ? (
+            <>
+              <section
+                className={`proposal-studio-hero is-${proposal.templateSnapshot?.coverStyle || "corporate"}`}
+              >
+                <div className="proposal-studio-hero-copy">
+                  <span className="proposal-preview-eyebrow">
+                    Proposal studio
+                  </span>
+                  <h3>{proposal.title}</h3>
+                  <p>
+                    {proposal.accountName} · {proposal.contactName}
+                    {" · "}
+                    Actualizada {formatDateTime(proposal.updatedAt)}
+                  </p>
+                </div>
+                <div className="proposal-studio-hero-aside">
+                  <span className="proposal-chip proposal-chip-outline">
+                    {formatProposalStatusLabel(proposal.statusCode)}
+                  </span>
+                  <span className="proposal-chip proposal-chip-outline">
+                    {proposal.templateName || "Sin plantilla"}
+                  </span>
+                  <span className="proposal-studio-version">
+                    Cotizacion #{proposal.quotationId} · v
+                    {proposal.quotationVersionNumber}
+                  </span>
+                </div>
+              </section>
+
+              <div className="proposal-detail-header">
+                <div>
+                  <h3>Metadatos editoriales</h3>
+                  <p className="field-hint">
+                    La narrativa vive por componentes. Aqui solo ajustas el
+                    estado general y el titulo interno.
+                  </p>
+                </div>
+                <div className="proposal-detail-meta">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={onOpenPreview}
+                  >
+                    Previsualizar propuesta
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={busyAction === `apply-template-${proposal.id}`}
+                    onClick={onOpenApplyTemplateModal}
+                  >
+                    Cambiar plantilla visual
+                  </button>
+                </div>
+              </div>
+
+              {proposal.updateAvailable ? (
+                <div className="proposal-update-banner">
+                  <div>
+                    <strong>Hay una version aprobada mas reciente</strong>
+                    <p className="field-hint">
+                      Esta propuesta usa la v{proposal.quotationVersionNumber}.
+                      Ya existe la v{proposal.latestApprovedVersionNumber}.
+                    </p>
+                  </div>
+                  <div className="proposal-update-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={busyAction === `rebase-${proposal.id}`}
+                      onClick={onRebaseProposal}
+                    >
+                      Actualizar propuesta
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={busyAction === "create-proposal"}
+                      onClick={onCreateNewProposalFromLatest}
+                    >
+                      Crear nueva propuesta
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <section className="proposal-editor-card">
+                <div className="proposal-editor-card-head">
+                  <div className="proposal-editor-card-head-main">
+                    <h4>Configuracion general</h4>
+                    <p className="field-hint">
+                      Titulo interno y estado operativo de la propuesta.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="proposal-editor-save-icon-button"
+                    disabled={busyAction === `save-metadata-${proposal.id}`}
+                    onClick={onSaveMetadata}
+                    aria-label={
+                      busyAction === `save-metadata-${proposal.id}`
+                        ? "Guardando metadatos"
+                        : "Guardar metadatos"
+                    }
+                    title={
+                      busyAction === `save-metadata-${proposal.id}`
+                        ? "Guardando..."
+                        : "Guardar metadatos"
+                    }
+                  >
+                    {busyAction === `save-metadata-${proposal.id}` ? (
+                      <span aria-hidden="true">...</span>
+                    ) : (
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 4.75A1.75 1.75 0 0 1 6.75 3h8.836c.464 0 .909.184 1.237.513l2.664 2.664c.329.328.513.773.513 1.237V19.25A1.75 1.75 0 0 1 18.25 21h-12.5A1.75 1.75 0 0 1 4 19.25zm2 0v4.5h8v-4.5zm0 8.5v5.75h10v-8.75h-2.25a1.75 1.75 0 0 1-1.75-1.75V5H9v4.5A1.75 1.75 0 0 1 7.25 11H7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="proposal-editor-card-grid proposal-editor-card-grid-dual">
+                  <label>
+                    <span>Titulo interno</span>
+                    <input
+                      type="text"
+                      value={metadataDraft.title}
+                      onChange={(event) =>
+                        onMetadataDraftChange((current) => ({
+                          ...current,
+                          title: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Estado</span>
+                    <button
+                      type="button"
+                      className={
+                        normalizeProposalStatusCode(
+                          metadataDraft.statusCode,
+                        ) === "archived"
+                          ? "proposal-editor-status-toggle is-inactive"
+                          : "proposal-editor-status-toggle is-active"
+                      }
+                      aria-label={
+                        normalizeProposalStatusCode(
+                          metadataDraft.statusCode,
+                        ) === "archived"
+                          ? "Cambiar propuesta a activa"
+                          : "Cambiar propuesta a desactivada"
+                      }
+                      onClick={() =>
+                        onMetadataDraftChange((current) => ({
+                          ...current,
+                          statusCode:
+                            normalizeProposalStatusCode(current.statusCode) ===
+                            "archived"
+                              ? "active"
+                              : "archived",
+                        }))
+                      }
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        {normalizeProposalStatusCode(
+                          metadataDraft.statusCode,
+                        ) === "archived" ? (
+                          <path d="M6.75 6.75h10.5v10.5H6.75zM4.5 12a7.5 7.5 0 1 0 15 0 7.5 7.5 0 0 0-15 0zm3.03-3.97 8.44 8.44" />
+                        ) : (
+                          <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5A7.5 7.5 0 0 0 12 4.5zm3.12 5.78-3.66 4.88a.75.75 0 0 1-1.13.09l-1.94-1.94a.75.75 0 1 1 1.06-1.06l1.32 1.32 3.05-4.06a.75.75 0 0 1 1.2.9z" />
+                        )}
+                      </svg>
+                      <span>
+                        {formatProposalStatusLabel(
+                          normalizeProposalStatusCode(metadataDraft.statusCode),
+                        )}
+                      </span>
+                    </button>
+                  </label>
+                </div>
+              </section>
+
+              <div className="proposal-component-stack">
+                {(proposal.components || []).map((component) => (
+                  <ProposalComponentCard
+                    key={component.componentCode}
+                    component={component}
+                    draft={
+                      componentDrafts[component.componentCode] ||
+                      cloneComponentDraft(component)
+                    }
+                    assets={proposalAssets}
+                    busy={
+                      busyAction === `save-component-${component.componentCode}`
+                    }
+                    isDirty={dirtyComponentCodes.has(component.componentCode)}
+                    aiJob={componentGenerationJobs[component.componentCode]}
+                    aiSuggestion={componentSuggestions[component.componentCode]}
+                    onChangeDraft={(componentCode, nextDraft) =>
+                      onComponentDraftChange((current) => ({
+                        ...current,
+                        [componentCode]: nextDraft,
+                      }))
+                    }
+                    onSave={onSaveComponent}
+                    onGenerateSuggestion={onGenerateSuggestion}
+                    onRefreshSuggestionStatus={onRefreshSuggestionStatus}
+                    onApplySuggestion={onApplySuggestion}
+                    onDismissSuggestion={onDismissSuggestion}
+                  />
+                ))}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ProposalsPage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const createRequestRef = useRef("");
+  const proposalsLoadRequestRef = useRef(0);
+  const [proposals, setProposals] = useState([]);
+  const [proposalSearchTerm, setProposalSearchTerm] = useState("");
+  const [proposalStatusFilter, setProposalStatusFilter] = useState("all");
+  const [selectedProposal, setSelectedProposal] = useState(null);
+  const [openProposalMenuId, setOpenProposalMenuId] = useState(null);
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [busyAction, setBusyAction] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [proposalTemplates, setProposalTemplates] = useState([]);
+  const [proposalAssets, setProposalAssets] = useState([]);
+  const [loadingProposalTemplates, setLoadingProposalTemplates] =
+    useState(false);
+  const [templatePickerState, setTemplatePickerState] = useState({
+    isOpen: false,
+    mode: "create",
+    versionId: null,
+    proposalId: null,
+    sourceProposalId: null,
+  });
+  const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+  const [templateApplyMode, setTemplateApplyMode] =
+    useState("preserve_content");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [companyBranding, setCompanyBranding] = useState(null);
+  const [metadataDraft, setMetadataDraft] = useState({
+    title: "",
+    statusCode: "active",
+  });
+  const [componentDrafts, setComponentDrafts] = useState({});
+  const [componentGenerationJobs, setComponentGenerationJobs] = useState({});
+  const [componentSuggestions, setComponentSuggestions] = useState({});
+
+  const selectedProposalId =
+    Number(searchParams.get("proposalId") || 0) || null;
+  const createFromVersionId =
+    Number(searchParams.get("createFromVersionId") || 0) || null;
+  const sourceProposalId =
+    Number(searchParams.get("sourceProposalId") || 0) || null;
+  const selectedTemplateIdFromQuery =
+    Number(searchParams.get("templateId") || 0) || null;
+
+  const defaultTemplateId = useMemo(
+    () =>
+      proposalTemplates.find((template) => template.isDefault)?.id ||
+      proposalTemplates[0]?.id ||
+      null,
+    [proposalTemplates],
+  );
+  const previewModel = useMemo(
+    () =>
+      buildProposalPrintModel(
+        selectedProposal,
+        metadataDraft,
+        componentDrafts,
+        companyBranding,
+      ),
+    [selectedProposal, metadataDraft, componentDrafts, companyBranding],
+  );
+  const previewDirty = useMemo(
+    () =>
+      isProposalPreviewDirty(selectedProposal, metadataDraft, componentDrafts),
+    [selectedProposal, metadataDraft, componentDrafts],
+  );
+  const dirtyComponentCodes = useMemo(() => {
+    const next = new Set();
+    (selectedProposal?.components || []).forEach((component) => {
+      if (isProposalComponentDirty(component, componentDrafts)) {
+        next.add(component.componentCode);
+      }
+    });
+    return next;
+  }, [selectedProposal, componentDrafts]);
+  const proposalStatusCounts = useMemo(() => {
+    return proposals.reduce(
+      (counts, proposal) => {
+        const statusCode = normalizeProposalStatusCode(proposal.statusCode);
+        if (statusCode === "archived") {
+          counts.archived += 1;
+        } else {
+          counts.active += 1;
+        }
+        return counts;
+      },
+      { active: 0, archived: 0 },
+    );
+  }, [proposals]);
+  const filteredProposals = useMemo(() => {
+    const normalizedSearch = normalizeComparableLabel(proposalSearchTerm);
+
+    return proposals.filter((proposal) => {
+      const matchesStatus =
+        proposalStatusFilter === "all" ||
+        normalizeProposalStatusCode(proposal.statusCode) ===
+          proposalStatusFilter;
+
+      if (!matchesStatus) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const searchableText = normalizeComparableLabel(
+        [
+          proposal.title || `Propuesta ${proposal.id}`,
+          proposal.accountName || "",
+          proposal.contactName || "",
+          proposal.id,
+          proposal.quotationId,
+          proposal.quotationVersionNumber,
+          formatProposalStatusLabel(proposal.statusCode),
+        ].join(" "),
+      );
+
+      return searchableText.includes(normalizedSearch);
+    });
+  }, [proposals, proposalSearchTerm, proposalStatusFilter]);
+
+  useEffect(() => {
+    if (!selectedProposal) {
+      setMetadataDraft({ title: "", statusCode: "active" });
+      setComponentDrafts({});
+      setComponentGenerationJobs({});
+      setComponentSuggestions({});
+      return;
+    }
+    setMetadataDraft(buildMetadataDraftFromProposal(selectedProposal));
+    setComponentDrafts(buildComponentDraftMap(selectedProposal.components));
+  }, [selectedProposal]);
+
+  useEffect(() => {
+    if (!selectedProposal?.id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadLatestExecutiveSummaryGeneration() {
+      try {
+        const { data } = await api.get(
+          `/api/proposals/${selectedProposal.id}/components/executive_summary/generation-jobs/latest`,
+        );
+        if (cancelled) return;
+        const nextJob = normalizeProposalAiJob(data?.job);
+        setComponentGenerationJobs(
+          nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
+        );
+        const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
+        setComponentSuggestions(
+          nextSuggestion
+            ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextSuggestion }
+            : {},
+        );
+      } catch {
+        if (cancelled) return;
+        setComponentGenerationJobs({});
+        setComponentSuggestions({});
+      }
+    }
+
+    loadLatestExecutiveSummaryGeneration();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProposal?.id]);
+
+  async function refreshLatestExecutiveSummaryGeneration(proposalId) {
+    const numericProposalId = Number(proposalId || 0);
+    if (!numericProposalId) return null;
+
+    const { data } = await api.get(
+      `/api/proposals/${numericProposalId}/components/executive_summary/generation-jobs/latest`,
+    );
+    const nextJob = normalizeProposalAiJob(data?.job);
+
+    setComponentGenerationJobs(
+      nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
+    );
+
+    const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
+    setComponentSuggestions(
+      nextSuggestion
+        ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextSuggestion }
+        : {},
+    );
+
+    return nextJob;
+  }
+
+  useEffect(() => {
+    if (!selectedProposalId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const currentJob =
+      componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE] || null;
+
+    const syncLatest = async () => {
+      try {
+        const nextJob =
+          await refreshLatestExecutiveSummaryGeneration(selectedProposalId);
+        if (cancelled || !nextJob) {
+          return;
+        }
+        if (
+          currentJob?.status !== nextJob.status &&
+          isProposalAiJobTerminal(nextJob)
+        ) {
+          if (nextJob.status === "completed") {
+            setSuccess("Sugerencia IA lista para revisar");
+          } else if (nextJob.status === "failed") {
+            setError(
+              nextJob.error?.message ||
+                "No fue posible generar la sugerencia del resumen ejecutivo",
+            );
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible sincronizar el ultimo estado de la sugerencia IA",
+          ),
+        );
+      }
+    };
+
+    syncLatest();
+
+    const intervalId = window.setInterval(() => {
+      const activeJob =
+        componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE] || null;
+      if (!activeJob || !isProposalAiJobTerminal(activeJob)) {
+        syncLatest();
+      }
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    selectedProposalId,
+    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.status,
+    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.publicId,
+    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.updatedAt,
+  ]);
+
+  useEffect(() => {
+    if (!error && !success) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setError("");
+      setSuccess("");
+    }, 4500);
+    return () => window.clearTimeout(timeoutId);
+  }, [error, success]);
+
+  async function loadProposalTemplates() {
+    setLoadingProposalTemplates(true);
+    try {
+      const { data } = await api.get("/api/proposal-templates");
+      const nextTemplates = Array.isArray(data)
+        ? data.map(normalizeProposalTemplateOption)
+        : [];
+      setProposalTemplates(nextTemplates);
+      return nextTemplates;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar las plantillas de propuestas",
+        ),
+      );
+      return [];
+    } finally {
+      setLoadingProposalTemplates(false);
+    }
+  }
+
+  async function loadProposalAssets() {
+    try {
+      const { data } = await api.get("/api/proposal-assets");
+      setProposalAssets(
+        Array.isArray(data?.items) ? data.items.map(normalizeAssetOption) : [],
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar los assets de propuesta",
+        ),
+      );
+    }
+  }
+
+  async function loadCompanyBranding() {
+    try {
+      const { data } = await api.get("/api/settings/document-branding");
+      setCompanyBranding(data?.company || null);
+    } catch {
+      setCompanyBranding(null);
+    }
+  }
+
+  async function loadProposalDetail(proposalId) {
+    if (!proposalId) {
+      setSelectedProposal(null);
+      return;
+    }
+
+    setLoadingDetail(true);
+    setSelectedProposal(null);
+    try {
+      const { data } = await api.get(`/api/proposals/${proposalId}`);
+      setSelectedProposal(data || null);
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la propuesta",
+        ),
+      );
+    } finally {
+      setLoadingDetail(false);
+    }
+  }
+
+  async function loadProposals({ nextSelectedProposalId } = {}) {
+    const requestId = proposalsLoadRequestRef.current + 1;
+    proposalsLoadRequestRef.current = requestId;
+    setLoadingList(true);
+    try {
+      const { data } = await api.get("/api/proposals");
+      if (proposalsLoadRequestRef.current !== requestId) return;
+      const nextProposals = Array.isArray(data) ? data : [];
+      setProposals(nextProposals);
+
+      if (nextSelectedProposalId) {
+        setSearchParams(
+          { proposalId: String(nextSelectedProposalId) },
+          { replace: true },
+        );
+      } else if (
+        selectedProposalId &&
+        !nextProposals.some(
+          (proposal) => Number(proposal.id) === Number(selectedProposalId),
+        )
+      ) {
+        setSearchParams({}, { replace: true });
+      }
+    } catch (err) {
+      if (proposalsLoadRequestRef.current !== requestId) return;
+      setError(getApiErrorMessage(err, "No fue posible cargar las propuestas"));
+    } finally {
+      if (proposalsLoadRequestRef.current !== requestId) return;
+      setLoadingList(false);
+    }
+  }
+
+  useEffect(() => {
+    loadProposals();
+    loadProposalTemplates();
+    loadProposalAssets();
+    loadCompanyBranding();
+  }, []);
+
+  useEffect(() => {
+    if (selectedProposalId) {
+      loadProposalDetail(selectedProposalId);
+      return;
+    }
+
+    setSelectedProposal(null);
+  }, [selectedProposalId]);
+
+  useEffect(() => {
+    if (openProposalMenuId === null) return undefined;
+
+    function handleDocumentPointerDown(event) {
+      if (event.target.closest(".proposal-kebab-wrap")) return;
+      setOpenProposalMenuId(null);
+    }
+
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
+    };
+  }, [openProposalMenuId]);
+
+  useEffect(() => {
+    if (!createFromVersionId) {
+      createRequestRef.current = "";
+      return;
+    }
+
+    const requestKey = `${createFromVersionId}:${sourceProposalId || ""}:${selectedTemplateIdFromQuery || ""}`;
+    if (createRequestRef.current === requestKey) return;
+    createRequestRef.current = requestKey;
+
+    let cancelled = false;
+
+    async function createProposalFromVersion() {
+      setBusyAction("create-proposal");
+      try {
+        const { data } = await api.post(
+          `/api/quotation-versions/${createFromVersionId}/proposals`,
+          {
+            ...(sourceProposalId ? { sourceProposalId } : {}),
+            ...(selectedTemplateIdFromQuery
+              ? { templateId: selectedTemplateIdFromQuery }
+              : {}),
+          },
+        );
+        if (cancelled) return;
+        const nextProposalId = Number(data?.proposal?.id || 0);
+        setSuccess(
+          data?.created === false
+            ? "La propuesta ya existia y se abrio la version actual"
+            : "Propuesta creada correctamente",
+        );
+        await loadProposals({ nextSelectedProposalId: nextProposalId });
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible crear la propuesta desde la cotizacion",
+            ),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setBusyAction("");
+        }
+      }
+    }
+
+    createProposalFromVersion();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [createFromVersionId, sourceProposalId, selectedTemplateIdFromQuery]);
+
+  function updateProposalInList(nextProposal) {
+    if (!nextProposal?.id) return;
+    setProposals((current) => {
+      const hasMatch = current.some(
+        (proposal) => Number(proposal.id) === Number(nextProposal.id),
+      );
+      if (!hasMatch) {
+        return [nextProposal, ...current];
+      }
+      return current.map((proposal) =>
+        Number(proposal.id) === Number(nextProposal.id)
+          ? nextProposal
+          : proposal,
+      );
+    });
+    setSelectedProposal(nextProposal);
+  }
+
+  function closeTemplatePicker() {
+    setTemplatePickerState({
+      isOpen: false,
+      mode: "create",
+      versionId: null,
+      proposalId: null,
+      sourceProposalId: null,
+    });
+    setTemplateApplyMode("preserve_content");
+  }
+
+  async function openTemplatePicker({
+    mode,
+    versionId = null,
+    proposalId = null,
+    sourceProposalId: nextSourceProposalId = null,
+    initialTemplateId = null,
+  }) {
+    const templates = proposalTemplates.length
+      ? proposalTemplates
+      : await loadProposalTemplates();
+    setSelectedTemplateId(
+      Number(initialTemplateId || 0) ||
+        templates.find((template) => template.isDefault)?.id ||
+        templates[0]?.id ||
+        null,
+    );
+    setTemplatePickerState({
+      isOpen: true,
+      mode,
+      versionId,
+      proposalId,
+      sourceProposalId: nextSourceProposalId,
+    });
+  }
+
+  async function handleConfirmTemplatePicker() {
+    if (templatePickerState.mode === "apply") {
+      const proposalId = Number(templatePickerState.proposalId || 0) || null;
+      if (!proposalId || !selectedTemplateId) return;
+      setBusyAction(`apply-template-${proposalId}`);
+      try {
+        const { data } = await api.post(
+          `/api/proposals/${proposalId}/apply-template`,
+          {
+            templateId: selectedTemplateId,
+            mode: templateApplyMode,
+          },
+        );
+        setSuccess("Plantilla aplicada correctamente");
+        closeTemplatePicker();
+        updateProposalInList(data?.proposal);
+        await loadProposalDetail(proposalId);
+      } catch (err) {
+        setError(
+          getApiErrorMessage(err, "No fue posible aplicar la plantilla"),
+        );
+      } finally {
+        setBusyAction("");
+      }
+      return;
+    }
+
+    const versionId = Number(templatePickerState.versionId || 0) || null;
+    if (!versionId) return;
+    const params = new URLSearchParams({
+      createFromVersionId: String(versionId),
+    });
+    if (selectedTemplateId) {
+      params.set("templateId", String(selectedTemplateId));
+    }
+    if (templatePickerState.sourceProposalId) {
+      params.set(
+        "sourceProposalId",
+        String(templatePickerState.sourceProposalId),
+      );
+    }
+    closeTemplatePicker();
+    navigate(`/proposals?${params.toString()}`);
+  }
+
+  async function handleSaveMetadata() {
+    if (!selectedProposal) return;
+    setBusyAction(`save-metadata-${selectedProposal.id}`);
+    try {
+      const { data } = await api.put(`/api/proposals/${selectedProposal.id}`, {
+        title: metadataDraft.title,
+        statusCode: metadataDraft.statusCode,
+      });
+      updateProposalInList(data?.proposal);
+      setSuccess("Metadatos de la propuesta actualizados");
+      await loadProposalDetail(selectedProposal.id);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible guardar la propuesta"));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleSaveComponent(componentCode) {
+    if (!selectedProposal || !componentDrafts[componentCode]) return;
+    setBusyAction(`save-component-${componentCode}`);
+    try {
+      const { data } = await api.put(
+        `/api/proposals/${selectedProposal.id}/components/${componentCode}`,
+        serializeComponentDraft(componentDrafts[componentCode]),
+      );
+      updateProposalInList(data?.proposal);
+      setSuccess("Seccion actualizada");
+      await loadProposalDetail(selectedProposal.id);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible guardar la seccion"));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleGenerateSuggestion(componentCode) {
+    if (
+      !selectedProposal ||
+      componentCode !== EXECUTIVE_SUMMARY_COMPONENT_CODE
+    ) {
+      return;
+    }
+
+    setBusyAction(`generate-component-${componentCode}`);
+    try {
+      const { data } = await api.post(
+        `/api/proposals/${selectedProposal.id}/components/executive_summary/generation-jobs`,
+        {
+          mode: "generate_parallel_suggestion",
+          languageCode: "es",
+          maxLibraryAssets: 4,
+        },
+      );
+      const nextJob = normalizeProposalAiJob(data?.job);
+      if (nextJob) {
+        setComponentGenerationJobs((current) => ({
+          ...current,
+          [componentCode]: nextJob,
+        }));
+        if (nextJob.status === "completed") {
+          const nextSuggestion = normalizeProposalAiSuggestion(nextJob.result);
+          if (nextSuggestion) {
+            setComponentSuggestions((current) => ({
+              ...current,
+              [componentCode]: nextSuggestion,
+            }));
+          }
+        }
+      }
+      setSuccess(
+        data?.reused
+          ? "Ya existe una sugerencia IA en proceso"
+          : "Generacion IA iniciada",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible iniciar la sugerencia IA para el resumen ejecutivo",
+        ),
+      );
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function handleRefreshSuggestionStatus(componentCode) {
+    if (
+      componentCode !== EXECUTIVE_SUMMARY_COMPONENT_CODE ||
+      !selectedProposal?.id
+    ) {
+      return;
+    }
+
+    try {
+      const nextJob = await refreshLatestExecutiveSummaryGeneration(
+        selectedProposal.id,
+      );
+      if (!nextJob) return;
+      if (nextJob.status === "completed") {
+        setSuccess("Sugerencia IA lista para revisar");
+      } else if (nextJob.status === "failed") {
+        setError(
+          nextJob.error?.message ||
+            "No fue posible generar la sugerencia del resumen ejecutivo",
+        );
+      }
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado de la sugerencia IA",
+        ),
+      );
+    }
+  }
+
+  function handleApplySuggestion(componentCode) {
+    const suggestion = componentSuggestions[componentCode];
+    if (!suggestion) return;
+    const nextComponentDraft = {
+      title: suggestion.title || "",
+      blocks: suggestion.blocks.map((block) => ({
+        id: null,
+        type: block.type || "paragraph",
+        text: block.text || "",
+        items: Array.isArray(block.items) ? block.items : [],
+        assetId: null,
+        assetVersionId: null,
+        image: null,
+      })),
+    };
+
+    setComponentDrafts((current) => {
+      return {
+        ...current,
+        [componentCode]: nextComponentDraft,
+      };
+    });
+    setSelectedProposal((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        components: Array.isArray(current.components)
+          ? current.components.map((component) =>
+              component.componentCode === componentCode
+                ? {
+                    ...component,
+                    title: nextComponentDraft.title,
+                    blocks: nextComponentDraft.blocks,
+                  }
+                : component,
+            )
+          : current.components,
+      };
+    });
+    setSuccess("Sugerencia aplicada al borrador");
+  }
+
+  function handleDismissSuggestion(componentCode) {
+    setComponentSuggestions((current) => {
+      const next = { ...current };
+      delete next[componentCode];
+      return next;
+    });
+  }
+
+  async function handleRebaseProposal() {
+    if (!selectedProposal?.latestApprovedVersionId) return;
+    setBusyAction(`rebase-${selectedProposal.id}`);
+    try {
+      const { data } = await api.post(
+        `/api/proposals/${selectedProposal.id}/rebase`,
+        {
+          quotationVersionId: selectedProposal.latestApprovedVersionId,
+        },
+      );
+      updateProposalInList(data?.proposal);
+      setSuccess("Propuesta actualizada a la nueva version aprobada");
+      await loadProposalDetail(selectedProposal.id);
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar la propuesta a la nueva version",
+        ),
+      );
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function handleCreateNewProposalFromLatest() {
+    if (!selectedProposal?.latestApprovedVersionId) return;
+    openTemplatePicker({
+      mode: "create",
+      versionId: selectedProposal.latestApprovedVersionId,
+      sourceProposalId: selectedProposal.id,
+      initialTemplateId: selectedProposal.templateId,
+    });
+  }
+
+  function handleOpenApplyTemplateModal() {
+    if (!selectedProposal) return;
+    openTemplatePicker({
+      mode: "apply",
+      proposalId: selectedProposal.id,
+      initialTemplateId: selectedProposal.templateId || defaultTemplateId,
+    });
+  }
+
+  async function resolvePreviewSource() {
+    if (!selectedProposal) {
+      return null;
+    }
+
+    if (previewDirty) {
+      return {
+        proposal: selectedProposal,
+        metadata: metadataDraft,
+        drafts: componentDrafts,
+      };
+    }
+
+    try {
+      const { data } = await api.get(`/api/proposals/${selectedProposal.id}`);
+      const freshProposal = data || null;
+      if (!freshProposal) {
+        return null;
+      }
+
+      updateProposalInList(freshProposal);
+      const nextMetadataDraft = buildMetadataDraftFromProposal(freshProposal);
+      const nextComponentDrafts = buildComponentDraftMap(
+        freshProposal.components,
+      );
+      setMetadataDraft(nextMetadataDraft);
+      setComponentDrafts(nextComponentDrafts);
+
+      return {
+        proposal: freshProposal,
+        metadata: nextMetadataDraft,
+        drafts: nextComponentDrafts,
+      };
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar la propuesta antes de abrir la vista previa",
+        ),
+      );
+      return null;
+    }
+  }
+
+  async function handleOpenPreview() {
+    const previewSource = await resolvePreviewSource();
+    if (!previewSource) return;
+    setIsPreviewOpen(true);
+  }
+
+  function handleClosePreview() {
+    setIsPreviewOpen(false);
+  }
+
+  function openProposalPrintView(options = {}) {
+    if (!previewModel || typeof window === "undefined") return false;
+
+    const { autoPrint = false } = options;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setError(
+        "El navegador bloqueo la ventana de vista previa. Permite ventanas emergentes e intenta de nuevo.",
+      );
+      return false;
+    }
+
+    try {
+      printWindow.document.title = autoPrint
+        ? "Preparando impresion..."
+        : "Preparando vista previa...";
+      printWindow.document.body.innerHTML = `
+        <div style="font-family: Arial, sans-serif; padding: 32px; color: #123044;">
+          <h1 style="margin: 0 0 12px; font-size: 22px;">Preparando documento</h1>
+          <p style="margin: 0; font-size: 14px; color: #42515c;">
+            Estamos armando la version imprimible de la propuesta.
+          </p>
+        </div>
+      `;
+    } catch {
+      // Ignore bootstrap failures and continue with navigation.
+    }
+
+    const jobId = createProposalPrintJob(previewModel, printWindow);
+    if (!jobId) {
+      printWindow.close();
+      setError("No fue posible preparar la vista previa de la propuesta");
+      return false;
+    }
+
+    const params = new URLSearchParams({ job: jobId });
+    if (autoPrint) {
+      params.set("autoprint", "1");
+    }
+
+    const printUrl = new URL(
+      `/proposals/print?${params.toString()}`,
+      window.location.origin,
+    );
+    printWindow.location.replace(printUrl.toString());
+    return true;
+  }
+
+  async function handleOpenPdfPreview() {
+    if (!selectedProposal || typeof window === "undefined") return;
+
+    const previewSource = await resolvePreviewSource();
+    if (!previewSource) return;
+
+    const nextPreviewModel = buildProposalPrintModel(
+      previewSource.proposal,
+      previewSource.metadata,
+      previewSource.drafts,
+      companyBranding,
+    );
+    if (!nextPreviewModel) return;
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setError(
+        "El navegador bloqueo la ventana de vista previa. Permite ventanas emergentes e intenta de nuevo.",
+      );
+      return;
+    }
+
+    try {
+      printWindow.document.title = "Generando PDF...";
+      printWindow.document.body.innerHTML = `
+        <div style="font-family: Arial, sans-serif; padding: 32px; color: #123044;">
+          <h1 style="margin: 0 0 12px; font-size: 22px;">Generando vista previa PDF</h1>
+          <p style="margin: 0; font-size: 14px; color: #42515c;">
+            Estamos preparando el documento oficial de la propuesta.
+          </p>
+        </div>
+      `;
+    } catch {
+      // Ignore bootstrap failures and continue with fetch navigation.
+    }
+
+    try {
+      const pdfPayload = buildProposalPdfPayload(
+        nextPreviewModel,
+        previewSource.proposal,
+      );
+      const requestUrl = new URL(
+        "/api/proposals/render-pdf",
+        api.defaults.baseURL || window.location.origin,
+      );
+      const authToken = window.localStorage.getItem("crm_token") || "";
+
+      const response = await fetch(requestUrl.toString(), {
+        method: "POST",
+        headers: {
+          Accept: "application/pdf",
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify(pdfPayload),
+      });
+
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const errorData = await response.json().catch(() => null);
+          const validationErrors = errorData?.errors?.fieldErrors
+            ? Object.entries(errorData.errors.fieldErrors)
+                .flatMap(([field, messages]) => {
+                  if (!Array.isArray(messages) || messages.length === 0) {
+                    return [];
+                  }
+                  return `${field}: ${messages.join(", ")}`;
+                })
+                .join(" | ")
+            : "";
+          throw new Error(
+            validationErrors
+              ? `${errorData?.message || "No fue posible generar la vista previa PDF"}: ${validationErrors}`
+              : errorData?.message ||
+                  "No fue posible generar la vista previa PDF",
+          );
+        }
+
+        const textError = await response.text().catch(() => "");
+        throw new Error(
+          textError || "No fue posible generar la vista previa PDF",
+        );
+      }
+
+      const pdfBlob = await response.blob();
+      if (!pdfBlob || pdfBlob.size === 0) {
+        throw new Error("La vista previa PDF se genero vacia");
+      }
+
+      const objectUrl = window.URL.createObjectURL(pdfBlob);
+      const revokeObjectUrl = () => {
+        window.URL.revokeObjectURL(objectUrl);
+      };
+
+      const handleLoad = () => {
+        printWindow.removeEventListener("load", handleLoad);
+        printWindow.addEventListener("pagehide", revokeObjectUrl, {
+          once: true,
+        });
+      };
+
+      printWindow.addEventListener("load", handleLoad, { once: true });
+      printWindow.location.replace(objectUrl);
+      handleClosePreview();
+    } catch (err) {
+      printWindow.close();
+      setError(err?.message || "No fue posible generar la vista previa PDF");
+    }
+  }
+
+  function handleSelectProposal(proposalId) {
+    setOpenProposalMenuId(null);
+    setSearchParams({ proposalId: String(proposalId) }, { replace: true });
+  }
+
+  function handleCloseProposalEditor() {
+    setSearchParams({}, { replace: true });
+  }
+
+  function toggleProposalMenu(proposalId) {
+    setOpenProposalMenuId((current) =>
+      Number(current) === Number(proposalId) ? null : proposalId,
+    );
+  }
+
+  return (
+    <section className="panel proposal-shell">
+      <div className="roles-page-header">
+        <div className="roles-page-header-left">
+          <div className="module-title-with-icon">
+            <h2>Propuestas</h2>
+            <span
+              className="module-title-icon module-title-icon-quotations"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M5.75 4.75h9.19a2.25 2.25 0 0 1 1.59.66l1.06 1.06a2.25 2.25 0 0 1 .66 1.59V17A2.25 2.25 0 0 1 16 19.25H8A2.25 2.25 0 0 1 5.75 17z" />
+                <path d="M8.5 9.25h7" />
+                <path d="M8.5 12.25h7" />
+                <path d="M8.5 15.25h4.5" />
+              </svg>
+            </span>
+          </div>
+          <p className="roles-subtitle">
+            Propuestas comerciales con contenido institucional por seccion,
+            imagenes historicas y pricing heredado desde cotizacion.
+          </p>
+        </div>
+      </div>
+
+      <div className="proposal-layout proposal-layout-structured proposal-layout-list-only">
+        <aside className="proposal-list-card">
+          <div className="proposal-list-header">
+            <div>
+              <h3>Propuestas</h3>
+              <span className="field-hint">
+                {filteredProposals.length} de {proposals.length} registradas
+              </span>
+            </div>
+            <div className="proposal-list-filters accounts-pills-bar-row">
+              <div
+                className="accounts-status-pills"
+                role="group"
+                aria-label="Filtrar propuestas por estado"
+              >
+                <button
+                  type="button"
+                  className={
+                    proposalStatusFilter === "active"
+                      ? "status-filter-pill status-filter-pill-active is-selected"
+                      : "status-filter-pill status-filter-pill-active"
+                  }
+                  aria-pressed={proposalStatusFilter === "active"}
+                  onClick={() => setProposalStatusFilter("active")}
+                >
+                  <span className="status-filter-pill-dot" aria-hidden="true" />
+                  <span className="status-filter-pill-text">Activas</span>
+                  <span className="status-filter-pill-count">
+                    {proposalStatusCounts.active}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    proposalStatusFilter === "archived"
+                      ? "status-filter-pill status-filter-pill-inactive is-selected"
+                      : "status-filter-pill status-filter-pill-inactive"
+                  }
+                  aria-pressed={proposalStatusFilter === "archived"}
+                  onClick={() => setProposalStatusFilter("archived")}
+                >
+                  <span className="status-filter-pill-dot" aria-hidden="true" />
+                  <span className="status-filter-pill-text">Desactivadas</span>
+                  <span className="status-filter-pill-count">
+                    {proposalStatusCounts.archived}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    proposalStatusFilter === "all"
+                      ? "status-filter-pill status-filter-pill-all is-selected"
+                      : "status-filter-pill status-filter-pill-all"
+                  }
+                  aria-pressed={proposalStatusFilter === "all"}
+                  onClick={() => setProposalStatusFilter("all")}
+                >
+                  <span className="status-filter-pill-dot" aria-hidden="true" />
+                  <span className="status-filter-pill-text">Todas</span>
+                  <span className="status-filter-pill-count">
+                    {proposals.length}
+                  </span>
+                </button>
+              </div>
+              <input
+                className="accounts-search-inline"
+                type="search"
+                value={proposalSearchTerm}
+                placeholder="Buscar por titulo, cuenta o contacto"
+                aria-label="Buscar propuestas"
+                onChange={(event) => setProposalSearchTerm(event.target.value)}
+              />
+            </div>
+          </div>
+
+          {loadingList ? (
+            <p className="field-hint">Cargando propuestas...</p>
+          ) : null}
+
+          {!loadingList && proposals.length === 0 ? (
+            <p className="field-hint">
+              Aun no hay propuestas. Crea la primera desde cotizaciones.
+            </p>
+          ) : null}
+
+          {!loadingList &&
+          proposals.length > 0 &&
+          filteredProposals.length === 0 ? (
+            <p className="field-hint">
+              Ninguna propuesta coincide con el filtro actual.
+            </p>
+          ) : null}
+
+          <div className="proposal-list-items">
+            <div className="proposal-list-table" role="list">
+              <div className="proposal-list-row proposal-list-row-header">
+                <span>Titulo</span>
+                <span>Cuenta</span>
+                <span>Contacto</span>
+                <span>Estado</span>
+                <span>Cotizacion</span>
+                <span>Actualizada</span>
+                <span>Acciones</span>
+              </div>
+
+              {filteredProposals.map((proposal) => {
+                const isSelected =
+                  Number(selectedProposalId) === Number(proposal.id);
+
+                return (
+                  <div
+                    key={proposal.id}
+                    className={
+                      isSelected
+                        ? "proposal-list-row is-selected"
+                        : "proposal-list-row"
+                    }
+                    role="listitem"
+                  >
+                    <div className="proposal-list-cell proposal-list-cell-title">
+                      <strong>
+                        {proposal.title || `Propuesta #${proposal.id}`}
+                      </strong>
+                    </div>
+                    <div className="proposal-list-cell">
+                      <span className="proposal-list-mobile-label">Cuenta</span>
+                      <span>{proposal.accountName || "Sin cuenta"}</span>
+                    </div>
+                    <div className="proposal-list-cell">
+                      <span className="proposal-list-mobile-label">
+                        Contacto
+                      </span>
+                      <span>{proposal.contactName || "Sin contacto"}</span>
+                    </div>
+                    <div className="proposal-list-cell">
+                      <span className="proposal-list-mobile-label">Estado</span>
+                      <span className="proposal-chip proposal-chip-soft">
+                        {formatProposalStatusLabel(proposal.statusCode)}
+                      </span>
+                    </div>
+                    <div className="proposal-list-cell">
+                      <span className="proposal-list-mobile-label">
+                        Cotizacion
+                      </span>
+                      <span>
+                        #{proposal.quotationId} · v
+                        {proposal.quotationVersionNumber || "-"}
+                      </span>
+                    </div>
+                    <div className="proposal-list-cell">
+                      <span className="proposal-list-mobile-label">
+                        Actualizada
+                      </span>
+                      <span>{formatDateTime(proposal.updatedAt)}</span>
+                    </div>
+                    <div className="proposal-list-cell proposal-list-cell-action">
+                      <div className="user-kebab-wrap proposal-kebab-wrap">
+                        <button
+                          type="button"
+                          className="kebab-btn"
+                          aria-label="Abrir acciones de propuesta"
+                          title="Acciones"
+                          onClick={() => toggleProposalMenu(proposal.id)}
+                        >
+                          ⋮
+                        </button>
+                        {openProposalMenuId === proposal.id ? (
+                          <div className="user-kebab-menu proposal-actions-menu">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectProposal(proposal.id)}
+                            >
+                              Editar
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {error ? <div className="toast toast-error">{error}</div> : null}
+      {success ? <div className="toast toast-success">{success}</div> : null}
+
+      <ProposalTemplatePickerModal
+        isOpen={templatePickerState.isOpen}
+        title={
+          templatePickerState.mode === "apply"
+            ? "Cambiar plantilla"
+            : "Elegir plantilla"
+        }
+        subtitle={
+          templatePickerState.mode === "apply"
+            ? "La plantilla cambia la presentacion visual. El contenido estructurado e imagenes historicas de la propuesta se conservan salvo reemplazo explicito posterior."
+            : "La plantilla define la portada y el tono visual. El pricing sigue viniendo de la cotizacion aprobada."
+        }
+        templates={proposalTemplates}
+        loading={loadingProposalTemplates}
+        selectedTemplateId={selectedTemplateId}
+        onSelectTemplate={setSelectedTemplateId}
+        onClose={closeTemplatePicker}
+        onConfirm={handleConfirmTemplatePicker}
+        confirmLabel={
+          templatePickerState.mode === "apply"
+            ? "Aplicar plantilla"
+            : "Crear propuesta"
+        }
+        busy={
+          templatePickerState.mode === "apply" &&
+          busyAction === `apply-template-${templatePickerState.proposalId}`
+        }
+        footerContent={
+          templatePickerState.mode === "apply" ? (
+            <div className="proposal-template-mode-panel">
+              <div className="proposal-template-mode-panel-copy">
+                <strong>Modo de aplicacion</strong>
+                <p className="field-hint">
+                  La estructura por componentes ya es propia de la propuesta. La
+                  plantilla solo redefine el acabado visual y el contenido
+                  legacy derivado.
+                </p>
+              </div>
+              <div
+                className="proposal-template-mode-switch"
+                role="group"
+                aria-label="Modo de aplicacion de plantilla"
+              >
+                <button
+                  type="button"
+                  className={
+                    templateApplyMode === "preserve_content"
+                      ? "proposal-template-mode-pill is-selected"
+                      : "proposal-template-mode-pill"
+                  }
+                  onClick={() => setTemplateApplyMode("preserve_content")}
+                >
+                  <span>Conservar contenido</span>
+                  <small>Solo actualiza la presentacion</small>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    templateApplyMode === "replace_content"
+                      ? "proposal-template-mode-pill is-selected"
+                      : "proposal-template-mode-pill"
+                  }
+                  onClick={() => setTemplateApplyMode("replace_content")}
+                >
+                  <span>Reemplazar legacy</span>
+                  <small>No altera tus componentes editados</small>
+                </button>
+              </div>
+            </div>
+          ) : null
+        }
+      />
+
+      <ProposalEditorModal
+        isOpen={Boolean(selectedProposalId)}
+        proposal={selectedProposal}
+        loading={loadingDetail}
+        metadataDraft={metadataDraft}
+        componentDrafts={componentDrafts}
+        dirtyComponentCodes={dirtyComponentCodes}
+        proposalAssets={proposalAssets}
+        componentGenerationJobs={componentGenerationJobs}
+        componentSuggestions={componentSuggestions}
+        busyAction={busyAction}
+        onClose={handleCloseProposalEditor}
+        onOpenPreview={handleOpenPreview}
+        onOpenApplyTemplateModal={handleOpenApplyTemplateModal}
+        onRebaseProposal={handleRebaseProposal}
+        onCreateNewProposalFromLatest={handleCreateNewProposalFromLatest}
+        onMetadataDraftChange={setMetadataDraft}
+        onSaveMetadata={handleSaveMetadata}
+        onComponentDraftChange={setComponentDrafts}
+        onSaveComponent={handleSaveComponent}
+        onGenerateSuggestion={handleGenerateSuggestion}
+        onRefreshSuggestionStatus={handleRefreshSuggestionStatus}
+        onApplySuggestion={handleApplySuggestion}
+        onDismissSuggestion={handleDismissSuggestion}
+      />
+
+      <ProposalPrintPreviewModal
+        isOpen={isPreviewOpen}
+        model={previewModel}
+        dirty={previewDirty}
+        onClose={handleClosePreview}
+        onOpenPdfPreview={handleOpenPdfPreview}
+      />
+    </section>
+  );
+}

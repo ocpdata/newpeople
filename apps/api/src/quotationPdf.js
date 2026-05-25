@@ -687,6 +687,10 @@ function renderSectionHeader(doc, section, { isContinuation = false } = {}) {
 
 function drawSectionTable(doc, section, currencyCode) {
   const rows = Array.isArray(section?.rows) ? section.rows : [];
+  if (!rows.length) {
+    return;
+  }
+
   const columns = [32, 72, 214, 48, 79, 83];
   const sectionTitle = asText(section?.title) || "Seccion";
   const firstMeasuredRow = rows[0]
@@ -1001,6 +1005,23 @@ export async function buildQuotationPdfBuffer(input) {
   const doc = createDocument();
   const bufferPromise = bufferPdfDocument(doc);
 
+  await drawQuotationPdfContent(doc, model);
+  drawPageNumbers(doc);
+  doc.end();
+
+  return {
+    buffer: await bufferPromise,
+    fileName: `${formatFilenamePart(model.header.proposalName)}.pdf`,
+  };
+}
+
+export async function drawQuotationPdfContent(doc, input, options = {}) {
+  const model = normalizeModel(input);
+
+  if (options.startOnNewPage) {
+    doc.addPage();
+  }
+
   await drawHeader(doc, model);
   drawPeopleSummary(doc, model);
   drawParagraphSection(doc, "Introduccion", model.introduction);
@@ -1009,11 +1030,4 @@ export async function buildQuotationPdfBuffer(input) {
   }
   drawSummaryAndTerms(doc, model);
   drawOutlinedParagraphCard(doc, "Notas", model.notes);
-  drawPageNumbers(doc);
-  doc.end();
-
-  return {
-    buffer: await bufferPromise,
-    fileName: `${formatFilenamePart(model.header.proposalName)}.pdf`,
-  };
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import QuotationsSection from "./quotations/QuotationsSection";
 import { api, getApiErrorMessage } from "./api";
 import "./quotations/quotations.css";
@@ -22,7 +23,20 @@ function mapContactOption(contact) {
   };
 }
 
+function normalizeProposalTemplateOption(template) {
+  return {
+    id: Number(template.id),
+    code: template.code || "",
+    name: template.name || "",
+    description: template.description || "",
+    previewTitle: template.previewTitle || template.preview_title || "",
+    coverStyle: template.coverStyle || template.cover_style || "corporate",
+    isDefault: Boolean(template.isDefault ?? template.is_default),
+  };
+}
+
 export default function QuotationsPage({ currentUser }) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const quotationsSectionRef = useRef(null);
   const [initialSelectedOpportunityId] = useState(
@@ -39,6 +53,15 @@ export default function QuotationsPage({ currentUser }) {
   const [loadingOpportunities, setLoadingOpportunities] = useState(true);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [error, setError] = useState("");
+  const [proposalTemplates, setProposalTemplates] = useState([]);
+  const [loadingProposalTemplates, setLoadingProposalTemplates] =
+    useState(false);
+  const [proposalTemplateModal, setProposalTemplateModal] = useState({
+    isOpen: false,
+    versionId: null,
+  });
+  const [selectedProposalTemplateId, setSelectedProposalTemplateId] =
+    useState(null);
 
   const selectedAccount = useMemo(
     () =>
@@ -56,6 +79,78 @@ export default function QuotationsPage({ currentUser }) {
       ) || null,
     [opportunities, selectedOpportunityId],
   );
+
+  const defaultProposalTemplateId = useMemo(
+    () =>
+      proposalTemplates.find((template) => template.isDefault)?.id ||
+      proposalTemplates[0]?.id ||
+      null,
+    [proposalTemplates],
+  );
+
+  const loadProposalTemplates = useCallback(async () => {
+    setLoadingProposalTemplates(true);
+    try {
+      const { data } = await api.get("/api/proposal-templates");
+      const nextTemplates = Array.isArray(data)
+        ? data.map(normalizeProposalTemplateOption)
+        : [];
+      setProposalTemplates(nextTemplates);
+      return nextTemplates;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar las plantillas disponibles para propuestas",
+        ),
+      );
+      return [];
+    } finally {
+      setLoadingProposalTemplates(false);
+    }
+  }, []);
+
+  const closeProposalTemplateModal = useCallback(() => {
+    setProposalTemplateModal({ isOpen: false, versionId: null });
+  }, []);
+
+  const openProposalTemplateModal = useCallback(
+    async (versionId) => {
+      const nextVersionId = Number(versionId || 0) || null;
+      if (!nextVersionId) return;
+      setProposalTemplateModal({ isOpen: true, versionId: nextVersionId });
+      const templates = proposalTemplates.length
+        ? proposalTemplates
+        : await loadProposalTemplates();
+      const nextDefaultId =
+        templates.find((template) => template.isDefault)?.id ||
+        templates[0]?.id ||
+        null;
+      setSelectedProposalTemplateId(nextDefaultId);
+    },
+    [loadProposalTemplates, proposalTemplates],
+  );
+
+  const handleConfirmProposalTemplate = useCallback(() => {
+    const versionId = Number(proposalTemplateModal.versionId || 0) || null;
+    if (!versionId) return;
+    const params = new URLSearchParams({
+      createFromVersionId: String(versionId),
+    });
+    const templateId =
+      Number(selectedProposalTemplateId || 0) || defaultProposalTemplateId;
+    if (templateId) {
+      params.set("templateId", String(templateId));
+    }
+    closeProposalTemplateModal();
+    navigate(`/proposals?${params.toString()}`);
+  }, [
+    closeProposalTemplateModal,
+    defaultProposalTemplateId,
+    navigate,
+    proposalTemplateModal.versionId,
+    selectedProposalTemplateId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,12 +459,34 @@ export default function QuotationsPage({ currentUser }) {
           contactOptions={contactOptions}
           currentUser={currentUser}
           onOpportunityFocusChange={handleQuotationOpportunityFocusChange}
+          onCreateProposalFromQuotationVersion={(_quotation, version) => {
+            const versionId = Number(version?.id || 0) || null;
+            const proposalId = Number(version?.proposalId || 0) || null;
+            if (proposalId) {
+              navigate(`/proposals?proposalId=${proposalId}`);
+              return;
+            }
+            openProposalTemplateModal(versionId);
+          }}
           isOpen
           showHeader={false}
           showCreateButton={false}
           showDetails={false}
         />
       ) : null}
+
+      <ProposalTemplatePickerModal
+        isOpen={proposalTemplateModal.isOpen}
+        title="Elegir plantilla"
+        subtitle="La plantilla define portada, ritmo visual y narrativa base. El pricing sigue heredandose de la cotizacion aprobada."
+        templates={proposalTemplates}
+        loading={loadingProposalTemplates}
+        selectedTemplateId={selectedProposalTemplateId}
+        onSelectTemplate={setSelectedProposalTemplateId}
+        onClose={closeProposalTemplateModal}
+        onConfirm={handleConfirmProposalTemplate}
+        confirmLabel="Crear propuesta"
+      />
 
       {error ? <div className="toast toast-error">{error}</div> : null}
     </section>

@@ -6,10 +6,14 @@ import { ensureCommercialEnablementPermissions } from "./commercial-enablement/p
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
 import {
   addCommercialEnablementCollectionItem,
+  analyzeCommercialEnablementIntakeSession,
   addCommercialEnablementFavorite,
   archiveCommercialEnablementAsset,
   buildCommercialEnablementCollectionSharePackage,
+  cancelCommercialEnablementIntakeSession,
   createCommercialEnablementAsset,
+  createCommercialEnablementAssetFromIntakeSession,
+  createCommercialEnablementIntakeSession,
   createCommercialEnablementCatalogEntry,
   deleteCommercialEnablementCatalogEntry,
   deleteCommercialEnablementAsset,
@@ -37,6 +41,7 @@ import {
   removeCommercialEnablementFavorite,
   updateCommercialEnablementAsset,
   updateCommercialEnablementCatalogEntry,
+  updateCommercialEnablementFile,
   updateCommercialEnablementLink,
   uploadCommercialEnablementFiles,
   validateCommercialEnablementAsset,
@@ -45,6 +50,9 @@ import {
   deleteCommercialEnablementLink,
   deleteCommercialEnablementRelation,
   duplicateCommercialEnablementAsset,
+  getCommercialEnablementIntakeExtractedContent,
+  getCommercialEnablementIntakeSession,
+  reviewCommercialEnablementIntakeSession,
 } from "./commercial-enablement/service.js";
 
 const router = express.Router();
@@ -105,6 +113,21 @@ const assetSchema = z.object({
   isDownloadable: z.boolean().optional().default(true),
   isFeatured: z.boolean().optional().default(false),
   ownerUserId: z.number().int().positive().optional().nullable(),
+});
+
+const intakeAnalyzeSchema = z.object({
+  hint: z.string().trim().max(2000).optional().default(""),
+  forceRegenerate: z.boolean().optional().default(false),
+});
+
+const intakeReviewSchema = z.object({
+  acceptedPayload: assetSchema,
+  reviewConfirmed: z.boolean().optional().default(false),
+});
+
+const intakeCreateSchema = z.object({
+  finalPayload: assetSchema,
+  reviewConfirmed: z.literal(true),
 });
 
 const usageEventSchema = z.object({
@@ -180,6 +203,207 @@ router.get(
   requireAnyPermission(READ_PERMISSIONS),
   async (_req, res) => {
     res.json(await getCommercialEnablementCatalogs());
+  },
+);
+
+router.post(
+  "/intake-sessions",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    try {
+      const session = await createCommercialEnablementIntakeSession({
+        req,
+        user: req.user,
+        hint: String(req.query?.hint || req.body?.hint || "").trim(),
+      });
+      return res.status(201).json(session);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message: String(
+          error?.message || "No fue posible iniciar la sesion asistida",
+        ),
+      });
+    }
+  },
+);
+
+router.get(
+  "/intake-sessions/:publicId",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    try {
+      return res.json(
+        await getCommercialEnablementIntakeSession({
+          publicId: req.params.publicId,
+          user: req.user,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible consultar la sesion asistida",
+      });
+    }
+  },
+);
+
+router.get(
+  "/intake-sessions/:publicId/extracted-content",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    try {
+      return res.json(
+        await getCommercialEnablementIntakeExtractedContent({
+          publicId: req.params.publicId,
+          user: req.user,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible consultar el texto extraido",
+      });
+    }
+  },
+);
+
+router.post(
+  "/intake-sessions/:publicId/analyze",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    const parsed = intakeAnalyzeSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      return res.json(
+        await analyzeCommercialEnablementIntakeSession({
+          publicId: req.params.publicId,
+          user: req.user,
+          hint: parsed.data.hint,
+          forceRegenerate: parsed.data.forceRegenerate,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible analizar el documento",
+      });
+    }
+  },
+);
+
+router.patch(
+  "/intake-sessions/:publicId/review",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    const parsed = intakeReviewSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      return res.json(
+        await reviewCommercialEnablementIntakeSession({
+          publicId: req.params.publicId,
+          user: req.user,
+          acceptedPayload: parsed.data.acceptedPayload,
+          reviewConfirmed: parsed.data.reviewConfirmed,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible guardar la revision del activo",
+      });
+    }
+  },
+);
+
+router.post(
+  "/intake-sessions/:publicId/create-asset",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    const parsed = intakeCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const validation = await validateCommercialEnablementAssetPayload({
+      body: parsed.data.finalPayload,
+    });
+    if (!validation.ok && parsed.data.finalPayload.status === "published") {
+      return res.status(400).json({
+        message: "No puedes publicar un activo incompleto",
+        issues: validation.issues,
+      });
+    }
+
+    try {
+      const resource = await createCommercialEnablementAssetFromIntakeSession({
+        publicId: req.params.publicId,
+        user: req.user,
+        finalPayload: parsed.data.finalPayload,
+        reviewConfirmed: parsed.data.reviewConfirmed,
+      });
+      await logAuditEvent({
+        req,
+        module: "enablement_comercial",
+        action: "created_from_intake",
+        entityType: "commercial_enablement_asset",
+        entityId: resource.id,
+        detail: `Activo creado desde sesion asistida: ${resource.title}`,
+        after: resource,
+      });
+      return res.status(201).json(resource);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible crear el activo desde la sesion asistida",
+      });
+    }
+  },
+);
+
+router.post(
+  "/intake-sessions/:publicId/cancel",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    try {
+      return res.json(
+        await cancelCommercialEnablementIntakeSession({
+          publicId: req.params.publicId,
+          user: req.user,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible cancelar la sesion asistida",
+      });
+    }
   },
 );
 
@@ -314,6 +538,29 @@ router.post(
           error.status && error.status < 500
             ? error.message
             : "No fue posible cargar el adjunto",
+      });
+    }
+  },
+);
+
+router.put(
+  "/assets/:assetPublicId/files/:filePublicId",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    try {
+      const resource = await updateCommercialEnablementFile({
+        req,
+        assetPublicId: req.params.assetPublicId,
+        filePublicId: req.params.filePublicId,
+        user: req.user,
+      });
+      return res.json(resource);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible reemplazar el archivo",
       });
     }
   },

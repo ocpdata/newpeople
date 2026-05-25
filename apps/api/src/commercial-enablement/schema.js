@@ -248,6 +248,72 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     CONSTRAINT fk_commercial_enablement_collection_items_item FOREIGN KEY (item_id) REFERENCES commercial_enablement_items(id) ON DELETE CASCADE,
     INDEX idx_commercial_enablement_collection_items_sort (collection_id, sort_order)
   )`,
+  `CREATE TABLE IF NOT EXISTS commercial_enablement_intake_sessions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    public_id VARCHAR(64) NOT NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'uploaded',
+    uploaded_by_user_id BIGINT UNSIGNED NOT NULL,
+    source_file_name VARCHAR(255) NOT NULL,
+    source_mime_type VARCHAR(120) NOT NULL,
+    source_size_bytes BIGINT UNSIGNED NOT NULL,
+    source_checksum CHAR(64) NOT NULL,
+    storage_provider VARCHAR(30) NOT NULL,
+    storage_bucket VARCHAR(120) NULL,
+    storage_key VARCHAR(500) NOT NULL,
+    extraction_status VARCHAR(40) NOT NULL DEFAULT 'pending',
+    extraction_error_code VARCHAR(80) NULL,
+    extraction_error_message TEXT NULL,
+    analysis_status VARCHAR(40) NOT NULL DEFAULT 'pending',
+    analysis_model VARCHAR(80) NULL,
+    analysis_error_code VARCHAR(80) NULL,
+    analysis_error_message TEXT NULL,
+    source_hint TEXT NULL,
+    source_summary TEXT NULL,
+    language_detected VARCHAR(20) NULL,
+    page_count INT NULL,
+    extraction_preview LONGTEXT NULL,
+    draft_payload_json JSON NULL,
+    accepted_payload_json JSON NULL,
+    accepted_field_decisions_json JSON NULL,
+    warnings_json JSON NULL,
+    review_confirmed TINYINT(1) NOT NULL DEFAULT 0,
+    review_started_at DATETIME(3) NULL,
+    completed_asset_id BIGINT UNSIGNED NULL,
+    expires_at DATETIME(3) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT uq_commercial_enablement_intake_sessions_public UNIQUE (public_id),
+    CONSTRAINT fk_commercial_enablement_intake_sessions_user FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_commercial_enablement_intake_sessions_asset FOREIGN KEY (completed_asset_id) REFERENCES commercial_enablement_items(id) ON DELETE SET NULL,
+    INDEX idx_commercial_enablement_intake_sessions_status (status, updated_at),
+    INDEX idx_commercial_enablement_intake_sessions_user (uploaded_by_user_id, updated_at)
+  )`,
+  `CREATE TABLE IF NOT EXISTS commercial_enablement_intake_extracted_content (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    intake_session_id BIGINT UNSIGNED NOT NULL,
+    content_kind VARCHAR(40) NOT NULL,
+    page_number INT NULL,
+    text_content LONGTEXT NULL,
+    char_count INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT fk_commercial_enablement_intake_extracted_content_session FOREIGN KEY (intake_session_id) REFERENCES commercial_enablement_intake_sessions(id) ON DELETE CASCADE,
+    INDEX idx_commercial_enablement_intake_extracted_content_session (intake_session_id, id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS commercial_enablement_item_source_contents (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    item_id BIGINT UNSIGNED NOT NULL,
+    intake_session_id BIGINT UNSIGNED NULL,
+    source_file_name VARCHAR(255) NOT NULL,
+    source_mime_type VARCHAR(120) NOT NULL,
+    source_checksum CHAR(64) NOT NULL,
+    extracted_text LONGTEXT NULL,
+    extracted_text_summary TEXT NULL,
+    accepted_suggestions_json JSON NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT fk_commercial_enablement_item_source_contents_item FOREIGN KEY (item_id) REFERENCES commercial_enablement_items(id) ON DELETE CASCADE,
+    CONSTRAINT fk_commercial_enablement_item_source_contents_session FOREIGN KEY (intake_session_id) REFERENCES commercial_enablement_intake_sessions(id) ON DELETE SET NULL,
+    INDEX idx_commercial_enablement_item_source_contents_item (item_id, created_at)
+  )`,
 ];
 
 async function ensureCommercialEnablementItemsColumn(columnName, definition) {
@@ -265,7 +331,9 @@ async function ensureCommercialEnablementItemsColumn(columnName, definition) {
 }
 
 async function dropTableColumnIfExists(tableName, columnName) {
-  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [columnName]);
+  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
+    columnName,
+  ]);
   if (rows.length) {
     await query(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`);
   }

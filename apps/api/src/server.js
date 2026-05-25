@@ -21,6 +21,10 @@ import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema
 import { ensureProcessCommercialConfigPermissions } from "./process-commercial-config/permissions.js";
 import { startCommercialNarrativeWorker } from "./routes.execution-commercial.js";
 import { startInteractionAnalysisWorker } from "./routes.interactions.js";
+import {
+  ensureProposalExecutiveSummaryGenerationJobSchema,
+  startProposalExecutiveSummaryGenerationWorker,
+} from "./routes.quotations.js";
 import { startOpportunityStageAnswerSuggestionWorker } from "./opportunity-stage-answer-suggestions/async.js";
 import { ensureOpportunityStageAnswerSuggestionJobSchema } from "./opportunity-stage-answer-suggestions/schema.js";
 import { startOpportunityStageValidationWorker } from "./opportunity-stage-validations/async.js";
@@ -46,6 +50,7 @@ export async function startServer() {
   await ensureOpportunityStageAnswerSuggestionJobSchema();
   await ensureOpportunityStageValidationJobSchema();
   await ensureOpportunityWorkspaceSchema();
+  await ensureProposalExecutiveSummaryGenerationJobSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
   await ensureCommercialPlanningSchema();
@@ -55,6 +60,7 @@ export async function startServer() {
   await startCommercialNarrativeWorker();
   await startInteractionAnalysisWorker();
   await startOpportunityDocumentProcessingWorker();
+  await startProposalExecutiveSummaryGenerationWorker();
   await startOpportunityStageAnswerSuggestionWorker();
   await startOpportunityStageValidationWorker();
   return app.listen(config.port, () => {

@@ -28,6 +28,7 @@ function QuotationsListPanel({
   toggleQuotationMenu,
   busyAction,
   openEditQuotationModal,
+  onCreateProposalFromQuotationVersion,
   quotationsPage,
   quotationsPerPage,
   totalQuotationPages,
@@ -69,6 +70,7 @@ function QuotationsListPanel({
       {
         id: Number(quotation.latestVersionId || quotation.id || 0),
         versionNumber: quotation.latestVersionNumber || "-",
+        statusCode: quotation.latestStatusCode || "",
         statusName: quotation.latestStatusName || "",
         isLatestVersion: true,
       },
@@ -334,8 +336,21 @@ function QuotationsListPanel({
                             quotationId
                           ] || 0,
                         ) || Number(versionOptions[0]?.id || 0);
+                      const selectedEditVersion = versionOptions.find(
+                        (version) =>
+                          Number(version.id) === Number(selectedEditVersionId),
+                      );
                       const loadingVersions =
                         loadingQuotationVersionsByQuotationId[quotationId];
+                      const canOpenProposal =
+                        typeof onCreateProposalFromQuotationVersion ===
+                          "function" &&
+                        Number(selectedEditVersion?.proposalId || 0) > 0;
+                      const canCreateProposal =
+                        typeof onCreateProposalFromQuotationVersion ===
+                          "function" &&
+                        selectedEditVersion?.statusCode === "aprobada" &&
+                        !canOpenProposal;
 
                       return (
                         <>
@@ -396,6 +411,32 @@ function QuotationsListPanel({
                               >
                                 Editar cotizacion
                               </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  loadingVersions ||
+                                  (!canCreateProposal && !canOpenProposal)
+                                }
+                                onClick={() => {
+                                  onCreateProposalFromQuotationVersion?.(
+                                    quotation,
+                                    selectedEditVersion,
+                                  );
+                                  setOpenQuotationMenuId(null);
+                                }}
+                              >
+                                {canOpenProposal
+                                  ? "Editar propuesta"
+                                  : "Crear propuesta"}
+                              </button>
+                              {!loadingVersions &&
+                              !canCreateProposal &&
+                              !canOpenProposal ? (
+                                <p className="quotation-actions-menu-hint">
+                                  Solo las versiones aprobadas sin propuesta
+                                  pueden generar una nueva propuesta.
+                                </p>
+                              ) : null}
                             </div>
                           ) : null}
                         </>

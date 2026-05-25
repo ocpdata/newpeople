@@ -33,6 +33,8 @@ const ManufacturerRegistrationsPage = lazy(
 const ContactsPage = lazy(() => import("./ContactsPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
+const ProposalsPage = lazy(() => import("./ProposalsPage"));
+const ProposalPrintPage = lazy(() => import("./ProposalPrintPage"));
 
 function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
   return (
@@ -113,6 +115,7 @@ export default function AppShell({
     "cotizaciones.administracion",
     "cotizaciones.externo",
   ].some(can);
+  const canAccessProposals = canAccessQuotations;
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
   const canAccessCommercialDevelopment =
@@ -281,6 +284,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/proposals"
+          element={canAccessProposals ? <ProposalsPage /> : <Navigate to="/" />}
+        />
+        <Route
+          path="/proposals/print"
+          element={
+            canAccessProposals ? <ProposalPrintPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
           path="/contacts"
           element={
             can("contactos.read") ? (
@@ -353,6 +366,14 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Cotizaciones
+                </GuardedNavLink>
+              )}
+              {canAccessProposals && (
+                <GuardedNavLink
+                  to="/proposals"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Propuestas
                 </GuardedNavLink>
               )}
             </SidebarNavGroup>

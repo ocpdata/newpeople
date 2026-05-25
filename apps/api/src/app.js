@@ -21,9 +21,11 @@ import settingsRoutes from "./routes.settings.js";
 
 export function createApp() {
   const app = express();
+  const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "12mb";
 
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: requestBodyLimit }));
+  app.use(express.urlencoded({ extended: true, limit: requestBodyLimit }));
 
   app.get("/health", async (_req, res) => {
     const nowRows = await query("SELECT NOW(3) AS now");
@@ -70,6 +72,13 @@ export function createApp() {
 
   app.use((err, _req, res, _next) => {
     const status = Number(err?.status) || 500;
+    if (status === 413 || err?.type === "entity.too.large") {
+      return res.status(413).json({
+        message:
+          "El archivo es demasiado grande para esta solicitud. Intenta con una imagen mas liviana.",
+      });
+    }
+
     if (status >= 500) {
       console.error(err);
       return res.status(500).json({ message: "Error interno del servidor" });
