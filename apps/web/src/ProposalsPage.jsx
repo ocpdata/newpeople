@@ -236,6 +236,32 @@ function normalizeAssetOption(asset) {
   };
 }
 
+function normalizeCommercialEnablementAssetOption(asset) {
+  return {
+    publicId: asset.publicId || "",
+    title: asset.title || "",
+    summary: asset.summary || "",
+    assetTypeCode: asset.assetTypeCode || "",
+    assetTypeLabel: asset.assetTypeLabel || asset.assetTypeCode || "Activo",
+    visibilityLevel: asset.visibilityLevel || "client_safe",
+    visibilityLabel: asset.visibilityLabel || "Compartible con cliente",
+    audienceCode: asset.audienceCode || "client",
+    audienceLabel: asset.audienceLabel || "Cliente",
+    files: Array.isArray(asset.files) ? asset.files : [],
+    links: Array.isArray(asset.links) ? asset.links : [],
+    catalogs: Array.isArray(asset.catalogs) ? asset.catalogs : [],
+    tags: Array.isArray(asset.tags) ? asset.tags : [],
+  };
+}
+
+function getCommercialEnablementCatalogNames(asset, catalogType, limit = 2) {
+  return (Array.isArray(asset?.catalogs) ? asset.catalogs : [])
+    .filter((entry) => entry.catalogType === catalogType)
+    .map((entry) => entry.name)
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function parseJsonObject(value) {
   if (!value) return null;
   if (typeof value === "object") {
@@ -286,6 +312,27 @@ function normalizeProposalAiJob(job) {
       label: job.progress?.label || "Trabajo en cola",
       percent: Number(job.progress?.percent || 0),
     },
+    request: {
+      languageCode: job.request?.languageCode || "es",
+      instructions: job.request?.instructions || "",
+      maxLibraryAssets: Number(job.request?.maxLibraryAssets || 4),
+      librarySourceMode:
+        job.request?.librarySourceMode === "manual" ? "manual" : "auto",
+      libraryContentMode:
+        job.request?.libraryContentMode === "summary_extract"
+          ? "summary_extract"
+          : "source_text",
+      sourcePriorityMode:
+        job.request?.sourcePriorityMode === "non_library_first" ||
+        job.request?.sourcePriorityMode === "library_first"
+          ? job.request.sourcePriorityMode
+          : "balanced",
+      selectedLibraryAssetPublicIds: Array.isArray(
+        job.request?.selectedLibraryAssetPublicIds,
+      )
+        ? job.request.selectedLibraryAssetPublicIds
+        : [],
+    },
     result: parsedResult,
     error: job.error || null,
   };
@@ -295,6 +342,16 @@ function isProposalAiJobTerminal(job) {
   return job?.status === "completed" || job?.status === "failed";
 }
 
+function formatExecutiveSummaryLibraryContentModeLabel(mode) {
+  return mode === "summary_extract" ? "Summary + extract" : "Texto fuente";
+}
+
+function formatExecutiveSummarySourcePriorityModeLabel(mode) {
+  if (mode === "non_library_first") return "Documentos primero";
+  if (mode === "library_first") return "Biblioteca primero";
+  return "Balanceado";
+}
+
 function ProposalAiIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
@@ -302,6 +359,22 @@ function ProposalAiIcon() {
         d="M12 3.75a.75.75 0 0 1 .73.58l.52 2.21a3 3 0 0 0 2.23 2.23l2.21.52a.75.75 0 0 1 0 1.46l-2.21.52a3 3 0 0 0-2.23 2.23l-.52 2.21a.75.75 0 0 1-1.46 0l-.52-2.21a3 3 0 0 0-2.23-2.23l-2.21-.52a.75.75 0 0 1 0-1.46l2.21-.52a3 3 0 0 0 2.23-2.23l.52-2.21A.75.75 0 0 1 12 3.75Zm6.25 11.5a.75.75 0 0 1 .73.58l.18.77a1.5 1.5 0 0 0 1.11 1.11l.77.18a.75.75 0 0 1 0 1.46l-.77.18a1.5 1.5 0 0 0-1.11 1.11l-.18.77a.75.75 0 0 1-1.46 0l-.18-.77a1.5 1.5 0 0 0-1.11-1.11l-.77-.18a.75.75 0 0 1 0-1.46l.77-.18a1.5 1.5 0 0 0 1.11-1.11l.18-.77a.75.75 0 0 1 .73-.58Zm-12.5 2a.75.75 0 0 1 .73.58l.13.55a1.25 1.25 0 0 0 .92.92l.55.13a.75.75 0 0 1 0 1.46l-.55.13a1.25 1.25 0 0 0-.92.92l-.13.55a.75.75 0 0 1-1.46 0l-.13-.55a1.25 1.25 0 0 0-.92-.92l-.55-.13a.75.75 0 0 1 0-1.46l.55-.13a1.25 1.25 0 0 0 .92-.92l.13-.55a.75.75 0 0 1 .73-.58Z"
         fill="currentColor"
       />
+    </svg>
+  );
+}
+
+function ProposalAiDocumentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M7 3.75A1.75 1.75 0 0 0 5.25 5.5v13A1.75 1.75 0 0 0 7 20.25h10A1.75 1.75 0 0 0 18.75 18.5V9.31a1.75 1.75 0 0 0-.5-1.23l-3.33-3.33a1.75 1.75 0 0 0-1.23-.5zm6.25 1.9 3.6 3.6h-2.1A1.5 1.5 0 0 1 13.25 7.75zM8.5 11.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75zm0 3.5a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75z" />
+    </svg>
+  );
+}
+
+function ProposalAiPriorityIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M6.22 7.72a.75.75 0 0 1 1.06 0L9.25 9.69V5.5a.75.75 0 0 1 1.5 0v4.19l1.97-1.97a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L6.22 8.78a.75.75 0 0 1 0-1.06zM10 12.75a.75.75 0 0 1 .75.75v4.19l1.97-1.97a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0l-3.25-3.25a.75.75 0 0 1 1.06-1.06l1.97 1.97V13.5a.75.75 0 0 1 .75-.75zm5.25-7a.75.75 0 0 1 .75.75v11a.75.75 0 0 1-1.5 0v-11a.75.75 0 0 1 .75-.75z" />
     </svg>
   );
 }
@@ -700,6 +773,18 @@ function ProposalComponentCard({
   isDirty,
   aiJob,
   aiSuggestion,
+  executiveSummarySourceMode,
+  executiveSummaryLibraryContentMode,
+  executiveSummarySourcePriorityMode,
+  executiveSummaryLibraryQuery,
+  executiveSummaryLibraryAssets,
+  executiveSummaryLibraryLoading,
+  selectedExecutiveSummaryLibraryAssetPublicIds,
+  onExecutiveSummarySourceModeChange,
+  onExecutiveSummaryLibraryContentModeChange,
+  onExecutiveSummarySourcePriorityModeChange,
+  onExecutiveSummaryLibraryQueryChange,
+  onToggleExecutiveSummaryLibraryAsset,
   onChangeDraft,
   onSave,
   onGenerateSuggestion,
@@ -715,6 +800,38 @@ function ProposalComponentCard({
     component.componentCode === EXECUTIVE_SUMMARY_COMPONENT_CODE;
   const isGeneratingSuggestion =
     aiJob && ["pending", "running"].includes(aiJob.status);
+  const filteredExecutiveSummaryLibraryAssets = isExecutiveSummaryComponent
+    ? executiveSummaryLibraryAssets.filter((asset) => {
+        const normalizedQuery = normalizeComparableLabel(
+          executiveSummaryLibraryQuery,
+        );
+        if (!normalizedQuery) return true;
+
+        return normalizeComparableLabel(
+          [
+            asset.title,
+            asset.summary,
+            asset.assetTypeLabel,
+            ...getCommercialEnablementCatalogNames(asset, "manufacturer", 4),
+            ...getCommercialEnablementCatalogNames(asset, "solution", 4),
+          ].join(" "),
+        ).includes(normalizedQuery);
+      })
+    : [];
+  const selectedExecutiveSummaryAssets = isExecutiveSummaryComponent
+    ? selectedExecutiveSummaryLibraryAssetPublicIds.map(
+        (assetPublicId) =>
+          executiveSummaryLibraryAssets.find(
+            (asset) => asset.publicId === assetPublicId,
+          ) || null,
+      )
+    : [];
+  const canGenerateExecutiveSummarySuggestion =
+    !busy &&
+    !isGeneratingSuggestion &&
+    (!isExecutiveSummaryComponent ||
+      executiveSummarySourceMode === "auto" ||
+      selectedExecutiveSummaryLibraryAssetPublicIds.length > 0);
 
   function updateBlock(index, changes) {
     onChangeDraft(component.componentCode, {
@@ -772,16 +889,22 @@ function ProposalComponentCard({
             <button
               type="button"
               className="proposal-component-ai-icon-button"
-              disabled={busy || isGeneratingSuggestion}
+              disabled={!canGenerateExecutiveSummarySuggestion}
               onClick={() => onGenerateSuggestion(component.componentCode)}
               aria-label={
                 isGeneratingSuggestion
                   ? "Generando sugerencia con IA"
+                  : executiveSummarySourceMode === "manual" &&
+                      !selectedExecutiveSummaryLibraryAssetPublicIds.length
+                    ? "Selecciona al menos un activo de biblioteca"
                   : "Generar sugerencia con IA"
               }
               title={
                 isGeneratingSuggestion
                   ? aiJob?.progress?.label || "Generando sugerencia con IA"
+                  : executiveSummarySourceMode === "manual" &&
+                      !selectedExecutiveSummaryLibraryAssetPublicIds.length
+                    ? "Selecciona al menos un activo de biblioteca"
                   : "Generar sugerencia con IA"
               }
             >
@@ -857,6 +980,286 @@ function ProposalComponentCard({
             </div>
           </div>
 
+          <div className="proposal-component-ai-source-mode-panel">
+            <div className="proposal-component-ai-source-mode-copy">
+              <strong>Fuentes de biblioteca</strong>
+              <p className="field-hint">
+                Define si la IA elige activos sugeridos automaticamente o si
+                debe usar una seleccion manual.
+              </p>
+            </div>
+            <div className="proposal-component-ai-source-mode-toggle">
+              <button
+                type="button"
+                className={
+                  executiveSummarySourceMode === "auto"
+                    ? "proposal-component-ai-source-pill is-selected"
+                    : "proposal-component-ai-source-pill"
+                }
+                onClick={() => onExecutiveSummarySourceModeChange("auto")}
+              >
+                <span>Automatico</span>
+                <small>La IA elige hasta 4 activos</small>
+              </button>
+              <button
+                type="button"
+                className={
+                  executiveSummarySourceMode === "manual"
+                    ? "proposal-component-ai-source-pill is-selected"
+                    : "proposal-component-ai-source-pill"
+                }
+                onClick={() => onExecutiveSummarySourceModeChange("manual")}
+              >
+                <span>Manual</span>
+                <small>Solo usa los activos elegidos</small>
+              </button>
+            </div>
+
+            <div className="proposal-component-ai-policy-grid">
+              <div className="proposal-component-ai-policy-card">
+                <div className="proposal-component-ai-policy-head">
+                  <span className="proposal-component-ai-policy-icon">
+                    <ProposalAiDocumentIcon />
+                  </span>
+                  <div>
+                    <strong>Contenido de biblioteca</strong>
+                    <p className="field-hint">
+                      Elige si cada activo aporta texto fuente o una vista breve
+                      con summary y extract.
+                    </p>
+                  </div>
+                </div>
+                <div className="proposal-component-ai-policy-toggle is-dual">
+                  <button
+                    type="button"
+                    className={
+                      executiveSummaryLibraryContentMode === "source_text"
+                        ? "proposal-component-ai-policy-pill is-selected"
+                        : "proposal-component-ai-policy-pill"
+                    }
+                    onClick={() =>
+                      onExecutiveSummaryLibraryContentModeChange("source_text")
+                    }
+                  >
+                    <ProposalAiDocumentIcon />
+                    <span>Texto fuente</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      executiveSummaryLibraryContentMode === "summary_extract"
+                        ? "proposal-component-ai-policy-pill is-selected"
+                        : "proposal-component-ai-policy-pill"
+                    }
+                    onClick={() =>
+                      onExecutiveSummaryLibraryContentModeChange(
+                        "summary_extract",
+                      )
+                    }
+                  >
+                    <ProposalAiDocumentIcon />
+                    <span>Summary + extract</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="proposal-component-ai-policy-card">
+                <div className="proposal-component-ai-policy-head">
+                  <span className="proposal-component-ai-policy-icon">
+                    <ProposalAiPriorityIcon />
+                  </span>
+                  <div>
+                    <strong>Prioridad de fuentes</strong>
+                    <p className="field-hint">
+                      Decide si el foco narrativo favorece documentos de la
+                      oportunidad, la biblioteca o un balance entre ambos.
+                    </p>
+                  </div>
+                </div>
+                <div className="proposal-component-ai-policy-toggle is-triple">
+                  <button
+                    type="button"
+                    className={
+                      executiveSummarySourcePriorityMode ===
+                      "non_library_first"
+                        ? "proposal-component-ai-policy-pill is-selected"
+                        : "proposal-component-ai-policy-pill"
+                    }
+                    onClick={() =>
+                      onExecutiveSummarySourcePriorityModeChange(
+                        "non_library_first",
+                      )
+                    }
+                  >
+                    <ProposalAiPriorityIcon />
+                    <span>Documentos primero</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      executiveSummarySourcePriorityMode === "balanced"
+                        ? "proposal-component-ai-policy-pill is-selected"
+                        : "proposal-component-ai-policy-pill"
+                    }
+                    onClick={() =>
+                      onExecutiveSummarySourcePriorityModeChange("balanced")
+                    }
+                  >
+                    <ProposalAiPriorityIcon />
+                    <span>Balanceado</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      executiveSummarySourcePriorityMode === "library_first"
+                        ? "proposal-component-ai-policy-pill is-selected"
+                        : "proposal-component-ai-policy-pill"
+                    }
+                    onClick={() =>
+                      onExecutiveSummarySourcePriorityModeChange(
+                        "library_first",
+                      )
+                    }
+                  >
+                    <ProposalAiPriorityIcon />
+                    <span>Biblioteca primero</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {executiveSummarySourceMode === "manual" ? (
+            <div className="proposal-component-ai-library-picker">
+              <label className="proposal-component-ai-library-search">
+                <span>Buscar activos</span>
+                <input
+                  type="search"
+                  value={executiveSummaryLibraryQuery}
+                  placeholder="Buscar por titulo, resumen, fabricante o solucion"
+                  onChange={(event) =>
+                    onExecutiveSummaryLibraryQueryChange(event.target.value)
+                  }
+                />
+              </label>
+
+              <div className="proposal-component-ai-library-selected-bar">
+                <strong>
+                  Seleccionados: {selectedExecutiveSummaryLibraryAssetPublicIds.length}
+                  /4
+                </strong>
+                <div className="proposal-component-ai-library-selected-chips">
+                  {selectedExecutiveSummaryAssets.filter(Boolean).length ? (
+                    selectedExecutiveSummaryAssets.filter(Boolean).map((asset) => (
+                      <button
+                        key={asset.publicId}
+                        type="button"
+                        className="proposal-component-ai-library-selected-chip"
+                        onClick={() =>
+                          onToggleExecutiveSummaryLibraryAsset(asset.publicId)
+                        }
+                      >
+                        <span>{asset.title}</span>
+                        <strong>×</strong>
+                      </button>
+                    ))
+                  ) : (
+                    <span className="field-hint">
+                      Selecciona entre 1 y 4 activos compartibles con cliente.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {executiveSummaryLibraryLoading ? (
+                <div className="proposal-component-ai-status-row">
+                  <span
+                    className="proposal-component-ai-spinner"
+                    aria-hidden="true"
+                  />
+                  <span>Cargando biblioteca comercial...</span>
+                </div>
+              ) : filteredExecutiveSummaryLibraryAssets.length ? (
+                <div className="proposal-component-ai-library-grid">
+                  {filteredExecutiveSummaryLibraryAssets.slice(0, 8).map((asset) => {
+                    const isSelected = selectedExecutiveSummaryLibraryAssetPublicIds.includes(
+                      asset.publicId,
+                    );
+                    const manufacturerNames = getCommercialEnablementCatalogNames(
+                      asset,
+                      "manufacturer",
+                    );
+                    const solutionNames = getCommercialEnablementCatalogNames(
+                      asset,
+                      "solution",
+                    );
+                    return (
+                      <label
+                        key={asset.publicId}
+                        className={
+                          isSelected
+                            ? "proposal-component-ai-library-option is-selected"
+                            : "proposal-component-ai-library-option"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() =>
+                            onToggleExecutiveSummaryLibraryAsset(asset.publicId)
+                          }
+                          disabled={
+                            !isSelected &&
+                            selectedExecutiveSummaryLibraryAssetPublicIds.length >= 4
+                          }
+                        />
+                        <div className="proposal-component-ai-library-option-copy">
+                          <div className="proposal-component-ai-library-option-topline">
+                            <strong>{asset.title}</strong>
+                            <span>{asset.assetTypeLabel}</span>
+                          </div>
+                          <p>{asset.summary || "Sin resumen disponible"}</p>
+                          <div className="proposal-component-ai-library-option-meta">
+                            <span>{asset.visibilityLabel}</span>
+                            {manufacturerNames.map((name) => (
+                              <span key={`${asset.publicId}-${name}`}>{name}</span>
+                            ))}
+                            {solutionNames.map((name) => (
+                              <span key={`${asset.publicId}-${name}`}>{name}</span>
+                            ))}
+                            <span>
+                              {asset.files.length} archivo(s) · {asset.links.length} URL(s)
+                            </span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="proposal-component-ai-library-empty">
+                  <strong>No hay activos disponibles</strong>
+                  <span>
+                    Ajusta tu busqueda o verifica que existan activos publicados y
+                    compartibles con cliente.
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="field-hint proposal-component-ai-helper-note">
+              La IA elegira automaticamente hasta 4 activos publicados y
+              compartibles con cliente usando {" "}
+              {formatExecutiveSummaryLibraryContentModeLabel(
+                executiveSummaryLibraryContentMode,
+              ).toLowerCase()}{" "}
+              con prioridad {" "}
+              {formatExecutiveSummarySourcePriorityModeLabel(
+                executiveSummarySourcePriorityMode,
+              ).toLowerCase()}.
+            </p>
+          )}
+
           {aiSuggestion ? (
             <div className="proposal-component-ai-suggestion-card">
               <div className="proposal-component-ai-suggestion-copy">
@@ -883,6 +1286,31 @@ function ProposalComponentCard({
                   </span>
                   <span>
                     Activos: {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
+                  </span>
+                  <span>
+                    Contenido: {formatExecutiveSummaryLibraryContentModeLabel(
+                      aiSuggestion.sources?.generationPolicy
+                        ?.libraryContentMode,
+                    )}
+                  </span>
+                  <span>
+                    Prioridad: {formatExecutiveSummarySourcePriorityModeLabel(
+                      aiSuggestion.sources?.generationPolicy
+                        ?.sourcePriorityMode,
+                    )}
+                  </span>
+                </div>
+              ) : null}
+
+              {Array.isArray(aiSuggestion.sources?.libraryAssets) &&
+              aiSuggestion.sources.libraryAssets.length ? (
+                <div className="proposal-component-ai-library-used-list">
+                  <strong>Biblioteca usada</strong>
+                  <span>
+                    {aiSuggestion.sources.libraryAssets
+                      .map((asset) => asset.title)
+                      .filter(Boolean)
+                      .join(", ")}
                   </span>
                 </div>
               ) : null}
@@ -1043,6 +1471,13 @@ function ProposalEditorModal({
   proposalAssets,
   componentGenerationJobs,
   componentSuggestions,
+  executiveSummarySourceMode,
+  executiveSummaryLibraryContentMode,
+  executiveSummarySourcePriorityMode,
+  executiveSummaryLibraryQuery,
+  executiveSummaryLibraryAssets,
+  executiveSummaryLibraryLoading,
+  selectedExecutiveSummaryLibraryAssetPublicIds,
   busyAction,
   onClose,
   onOpenPreview,
@@ -1053,6 +1488,11 @@ function ProposalEditorModal({
   onSaveMetadata,
   onComponentDraftChange,
   onSaveComponent,
+  onExecutiveSummarySourceModeChange,
+  onExecutiveSummaryLibraryContentModeChange,
+  onExecutiveSummarySourcePriorityModeChange,
+  onExecutiveSummaryLibraryQueryChange,
+  onToggleExecutiveSummaryLibraryAsset,
   onGenerateSuggestion,
   onRefreshSuggestionStatus,
   onApplySuggestion,
@@ -1300,6 +1740,38 @@ function ProposalEditorModal({
                     isDirty={dirtyComponentCodes.has(component.componentCode)}
                     aiJob={componentGenerationJobs[component.componentCode]}
                     aiSuggestion={componentSuggestions[component.componentCode]}
+                    executiveSummarySourceMode={executiveSummarySourceMode}
+                    executiveSummaryLibraryContentMode={
+                      executiveSummaryLibraryContentMode
+                    }
+                    executiveSummarySourcePriorityMode={
+                      executiveSummarySourcePriorityMode
+                    }
+                    executiveSummaryLibraryQuery={executiveSummaryLibraryQuery}
+                    executiveSummaryLibraryAssets={
+                      executiveSummaryLibraryAssets
+                    }
+                    executiveSummaryLibraryLoading={
+                      executiveSummaryLibraryLoading
+                    }
+                    selectedExecutiveSummaryLibraryAssetPublicIds={
+                      selectedExecutiveSummaryLibraryAssetPublicIds
+                    }
+                    onExecutiveSummarySourceModeChange={
+                      onExecutiveSummarySourceModeChange
+                    }
+                    onExecutiveSummaryLibraryContentModeChange={
+                      onExecutiveSummaryLibraryContentModeChange
+                    }
+                    onExecutiveSummarySourcePriorityModeChange={
+                      onExecutiveSummarySourcePriorityModeChange
+                    }
+                    onExecutiveSummaryLibraryQueryChange={
+                      onExecutiveSummaryLibraryQueryChange
+                    }
+                    onToggleExecutiveSummaryLibraryAsset={
+                      onToggleExecutiveSummaryLibraryAsset
+                    }
                     onChangeDraft={(componentCode, nextDraft) =>
                       onComponentDraftChange((current) => ({
                         ...current,
@@ -1360,6 +1832,21 @@ export default function ProposalsPage() {
   const [componentDrafts, setComponentDrafts] = useState({});
   const [componentGenerationJobs, setComponentGenerationJobs] = useState({});
   const [componentSuggestions, setComponentSuggestions] = useState({});
+  const [executiveSummarySourceMode, setExecutiveSummarySourceMode] =
+    useState("auto");
+  const [executiveSummaryLibraryContentMode, setExecutiveSummaryLibraryContentMode] =
+    useState("source_text");
+  const [executiveSummarySourcePriorityMode, setExecutiveSummarySourcePriorityMode] =
+    useState("balanced");
+  const [executiveSummaryLibraryQuery, setExecutiveSummaryLibraryQuery] =
+    useState("");
+  const [executiveSummaryLibraryAssets, setExecutiveSummaryLibraryAssets] =
+    useState([]);
+  const [executiveSummaryLibraryLoading, setExecutiveSummaryLibraryLoading] =
+    useState(false);
+  const [executiveSummaryLibraryLoaded, setExecutiveSummaryLibraryLoaded] =
+    useState(false);
+  const [selectedExecutiveSummaryLibraryAssetPublicIds, setSelectedExecutiveSummaryLibraryAssetPublicIds] = useState([]);
 
   const selectedProposalId =
     Number(searchParams.get("proposalId") || 0) || null;
@@ -1454,6 +1941,13 @@ export default function ProposalsPage() {
       setComponentDrafts({});
       setComponentGenerationJobs({});
       setComponentSuggestions({});
+      setExecutiveSummarySourceMode("auto");
+      setExecutiveSummaryLibraryContentMode("source_text");
+      setExecutiveSummarySourcePriorityMode("balanced");
+      setExecutiveSummaryLibraryQuery("");
+      setExecutiveSummaryLibraryAssets([]);
+      setExecutiveSummaryLibraryLoaded(false);
+      setSelectedExecutiveSummaryLibraryAssetPublicIds([]);
       return;
     }
     setMetadataDraft(buildMetadataDraftFromProposal(selectedProposal));
@@ -1476,6 +1970,25 @@ export default function ProposalsPage() {
         const nextJob = normalizeProposalAiJob(data?.job);
         setComponentGenerationJobs(
           nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
+        );
+        setExecutiveSummarySourceMode(
+          nextJob?.request?.librarySourceMode === "manual" ? "manual" : "auto",
+        );
+        setExecutiveSummaryLibraryContentMode(
+          nextJob?.request?.libraryContentMode === "summary_extract"
+            ? "summary_extract"
+            : "source_text",
+        );
+        setExecutiveSummarySourcePriorityMode(
+          nextJob?.request?.sourcePriorityMode === "non_library_first" ||
+            nextJob?.request?.sourcePriorityMode === "library_first"
+            ? nextJob.request.sourcePriorityMode
+            : "balanced",
+        );
+        setSelectedExecutiveSummaryLibraryAssetPublicIds(
+          Array.isArray(nextJob?.request?.selectedLibraryAssetPublicIds)
+            ? nextJob.request.selectedLibraryAssetPublicIds
+            : [],
         );
         const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
         setComponentSuggestions(
@@ -1509,6 +2022,25 @@ export default function ProposalsPage() {
     setComponentGenerationJobs(
       nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
     );
+    setExecutiveSummarySourceMode(
+      nextJob?.request?.librarySourceMode === "manual" ? "manual" : "auto",
+    );
+    setExecutiveSummaryLibraryContentMode(
+      nextJob?.request?.libraryContentMode === "summary_extract"
+        ? "summary_extract"
+        : "source_text",
+    );
+    setExecutiveSummarySourcePriorityMode(
+      nextJob?.request?.sourcePriorityMode === "non_library_first" ||
+        nextJob?.request?.sourcePriorityMode === "library_first"
+        ? nextJob.request.sourcePriorityMode
+        : "balanced",
+    );
+    setSelectedExecutiveSummaryLibraryAssetPublicIds(
+      Array.isArray(nextJob?.request?.selectedLibraryAssetPublicIds)
+        ? nextJob.request.selectedLibraryAssetPublicIds
+        : [],
+    );
 
     const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
     setComponentSuggestions(
@@ -1536,10 +2068,12 @@ export default function ProposalsPage() {
         if (cancelled || !nextJob) {
           return;
         }
-        if (
-          currentJob?.status !== nextJob.status &&
-          isProposalAiJobTerminal(nextJob)
-        ) {
+        const shouldNotifyTerminalTransition =
+          Boolean(currentJob?.publicId) &&
+          currentJob.publicId === nextJob.publicId &&
+          currentJob.status !== nextJob.status &&
+          isProposalAiJobTerminal(nextJob);
+        if (shouldNotifyTerminalTransition) {
           if (nextJob.status === "completed") {
             setSuccess("Sugerencia IA lista para revisar");
           } else if (nextJob.status === "failed") {
@@ -1579,6 +2113,64 @@ export default function ProposalsPage() {
     componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.status,
     componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.publicId,
     componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.updatedAt,
+  ]);
+
+  useEffect(() => {
+    if (!selectedProposal?.id || executiveSummarySourceMode !== "manual") {
+      return undefined;
+    }
+    if (executiveSummaryLibraryLoaded || executiveSummaryLibraryLoading) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadExecutiveSummaryLibraryAssets() {
+      setExecutiveSummaryLibraryLoading(true);
+      try {
+        const { data } = await api.get("/api/commercial-enablement/assets", {
+          params: {
+            status: "published",
+            onlyClientSafe: "true",
+            page: 1,
+            pageSize: 100,
+            sort: "updated_desc",
+          },
+        });
+
+        if (cancelled) return;
+
+        setExecutiveSummaryLibraryAssets(
+          Array.isArray(data?.items)
+            ? data.items.map(normalizeCommercialEnablementAssetOption)
+            : [],
+        );
+        setExecutiveSummaryLibraryLoaded(true);
+      } catch (err) {
+        if (cancelled) return;
+        setExecutiveSummaryLibraryAssets([]);
+        setExecutiveSummaryLibraryLoaded(true);
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible cargar la biblioteca comercial para la sugerencia IA",
+          ),
+        );
+      } finally {
+        if (cancelled) return;
+        setExecutiveSummaryLibraryLoading(false);
+      }
+    }
+
+    loadExecutiveSummaryLibraryAssets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedProposal?.id,
+    executiveSummarySourceMode,
+    executiveSummaryLibraryLoaded,
   ]);
 
   useEffect(() => {
@@ -1912,11 +2504,31 @@ export default function ProposalsPage() {
     }
   }
 
+  function handleToggleExecutiveSummaryLibraryAsset(assetPublicId) {
+    setSelectedExecutiveSummaryLibraryAssetPublicIds((current) => {
+      if (current.includes(assetPublicId)) {
+        return current.filter((value) => value !== assetPublicId);
+      }
+      if (current.length >= 4) {
+        return current;
+      }
+      return [...current, assetPublicId];
+    });
+  }
+
   async function handleGenerateSuggestion(componentCode) {
     if (
       !selectedProposal ||
       componentCode !== EXECUTIVE_SUMMARY_COMPONENT_CODE
     ) {
+      return;
+    }
+
+    if (
+      executiveSummarySourceMode === "manual" &&
+      selectedExecutiveSummaryLibraryAssetPublicIds.length === 0
+    ) {
+      setError("Selecciona al menos un activo de biblioteca para usar el modo manual");
       return;
     }
 
@@ -1928,6 +2540,13 @@ export default function ProposalsPage() {
           mode: "generate_parallel_suggestion",
           languageCode: "es",
           maxLibraryAssets: 4,
+          librarySourceMode: executiveSummarySourceMode,
+          libraryContentMode: executiveSummaryLibraryContentMode,
+          sourcePriorityMode: executiveSummarySourcePriorityMode,
+          selectedLibraryAssetPublicIds:
+            executiveSummarySourceMode === "manual"
+              ? selectedExecutiveSummaryLibraryAssetPublicIds
+              : [],
         },
       );
       const nextJob = normalizeProposalAiJob(data?.job);
@@ -2613,6 +3232,19 @@ export default function ProposalsPage() {
         proposalAssets={proposalAssets}
         componentGenerationJobs={componentGenerationJobs}
         componentSuggestions={componentSuggestions}
+        executiveSummarySourceMode={executiveSummarySourceMode}
+        executiveSummaryLibraryContentMode={
+          executiveSummaryLibraryContentMode
+        }
+        executiveSummarySourcePriorityMode={
+          executiveSummarySourcePriorityMode
+        }
+        executiveSummaryLibraryQuery={executiveSummaryLibraryQuery}
+        executiveSummaryLibraryAssets={executiveSummaryLibraryAssets}
+        executiveSummaryLibraryLoading={executiveSummaryLibraryLoading}
+        selectedExecutiveSummaryLibraryAssetPublicIds={
+          selectedExecutiveSummaryLibraryAssetPublicIds
+        }
         busyAction={busyAction}
         onClose={handleCloseProposalEditor}
         onOpenPreview={handleOpenPreview}
@@ -2623,6 +3255,17 @@ export default function ProposalsPage() {
         onSaveMetadata={handleSaveMetadata}
         onComponentDraftChange={setComponentDrafts}
         onSaveComponent={handleSaveComponent}
+        onExecutiveSummarySourceModeChange={setExecutiveSummarySourceMode}
+        onExecutiveSummaryLibraryContentModeChange={
+          setExecutiveSummaryLibraryContentMode
+        }
+        onExecutiveSummarySourcePriorityModeChange={
+          setExecutiveSummarySourcePriorityMode
+        }
+        onExecutiveSummaryLibraryQueryChange={setExecutiveSummaryLibraryQuery}
+        onToggleExecutiveSummaryLibraryAsset={
+          handleToggleExecutiveSummaryLibraryAsset
+        }
         onGenerateSuggestion={handleGenerateSuggestion}
         onRefreshSuggestionStatus={handleRefreshSuggestionStatus}
         onApplySuggestion={handleApplySuggestion}

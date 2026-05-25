@@ -9,7 +9,9 @@ import { logAuditEvent } from "./audit.js";
 import { buildProposalPdfBuffer } from "./proposalPdf.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
 import {
+  AI_PARAMETER_CAPABILITY_KEYS,
   cloneProposalComponents,
+  getPublishedAiParameterEntryByCapabilityKey,
   getProposalContentConfiguration,
   getCompanyDocumentBranding,
   listInstitutionalAssets,
@@ -33,6 +35,7 @@ import {
 } from "./opportunity-documents/service.js";
 import { createDocumentStorage } from "./opportunity-documents/storage.js";
 import {
+  getCommercialEnablementAssetDetail,
   getCommercialEnablementCatalogs,
   listCommercialEnablementAssets,
 } from "./commercial-enablement/service.js";
@@ -234,6 +237,7 @@ const PROPOSAL_EXEC_SUMMARY_MAX_ANSWERS = 16;
 const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS = 4;
 const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS = 1500;
 const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS = 500;
+const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SOURCE_TEXT_CHARS = 4000;
 const PROPOSAL_EXEC_SUMMARY_MAX_SECTION_ITEMS = 8;
 const PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS = 120000;
 
@@ -439,6 +443,51 @@ const proposalExecutiveSummaryGenerationSchema = z.object({
   languageCode: z.string().trim().max(10).optional().default("es"),
   instructions: z.string().trim().max(1000).optional().default(""),
   maxLibraryAssets: z.number().int().positive().max(4).optional().default(4),
+  librarySourceMode: z.enum(["auto", "manual"]).optional().default("auto"),
+  libraryContentMode: z
+    .enum(["source_text", "summary_extract"])
+    .optional()
+    .default("source_text"),
+  sourcePriorityMode: z
+    .enum(["non_library_first", "library_first", "balanced"])
+    .optional()
+    .default("balanced"),
+  selectedLibraryAssetPublicIds: z
+    .array(z.string().trim().min(4).max(80))
+    .max(4)
+    .optional()
+    .default([]),
+}).superRefine((value, ctx) => {
+  const selectedIds = Array.isArray(value.selectedLibraryAssetPublicIds)
+    ? value.selectedLibraryAssetPublicIds.map((item) => String(item || "").trim())
+    : [];
+  const uniqueIds = Array.from(new Set(selectedIds.filter(Boolean)));
+
+  if (selectedIds.length !== uniqueIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["selectedLibraryAssetPublicIds"],
+      message: "No se permiten activos repetidos",
+    });
+  }
+
+  if (value.librarySourceMode === "manual" && uniqueIds.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["selectedLibraryAssetPublicIds"],
+      message:
+        "Debes seleccionar al menos un activo cuando el modo de fuente es manual",
+    });
+  }
+
+  if (value.librarySourceMode === "auto" && uniqueIds.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["selectedLibraryAssetPublicIds"],
+      message:
+        "No debes enviar activos seleccionados cuando el modo de fuente es automatico",
+    });
+  }
 });
 
 const quotationProductListsQuerySchema = z.object({
@@ -3754,6 +3803,7 @@ export async function ensureProposalExecutiveSummaryGenerationJobSchema() {
 
 function buildProposalExecutiveSummaryJobResponse(row) {
   if (!row) return null;
+  const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
   return {
     publicId: row.public_id,
     proposalId: Number(row.proposal_id),
@@ -3766,6 +3816,41 @@ function buildProposalExecutiveSummaryJobResponse(row) {
     updatedAt: row.updated_at,
     requestedBy: {
       userId: Number(row.requested_by_user_id),
+    },
+    request: {
+      languageCode:
+        String(snapshot.languageCode || row.language_code || "es")
+          .trim()
+          .toLowerCase() || "es",
+      instructions: String(
+        snapshot.instructions || row.instructions_text || "",
+      ).trim(),
+      maxLibraryAssets: Math.min(
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
+        Number(
+          snapshot.maxLibraryAssets ||
+            row.max_library_assets ||
+            PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
+        ),
+      ),
+      librarySourceMode:
+        snapshot.librarySourceMode === "manual" ? "manual" : "auto",
+      libraryContentMode:
+        snapshot.libraryContentMode === "summary_extract"
+          ? "summary_extract"
+          : "source_text",
+      sourcePriorityMode:
+        snapshot.sourcePriorityMode === "non_library_first" ||
+        snapshot.sourcePriorityMode === "library_first"
+          ? snapshot.sourcePriorityMode
+          : "balanced",
+      selectedLibraryAssetPublicIds: Array.isArray(
+        snapshot.selectedLibraryAssetPublicIds,
+      )
+        ? snapshot.selectedLibraryAssetPublicIds
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
     },
     progress: {
       phase:
@@ -3802,6 +3887,7 @@ async function getProposalExecutiveSummaryGenerationJob({
   publicId,
   proposalId,
 }) {
+  await ensureProposalExecutiveSummaryGenerationJobSchema();
   const rows = await query(
     `SELECT *
      FROM proposal_ai_jobs
@@ -3821,6 +3907,7 @@ async function getProposalExecutiveSummaryGenerationJob({
 }
 
 async function getLatestProposalExecutiveSummaryGenerationJob({ proposalId }) {
+  await ensureProposalExecutiveSummaryGenerationJobSchema();
   const rows = await query(
     `SELECT *
      FROM proposal_ai_jobs
@@ -3844,10 +3931,13 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
   instructions,
   languageCode,
   maxLibraryAssets,
+  librarySourceMode,
+  libraryContentMode,
+  sourcePriorityMode,
+  selectedLibraryAssetPublicIds,
 }) {
   return {
     proposalId: Number(proposal?.id || 0),
-    proposalUpdatedAt: proposal?.updated_at || null,
     quotationVersionId: Number(proposal?.quotation_version_id || 0),
     componentCode: PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
     componentTitle: component?.title || "",
@@ -3863,6 +3953,26 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
       .trim()
       .toLowerCase(),
     maxLibraryAssets: Number(maxLibraryAssets || 0),
+    librarySourceMode: librarySourceMode === "manual" ? "manual" : "auto",
+    libraryContentMode:
+      libraryContentMode === "summary_extract"
+        ? "summary_extract"
+        : "source_text",
+    sourcePriorityMode:
+      sourcePriorityMode === "non_library_first" ||
+      sourcePriorityMode === "library_first"
+        ? sourcePriorityMode
+        : "balanced",
+    selectedLibraryAssetPublicIds: Array.from(
+      new Set(
+        (Array.isArray(selectedLibraryAssetPublicIds)
+          ? selectedLibraryAssetPublicIds
+          : []
+        )
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((left, right) => left.localeCompare(right, "es")),
   };
 }
 
@@ -3872,7 +3982,12 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
   instructions,
   languageCode,
   maxLibraryAssets,
+  librarySourceMode,
+  libraryContentMode,
+  sourcePriorityMode,
+  selectedLibraryAssetPublicIds,
 }) {
+  await ensureProposalExecutiveSummaryGenerationJobSchema();
   const proposalDetail = await serializeProposalDetail(proposal);
   const component = Array.isArray(proposalDetail.components)
     ? proposalDetail.components.find(
@@ -3897,6 +4012,10 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
     instructions,
     languageCode,
     maxLibraryAssets,
+    librarySourceMode,
+    libraryContentMode,
+    sourcePriorityMode,
+    selectedLibraryAssetPublicIds,
   });
   const fingerprint = hashProposalExecutiveSummarySnapshot(snapshot);
 
@@ -3906,6 +4025,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
      WHERE proposal_id = ?
        AND component_code = ?
        AND job_type = ?
+       AND request_fingerprint = ?
        AND status IN ('pending', 'running')
      ORDER BY id DESC
      LIMIT 1`,
@@ -3913,6 +4033,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
       Number(proposal.id),
       PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
       PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+      fingerprint,
     ],
   );
 
@@ -3963,6 +4084,215 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
     wasReused: false,
     response: buildProposalExecutiveSummaryJobResponse(rows[0]),
   };
+}
+
+async function resolveProposalExecutiveSummaryLibraryAssets({
+  user,
+  proposal,
+  opportunity,
+  manufacturerCodes,
+  solutionCodes,
+  industryCodes,
+  stageCodes,
+  maxLibraryAssets,
+  librarySourceMode,
+  libraryContentMode,
+  selectedLibraryAssetPublicIds,
+}) {
+  async function buildLibraryAssetContext(asset, {
+    matchScore = null,
+    matchReasons = [],
+    selectionMode,
+  }) {
+    const sourceRows = asset?.id
+      ? await query(
+          `SELECT source_file_name, source_mime_type, extracted_text, extracted_text_summary
+             FROM commercial_enablement_item_source_contents
+            WHERE item_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1`,
+          [Number(asset.id)],
+        )
+      : [];
+    const sourceContent = sourceRows[0] || null;
+    const extractedText = String(sourceContent?.extracted_text || "").trim();
+    const extractedSummary = String(
+      sourceContent?.extracted_text_summary || "",
+    ).trim();
+    const assetSummary = summarizeProposalAiText(
+      asset.summary,
+      PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS,
+    );
+
+    let documentText = "";
+    let contentModeUsed =
+      libraryContentMode === "summary_extract"
+        ? "summary_extract"
+        : "source_text";
+
+    if (contentModeUsed === "source_text") {
+      documentText = summarizeProposalAiText(
+        extractedText || extractedSummary || assetSummary,
+        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SOURCE_TEXT_CHARS,
+      );
+      if (!documentText) {
+        contentModeUsed = "summary_extract";
+      }
+    }
+
+    if (contentModeUsed === "summary_extract") {
+      const extractText = summarizeProposalAiText(
+        extractedSummary || extractedText,
+        PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS,
+      );
+      documentText = [assetSummary, extractText].filter(Boolean).join("\n\n");
+    }
+
+    return {
+      assetPublicId: asset.publicId,
+      title: asset.title,
+      summary: assetSummary,
+      assetTypeCode: asset.assetTypeCode,
+      matchScore,
+      matchReasons,
+      selectionMode,
+      contentModeUsed,
+      sourceFileName: sourceContent?.source_file_name || "",
+      sourceMimeType: sourceContent?.source_mime_type || "",
+      documentText,
+      manufacturerCodes: asset.catalogs
+        .filter((catalog) => catalog.catalogType === "manufacturer")
+        .map((catalog) => catalog.code),
+      solutionCodes: asset.catalogs
+        .filter((catalog) => catalog.catalogType === "solution")
+        .map((catalog) => catalog.code),
+      industryCodes: asset.catalogs
+        .filter((catalog) => catalog.catalogType === "industry")
+        .map((catalog) => catalog.code),
+      stageCodes: asset.tags
+        .filter((tag) => tag.tagGroup === "stage")
+        .map((tag) => tag.code),
+    };
+  }
+
+  const normalizedMode = librarySourceMode === "manual" ? "manual" : "auto";
+  const normalizedSelectedIds = Array.from(
+    new Set(
+      (Array.isArray(selectedLibraryAssetPublicIds)
+        ? selectedLibraryAssetPublicIds
+        : []
+      )
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (normalizedMode === "manual") {
+    const assets = await Promise.all(
+      normalizedSelectedIds.map((assetPublicId) =>
+        getCommercialEnablementAssetDetail({ user, assetPublicId }),
+      ),
+    );
+    const invalidAssetPublicIds = normalizedSelectedIds.filter(
+      (assetPublicId, index) => {
+        const asset = assets[index];
+        return (
+          !asset ||
+          asset.status !== "published" ||
+          asset.visibilityLevel !== "client_safe"
+        );
+      },
+    );
+
+    if (invalidAssetPublicIds.length) {
+      const error = new Error("Activos de biblioteca no validos");
+      error.status = 422;
+      error.body = {
+        message:
+          "Uno o mas activos seleccionados no son validos para esta generacion",
+        error: {
+          code: "invalid_library_sources",
+          retryable: false,
+        },
+        details: {
+          invalidAssetPublicIds,
+        },
+      };
+      throw error;
+    }
+
+    return Promise.all(
+      assets.map((asset) =>
+        buildLibraryAssetContext(asset, {
+          matchScore: null,
+          matchReasons: [],
+          selectionMode: "manual",
+        }),
+      ),
+    );
+  }
+
+  const libraryAssetsResponse = await listCommercialEnablementAssets({
+    user,
+    filters: {
+      status: "published",
+      onlyClientSafe: "true",
+    },
+  }).catch(() => null);
+
+  const libraryAssets = Array.isArray(libraryAssetsResponse?.items)
+    ? libraryAssetsResponse.items
+    : [];
+
+  const scoredAssets = libraryAssets
+    .map((item) => {
+      const scored = scoreLibraryAssetForProposalContext(item, {
+        manufacturerCodes,
+        solutionCodes,
+        industryCodes,
+        stageCodes,
+        opportunityNameNormalized: normalizeProposalAiText(
+          opportunity?.name || proposal.opportunity_name || "",
+        ),
+      });
+      return {
+        item,
+        score: scored.score,
+        reasons: scored.reasons,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.item.usageCount - left.item.usageCount ||
+        String(left.item.title).localeCompare(String(right.item.title), "es"),
+    );
+
+  const selectedEntries = scoredAssets.slice(
+    0,
+    Math.min(PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS, maxLibraryAssets),
+  );
+  const detailedAssets = await Promise.all(
+    selectedEntries.map((entry) =>
+      getCommercialEnablementAssetDetail({
+        user,
+        assetPublicId: entry.item.publicId,
+      }).then((asset) => ({ asset, entry })),
+    ),
+  );
+
+  return Promise.all(
+    detailedAssets
+      .filter((item) => item.asset)
+      .map(({ asset, entry }) =>
+        buildLibraryAssetContext(asset, {
+          matchScore: entry.score,
+          matchReasons: entry.reasons,
+          selectionMode: "auto",
+        }),
+      ),
+  );
 }
 
 async function updateProposalExecutiveSummaryJobProgress({
@@ -4255,6 +4585,10 @@ async function buildProposalExecutiveSummaryGenerationContext({
   instructions,
   languageCode,
   maxLibraryAssets,
+  librarySourceMode,
+  libraryContentMode,
+  sourcePriorityMode,
+  selectedLibraryAssetPublicIds,
 }) {
   const proposalDetail = await serializeProposalDetail(proposal);
   const currentComponent = Array.isArray(proposalDetail.components)
@@ -4303,71 +4637,48 @@ async function buildProposalExecutiveSummaryGenerationContext({
     String(opportunity?.sales_stage_code || "").trim(),
   ].filter(Boolean);
 
-  const libraryAssetsResponse = await listCommercialEnablementAssets({
+  const matchedAssets = await resolveProposalExecutiveSummaryLibraryAssets({
     user,
-    filters: {
-      status: "published",
-      onlyClientSafe: "true",
-    },
-  }).catch(() => null);
+    proposal,
+    opportunity,
+    manufacturerCodes,
+    solutionCodes,
+    industryCodes,
+    stageCodes,
+    maxLibraryAssets,
+    librarySourceMode,
+    libraryContentMode,
+    selectedLibraryAssetPublicIds,
+  });
 
-  const libraryAssets = Array.isArray(libraryAssetsResponse?.items)
-    ? libraryAssetsResponse.items
-    : [];
-
-  const scoredAssets = libraryAssets
-    .map((item) => {
-      const scored = scoreLibraryAssetForProposalContext(item, {
-        manufacturerCodes,
-        solutionCodes,
-        industryCodes,
-        stageCodes,
-        opportunityNameNormalized: normalizeProposalAiText(
-          opportunity?.name || proposal.opportunity_name || "",
+  const documentSources = [
+    ...(Array.isArray(documents) ? documents : [])
+      .slice(0, PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS)
+      .map((document) => ({
+        sourceKind: "opportunity_document",
+        sourcePriorityGroup: "non_library",
+        documentPublicId: document.publicId,
+        title: document.originalFileName,
+        mimeType: document.mimeType,
+        text: summarizeProposalAiText(
+          document.contentSummary ||
+            document.transcriptText ||
+            document.normalizedText ||
+            document.rawText,
+          PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS,
         ),
-      });
-      return {
-        item,
-        score: scored.score,
-        reasons: scored.reasons,
-      };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        right.item.usageCount - left.item.usageCount ||
-        String(left.item.title).localeCompare(String(right.item.title), "es"),
-    );
-
-  const matchedAssets = scoredAssets
-    .slice(
-      0,
-      Math.min(PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS, maxLibraryAssets),
-    )
-    .map((entry) => ({
-      assetPublicId: entry.item.publicId,
-      title: entry.item.title,
-      summary: summarizeProposalAiText(
-        entry.item.summary,
-        PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS,
-      ),
-      assetTypeCode: entry.item.assetTypeCode,
-      matchScore: entry.score,
-      matchReasons: entry.reasons,
-      manufacturerCodes: entry.item.catalogs
-        .filter((catalog) => catalog.catalogType === "manufacturer")
-        .map((catalog) => catalog.code),
-      solutionCodes: entry.item.catalogs
-        .filter((catalog) => catalog.catalogType === "solution")
-        .map((catalog) => catalog.code),
-      industryCodes: entry.item.catalogs
-        .filter((catalog) => catalog.catalogType === "industry")
-        .map((catalog) => catalog.code),
-      stageCodes: entry.item.tags
-        .filter((tag) => tag.tagGroup === "stage")
-        .map((tag) => tag.code),
-    }));
+      })),
+    ...(Array.isArray(matchedAssets) ? matchedAssets : []).map((asset) => ({
+      sourceKind: "library_asset",
+      sourcePriorityGroup: "library",
+      assetPublicId: asset.assetPublicId,
+      title: asset.title,
+      mimeType: asset.sourceMimeType || null,
+      text: asset.documentText || "",
+      contentModeUsed: asset.contentModeUsed || "summary_extract",
+      selectionMode: asset.selectionMode || "auto",
+    })),
+  ].filter((source) => String(source.text || "").trim());
 
   return {
     proposal: {
@@ -4480,17 +4791,34 @@ async function buildProposalExecutiveSummaryGenerationContext({
         stageCodes,
       },
       matchedAssets,
+      documentSources: documentSources.filter(
+        (source) => source.sourceKind === "library_asset",
+      ),
       limit: Math.min(
         PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
         Number(maxLibraryAssets || PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS),
       ),
     },
+    documentSources,
     generationPolicy: {
       languageCode:
         String(languageCode || "es")
           .trim()
           .toLowerCase() || "es",
       mode: "parallel",
+      librarySourceMode: librarySourceMode === "manual" ? "manual" : "auto",
+      libraryContentMode:
+        libraryContentMode === "summary_extract"
+          ? "summary_extract"
+          : "source_text",
+      sourcePriorityMode:
+        sourcePriorityMode === "non_library_first" ||
+        sourcePriorityMode === "library_first"
+          ? sourcePriorityMode
+          : "balanced",
+      selectedLibraryAssetPublicIds: Array.isArray(selectedLibraryAssetPublicIds)
+        ? selectedLibraryAssetPublicIds
+        : [],
       maxLibraryAssets: Math.min(
         PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
         Number(maxLibraryAssets || PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS),
@@ -4511,24 +4839,59 @@ async function requestProposalExecutiveSummarySuggestion(context) {
     throw error;
   }
 
+  const aiParameters = await getPublishedAiParameterEntryByCapabilityKey(
+    AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+  );
+  if (aiParameters && aiParameters.isEnabled === false) {
+    const error = new Error(
+      "La generacion asistida del resumen ejecutivo esta deshabilitada",
+    );
+    error.code = "ai_generation_disabled";
+    throw error;
+  }
+
+  const expectedShape =
+    aiParameters?.outputSchema &&
+    typeof aiParameters.outputSchema === "object" &&
+    !Array.isArray(aiParameters.outputSchema)
+      ? aiParameters.outputSchema
+      : {
+          title: "Resumen ejecutivo sugerido",
+          paragraphs: ["string"],
+          warnings: ["string"],
+        };
+  const effectiveContext = {
+    ...context,
+    aiParameters: aiParameters?.parameters || {},
+  };
+  const userPromptTemplate = String(
+    aiParameters?.userPromptTemplate || "{context, expectedShape}",
+  ).trim();
+  const userPromptContent =
+    userPromptTemplate === "{context, expectedShape}"
+      ? JSON.stringify({ context: effectiveContext, expectedShape })
+      : userPromptTemplate
+          .replaceAll(
+            "{{context}}",
+            JSON.stringify(effectiveContext, null, 2),
+          )
+          .replaceAll(
+            "{{expectedShape}}",
+            JSON.stringify(expectedShape, null, 2),
+          );
+
   const payload = {
-    model: config.openai.model,
+    model: aiParameters?.modelOverride || config.openai.model,
     input: [
       {
         role: "system",
         content:
-          "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.",
+          aiParameters?.systemPrompt ||
+          "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del resumen. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.",
       },
       {
         role: "user",
-        content: JSON.stringify({
-          context,
-          expectedShape: {
-            title: "Resumen ejecutivo sugerido",
-            paragraphs: ["string"],
-            warnings: ["string"],
-          },
-        }),
+        content: userPromptContent,
       },
     ],
   };
@@ -4536,7 +4899,10 @@ async function requestProposalExecutiveSummarySuggestion(context) {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+    Math.max(
+      5000,
+      Number(aiParameters?.timeoutMs || PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS),
+    ),
   );
 
   try {
@@ -4592,6 +4958,13 @@ async function requestProposalExecutiveSummarySuggestion(context) {
             String(context?.generationPolicy?.languageCode || "es").trim() ||
             "es",
           generatedAt: new Date().toISOString(),
+          aiParameters: {
+            capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+            publishedRevisionNumber:
+              Number(aiParameters?.publishedRevisionNumber || 0) || null,
+            model:
+              aiParameters?.modelOverride || config.openai.model,
+          },
         },
       },
       sourceSummary: {
@@ -4606,6 +4979,9 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           : 0,
         libraryAssetsUsed: Array.isArray(context?.libraryContext?.matchedAssets)
           ? context.libraryContext.matchedAssets.length
+          : 0,
+        documentSourcesUsed: Array.isArray(context?.documentSources)
+          ? context.documentSources.length
           : 0,
       },
       sources: {
@@ -4633,11 +5009,45 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           (asset) => ({
             assetPublicId: asset.assetPublicId,
             title: asset.title,
+            contentModeUsed:
+              asset.contentModeUsed === "summary_extract"
+                ? "summary_extract"
+                : "source_text",
+            selectionMode:
+              asset.selectionMode === "manual" ? "manual" : "auto",
             matchReasons: Array.isArray(asset.matchReasons)
               ? asset.matchReasons
               : [],
           }),
         ),
+        generationPolicy: {
+          librarySourceMode:
+            context?.generationPolicy?.librarySourceMode === "manual"
+              ? "manual"
+              : "auto",
+          libraryContentMode:
+            context?.generationPolicy?.libraryContentMode === "summary_extract"
+              ? "summary_extract"
+              : "source_text",
+          sourcePriorityMode:
+            context?.generationPolicy?.sourcePriorityMode ===
+              "non_library_first" ||
+            context?.generationPolicy?.sourcePriorityMode === "library_first"
+              ? context.generationPolicy.sourcePriorityMode
+              : "balanced",
+        },
+        aiParameters: {
+          capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+          publishedRevisionNumber:
+            Number(aiParameters?.publishedRevisionNumber || 0) || null,
+          model: aiParameters?.modelOverride || config.openai.model,
+          timeoutMs: Math.max(
+            5000,
+            Number(
+              aiParameters?.timeoutMs || PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+            ),
+          ),
+        },
       },
       warnings: Array.isArray(parsed.warnings)
         ? parsed.warnings.map((message) => ({
@@ -4681,39 +5091,6 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
     }
 
     const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
-    const proposalDetail = await serializeProposalDetail(proposal);
-    const currentComponent = Array.isArray(proposalDetail.components)
-      ? proposalDetail.components.find(
-          (component) =>
-            component.componentCode ===
-            PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
-        )
-      : null;
-    const currentFingerprint = hashProposalExecutiveSummarySnapshot(
-      buildProposalExecutiveSummaryFingerprintSnapshot({
-        proposal,
-        component: currentComponent,
-        instructions: row.instructions_text,
-        languageCode: row.language_code,
-        maxLibraryAssets: row.max_library_assets,
-      }),
-    );
-
-    if (
-      snapshot?.proposalId &&
-      currentFingerprint !== row.request_fingerprint
-    ) {
-      await finalizeProposalExecutiveSummaryGenerationJob({
-        jobId: Number(row.id),
-        leaseToken: row.lease_token,
-        status: "failed",
-        errorCode: "stale_snapshot",
-        errorMessage:
-          "La propuesta cambio antes de completar la generacion. Vuelve a solicitar la sugerencia.",
-      });
-      return;
-    }
-
     await updateProposalExecutiveSummaryJobProgress({
       jobId: Number(row.id),
       leaseToken: row.lease_token,
@@ -4728,6 +5105,10 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       instructions: row.instructions_text,
       languageCode: row.language_code,
       maxLibraryAssets: row.max_library_assets,
+      librarySourceMode: snapshot.librarySourceMode,
+      libraryContentMode: snapshot.libraryContentMode,
+      sourcePriorityMode: snapshot.sourcePriorityMode,
+      selectedLibraryAssetPublicIds: snapshot.selectedLibraryAssetPublicIds,
     });
 
     await updateProposalExecutiveSummaryJobProgress({
@@ -6501,6 +6882,23 @@ router.post(
     }
 
     try {
+      if (parsed.data.librarySourceMode === "manual") {
+        await resolveProposalExecutiveSummaryLibraryAssets({
+          user: req.user,
+          proposal,
+          opportunity: null,
+          manufacturerCodes: [],
+          solutionCodes: [],
+          industryCodes: [],
+          stageCodes: [],
+          maxLibraryAssets: parsed.data.maxLibraryAssets,
+          librarySourceMode: parsed.data.librarySourceMode,
+          libraryContentMode: parsed.data.libraryContentMode,
+          selectedLibraryAssetPublicIds:
+            parsed.data.selectedLibraryAssetPublicIds,
+        });
+      }
+
       const creation = await createOrReuseProposalExecutiveSummaryGenerationJob(
         {
           proposal,
@@ -6508,6 +6906,11 @@ router.post(
           instructions: parsed.data.instructions,
           languageCode: parsed.data.languageCode,
           maxLibraryAssets: parsed.data.maxLibraryAssets,
+          librarySourceMode: parsed.data.librarySourceMode,
+          libraryContentMode: parsed.data.libraryContentMode,
+          sourcePriorityMode: parsed.data.sourcePriorityMode,
+          selectedLibraryAssetPublicIds:
+            parsed.data.selectedLibraryAssetPublicIds,
         },
       );
 

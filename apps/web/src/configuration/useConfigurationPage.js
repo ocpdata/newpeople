@@ -34,6 +34,56 @@ const EMPTY_PROPOSAL_CONTENT_CONFIG = {
   components: [],
 };
 
+const EMPTY_AI_PARAMETER_ENTRY = {
+  capabilityKey: "proposal.executive_summary",
+  title: "Resumen ejecutivo",
+  description: "",
+  isEnabled: true,
+  modelOverride: "",
+  timeoutMs: 120000,
+  systemPrompt: "",
+  userPromptTemplate: "{context, expectedShape}",
+  outputSchema: {
+    title: "string",
+    paragraphs: ["string"],
+    warnings: ["string"],
+  },
+  parameters: {
+    maxLibraryAssets: 4,
+    allowInstructionsField: true,
+    defaultLanguageCode: "es",
+    supportedLibraryContentModes: ["source_text", "summary_extract"],
+    supportedSourcePriorityModes: [
+      "non_library_first",
+      "balanced",
+      "library_first",
+    ],
+    targetAudience: "client",
+    allowOverwrite: false,
+  },
+  draftRevisionNumber: null,
+  publishedRevisionNumber: null,
+  published: null,
+  updatedAt: null,
+  updatedByUserName: "",
+};
+
+const EMPTY_AI_PARAMETERS_CONFIG = {
+  status: "published",
+  publishedAt: null,
+  publishedByUserName: "",
+  updatedAt: null,
+  updatedByUserName: "",
+  capabilities: [
+    {
+      capabilityKey: "proposal.executive_summary",
+      title: "Resumen ejecutivo",
+      description: "Generacion del resumen ejecutivo comercial para propuestas.",
+    },
+  ],
+  entries: [EMPTY_AI_PARAMETER_ENTRY],
+};
+
 function normalizeInstitutionalAsset(asset) {
   if (!asset) return null;
   return {
@@ -116,6 +166,115 @@ function normalizeProposalContentConfig(config) {
             : [],
         }))
       : [],
+  };
+}
+
+function normalizeAiParameterEntry(entry) {
+  if (!entry) {
+    return { ...EMPTY_AI_PARAMETER_ENTRY };
+  }
+  return {
+    capabilityKey: String(
+      entry.capabilityKey || EMPTY_AI_PARAMETER_ENTRY.capabilityKey,
+    ),
+    title: String(entry.title || EMPTY_AI_PARAMETER_ENTRY.title),
+    description: String(entry.description || ""),
+    isEnabled:
+      entry.isEnabled === undefined
+        ? true
+        : Boolean(entry.isEnabled),
+    modelOverride: String(entry.modelOverride || ""),
+    timeoutMs:
+      entry.timeoutMs == null
+        ? EMPTY_AI_PARAMETER_ENTRY.timeoutMs
+        : Number(entry.timeoutMs),
+    systemPrompt: String(entry.systemPrompt || ""),
+    userPromptTemplate: String(
+      entry.userPromptTemplate || EMPTY_AI_PARAMETER_ENTRY.userPromptTemplate,
+    ),
+    outputSchema:
+      entry.outputSchema && typeof entry.outputSchema === "object"
+        ? entry.outputSchema
+        : EMPTY_AI_PARAMETER_ENTRY.outputSchema,
+    parameters:
+      entry.parameters && typeof entry.parameters === "object"
+        ? {
+            ...EMPTY_AI_PARAMETER_ENTRY.parameters,
+            ...entry.parameters,
+          }
+        : { ...EMPTY_AI_PARAMETER_ENTRY.parameters },
+    draftRevisionNumber:
+      entry.draftRevisionNumber == null
+        ? null
+        : Number(entry.draftRevisionNumber),
+    publishedRevisionNumber:
+      entry.publishedRevisionNumber == null
+        ? null
+        : Number(entry.publishedRevisionNumber),
+    published: entry.published
+      ? {
+          ...normalizeAiParameterEntry(entry.published),
+          published: null,
+        }
+      : null,
+    updatedAt: entry.updatedAt || null,
+    updatedByUserName: String(entry.updatedByUserName || ""),
+  };
+}
+
+function normalizeAiParametersConfig(config) {
+  if (!config) {
+    return { ...EMPTY_AI_PARAMETERS_CONFIG };
+  }
+
+  const entries = Array.isArray(config.entries)
+    ? config.entries.map(normalizeAiParameterEntry)
+    : [normalizeAiParameterEntry(null)];
+
+  return {
+    status: String(config.status || "published"),
+    publishedAt: config.publishedAt || null,
+    publishedByUserName: String(config.publishedByUserName || ""),
+    updatedAt: config.updatedAt || null,
+    updatedByUserName: String(config.updatedByUserName || ""),
+    capabilities: Array.isArray(config.capabilities)
+      ? config.capabilities.map((item) => ({
+          capabilityKey: String(item.capabilityKey || ""),
+          title: String(item.title || ""),
+          description: String(item.description || ""),
+        }))
+      : EMPTY_AI_PARAMETERS_CONFIG.capabilities,
+    entries,
+  };
+}
+
+function serializeAiParameterDraft(draft) {
+  return JSON.stringify({
+    capabilityKey: String(draft?.capabilityKey || ""),
+    title: String(draft?.title || "").trim(),
+    description: String(draft?.description || "").trim(),
+    isEnabled: Boolean(draft?.isEnabled),
+    modelOverride: String(draft?.modelOverride || "").trim(),
+    timeoutMs: Number(draft?.timeoutMs || 0),
+    systemPrompt: String(draft?.systemPrompt || "").trim(),
+    userPromptTemplate: String(draft?.userPromptTemplate || "").trim(),
+    outputSchema: draft?.outputSchema || {},
+    parameters: draft?.parameters || {},
+  });
+}
+
+function buildAiParameterDraftPayload(draft, changeSummary = "") {
+  return {
+    title: String(draft?.title || "").trim(),
+    description: String(draft?.description || "").trim() || undefined,
+    isEnabled: Boolean(draft?.isEnabled),
+    modelOverride: String(draft?.modelOverride || "").trim() || undefined,
+    timeoutMs: Number(draft?.timeoutMs || 120000),
+    systemPrompt: String(draft?.systemPrompt || "").trim(),
+    userPromptTemplate: String(draft?.userPromptTemplate || "").trim(),
+    outputSchema: draft?.outputSchema || {},
+    parameters: draft?.parameters || {},
+    changeSummary: String(changeSummary || "").trim() || undefined,
   };
 }
 
@@ -304,6 +463,25 @@ export function useConfigurationPage() {
   const [proposalComponentDefinitions, setProposalComponentDefinitions] =
     useState([]);
   const [institutionalAssets, setInstitutionalAssets] = useState([]);
+  const [aiParametersConfig, setAiParametersConfig] = useState(
+    EMPTY_AI_PARAMETERS_CONFIG,
+  );
+  const [selectedAiCapabilityKey, setSelectedAiCapabilityKey] = useState(
+    "proposal.executive_summary",
+  );
+  const [aiParameterDraft, setAiParameterDraft] = useState(
+    EMPTY_AI_PARAMETER_ENTRY,
+  );
+  const [initialAiParameterSnapshot, setInitialAiParameterSnapshot] = useState(
+    serializeAiParameterDraft(EMPTY_AI_PARAMETER_ENTRY),
+  );
+  const [aiParameterValidationWarnings, setAiParameterValidationWarnings] =
+    useState([]);
+  const [aiParameterRevisions, setAiParameterRevisions] = useState([]);
+  const [savingAiParameters, setSavingAiParameters] = useState(false);
+  const [publishingAiParameters, setPublishingAiParameters] = useState(false);
+  const [validatingAiParameters, setValidatingAiParameters] = useState(false);
+  const [restoringAiParameterKey, setRestoringAiParameterKey] = useState("");
   const [savingProposalContent, setSavingProposalContent] = useState(false);
   const [publishingProposalContent, setPublishingProposalContent] =
     useState(false);
@@ -324,6 +502,7 @@ export function useConfigurationPage() {
           playbooksResponse,
           proposalContentResponse,
           institutionalAssetsResponse,
+          aiParametersResponse,
         ] = await Promise.all([
           api.get("/api/settings/company-profile"),
           api
@@ -340,6 +519,9 @@ export function useConfigurationPage() {
           api
             .get("/api/settings/institutional-assets")
             .catch(() => ({ data: { items: [] } })),
+          api.get("/api/settings/ai-parameters").catch(() => ({
+            data: { config: EMPTY_AI_PARAMETERS_CONFIG },
+          })),
         ]);
 
         if (cancelled) return;
@@ -382,6 +564,19 @@ export function useConfigurationPage() {
                 .filter(Boolean)
             : [],
         );
+        const nextAiParametersConfig = normalizeAiParametersConfig(
+          aiParametersResponse.data?.config,
+        );
+        const nextAiEntry =
+          nextAiParametersConfig.entries.find(
+            (entry) => entry.capabilityKey === selectedAiCapabilityKey,
+          ) || nextAiParametersConfig.entries[0] || normalizeAiParameterEntry();
+        setAiParametersConfig(nextAiParametersConfig);
+        setSelectedAiCapabilityKey(nextAiEntry.capabilityKey);
+        setAiParameterDraft(nextAiEntry);
+        setInitialAiParameterSnapshot(serializeAiParameterDraft(nextAiEntry));
+        setAiParameterValidationWarnings([]);
+        setAiParameterRevisions([]);
         const activePlaybook = Array.isArray(playbooksResponse.data?.items)
           ? playbooksResponse.data.items.find((item) => item.isActive)
           : null;
@@ -434,13 +629,19 @@ export function useConfigurationPage() {
       initialTemporaryFeaturesSnapshot,
     [temporaryFeatureSettings, initialTemporaryFeaturesSnapshot],
   );
+  const aiParametersDirty = useMemo(
+    () => serializeAiParameterDraft(aiParameterDraft) !== initialAiParameterSnapshot,
+    [aiParameterDraft, initialAiParameterSnapshot],
+  );
 
   const validationErrors = useMemo(() => validateCompanyProfile(form), [form]);
   const canSave = isDirty && Object.keys(validationErrors).length === 0;
   const temporaryFeaturesCanSave = temporaryFeaturesDirty;
 
   useEffect(() => {
-    if (!isDirty && !temporaryFeaturesDirty) return undefined;
+    if (!isDirty && !temporaryFeaturesDirty && !aiParametersDirty) {
+      return undefined;
+    }
 
     function handleBeforeUnload(event) {
       event.preventDefault();
@@ -449,7 +650,7 @@ export function useConfigurationPage() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isDirty, temporaryFeaturesDirty]);
+  }, [isDirty, temporaryFeaturesDirty, aiParametersDirty]);
 
   function updateField(field, value) {
     setSaveAttempted(false);
@@ -457,7 +658,7 @@ export function useConfigurationPage() {
   }
 
   function confirmDiscardChanges() {
-    if (!isDirty) return true;
+    if (!isDirty && !aiParametersDirty) return true;
     return window.confirm("Hay cambios sin guardar. ¿Deseas descartarlos?");
   }
 
@@ -469,10 +670,20 @@ export function useConfigurationPage() {
 
   function discardChanges() {
     if (!confirmDiscardChanges()) return;
-    const nextForm = normalizeProfileToForm(companyProfile);
-    setForm(nextForm);
-    setSaveAttempted(false);
-    setInitialSnapshot(serializeForm(nextForm));
+    if (activeSection === "ai_parameters") {
+      const nextEntry =
+        aiParametersConfig.entries.find(
+          (entry) => entry.capabilityKey === selectedAiCapabilityKey,
+        ) || normalizeAiParameterEntry(null);
+      setAiParameterDraft(nextEntry);
+      setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+      setAiParameterValidationWarnings([]);
+    } else {
+      const nextForm = normalizeProfileToForm(companyProfile);
+      setForm(nextForm);
+      setSaveAttempted(false);
+      setInitialSnapshot(serializeForm(nextForm));
+    }
     setError("");
     setSuccess("");
   }
@@ -747,6 +958,196 @@ export function useConfigurationPage() {
     return formatDateTime(proposalContentConfig.updatedAt);
   }, [proposalContentConfig]);
 
+  const latestAiParametersUpdateText = useMemo(() => {
+    if (!aiParametersConfig.updatedAt) {
+      return aiParametersConfig.publishedAt
+        ? formatDateTime(aiParametersConfig.publishedAt)
+        : "Sin cambios publicados";
+    }
+    return `${formatDateTime(aiParametersConfig.updatedAt)} por ${
+      aiParametersConfig.updatedByUserName || "sistema"
+    }`;
+  }, [aiParametersConfig]);
+
+  async function reloadAiParametersConfig(nextCapabilityKey = selectedAiCapabilityKey) {
+    const response = await api.get("/api/settings/ai-parameters");
+    const nextConfig = normalizeAiParametersConfig(response.data?.config);
+    const nextEntry =
+      nextConfig.entries.find(
+        (entry) => entry.capabilityKey === nextCapabilityKey,
+      ) || nextConfig.entries[0] || normalizeAiParameterEntry(null);
+    setAiParametersConfig(nextConfig);
+    setSelectedAiCapabilityKey(nextEntry.capabilityKey);
+    setAiParameterDraft(nextEntry);
+    setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+    return nextEntry;
+  }
+
+  async function loadAiParameterRevisions(capabilityKey = selectedAiCapabilityKey) {
+    const response = await api.get(
+      `/api/settings/ai-parameters/entries/${capabilityKey}/revisions`,
+    );
+    setAiParameterRevisions(
+      Array.isArray(response.data?.revisions) ? response.data.revisions : [],
+    );
+  }
+
+  function updateAiParameterField(field, value) {
+    setAiParameterDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateAiParameterParameter(field, value) {
+    setAiParameterDraft((current) => ({
+      ...current,
+      parameters: {
+        ...(current.parameters || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function selectAiCapability(capabilityKey) {
+    if (capabilityKey === selectedAiCapabilityKey) return;
+    if (aiParametersDirty && !confirmDiscardChanges()) return;
+    const nextEntry =
+      aiParametersConfig.entries.find(
+        (entry) => entry.capabilityKey === capabilityKey,
+      ) || normalizeAiParameterEntry(null);
+    setSelectedAiCapabilityKey(capabilityKey);
+    setAiParameterDraft(nextEntry);
+    setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+    setAiParameterValidationWarnings([]);
+    setAiParameterRevisions([]);
+    if (activeSection === "ai_parameters") {
+      try {
+        await loadAiParameterRevisions(capabilityKey);
+      } catch {
+        setAiParameterRevisions([]);
+      }
+    }
+  }
+
+  async function validateAiParametersDraft() {
+    setValidatingAiParameters(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/ai-parameters/entries/${selectedAiCapabilityKey}/validate`,
+        buildAiParameterDraftPayload(aiParameterDraft),
+      );
+      setAiParameterValidationWarnings(
+        Array.isArray(response.data?.warnings) ? response.data.warnings : [],
+      );
+      setSuccess("Validacion de parametros IA completada");
+      return response.data;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible validar los parametros IA"),
+      );
+      throw err;
+    } finally {
+      setValidatingAiParameters(false);
+    }
+  }
+
+  async function saveAiParametersDraft(changeSummary = "") {
+    setSavingAiParameters(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        `/api/settings/ai-parameters/entries/${selectedAiCapabilityKey}`,
+        buildAiParameterDraftPayload(aiParameterDraft, changeSummary),
+      );
+      const nextConfig = normalizeAiParametersConfig(response.data?.config);
+      const nextEntry =
+        normalizeAiParameterEntry(response.data?.entry) ||
+        nextConfig.entries.find(
+          (entry) => entry.capabilityKey === selectedAiCapabilityKey,
+        ) ||
+        normalizeAiParameterEntry(null);
+      setAiParametersConfig(nextConfig);
+      setAiParameterDraft(nextEntry);
+      setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+      setSuccess(response.data?.message || "Borrador IA actualizado");
+      await loadAiParameterRevisions(selectedAiCapabilityKey);
+      return nextEntry;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible guardar el borrador IA"),
+      );
+      throw err;
+    } finally {
+      setSavingAiParameters(false);
+    }
+  }
+
+  async function publishAiParameters() {
+    setPublishingAiParameters(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post("/api/settings/ai-parameters/publish");
+      const nextConfig = normalizeAiParametersConfig(response.data?.config);
+      const nextEntry =
+        nextConfig.entries.find(
+          (entry) => entry.capabilityKey === selectedAiCapabilityKey,
+        ) || nextConfig.entries[0] || normalizeAiParameterEntry(null);
+      setAiParametersConfig(nextConfig);
+      setAiParameterDraft(nextEntry);
+      setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+      setSuccess(response.data?.message || "Parametros IA publicados");
+      await loadAiParameterRevisions(selectedAiCapabilityKey);
+      return nextEntry;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible publicar los parametros IA"),
+      );
+      throw err;
+    } finally {
+      setPublishingAiParameters(false);
+    }
+  }
+
+  async function restoreAiParameterRevision(revisionNumber) {
+    setRestoringAiParameterKey(`${selectedAiCapabilityKey}:${revisionNumber}`);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/ai-parameters/entries/${selectedAiCapabilityKey}/restore/${revisionNumber}`,
+      );
+      const nextConfig = normalizeAiParametersConfig(response.data?.config);
+      const nextEntry =
+        normalizeAiParameterEntry(response.data?.entry) ||
+        nextConfig.entries.find(
+          (entry) => entry.capabilityKey === selectedAiCapabilityKey,
+        ) ||
+        normalizeAiParameterEntry(null);
+      setAiParametersConfig(nextConfig);
+      setAiParameterDraft(nextEntry);
+      setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
+      setSuccess(response.data?.message || "Revision restaurada");
+      await loadAiParameterRevisions(selectedAiCapabilityKey);
+      return nextEntry;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible restaurar la revision IA"),
+      );
+      throw err;
+    } finally {
+      setRestoringAiParameterKey("");
+    }
+  }
+
+  useEffect(() => {
+    if (activeSection !== "ai_parameters") return;
+    void loadAiParameterRevisions(selectedAiCapabilityKey).catch(() => {
+      setAiParameterRevisions([]);
+    });
+  }, [activeSection, selectedAiCapabilityKey]);
+
   async function reloadProposalContentWorkspace() {
     const [configResponse, assetsResponse] = await Promise.all([
       api.get("/api/settings/proposal-content-config"),
@@ -901,6 +1302,12 @@ export function useConfigurationPage() {
         dirty: temporaryFeaturesDirty,
       },
       {
+        id: "ai_parameters",
+        title: "Parametros IA",
+        description: "Prompts, timeouts y politicas publicadas por capacidad",
+        dirty: aiParametersDirty,
+      },
+      {
         id: "proposal_content",
         title: "Propuestas comerciales",
         description: "Assets institucionales y contenido default por seccion",
@@ -919,7 +1326,7 @@ export function useConfigurationPage() {
         dirty: false,
       },
     ],
-    [isDirty, temporaryFeaturesDirty],
+    [aiParametersDirty, isDirty, temporaryFeaturesDirty],
   );
 
   return {
@@ -940,6 +1347,15 @@ export function useConfigurationPage() {
     proposalContentConfig,
     proposalComponentDefinitions,
     institutionalAssets,
+    aiParametersConfig,
+    selectedAiCapabilityKey,
+    aiParameterDraft,
+    aiParameterValidationWarnings,
+    aiParameterRevisions,
+    savingAiParameters,
+    publishingAiParameters,
+    validatingAiParameters,
+    restoringAiParameterKey,
     savingProposalContent,
     publishingProposalContent,
     assetActionKey,
@@ -949,9 +1365,11 @@ export function useConfigurationPage() {
     savingTemporaryFeatures,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
+    aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
     latestProposalContentUpdateText,
+    latestAiParametersUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -965,11 +1383,19 @@ export function useConfigurationPage() {
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
+    updateAiParameterField,
+    updateAiParameterParameter,
+    selectAiCapability,
+    validateAiParametersDraft,
+    saveAiParametersDraft,
+    publishAiParameters,
+    restoreAiParameterRevision,
     saveProposalContentComponent,
     publishProposalContent,
     createProposalAsset,
     addProposalAssetVersion,
     archiveProposalAsset,
     reloadProposalContentWorkspace,
+    reloadAiParametersConfig,
   };
 }

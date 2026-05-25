@@ -661,6 +661,7 @@ export default function CommercialEnablementPage({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [working, setWorking] = useState(false);
+  const [reanalyzingAssetSummary, setReanalyzingAssetSummary] = useState(false);
   const [workingMessage, setWorkingMessage] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -1293,6 +1294,71 @@ export default function CommercialEnablementPage({ currentUser }) {
       setError(message);
       setAssetSaveFeedback({ tone: "error", message });
     } finally {
+      setWorkingMessage("");
+      setWorking(false);
+    }
+  }
+
+  async function handleReanalyzeAssetSummary() {
+    if (!selectedAsset?.publicId || reanalyzingAssetSummary) return;
+
+    setReanalyzingAssetSummary(true);
+    setWorkingMessage(
+      "La IA esta resumiendo el contenido del documento. Espera la respuesta...",
+    );
+    setWorking(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/commercial-enablement/assets/${selectedAsset.publicId}/reanalyze-summary`,
+        {
+          forceRegenerate: true,
+        },
+        {
+          timeout: 120000,
+        },
+      );
+
+      const nextSummary = String(
+        response.data?.summarySuggestion?.text || "",
+      ).trim();
+      if (!nextSummary) {
+        throw new Error("No se recibio una propuesta de resumen valida");
+      }
+
+      setDraft((current) => ({
+        ...current,
+        summary: nextSummary,
+      }));
+      setSuccess(
+        "Se genero una nueva propuesta de resumen. Revisa el texto antes de guardar.",
+      );
+      setAssetSaveFeedback({
+        tone: "success",
+        message:
+          "Se genero una nueva propuesta de resumen. Revisa el texto antes de guardar.",
+      });
+      window.requestAnimationFrame(() => {
+        const element = summaryInputRef.current;
+        if (!element) return;
+        element.focus();
+        const end = element.value.length;
+        try {
+          element.setSelectionRange(end, end);
+        } catch {
+          // noop
+        }
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible reanalizar el resumen del activo",
+      );
+      setError(message);
+      setAssetSaveFeedback({ tone: "error", message });
+    } finally {
+      setReanalyzingAssetSummary(false);
       setWorkingMessage("");
       setWorking(false);
     }
@@ -2577,12 +2643,6 @@ export default function CommercialEnablementPage({ currentUser }) {
                       </span>
                     ))}
                   </div>
-                  {selectedAsset.internalDescription ? (
-                    <div className="enablement-library-note-box">
-                      <strong>Uso interno</strong>
-                      <p>{selectedAsset.internalDescription}</p>
-                    </div>
-                  ) : null}
                   <div className="enablement-library-resource-group">
                     <h4>Archivos</h4>
                     {selectedAsset.files.length ? (
@@ -3053,33 +3113,50 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </span>
                         <h3>Contenido del activo</h3>
                         <p>
-                          Resume el valor comercial y agrega notas internas para
-                          el equipo.
+                          Resume el contenido del documento de forma clara y
+                          util para su consulta y reutilizacion.
                         </p>
                       </div>
                     </div>
                     <div className="enablement-library-form-grid enablement-library-editor-copy-grid">
-                      <label>
-                        Resumen comercial
+                      <label className="enablement-library-field-span-2">
+                        <span className="enablement-library-field-label-row">
+                          <span>Resumen</span>
+                          {selectedAsset?.publicId ? (
+                            <button
+                              type="button"
+                              className="enablement-library-inline-button enablement-library-icon-button"
+                              onClick={handleReanalyzeAssetSummary}
+                              disabled={
+                                working ||
+                                reanalyzingAssetSummary ||
+                                !selectedAsset?.sourceContent
+                                  ?.canReanalyzeSummary
+                              }
+                              aria-label={
+                                reanalyzingAssetSummary
+                                  ? "Reanalizando resumen"
+                                  : "Reanalizar resumen"
+                              }
+                              title={
+                                selectedAsset?.sourceContent
+                                  ?.canReanalyzeSummary
+                                  ? reanalyzingAssetSummary
+                                    ? "Reanalizando resumen..."
+                                    : "Reanalizar resumen"
+                                  : "Este activo no tiene contenido fuente disponible para reanalizar"
+                              }
+                            >
+                              <AnalyzeDocumentIcon />
+                            </button>
+                          ) : null}
+                        </span>
                         <textarea
                           ref={summaryInputRef}
                           rows={4}
                           value={draft.summary}
                           onChange={(event) =>
                             updateDraftField("summary", event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Indicaciones internas
-                        <textarea
-                          rows={6}
-                          value={draft.internalDescription}
-                          onChange={(event) =>
-                            updateDraftField(
-                              "internalDescription",
-                              event.target.value,
-                            )
                           }
                         />
                       </label>
@@ -3092,7 +3169,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                         <span className="enablement-library-editor-kicker">
                           Contexto
                         </span>
-                        <h3>Clasificacion comercial</h3>
+                        <h3>Clasificación</h3>
                         <p>
                           Relaciona el material con fabricantes, soluciones,
                           industrias y momentos de uso.

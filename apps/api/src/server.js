@@ -10,6 +10,7 @@ import { ensureInteractionAnalysisJobSchema } from "./interactions/analysis-jobs
 import { ensureInteractionSchema } from "./interactions/schema.js";
 import { startAuditRetentionJob } from "./audit.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
+import { ensureCommercialEnablementStarterData } from "./commercial-enablement/library-service.js";
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
 import { ensureCommercialDevelopmentPermissions } from "./commercial-development/permissions.js";
@@ -53,6 +54,7 @@ export async function startServer() {
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
+  await ensureCommercialEnablementStarterData();
   await ensureCommercialPlanningSchema();
   await ensureManufacturerRegistrationsSchema();
   await startAuditRetentionJob();

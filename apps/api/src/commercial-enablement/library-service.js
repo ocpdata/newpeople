@@ -13,6 +13,8 @@ const storage = createDocumentStorage();
 
 const storageKeyPrefix = "commercial_enablement";
 
+let ensureCommercialEnablementStarterDataPromise;
+
 const MANAGE_PERMISSION_CODES = new Set([
   "enablement_comercial.manage",
   "enablement_comercial.admin",
@@ -653,9 +655,18 @@ async function migrateLegacyResourcesIfNeeded() {
 }
 
 export async function ensureCommercialEnablementStarterData() {
-  await ensureCommercialEnablementSchema();
-  await seedStaticCatalogs();
-  await migrateLegacyResourcesIfNeeded();
+  if (!ensureCommercialEnablementStarterDataPromise) {
+    ensureCommercialEnablementStarterDataPromise = (async () => {
+      await ensureCommercialEnablementSchema();
+      await seedStaticCatalogs();
+      await migrateLegacyResourcesIfNeeded();
+    })().catch((error) => {
+      ensureCommercialEnablementStarterDataPromise = null;
+      throw error;
+    });
+  }
+
+  return ensureCommercialEnablementStarterDataPromise;
 }
 
 function groupCatalogEntries(entries) {
@@ -1194,9 +1205,42 @@ export async function getCommercialEnablementAssetDetail({
     })),
   );
 
+  const sourceContentRows = await query(
+    `SELECT source_file_name, source_mime_type, created_at,
+            CHAR_LENGTH(COALESCE(extracted_text, '')) AS extracted_char_count,
+            CHAR_LENGTH(COALESCE(extracted_text_summary, '')) AS summary_char_count
+       FROM commercial_enablement_item_source_contents
+      WHERE item_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [Number(item.id)],
+  );
+  const latestSourceContent = sourceContentRows[0] || null;
+
   return {
     ...item,
     files,
+    sourceContent: latestSourceContent
+      ? {
+          sourceFileName: latestSourceContent.source_file_name || "",
+          sourceMimeType: latestSourceContent.source_mime_type || "",
+          createdAt: latestSourceContent.created_at || null,
+          hasExtractedText:
+            Number(latestSourceContent.extracted_char_count || 0) > 0,
+          hasSummary:
+            Number(latestSourceContent.summary_char_count || 0) > 0,
+          canReanalyzeSummary:
+            Number(latestSourceContent.extracted_char_count || 0) > 0 ||
+            Number(latestSourceContent.summary_char_count || 0) > 0,
+        }
+      : {
+          sourceFileName: "",
+          sourceMimeType: "",
+          createdAt: null,
+          hasExtractedText: false,
+          hasSummary: false,
+          canReanalyzeSummary: false,
+        },
   };
 }
 

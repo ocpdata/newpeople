@@ -22,6 +22,8 @@ const INTAKE_TTL_HOURS = 24;
 const MAX_EXTRACTION_PREVIEW_CHARS = 6000;
 const MAX_ANALYSIS_TEXT_CHARS = 18000;
 const ANALYSIS_MODEL = config.openai.model || "gpt-4.1-mini";
+const MAX_SUMMARY_SOURCE_TEXT_CHARS = 12000;
+const MAX_SUMMARY_OUTPUT_CHARS = 900;
 
 function buildPublicId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "")}`;
@@ -130,30 +132,131 @@ function buildSpanishSummary({ titleBase, hint, text }) {
   const normalizedHint = String(hint || "")
     .replace(/\s+/g, " ")
     .trim();
-  const excerpt = summarizeText(text || "", 220);
+  const excerpt = summarizeText(text || "", 360);
+
+  if (excerpt) {
+    const sentences = excerpt
+      .split(/(?<=[.!?])\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (sentences.length) {
+      return summarizeText(
+        sentences.join(" "),
+        MAX_SUMMARY_OUTPUT_CHARS,
+      );
+    }
+  }
 
   if (normalizedHint) {
     return summarizeText(
-      `Material comercial orientado a ${normalizedHint}. Validar que el mensaje final conserve beneficios, diferenciadores y siguiente paso comercial.`,
-      320,
+      `Documento resumido para ${normalizedHint}. Explica el contenido principal, el uso recomendado y los puntos de valor que conviene conservar al compartirlo.`,
+      MAX_SUMMARY_OUTPUT_CHARS,
     );
   }
 
   if (titleBase) {
     return summarizeText(
-      `Resumen comercial preliminar para ${titleBase}. Confirmar beneficios clave, propuesta de valor y contexto de uso antes de compartirlo con el cliente o el equipo.`,
-      320,
+      `${titleBase}. Resumen preliminar del documento para entender su contenido, su aplicacion y los mensajes clave antes de compartirlo o reutilizarlo.`,
+      MAX_SUMMARY_OUTPUT_CHARS,
     );
   }
 
-  if (excerpt) {
-    return summarizeText(
-      `Resumen comercial preliminar derivado del documento cargado. Contenido base detectado: ${excerpt}`,
-      320,
-    );
+  return "Resumen preliminar pendiente de validacion manual.";
+}
+
+function extractJsonPayloadParts(payload) {
+  return [
+    String(payload?.output_text || "").trim(),
+    ...(Array.isArray(payload?.output)
+      ? payload.output.flatMap((entry) =>
+          Array.isArray(entry?.content)
+            ? entry.content.map((part) => String(part?.text || "").trim())
+            : [],
+        )
+      : []),
+  ].filter(Boolean);
+}
+
+function tryParseJsonPayloadPart(part) {
+  try {
+    return JSON.parse(part);
+  } catch {
+    const start = part.indexOf("{");
+    const end = part.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(part.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
+async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
+  if (!config.openai.apiKey) {
+    return null;
   }
 
-  return "Resumen comercial preliminar pendiente de validacion manual.";
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: ANALYSIS_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text: "Resume un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Escribe summary siempre en espanol, aunque el documento fuente este en otro idioma. El summary debe explicar de forma breve y concreta que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. No inventes beneficios, promesas ni detalles no presentes en el texto. Devuelve solo {\"summary\": string}.",
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: JSON.stringify({
+                  fileName,
+                  hint,
+                  text: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS),
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    },
+  );
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`OpenAI request failed: ${response.status}`);
+  }
+
+  for (const part of extractJsonPayloadParts(payload)) {
+    const parsed = tryParseJsonPayloadPart(part);
+    if (parsed && typeof parsed === "object") {
+      const summary = summarizeText(
+        String(parsed.summary || ""),
+        MAX_SUMMARY_OUTPUT_CHARS,
+      );
+      if (summary) {
+        return { summary };
+      }
+    }
+  }
+
+  return null;
 }
 
 function buildSpanishInternalDescription({ hint, languageCode }) {
@@ -530,7 +633,7 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
             content: [
               {
                 type: "input_text",
-                text: "Analiza un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Los campos summary e internalDescription siempre deben redactarse en espanol, aunque el documento fuente este en otro idioma. Identifica languageCode como 'es' o 'en'. Nunca decidas status ni visibilityLevel; siempre deben quedar como decisionRequired=true y value=null. Usa solo codigos existentes cuando clasifiques assetTypeCode, manufacturerCodes, solutionCodes, industryCodes y audienceCode.",
+                text: "Analiza un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Los campos summary e internalDescription siempre deben redactarse en espanol, aunque el documento fuente este en otro idioma. El campo summary debe explicar brevemente que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. Identifica languageCode como 'es' o 'en'. Nunca decidas status ni visibilityLevel; siempre deben quedar como decisionRequired=true y value=null. Usa solo codigos existentes cuando clasifiques assetTypeCode, manufacturerCodes, solutionCodes, industryCodes y audienceCode.",
               },
             ],
           },
@@ -573,34 +676,125 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
     throw new Error(`OpenAI request failed: ${response.status}`);
   }
 
-  const textParts = [
-    String(payload?.output_text || "").trim(),
-    ...(Array.isArray(payload?.output)
-      ? payload.output.flatMap((entry) =>
-          Array.isArray(entry?.content)
-            ? entry.content.map((part) => String(part?.text || "").trim())
-            : [],
-        )
-      : []),
-  ].filter(Boolean);
-
-  for (const part of textParts) {
-    try {
-      return JSON.parse(part);
-    } catch {
-      const start = part.indexOf("{");
-      const end = part.lastIndexOf("}");
-      if (start !== -1 && end > start) {
-        try {
-          return JSON.parse(part.slice(start, end + 1));
-        } catch {
-          // Continue.
-        }
-      }
+  for (const part of extractJsonPayloadParts(payload)) {
+    const parsed = tryParseJsonPayloadPart(part);
+    if (parsed) {
+      return parsed;
     }
   }
 
   return null;
+}
+
+export async function reanalyzeCommercialEnablementAssetSummary({
+  assetPublicId,
+  user,
+}) {
+  await ensureCommercialEnablementStarterData();
+
+  const asset = await getCommercialEnablementAssetDetail({ user, assetPublicId });
+  if (!asset) {
+    const error = new Error("Activo no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  const sourceRows = await query(
+    `SELECT source_file_name, source_mime_type, extracted_text, extracted_text_summary, created_at
+       FROM commercial_enablement_item_source_contents
+      WHERE item_id = ?
+      ORDER BY created_at DESC, id DESC`,
+    [Number(asset.id)],
+  );
+
+  if (sourceRows.length !== 1) {
+    const error = new Error(
+      "El activo no tiene una fuente unica disponible para reanalizar el resumen",
+    );
+    error.status = 409;
+    error.body = {
+      message:
+        "El activo no tiene una fuente unica disponible para reanalizar el resumen",
+      error: {
+        code: "asset_summary_source_unavailable",
+        retryable: false,
+      },
+    };
+    throw error;
+  }
+
+  const source = sourceRows[0];
+  const extractedText = String(source.extracted_text || "").trim();
+  const extractedSummary = String(source.extracted_text_summary || "").trim();
+  const sourceText = extractedText || extractedSummary;
+
+  if (!sourceText) {
+    const error = new Error(
+      "No existe texto fuente suficiente para reanalizar el resumen",
+    );
+    error.status = 422;
+    error.body = {
+      message:
+        "No existe texto fuente suficiente para reanalizar el resumen",
+      error: {
+        code: "asset_summary_source_insufficient",
+        retryable: false,
+      },
+    };
+    throw error;
+  }
+
+  let summaryText = "";
+  let usedAi = false;
+  try {
+    const aiSuggestion = await requestOpenAiSummarySuggestion({
+      text: sourceText,
+      fileName: source.source_file_name || asset.title || "documento",
+      hint: asset.summary || asset.title || "",
+    });
+    summaryText = summarizeText(aiSuggestion?.summary || "", MAX_SUMMARY_OUTPUT_CHARS);
+    usedAi = Boolean(summaryText);
+  } catch {
+    summaryText = "";
+  }
+
+  if (!summaryText) {
+    summaryText = buildSpanishSummary({
+      titleBase: asset.title,
+      hint: asset.summary || "",
+      text: sourceText,
+    });
+  }
+
+  if (!summaryText) {
+    const error = new Error(
+      "No fue posible generar una propuesta de resumen util",
+    );
+    error.status = 422;
+    error.body = {
+      message: "No fue posible generar una propuesta de resumen util",
+      error: {
+        code: "asset_summary_generation_failed",
+        retryable: true,
+      },
+    };
+    throw error;
+  }
+
+  return {
+    assetPublicId: asset.publicId,
+    summarySuggestion: {
+      text: summaryText,
+      languageCode: "es",
+      generatedAt: new Date().toISOString(),
+      sourceKind: "item_source_content",
+      sourceFileName: source.source_file_name || "",
+    },
+    meta: {
+      usedAi,
+      charCount: summaryText.length,
+    },
+  };
 }
 
 async function analyzeIntakeSessionInternal({

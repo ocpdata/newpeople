@@ -2504,6 +2504,437 @@ function ProposalContentConfigurationPanel({
   );
 }
 
+function AiParametersConfigurationPanel({
+  config,
+  selectedCapabilityKey,
+  draft,
+  warnings,
+  revisions,
+  changeSummary,
+  onChangeSummary,
+  latestUpdateText,
+  saving,
+  publishing,
+  validating,
+  restoringKey,
+  dirty,
+  formatDateTime,
+  onSelectCapability,
+  onUpdateField,
+  onUpdateParameter,
+  onValidate,
+  onSaveDraft,
+  onPublish,
+  onRestoreRevision,
+}) {
+  const parameters = draft?.parameters || {};
+  const outputSchema = draft?.outputSchema || {};
+  const capabilities = Array.isArray(config?.capabilities)
+    ? config.capabilities
+    : [];
+
+  function toggleArrayValue(field, value, checked) {
+    const currentValues = Array.isArray(parameters[field]) ? parameters[field] : [];
+    const nextValues = checked
+      ? Array.from(new Set([...currentValues, value]))
+      : currentValues.filter((item) => item !== value);
+    onUpdateParameter(field, nextValues);
+  }
+
+  return (
+    <div className="configuration-ai-grid">
+      <section className="configuration-card configuration-ai-capabilities-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Capacidades IA</h4>
+            <p>Selecciona la capacidad que quieres editar y publicar.</p>
+          </div>
+          <span className="configuration-inline-pill">
+            {config?.status === "draft" ? "Borrador" : "Publicado"}
+          </span>
+        </div>
+
+        <div className="configuration-ai-capability-list">
+          {capabilities.map((capability) => (
+            <button
+              key={capability.capabilityKey}
+              type="button"
+              className={`configuration-ai-capability-item ${
+                capability.capabilityKey === selectedCapabilityKey
+                  ? "is-active"
+                  : ""
+              }`}
+              onClick={() => onSelectCapability(capability.capabilityKey)}
+            >
+              <strong>{capability.title}</strong>
+              <span>{capability.description}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="configuration-ai-status-box">
+          <strong>Ultimo movimiento</strong>
+          <span>{latestUpdateText}</span>
+          <span>
+            Publicado: {config?.publishedAt ? formatDateTime(config.publishedAt) : "Sin publicacion"}
+          </span>
+        </div>
+      </section>
+
+      <div className="configuration-section-stack">
+        <section className="configuration-card">
+          <div className="configuration-card-heading">
+            <div>
+              <h4>Control operativo</h4>
+              <p>Activa o ajusta el modelo y timeout de esta capacidad.</p>
+            </div>
+            {dirty ? <span className="configuration-inline-pill">Sin publicar</span> : null}
+          </div>
+
+          <div className="configuration-form-grid">
+            <div className="field-group">
+              <label>Titulo funcional</label>
+              <input
+                type="text"
+                value={draft.title}
+                onChange={(event) => onUpdateField("title", event.target.value)}
+              />
+            </div>
+            <div className="field-group">
+              <label>Timeout (ms)</label>
+              <input
+                type="number"
+                min="5000"
+                step="1000"
+                value={draft.timeoutMs}
+                onChange={(event) =>
+                  onUpdateField("timeoutMs", Number(event.target.value || 0))
+                }
+              />
+            </div>
+            <div className="field-group configuration-grid-span-full">
+              <label>Descripcion</label>
+              <textarea
+                rows="2"
+                value={draft.description}
+                onChange={(event) =>
+                  onUpdateField("description", event.target.value)
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Modelo override</label>
+              <input
+                type="text"
+                value={draft.modelOverride}
+                onChange={(event) =>
+                  onUpdateField("modelOverride", event.target.value)
+                }
+                placeholder="Usa el modelo por defecto si lo dejas vacio"
+              />
+            </div>
+            <div className="field-group configuration-toggle-field">
+              <label>Capacidad habilitada</label>
+              <button
+                type="button"
+                className={`configuration-toggle-chip ${draft.isEnabled ? "is-on" : ""}`}
+                onClick={() => onUpdateField("isEnabled", !draft.isEnabled)}
+              >
+                {draft.isEnabled ? "Activa" : "Deshabilitada"}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="configuration-card">
+          <h4>Prompt publicado</h4>
+          <div className="configuration-form-grid">
+            <div className="field-group configuration-grid-span-full">
+              <label>System prompt</label>
+              <textarea
+                rows="10"
+                value={draft.systemPrompt}
+                onChange={(event) =>
+                  onUpdateField("systemPrompt", event.target.value)
+                }
+              />
+            </div>
+            <div className="field-group configuration-grid-span-full">
+              <label>Plantilla de mensaje usuario</label>
+              <textarea
+                rows="5"
+                value={draft.userPromptTemplate}
+                onChange={(event) =>
+                  onUpdateField("userPromptTemplate", event.target.value)
+                }
+              />
+              <p className="field-hint">
+                Usa `{{context}}` y `{{expectedShape}}` para interpolar el contexto real.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="configuration-card">
+          <h4>Shape de salida</h4>
+          <div className="configuration-form-grid">
+            <div className="field-group">
+              <label>Campo title</label>
+              <input
+                type="text"
+                value={String(outputSchema.title || "")}
+                onChange={(event) =>
+                  onUpdateField("outputSchema", {
+                    ...outputSchema,
+                    title: event.target.value,
+                  })
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Item de paragraphs</label>
+              <input
+                type="text"
+                value={String(outputSchema.paragraphs?.[0] || "")}
+                onChange={(event) =>
+                  onUpdateField("outputSchema", {
+                    ...outputSchema,
+                    paragraphs: [event.target.value],
+                  })
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Item de warnings</label>
+              <input
+                type="text"
+                value={String(outputSchema.warnings?.[0] || "")}
+                onChange={(event) =>
+                  onUpdateField("outputSchema", {
+                    ...outputSchema,
+                    warnings: [event.target.value],
+                  })
+                }
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="configuration-card">
+          <h4>Politicas funcionales</h4>
+          <div className="configuration-form-grid">
+            <div className="field-group">
+              <label>Maximo de assets de biblioteca</label>
+              <input
+                type="number"
+                min="1"
+                max="8"
+                value={parameters.maxLibraryAssets}
+                onChange={(event) =>
+                  onUpdateParameter(
+                    "maxLibraryAssets",
+                    Number(event.target.value || 0),
+                  )
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Idioma por defecto</label>
+              <input
+                type="text"
+                value={String(parameters.defaultLanguageCode || "")}
+                onChange={(event) =>
+                  onUpdateParameter("defaultLanguageCode", event.target.value)
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Audiencia objetivo</label>
+              <input
+                type="text"
+                value={String(parameters.targetAudience || "")}
+                onChange={(event) =>
+                  onUpdateParameter("targetAudience", event.target.value)
+                }
+              />
+            </div>
+            <div className="field-group configuration-grid-span-full configuration-ai-toggle-group">
+              <label>Flags operativas</label>
+              <div className="configuration-ai-chip-row">
+                <button
+                  type="button"
+                  className={`configuration-toggle-chip ${
+                    parameters.allowInstructionsField ? "is-on" : ""
+                  }`}
+                  onClick={() =>
+                    onUpdateParameter(
+                      "allowInstructionsField",
+                      !parameters.allowInstructionsField,
+                    )
+                  }
+                >
+                  Instrucciones libres
+                </button>
+                <button
+                  type="button"
+                  className={`configuration-toggle-chip ${
+                    parameters.allowOverwrite ? "is-on" : ""
+                  }`}
+                  onClick={() =>
+                    onUpdateParameter(
+                      "allowOverwrite",
+                      !parameters.allowOverwrite,
+                    )
+                  }
+                >
+                  Permitir overwrite
+                </button>
+              </div>
+            </div>
+            <div className="field-group">
+              <label>Modos de biblioteca habilitados</label>
+              <div className="configuration-ai-check-list">
+                {[
+                  ["source_text", "Texto fuente"],
+                  ["summary_extract", "Summary + extract"],
+                ].map(([value, label]) => (
+                  <label key={value} className="configuration-ai-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Array.isArray(parameters.supportedLibraryContentModes) && parameters.supportedLibraryContentModes.includes(value)}
+                      onChange={(event) =>
+                        toggleArrayValue(
+                          "supportedLibraryContentModes",
+                          value,
+                          event.target.checked,
+                        )
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="field-group">
+              <label>Prioridades de fuente habilitadas</label>
+              <div className="configuration-ai-check-list">
+                {[
+                  ["non_library_first", "Documentos primero"],
+                  ["balanced", "Balanceado"],
+                  ["library_first", "Biblioteca primero"],
+                ].map(([value, label]) => (
+                  <label key={value} className="configuration-ai-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Array.isArray(parameters.supportedSourcePriorityModes) && parameters.supportedSourcePriorityModes.includes(value)}
+                      onChange={(event) =>
+                        toggleArrayValue(
+                          "supportedSourcePriorityModes",
+                          value,
+                          event.target.checked,
+                        )
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="field-group configuration-grid-span-full">
+              <label>Resumen del cambio</label>
+              <input
+                type="text"
+                value={changeSummary}
+                onChange={(event) => onChangeSummary(event.target.value)}
+                placeholder="Ej. Ajuste de tono comercial y timeout"
+              />
+            </div>
+          </div>
+
+          <div className="configuration-inline-actions configuration-ai-actions-row">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onValidate}
+              disabled={validating}
+            >
+              {validating ? "Validando..." : "Validar"}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onSaveDraft}
+              disabled={saving}
+            >
+              {saving ? "Guardando..." : "Guardar borrador"}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onPublish}
+              disabled={publishing}
+            >
+              {publishing ? "Publicando..." : "Publicar"}
+            </button>
+          </div>
+        </section>
+
+        {warnings.length ? (
+          <section className="configuration-card configuration-ai-warning-card">
+            <h4>Advertencias de validacion</h4>
+            <div className="configuration-ai-warning-list">
+              {warnings.map((warning) => (
+                <article key={`${warning.code}-${warning.field}`}>
+                  <strong>{warning.field}</strong>
+                  <p>{warning.message}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="configuration-card">
+          <div className="configuration-card-heading">
+            <div>
+              <h4>Revisiones</h4>
+              <p>Restaura una revision anterior como nuevo borrador.</p>
+            </div>
+          </div>
+
+          <div className="configuration-ai-revision-list">
+            {revisions.map((revision) => (
+              <article key={revision.revisionNumber} className="configuration-ai-revision-item">
+                <div>
+                  <strong>Revision {revision.revisionNumber}</strong>
+                  <span>
+                    {formatDateTime(revision.createdAt)} por {revision.createdByUserName || "sistema"}
+                  </span>
+                  <p>{revision.changeSummary || "Sin resumen"}</p>
+                </div>
+                <div className="configuration-inline-actions">
+                  {revision.isPublished ? (
+                    <span className="configuration-inline-pill">Publicada</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => onRestoreRevision(revision.revisionNumber)}
+                    disabled={restoringKey === `${selectedCapabilityKey}:${revision.revisionNumber}`}
+                  >
+                    {restoringKey === `${selectedCapabilityKey}:${revision.revisionNumber}`
+                      ? "Restaurando..."
+                      : "Restaurar"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export default function ConfigurationPage() {
   const {
     loading,
@@ -2523,7 +2954,17 @@ export default function ConfigurationPage() {
     proposalContentConfig,
     proposalComponentDefinitions,
     institutionalAssets,
+    aiParametersConfig,
+    selectedAiCapabilityKey,
+    aiParameterDraft,
+    aiParameterValidationWarnings,
+    aiParameterRevisions,
+    savingAiParameters,
+    publishingAiParameters,
+    validatingAiParameters,
+    restoringAiParameterKey,
     savingProposalContent,
+    publishingProposalContent,
     assetActionKey,
     fieldErrors,
     isDirty,
@@ -2531,9 +2972,11 @@ export default function ConfigurationPage() {
     savingTemporaryFeatures,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
+    aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
     latestProposalContentUpdateText,
+    latestAiParametersUpdateText,
     sectionItems,
     formatDateTime,
     summarizeChangedFields,
@@ -2547,11 +2990,20 @@ export default function ConfigurationPage() {
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
+    updateAiParameterField,
+    updateAiParameterParameter,
+    selectAiCapability,
+    validateAiParametersDraft,
+    saveAiParametersDraft,
+    publishAiParameters,
+    restoreAiParameterRevision,
     saveProposalContentComponent,
+    publishProposalContent,
     createProposalAsset,
     addProposalAssetVersion,
     archiveProposalAsset,
   } = useConfigurationPage();
+  const [aiChangeSummary, setAiChangeSummary] = useState("");
 
   const activeSectionMeta = useMemo(
     () =>
@@ -2736,6 +3188,47 @@ export default function ConfigurationPage() {
     ],
   );
 
+  const activeSectionUpdateText = useMemo(() => {
+    if (activeSection === "ai_parameters") {
+      return latestAiParametersUpdateText;
+    }
+    if (activeSection === "proposal_content") {
+      return latestProposalContentUpdateText;
+    }
+    if (activeSection === "global") {
+      return latestTemporaryFeaturesUpdateText;
+    }
+    return latestUpdateText;
+  }, [
+    activeSection,
+    latestAiParametersUpdateText,
+    latestProposalContentUpdateText,
+    latestTemporaryFeaturesUpdateText,
+    latestUpdateText,
+  ]);
+
+  const activeSectionStatusText = useMemo(() => {
+    if (activeSection === "ai_parameters") {
+      return aiParametersConfig.status === "draft"
+        ? "Borrador pendiente de publicar"
+        : aiParametersConfig.publishedAt
+          ? `Publicado ${formatDateTime(aiParametersConfig.publishedAt)}`
+          : "Sin publicacion";
+    }
+    if (activeSection === "proposal_content" && proposalContentConfig.updatedAt) {
+      return `Vigente desde ${formatDateTime(proposalContentConfig.updatedAt)}`;
+    }
+    return companyProfile?.updatedAt
+      ? `Vigente desde ${formatDateTime(companyProfile.updatedAt)}`
+      : "";
+  }, [
+    activeSection,
+    aiParametersConfig,
+    companyProfile?.updatedAt,
+    formatDateTime,
+    proposalContentConfig.updatedAt,
+  ]);
+
   if (loading) {
     return <div className="centered">Cargando configuracion...</div>;
   }
@@ -2760,7 +3253,9 @@ export default function ConfigurationPage() {
             Administra los datos institucionales y parametros globales de la
             aplicacion.
           </p>
-          <p className="field-hint">Ultima actualizacion: {latestUpdateText}</p>
+          <p className="field-hint">
+            Ultima actualizacion: {activeSectionUpdateText}
+          </p>
         </div>
 
         <div className="configuration-header-actions">
@@ -2774,19 +3269,75 @@ export default function ConfigurationPage() {
           <button
             type="button"
             className="btn-secondary"
-            disabled={!isDirty || saving}
+            disabled={
+              activeSection === "company"
+                ? !isDirty || saving
+                : activeSection === "ai_parameters"
+                  ? !aiParametersDirty || savingAiParameters
+                  : false
+            }
             onClick={discardChanges}
           >
             Descartar cambios
           </button>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={saving || !canSave}
-            onClick={saveCompanyProfile}
-          >
-            {saving ? "Guardando..." : "Guardar cambios"}
-          </button>
+          {activeSection === "company" ? (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={saving || !canSave}
+              onClick={saveCompanyProfile}
+            >
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+          ) : null}
+          {activeSection === "ai_parameters" ? (
+            <>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={validatingAiParameters}
+                onClick={() => {
+                  void validateAiParametersDraft();
+                }}
+              >
+                {validatingAiParameters ? "Validando..." : "Validar"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={savingAiParameters}
+                onClick={() => {
+                  void saveAiParametersDraft(aiChangeSummary).then(() => {
+                    setAiChangeSummary("");
+                  });
+                }}
+              >
+                {savingAiParameters ? "Guardando..." : "Guardar borrador"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={publishingAiParameters}
+                onClick={() => {
+                  void publishAiParameters();
+                }}
+              >
+                {publishingAiParameters ? "Publicando..." : "Publicar"}
+              </button>
+            </>
+          ) : null}
+          {activeSection === "proposal_content" ? (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={publishingProposalContent}
+              onClick={() => {
+                void publishProposalContent();
+              }}
+            >
+              {publishingProposalContent ? "Publicando..." : "Publicar"}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -2817,9 +3368,9 @@ export default function ConfigurationPage() {
               <h3>{activeSectionMeta.title}</h3>
               <p>{activeSectionMeta.description}</p>
             </div>
-            {companyProfile?.updatedAt ? (
+            {activeSectionStatusText ? (
               <span className="configuration-status-pill">
-                Vigente desde {formatDateTime(companyProfile.updatedAt)}
+                {activeSectionStatusText}
               </span>
             ) : null}
           </header>
@@ -3205,6 +3756,42 @@ export default function ConfigurationPage() {
             />
           ) : null}
 
+          {activeSection === "ai_parameters" ? (
+            <AiParametersConfigurationPanel
+              config={aiParametersConfig}
+              selectedCapabilityKey={selectedAiCapabilityKey}
+              draft={aiParameterDraft}
+              warnings={aiParameterValidationWarnings}
+              revisions={aiParameterRevisions}
+              changeSummary={aiChangeSummary}
+              onChangeSummary={setAiChangeSummary}
+              latestUpdateText={latestAiParametersUpdateText}
+              saving={savingAiParameters}
+              publishing={publishingAiParameters}
+              validating={validatingAiParameters}
+              restoringKey={restoringAiParameterKey}
+              dirty={aiParametersDirty}
+              formatDateTime={formatDateTime}
+              onSelectCapability={selectAiCapability}
+              onUpdateField={updateAiParameterField}
+              onUpdateParameter={updateAiParameterParameter}
+              onValidate={() => {
+                void validateAiParametersDraft();
+              }}
+              onSaveDraft={() => {
+                void saveAiParametersDraft(aiChangeSummary).then(() => {
+                  setAiChangeSummary("");
+                });
+              }}
+              onPublish={() => {
+                void publishAiParameters();
+              }}
+              onRestoreRevision={(revisionNumber) => {
+                void restoreAiParameterRevision(revisionNumber);
+              }}
+            />
+          ) : null}
+
           {activeSection === "audit" ? (
             <ConfigurationAuditList
               entries={auditEntries}
@@ -3215,7 +3802,7 @@ export default function ConfigurationPage() {
         </div>
       </div>
 
-      {isDirty ? (
+      {activeSection === "company" && isDirty ? (
         <div className="configuration-bottom-bar">
           <span>Tienes cambios sin guardar</span>
           <div className="configuration-bottom-bar-actions">
@@ -3234,6 +3821,34 @@ export default function ConfigurationPage() {
               disabled={saving || !canSave}
             >
               {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {activeSection === "ai_parameters" && aiParametersDirty ? (
+        <div className="configuration-bottom-bar">
+          <span>Tienes cambios de IA sin guardar</span>
+          <div className="configuration-bottom-bar-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={discardChanges}
+              disabled={savingAiParameters}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                void saveAiParametersDraft(aiChangeSummary).then(() => {
+                  setAiChangeSummary("");
+                });
+              }}
+              disabled={savingAiParameters}
+            >
+              {savingAiParameters ? "Guardando..." : "Guardar borrador"}
             </button>
           </div>
         </div>

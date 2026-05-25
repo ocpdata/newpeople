@@ -4,17 +4,24 @@ import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import { query } from "./db.js";
 import {
+  AI_PARAMETER_CAPABILITY_KEYS,
   buildCompanyDocumentBranding,
   createInstitutionalAsset,
   addInstitutionalAssetVersion,
   archiveInstitutionalAsset,
+  getAiParametersConfiguration,
   getCompanyDocumentBranding,
   getCompanyProfile,
   getInstitutionalAsset,
+  getPublishedAiParameterEntryByCapabilityKey,
   getProposalContentConfiguration,
   listInstitutionalAssets,
+  listAiParameterEntryRevisions,
   PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
+  publishAiParameterConfiguration,
   publishProposalContentConfiguration,
+  restoreAiParameterEntryRevision,
+  saveAiParameterEntryDraft,
   saveProposalContentComponent,
   getTemporaryFeatureSettings,
   saveTemporaryFeatureSettings,
@@ -82,6 +89,142 @@ const temporaryFeatureSettingsSchema = z.object({
   contactsPendingEnabled: z.boolean(),
   opportunitiesPendingEnabled: z.boolean(),
 });
+
+const aiParameterCapabilityKeySchema = z.enum([
+  AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+]);
+
+const aiParameterBaseEntrySchema = z.object({
+  title: z.string().trim().min(3).max(190),
+  description: optionalTrimmedString(5000),
+  isEnabled: z.boolean(),
+  modelOverride: z.preprocess(
+    (value) => (value == null ? undefined : value),
+    optionalTrimmedString(80),
+  ),
+  timeoutMs: z.number().int().min(5000).max(300000),
+  systemPrompt: z.string().trim().min(20).max(20000),
+  userPromptTemplate: z.string().trim().min(3).max(20000),
+  outputSchema: z.record(z.string(), z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
+  changeSummary: optionalTrimmedString(500),
+});
+
+const aiParameterExecutiveSummarySchema = aiParameterBaseEntrySchema.superRefine(
+  (value, context) => {
+    const parameters = value.parameters || {};
+    const maxLibraryAssets = Number(parameters.maxLibraryAssets);
+    if (!Number.isInteger(maxLibraryAssets) || maxLibraryAssets < 1 || maxLibraryAssets > 8) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "parameters.maxLibraryAssets debe estar entre 1 y 8",
+        path: ["parameters", "maxLibraryAssets"],
+      });
+    }
+
+    const defaultLanguageCode = String(parameters.defaultLanguageCode || "").trim();
+    if (!defaultLanguageCode || defaultLanguageCode.length > 8) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "parameters.defaultLanguageCode es obligatorio",
+        path: ["parameters", "defaultLanguageCode"],
+      });
+    }
+
+    const libraryModes = Array.isArray(parameters.supportedLibraryContentModes)
+      ? parameters.supportedLibraryContentModes
+      : [];
+    if (
+      libraryModes.length === 0 ||
+      libraryModes.some(
+        (item) => !["source_text", "summary_extract"].includes(String(item)),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "parameters.supportedLibraryContentModes debe incluir solo source_text y/o summary_extract",
+        path: ["parameters", "supportedLibraryContentModes"],
+      });
+    }
+
+    const priorityModes = Array.isArray(parameters.supportedSourcePriorityModes)
+      ? parameters.supportedSourcePriorityModes
+      : [];
+    if (
+      priorityModes.length === 0 ||
+      priorityModes.some(
+        (item) =>
+          !["non_library_first", "balanced", "library_first"].includes(
+            String(item),
+          ),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "parameters.supportedSourcePriorityModes debe incluir solo non_library_first, balanced y/o library_first",
+        path: ["parameters", "supportedSourcePriorityModes"],
+      });
+    }
+
+    if (typeof parameters.allowInstructionsField !== "boolean") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "parameters.allowInstructionsField debe ser boolean",
+        path: ["parameters", "allowInstructionsField"],
+      });
+    }
+
+    if (typeof parameters.allowOverwrite !== "boolean") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "parameters.allowOverwrite debe ser boolean",
+        path: ["parameters", "allowOverwrite"],
+      });
+    }
+  },
+);
+
+function getAiParameterEntrySchema(capabilityKey) {
+  if (capabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary) {
+    return aiParameterExecutiveSummarySchema;
+  }
+  return aiParameterBaseEntrySchema;
+}
+
+function validateAiParameterWarnings(capabilityKey, payload) {
+  const warnings = [];
+  if (capabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary) {
+    const systemPrompt = String(payload.systemPrompt || "");
+    if (!systemPrompt.includes("JSON")) {
+      warnings.push({
+        field: "systemPrompt",
+        code: "missing_json_instruction",
+        message: "Conviene indicar explicitamente que la respuesta debe ser JSON valido.",
+      });
+    }
+    if (!systemPrompt.includes("documentSources")) {
+      warnings.push({
+        field: "systemPrompt",
+        code: "missing_document_sources_reference",
+        message: "El prompt no menciona documentSources como fuente primaria.",
+      });
+    }
+    if (!systemPrompt.includes("generationPolicy")) {
+      warnings.push({
+        field: "systemPrompt",
+        code: "missing_generation_policy_reference",
+        message: "El prompt no menciona generationPolicy; podria ignorar prioridades de fuente.",
+      });
+    }
+  }
+  return warnings;
+}
+
+function parseAiParameterEntry(capabilityKey, body) {
+  return getAiParameterEntrySchema(capabilityKey).parse(body);
+}
 
 const institutionalAssetPayloadSchema = z.object({
   name: z.string().trim().min(2).max(190),
@@ -401,6 +544,128 @@ function parseChangedFields(value) {
     return {};
   }
 }
+
+router.get(
+  "/ai-parameters",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const config = await getAiParametersConfiguration();
+    res.json({ config });
+  },
+);
+
+router.put(
+  "/ai-parameters/entries/:capabilityKey",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const capabilityKey = aiParameterCapabilityKeySchema.parse(
+      req.params.capabilityKey,
+    );
+    const payload = parseAiParameterEntry(capabilityKey, req.body || {});
+    const config = await saveAiParameterEntryDraft(
+      capabilityKey,
+      payload,
+      req.user?.id || null,
+      payload.changeSummary || "Actualizacion manual",
+    );
+    await logAuditEvent({
+      action: "updated_ai_parameters",
+      entityType: "ai_parameters",
+      entityId: capabilityKey,
+      performedByUserId: req.user?.id || null,
+      metadata: {
+        capabilityKey,
+        changeSummary: payload.changeSummary || "Actualizacion manual",
+      },
+    });
+    res.json({
+      message: "Borrador de parametros IA actualizado",
+      config,
+      entry:
+        config.entries.find((item) => item.capabilityKey === capabilityKey) ||
+        null,
+    });
+  },
+);
+
+router.post(
+  "/ai-parameters/entries/:capabilityKey/validate",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const capabilityKey = aiParameterCapabilityKeySchema.parse(
+      req.params.capabilityKey,
+    );
+    const payload = parseAiParameterEntry(capabilityKey, req.body || {});
+    const warnings = validateAiParameterWarnings(capabilityKey, payload);
+    res.json({ valid: true, warnings, normalized: payload });
+  },
+);
+
+router.post(
+  "/ai-parameters/publish",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const config = await publishAiParameterConfiguration(req.user?.id || null);
+    await logAuditEvent({
+      action: "published_ai_parameters",
+      entityType: "ai_parameters",
+      entityId: "default",
+      performedByUserId: req.user?.id || null,
+      metadata: {
+        status: config.status,
+        publishedAt: config.publishedAt,
+      },
+    });
+    res.json({ message: "Parametros IA publicados", config });
+  },
+);
+
+router.get(
+  "/ai-parameters/entries/:capabilityKey/revisions",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const capabilityKey = aiParameterCapabilityKeySchema.parse(
+      req.params.capabilityKey,
+    );
+    const revisions = await listAiParameterEntryRevisions(capabilityKey);
+    res.json({ revisions });
+  },
+);
+
+router.post(
+  "/ai-parameters/entries/:capabilityKey/restore/:revisionNumber",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const capabilityKey = aiParameterCapabilityKeySchema.parse(
+      req.params.capabilityKey,
+    );
+    const revisionNumber = z.coerce.number().int().positive().parse(
+      req.params.revisionNumber,
+    );
+    const config = await restoreAiParameterEntryRevision(
+      capabilityKey,
+      revisionNumber,
+      req.user?.id || null,
+    );
+    await logAuditEvent({
+      action: "restored_ai_parameters_revision",
+      entityType: "ai_parameters",
+      entityId: capabilityKey,
+      performedByUserId: req.user?.id || null,
+      metadata: {
+        capabilityKey,
+        revisionNumber,
+      },
+    });
+    res.json({
+      message: `Revision ${revisionNumber} restaurada como nuevo borrador`,
+      config,
+      entry:
+        config.entries.find((item) => item.capabilityKey === capabilityKey) ||
+        null,
+    });
+  },
+);
 
 router.get(
   "/company-profile",

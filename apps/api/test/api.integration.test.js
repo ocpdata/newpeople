@@ -2,6 +2,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
+import { ensureCommercialEnablementPermissions } from "../src/commercial-enablement/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
@@ -14,6 +15,7 @@ import {
 import { pool, query } from "../src/db.js";
 import { processPendingCommercialNarrativeJobs } from "../src/routes.execution-commercial.js";
 import { processPendingInteractionAnalysisJobs } from "../src/routes.interactions.js";
+import { processPendingProposalExecutiveSummaryGenerationJobs } from "../src/routes.quotations.js";
 import { processPendingOpportunityStageAnswerSuggestionJobs } from "../src/opportunity-stage-answer-suggestions/service.js";
 import { processPendingOpportunityStageValidationJobs } from "../src/opportunity-stage-validations/service.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
@@ -54,6 +56,7 @@ describe("API integration baseline", () => {
   const ctx = {};
 
   beforeAll(async () => {
+    await ensureCommercialEnablementPermissions();
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
     await ensureCommercialExecutionSchema();
@@ -975,6 +978,141 @@ describe("API integration baseline", () => {
         originalProfile.description || null,
       ],
     );
+  });
+
+  test("configuracion.ai-parameters permite guardar borrador, publicar y restaurar resumen ejecutivo", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const currentConfigResponse = await request(app)
+      .get("/api/settings/ai-parameters")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(currentConfigResponse.status).toBe(200);
+    const originalEntry = currentConfigResponse.body.config.entries.find(
+      (entry) => entry.capabilityKey === "proposal.executive_summary",
+    );
+    expect(originalEntry).toBeTruthy();
+
+    const updatedPayload = {
+      title: originalEntry.title,
+      description: `${originalEntry.description} Ajuste de prueba.`,
+      isEnabled: true,
+      modelOverride: "gpt-5.4-mini",
+      timeoutMs: 65000,
+      systemPrompt: `${originalEntry.systemPrompt} Mantén un tono consultivo y conserva JSON valido.`,
+      userPromptTemplate:
+        "Instrucciones publicadas\n{{context}}\nShape\n{{expectedShape}}",
+      outputSchema: originalEntry.outputSchema,
+      parameters: {
+        ...originalEntry.parameters,
+        maxLibraryAssets: 3,
+      },
+      changeSummary: "Ajuste de prueba de resumen ejecutivo",
+    };
+
+    try {
+      const validateResponse = await request(app)
+        .post(
+          "/api/settings/ai-parameters/entries/proposal.executive_summary/validate",
+        )
+        .set("Authorization", `Bearer ${token}`)
+        .send(updatedPayload);
+
+      expect(validateResponse.status).toBe(200);
+      expect(validateResponse.body.valid).toBe(true);
+
+      const saveResponse = await request(app)
+        .put(
+          "/api/settings/ai-parameters/entries/proposal.executive_summary",
+        )
+        .set("Authorization", `Bearer ${token}`)
+        .send(updatedPayload);
+
+      expect(saveResponse.status).toBe(200);
+      expect(saveResponse.body.config.status).toBe("draft");
+      expect(saveResponse.body.entry.systemPrompt).toContain(
+        "tono consultivo",
+      );
+      expect(saveResponse.body.entry.published.systemPrompt).toBe(
+        originalEntry.published.systemPrompt,
+      );
+
+      const revisionsResponse = await request(app)
+        .get(
+          "/api/settings/ai-parameters/entries/proposal.executive_summary/revisions",
+        )
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(revisionsResponse.status).toBe(200);
+      expect(revisionsResponse.body.revisions[0]).toEqual(
+        expect.objectContaining({
+          changeSummary: "Ajuste de prueba de resumen ejecutivo",
+          isPublished: false,
+        }),
+      );
+
+      const publishResponse = await request(app)
+        .post("/api/settings/ai-parameters/publish")
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+
+      expect(publishResponse.status).toBe(200);
+      expect(publishResponse.body.config.status).toBe("published");
+      expect(
+        publishResponse.body.entry ||
+          publishResponse.body.config.entries.find(
+            (entry) => entry.capabilityKey === "proposal.executive_summary",
+          ),
+      ).toBeTruthy();
+
+      const restoreResponse = await request(app)
+        .post(
+          `/api/settings/ai-parameters/entries/proposal.executive_summary/restore/${originalEntry.publishedRevisionNumber}`,
+        )
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+
+      expect(restoreResponse.status).toBe(200);
+      expect(restoreResponse.body.config.status).toBe("draft");
+      expect(restoreResponse.body.entry.systemPrompt).toBe(
+        originalEntry.published.systemPrompt,
+      );
+
+      const republishResponse = await request(app)
+        .post("/api/settings/ai-parameters/publish")
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+
+      expect(republishResponse.status).toBe(200);
+      const restoredEntry = republishResponse.body.config.entries.find(
+        (entry) => entry.capabilityKey === "proposal.executive_summary",
+      );
+      expect(restoredEntry.systemPrompt).toBe(originalEntry.published.systemPrompt);
+    } finally {
+      await request(app)
+        .put("/api/settings/ai-parameters/entries/proposal.executive_summary")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          title: originalEntry.title,
+          description: originalEntry.description,
+          isEnabled: originalEntry.isEnabled,
+          modelOverride: originalEntry.modelOverride,
+          timeoutMs: originalEntry.timeoutMs,
+          systemPrompt: originalEntry.systemPrompt,
+          userPromptTemplate: originalEntry.userPromptTemplate,
+          outputSchema: originalEntry.outputSchema,
+          parameters: originalEntry.parameters,
+          changeSummary: "Restauracion automatica de prueba",
+        });
+      await request(app)
+        .post("/api/settings/ai-parameters/publish")
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+    }
   });
 
   test("auth.set-password permite configurar contrasena desde el enlace y luego iniciar sesion", async () => {
@@ -15773,6 +15911,845 @@ describe("API integration baseline", () => {
       Number(createVersionResponse.body.id),
     );
     expect(rebaseResponse.body.proposal.updateAvailable).toBe(false);
+  });
+
+  test("propuestas.ai-summary rechaza assets manuales invalidos antes de encolar el job", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_manual_invalid_assets`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const response = await request(app)
+      .post(
+        `/api/proposals/${createProposalResponse.body.proposal.id}/components/executive_summary/generation-jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        mode: "generate_parallel_suggestion",
+        languageCode: "es",
+        librarySourceMode: "manual",
+        selectedLibraryAssetPublicIds: ["cea_inexistente_1234"],
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        message:
+          "Uno o mas activos seleccionados no son validos para esta generacion",
+        error: expect.objectContaining({
+          code: "invalid_library_sources",
+        }),
+        details: expect.objectContaining({
+          invalidAssetPublicIds: ["cea_inexistente_1234"],
+        }),
+      }),
+    );
+  });
+
+  test("propuestas.ai-summary acepta seleccion manual valida y expone el request persistido del job", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_manual_sources`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const enablementRoleId = await createRole({
+      name: `${TEST_PREFIX}_enablement_manager_manual_sources`,
+      permissionCodes: ["enablement_comercial.manage"],
+    });
+    cleanup.roleIds.push(enablementRoleId);
+    const enablementUserId = await createUser({
+      fullName: "API Enablement Manager",
+      email: `${TEST_PREFIX}.enablement.manager@example.com`,
+      roleIds: [enablementRoleId],
+    });
+    cleanup.userIds.push(enablementUserId);
+    const enablementLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.enablement.manager@example.com`,
+    );
+
+    async function createPublishedLibraryAsset(suffix) {
+      const createAssetResponse = await request(app)
+        .post("/api/commercial-enablement/assets")
+        .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+        .send({
+          title: `${TEST_PREFIX}_${suffix}`,
+          summary: "Activo comercial compartible para el resumen ejecutivo.",
+          assetTypeCode: "solution_brief",
+          status: "draft",
+          sourceType: "url",
+          visibilityLevel: "client_safe",
+          audienceCode: "client",
+          manufacturerCodes: ["microsoft"],
+          solutionCodes: ["seguridad"],
+          industryCodes: ["finanzas"],
+          stageCodes: ["contacto_inicial"],
+        });
+
+      expect(createAssetResponse.status).toBe(201);
+
+      const assetPublicId = createAssetResponse.body.publicId;
+      const createLinkResponse = await request(app)
+        .post(`/api/commercial-enablement/assets/${assetPublicId}/links`)
+        .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+        .send({
+          url: `https://example.com/${suffix}`,
+          label: `Fuente ${suffix}`,
+          description: "Fuente comercial para pruebas de propuesta",
+          isPrimary: true,
+        });
+
+      expect(createLinkResponse.status).toBe(201);
+
+      const publishResponse = await request(app)
+        .post(`/api/commercial-enablement/assets/${assetPublicId}/publish`)
+        .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+        .send({});
+
+      expect(publishResponse.status).toBe(200);
+      return publishResponse.body;
+    }
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    cleanup.proposalIds.push(Number(createProposalResponse.body.proposal.id));
+
+    const asset = await createPublishedLibraryAsset("proposal_ai_source_a");
+
+    const createJobResponse = await request(app)
+      .post(
+        `/api/proposals/${createProposalResponse.body.proposal.id}/components/executive_summary/generation-jobs`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        mode: "generate_parallel_suggestion",
+        languageCode: "es",
+        instructions: "Usa un tono consultivo y orientado a valor.",
+        librarySourceMode: "manual",
+        libraryContentMode: "summary_extract",
+        sourcePriorityMode: "non_library_first",
+        selectedLibraryAssetPublicIds: [asset.publicId],
+      });
+
+    expect(createJobResponse.status).toBe(202);
+    expect(createJobResponse.body.job.request).toEqual({
+      languageCode: "es",
+      instructions: "Usa un tono consultivo y orientado a valor.",
+      maxLibraryAssets: 4,
+      librarySourceMode: "manual",
+      libraryContentMode: "summary_extract",
+      sourcePriorityMode: "non_library_first",
+      selectedLibraryAssetPublicIds: [asset.publicId],
+    });
+
+    const latestJobResponse = await request(app)
+      .get(
+        `/api/proposals/${createProposalResponse.body.proposal.id}/components/executive_summary/generation-jobs/latest`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(latestJobResponse.status).toBe(200);
+    expect(latestJobResponse.body.job).toEqual(
+      expect.objectContaining({
+        publicId: createJobResponse.body.job.publicId,
+        request: {
+          languageCode: "es",
+          instructions: "Usa un tono consultivo y orientado a valor.",
+          maxLibraryAssets: 4,
+          librarySourceMode: "manual",
+          libraryContentMode: "summary_extract",
+          sourcePriorityMode: "non_library_first",
+          selectedLibraryAssetPublicIds: [asset.publicId],
+        },
+      }),
+    );
+
+    await query(`DELETE FROM proposal_ai_jobs WHERE public_id = ?`, [
+      createJobResponse.body.job.publicId,
+    ]);
+  });
+
+  test("propuestas.ai-summary usa la configuracion IA publicada para prompt, modelo y timeout", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_published_parameters`,
+    );
+    const configLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.configuration.manager@example.com`,
+    );
+    const configToken = configLogin.body.token;
+
+    const currentConfigResponse = await request(app)
+      .get("/api/settings/ai-parameters")
+      .set("Authorization", `Bearer ${configToken}`);
+    expect(currentConfigResponse.status).toBe(200);
+
+    const originalEntry = currentConfigResponse.body.config.entries.find(
+      (entry) => entry.capabilityKey === "proposal.executive_summary",
+    );
+    expect(originalEntry).toBeTruthy();
+
+    const customPrompt =
+      "Redacta un resumen ejecutivo en JSON valido. Usa documentSources y generationPolicy como referencias primarias.";
+    const customTemplate =
+      "Plantilla publicada\n{{context}}\nSalida esperada\n{{expectedShape}}";
+
+    await request(app)
+      .put("/api/settings/ai-parameters/entries/proposal.executive_summary")
+      .set("Authorization", `Bearer ${configToken}`)
+      .send({
+        title: originalEntry.title,
+        description: originalEntry.description,
+        isEnabled: true,
+        modelOverride: "gpt-5.4-mini",
+        timeoutMs: 65000,
+        systemPrompt: customPrompt,
+        userPromptTemplate: customTemplate,
+        outputSchema: originalEntry.outputSchema,
+        parameters: originalEntry.parameters,
+        changeSummary: "Configuracion publicada para prueba de consumo",
+      });
+    await request(app)
+      .post("/api/settings/ai-parameters/publish")
+      .set("Authorization", `Bearer ${configToken}`)
+      .send({});
+
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    const proposalId = Number(createProposalResponse.body.proposal.id);
+    cleanup.proposalIds.push(proposalId);
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    title: "Resumen ejecutivo sugerido",
+                    paragraphs: ["Parrafo generado desde configuracion publicada."],
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const createJobResponse = await request(app)
+        .post(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          mode: "generate_parallel_suggestion",
+          languageCode: "es",
+          librarySourceMode: "auto",
+          libraryContentMode: "summary_extract",
+          sourcePriorityMode: "balanced",
+          selectedLibraryAssetPublicIds: [],
+        });
+
+      expect(createJobResponse.status).toBe(202);
+
+      await processPendingProposalExecutiveSummaryGenerationJobs({ limit: 1 });
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const fetchPayload = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(fetchPayload.model).toBe("gpt-5.4-mini");
+      expect(fetchPayload.input[0].content).toBe(customPrompt);
+      expect(fetchPayload.input[1].content).toContain("Plantilla publicada");
+      expect(fetchPayload.input[1].content).toContain("generationPolicy");
+      expect(fetchPayload.input[1].content).toContain("Salida esperada");
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+      await request(app)
+        .put("/api/settings/ai-parameters/entries/proposal.executive_summary")
+        .set("Authorization", `Bearer ${configToken}`)
+        .send({
+          title: originalEntry.title,
+          description: originalEntry.description,
+          isEnabled: originalEntry.isEnabled,
+          modelOverride: originalEntry.modelOverride,
+          timeoutMs: originalEntry.timeoutMs,
+          systemPrompt: originalEntry.systemPrompt,
+          userPromptTemplate: originalEntry.userPromptTemplate,
+          outputSchema: originalEntry.outputSchema,
+          parameters: originalEntry.parameters,
+          changeSummary: "Restauracion automatica de prueba",
+        });
+      await request(app)
+        .post("/api/settings/ai-parameters/publish")
+        .set("Authorization", `Bearer ${configToken}`)
+        .send({});
+    }
+  });
+
+  test("propuestas.ai-summary envia texto fuente de biblioteca y prioridad explicita al modelo", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_library_source_text_context`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const enablementRoleId = await createRole({
+      name: `${TEST_PREFIX}_enablement_manager_source_text_context`,
+      permissionCodes: ["enablement_comercial.manage"],
+    });
+    cleanup.roleIds.push(enablementRoleId);
+    const enablementUserId = await createUser({
+      fullName: "API Enablement Manager Source Context",
+      email: `${TEST_PREFIX}.enablement.source.context@example.com`,
+      roleIds: [enablementRoleId],
+    });
+    cleanup.userIds.push(enablementUserId);
+    const enablementLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.enablement.source.context@example.com`,
+    );
+
+    const createAssetResponse = await request(app)
+      .post("/api/commercial-enablement/assets")
+      .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+      .send({
+        title: `${TEST_PREFIX}_proposal_ai_source_text_asset`,
+        summary: "Resumen comercial corto del activo para continuidad operativa.",
+        assetTypeCode: "solution_brief",
+        status: "draft",
+        sourceType: "url",
+        visibilityLevel: "client_safe",
+        audienceCode: "client",
+        manufacturerCodes: ["microsoft"],
+        solutionCodes: ["seguridad"],
+        industryCodes: ["finanzas"],
+        stageCodes: ["contacto_inicial"],
+      });
+
+    expect(createAssetResponse.status).toBe(201);
+
+    const assetPublicId = String(createAssetResponse.body.publicId || "");
+    await request(app)
+      .post(`/api/commercial-enablement/assets/${assetPublicId}/links`)
+      .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+      .send({
+        url: "https://example.com/proposal-ai-source-text-context",
+        label: "Fuente contexto biblioteca",
+        description: "Fuente de biblioteca para pruebas de contexto IA",
+        isPrimary: true,
+      });
+
+    await query(
+      `INSERT INTO commercial_enablement_item_source_contents
+        (item_id, source_file_name, source_mime_type, source_checksum,
+         extracted_text, extracted_text_summary, accepted_suggestions_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(3))`,
+      [
+        Number(createAssetResponse.body.id),
+        "source-text-context.pdf",
+        "application/pdf",
+        `${TEST_PREFIX}_proposal_ai_source_text_checksum`,
+        "El activo de biblioteca detalla una estrategia de continuidad operativa, seguridad administrada, adopcion gradual y diferenciadores tecnicos para instituciones financieras con foco en banca digital.",
+        "Continuidad operativa y seguridad administrada para banca digital.",
+        JSON.stringify({}),
+      ],
+    );
+
+    const publishResponse = await request(app)
+      .post(`/api/commercial-enablement/assets/${assetPublicId}/publish`)
+      .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+      .send({});
+
+    expect(publishResponse.status).toBe(200);
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    const proposalId = Number(createProposalResponse.body.proposal.id);
+    cleanup.proposalIds.push(proposalId);
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    title: "Resumen ejecutivo sugerido",
+                    paragraphs: [
+                      "La propuesta aprovecha activos documentales de biblioteca con foco explicito en continuidad operativa y seguridad administrada.",
+                    ],
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const createJobResponse = await request(app)
+        .post(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          mode: "generate_parallel_suggestion",
+          languageCode: "es",
+          librarySourceMode: "manual",
+          libraryContentMode: "source_text",
+          sourcePriorityMode: "library_first",
+          selectedLibraryAssetPublicIds: [assetPublicId],
+        });
+
+      expect(createJobResponse.status).toBe(202);
+
+      await processPendingProposalExecutiveSummaryGenerationJobs({ limit: 1 });
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const fetchPayload = JSON.parse(global.fetch.mock.calls[0][1].body);
+      const requestContext = JSON.parse(fetchPayload.input[1].content).context;
+
+      expect(requestContext.generationPolicy).toEqual(
+        expect.objectContaining({
+          librarySourceMode: "manual",
+          libraryContentMode: "source_text",
+          sourcePriorityMode: "library_first",
+        }),
+      );
+      expect(requestContext.libraryContext.documentSources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceKind: "library_asset",
+            assetPublicId,
+            contentModeUsed: "source_text",
+            selectionMode: "manual",
+            text: expect.stringContaining(
+              "estrategia de continuidad operativa",
+            ),
+          }),
+        ]),
+      );
+      expect(requestContext.documentSources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceKind: "library_asset",
+            sourcePriorityGroup: "library",
+            assetPublicId,
+          }),
+        ]),
+      );
+
+      const latestJobResponse = await request(app)
+        .get(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs/latest`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(latestJobResponse.status).toBe(200);
+      expect(latestJobResponse.body.job.result.sources).toEqual(
+        expect.objectContaining({
+          generationPolicy: {
+            librarySourceMode: "manual",
+            libraryContentMode: "source_text",
+            sourcePriorityMode: "library_first",
+          },
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("propuestas.ai-summary no invalida el job si solo cambia updated_at de la propuesta antes de procesarlo", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_auto_timestamp_regression`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    const proposalId = Number(createProposalResponse.body.proposal.id);
+    cleanup.proposalIds.push(proposalId);
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    title: "Resumen ejecutivo sugerido",
+                    paragraphs: [
+                      "La propuesta prioriza continuidad operativa y proteccion del entorno del cliente con una narrativa ejecutiva consistente.",
+                    ],
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const createJobResponse = await request(app)
+        .post(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          mode: "generate_parallel_suggestion",
+          languageCode: "es",
+          maxLibraryAssets: 4,
+          librarySourceMode: "auto",
+          selectedLibraryAssetPublicIds: [],
+        });
+
+      expect(createJobResponse.status).toBe(202);
+      const jobPublicId = String(createJobResponse.body.job.publicId || "");
+      expect(jobPublicId).toBeTruthy();
+
+      await query(
+        `UPDATE proposals
+         SET updated_at = NOW(3), updated_by_user_id = ?
+         WHERE id = ?`,
+        [Number(fixture.sellerUserId), proposalId],
+      );
+
+      await processPendingProposalExecutiveSummaryGenerationJobs({ limit: 1 });
+
+      const latestJobResponse = await request(app)
+        .get(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs/latest`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(latestJobResponse.status).toBe(200);
+      expect(latestJobResponse.body.job).toEqual(
+        expect.objectContaining({
+          publicId: jobPublicId,
+          status: "completed",
+        }),
+      );
+      expect(latestJobResponse.body.job.error).toBeNull();
+      expect(latestJobResponse.body.job.result).toEqual(
+        expect.objectContaining({
+          suggestion: expect.objectContaining({
+            title: "Resumen ejecutivo sugerido",
+          }),
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("propuestas.ai-summary completa la sugerencia aunque el resumen ejecutivo cambie antes de procesar el job", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_proposal_ai_draft_change_regression`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+
+    await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ actionCode: "aprobar" });
+
+    const createProposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({});
+
+    expect(createProposalResponse.status).toBe(201);
+    const proposalId = Number(createProposalResponse.body.proposal.id);
+    cleanup.proposalIds.push(proposalId);
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    title: "Resumen ejecutivo sugerido",
+                    paragraphs: [
+                      "La propuesta sintetiza el contexto comercial actualizado y los beneficios mas relevantes para el cliente.",
+                    ],
+                    warnings: [],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const createJobResponse = await request(app)
+        .post(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          mode: "generate_parallel_suggestion",
+          languageCode: "es",
+          maxLibraryAssets: 4,
+          librarySourceMode: "auto",
+          selectedLibraryAssetPublicIds: [],
+        });
+
+      expect(createJobResponse.status).toBe(202);
+
+      const updateComponentResponse = await request(app)
+        .put(`/api/proposals/${proposalId}/components/executive_summary`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          title: "Resumen ejecutivo",
+          blocks: [
+            {
+              type: "paragraph",
+              text: "El resumen ejecutivo fue ajustado manualmente despues de solicitar la sugerencia IA.",
+              items: [],
+            },
+          ],
+        });
+
+      expect(updateComponentResponse.status).toBe(200);
+
+      await processPendingProposalExecutiveSummaryGenerationJobs({ limit: 1 });
+
+      const latestJobResponse = await request(app)
+        .get(
+          `/api/proposals/${proposalId}/components/executive_summary/generation-jobs/latest`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+
+      expect(latestJobResponse.status).toBe(200);
+      expect(latestJobResponse.body.job).toEqual(
+        expect.objectContaining({
+          publicId: createJobResponse.body.job.publicId,
+          status: "completed",
+        }),
+      );
+      expect(latestJobResponse.body.job.error).toBeNull();
+      expect(latestJobResponse.body.job.result).toEqual(
+        expect.objectContaining({
+          suggestion: expect.objectContaining({
+            title: "Resumen ejecutivo sugerido",
+          }),
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
+  test("enablement.assets reanaliza el resumen de un activo existente usando su contenido fuente", async () => {
+    const enablementRoleId = await createRole({
+      name: `${TEST_PREFIX}_enablement_manager_reanalyze_summary`,
+      permissionCodes: ["enablement_comercial.manage"],
+    });
+    cleanup.roleIds.push(enablementRoleId);
+
+    const enablementUserId = await createUser({
+      fullName: "API Enablement Summary Manager",
+      email: `${TEST_PREFIX}.enablement.summary.manager@example.com`,
+      roleIds: [enablementRoleId],
+    });
+    cleanup.userIds.push(enablementUserId);
+
+    const enablementLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.enablement.summary.manager@example.com`,
+    );
+
+    const createAssetResponse = await request(app)
+      .post("/api/commercial-enablement/assets")
+      .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+      .send({
+        title: `${TEST_PREFIX}_summary_reanalyze_asset`,
+        summary: "Resumen inicial breve.",
+        assetTypeCode: "solution_brief",
+        status: "draft",
+        sourceType: "file",
+        visibilityLevel: "client_safe",
+        audienceCode: "client",
+        manufacturerCodes: ["microsoft"],
+        solutionCodes: ["seguridad"],
+        industryCodes: ["finanzas"],
+        stageCodes: ["contacto_inicial"],
+      });
+
+    expect(createAssetResponse.status).toBe(201);
+
+    await query(
+      `INSERT INTO commercial_enablement_item_source_contents
+        (item_id, source_file_name, source_mime_type, source_checksum,
+         extracted_text, extracted_text_summary, accepted_suggestions_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(3))`,
+      [
+        Number(createAssetResponse.body.id),
+        "secure-edge-overview.pdf",
+        "application/pdf",
+        `${TEST_PREFIX}_summary_checksum`,
+        "El documento describe una propuesta de seguridad perimetral administrada con visibilidad centralizada, mitigacion de amenazas, continuidad operativa y recomendaciones de despliegue para clientes empresariales del sector financiero.",
+        "Documento sobre seguridad perimetral administrada y continuidad operativa.",
+        JSON.stringify({}),
+      ],
+    );
+
+    const detailResponse = await request(app)
+      .get(`/api/commercial-enablement/assets/${createAssetResponse.body.publicId}`)
+      .set("Authorization", `Bearer ${enablementLogin.body.token}`);
+
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.sourceContent).toEqual(
+      expect.objectContaining({
+        canReanalyzeSummary: true,
+        hasExtractedText: true,
+        sourceFileName: "secure-edge-overview.pdf",
+      }),
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            summary:
+              "Documento que resume una propuesta de seguridad perimetral administrada, explicando su alcance, el valor de continuidad operativa y las recomendaciones de despliegue para clientes empresariales.",
+          }),
+        }),
+      });
+
+      const response = await request(app)
+        .post(
+          `/api/commercial-enablement/assets/${createAssetResponse.body.publicId}/reanalyze-summary`,
+        )
+        .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+        .send({ forceRegenerate: true });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          assetPublicId: createAssetResponse.body.publicId,
+          summarySuggestion: expect.objectContaining({
+            text: expect.stringContaining(
+              "seguridad perimetral administrada",
+            ),
+            languageCode: "es",
+            sourceKind: "item_source_content",
+            sourceFileName: "secure-edge-overview.pdf",
+          }),
+          meta: expect.objectContaining({
+            usedAi: true,
+          }),
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
   });
 
   test("configuracion.proposal-content permite guardar defaults con assets institucionales", async () => {

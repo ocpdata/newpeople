@@ -52,6 +52,7 @@ import {
   duplicateCommercialEnablementAsset,
   getCommercialEnablementIntakeExtractedContent,
   getCommercialEnablementIntakeSession,
+  reanalyzeCommercialEnablementAssetSummary,
   reviewCommercialEnablementIntakeSession,
 } from "./commercial-enablement/service.js";
 
@@ -143,6 +144,10 @@ const usageEventSchema = z.object({
   contextType: z.string().trim().max(40).optional().nullable(),
   contextEntityId: z.number().int().positive().optional().nullable(),
   metadata: z.record(z.any()).optional().nullable(),
+});
+
+const assetSummaryReanalyzeSchema = z.object({
+  forceRegenerate: z.boolean().optional().default(true),
 });
 
 const linkSchema = z.object({
@@ -509,6 +514,39 @@ router.put(
       after: resource,
     });
     return res.json(resource);
+  },
+);
+
+router.post(
+  "/assets/:assetPublicId/reanalyze-summary",
+  requireAnyPermission(UPLOAD_PERMISSIONS),
+  async (req, res) => {
+    const parsed = assetSummaryReanalyzeSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      return res.json(
+        await reanalyzeCommercialEnablementAssetSummary({
+          assetPublicId: req.params.assetPublicId,
+          user: req.user,
+          forceRegenerate: parsed.data.forceRegenerate,
+        }),
+      );
+    } catch (error) {
+      return res.status(error.status || 500).json(
+        error.body || {
+          message:
+            error.status && error.status < 500
+              ? error.message
+              : "No fue posible reanalizar el resumen del activo",
+        },
+      );
+    }
   },
 );
 

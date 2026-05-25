@@ -3,6 +3,7 @@ import { query, withTransaction } from "./db.js";
 
 let ensureCompanyProfileTablePromise;
 let ensureTemporaryFeatureSettingsTablePromise;
+let ensureAiParametersSchemaPromise;
 let ensureInstitutionalAssetsSchemaPromise;
 let ensureProposalContentSchemaPromise;
 let ensureProposalContentClonesSchemaPromise;
@@ -36,6 +37,56 @@ export const PROPOSAL_CONTENT_COMPONENT_DEFINITIONS = [
     displayOrder: 13,
   },
   { code: "next_steps", title: "Siguientes pasos", displayOrder: 14 },
+];
+
+export const AI_PARAMETER_CAPABILITY_KEYS = {
+  proposalExecutiveSummary: "proposal.executive_summary",
+};
+
+const AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES = [
+  "source_text",
+  "summary_extract",
+];
+const AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES = [
+  "non_library_first",
+  "balanced",
+  "library_first",
+];
+const AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PROMPT =
+  "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del resumen. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.";
+const AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_USER_PROMPT_TEMPLATE =
+  "{context, expectedShape}";
+const AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_OUTPUT_SCHEMA = {
+  title: "string",
+  paragraphs: ["string"],
+  warnings: ["string"],
+};
+const AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PARAMETERS = {
+  maxLibraryAssets: 4,
+  allowInstructionsField: true,
+  defaultLanguageCode: "es",
+  supportedLibraryContentModes:
+    AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES,
+  supportedSourcePriorityModes:
+    AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES,
+  targetAudience: "client",
+  allowOverwrite: false,
+};
+const AI_PARAMETER_CAPABILITY_DEFINITIONS = [
+  {
+    capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+    title: "Resumen ejecutivo",
+    description:
+      "Generacion del resumen ejecutivo comercial para propuestas.",
+    isEnabled: true,
+    modelOverride: null,
+    timeoutMs: 120000,
+    systemPrompt: AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PROMPT,
+    userPromptTemplate:
+      AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_USER_PROMPT_TEMPLATE,
+    outputSchema: AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_OUTPUT_SCHEMA,
+    parameters: AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PARAMETERS,
+  },
 ];
 
 const PROPOSAL_BLOCK_TYPES = ["heading", "paragraph", "list", "image"];
@@ -1434,6 +1485,157 @@ function normalizeTemporaryFeatureSettingsRow(row) {
   };
 }
 
+function getAiParameterCapabilityDefinition(capabilityKey) {
+  return (
+    AI_PARAMETER_CAPABILITY_DEFINITIONS.find(
+      (entry) => entry.capabilityKey === capabilityKey,
+    ) || null
+  );
+}
+
+function buildDefaultAiParameterEntry(capabilityKey) {
+  const definition = getAiParameterCapabilityDefinition(capabilityKey);
+  if (!definition) return null;
+  return {
+    capabilityKey: definition.capabilityKey,
+    title: definition.title,
+    description: definition.description,
+    isEnabled: Boolean(definition.isEnabled),
+    modelOverride: definition.modelOverride || null,
+    timeoutMs: Number(definition.timeoutMs || 120000),
+    systemPrompt: asText(definition.systemPrompt),
+    userPromptTemplate: asText(definition.userPromptTemplate),
+    outputSchema: safeParseJson(definition.outputSchema, {}) || {},
+    parameters: safeParseJson(definition.parameters, {}) || {},
+  };
+}
+
+function normalizeAiParameterEntrySnapshot(value, fallbackCapabilityKey = "") {
+  const defaults = buildDefaultAiParameterEntry(fallbackCapabilityKey) || {
+    capabilityKey: fallbackCapabilityKey,
+    title: "",
+    description: "",
+    isEnabled: true,
+    modelOverride: null,
+    timeoutMs: 120000,
+    systemPrompt: "",
+    userPromptTemplate: "",
+    outputSchema: {},
+    parameters: {},
+  };
+  const parsed = safeParseJson(value, value);
+  const source = parsed && typeof parsed === "object" ? parsed : {};
+  return {
+    capabilityKey: asText(source.capabilityKey || defaults.capabilityKey),
+    title: asText(source.title || defaults.title),
+    description: asText(source.description || defaults.description),
+    isEnabled:
+      source.isEnabled === undefined
+        ? Boolean(defaults.isEnabled)
+        : Boolean(source.isEnabled),
+    modelOverride: asText(source.modelOverride || defaults.modelOverride) || null,
+    timeoutMs: Math.max(
+      5000,
+      Number(source.timeoutMs || defaults.timeoutMs || 120000),
+    ),
+    systemPrompt: asText(source.systemPrompt || defaults.systemPrompt),
+    userPromptTemplate: asText(
+      source.userPromptTemplate || defaults.userPromptTemplate,
+    ),
+    outputSchema:
+      safeParseJson(source.outputSchema || defaults.outputSchema, {}) || {},
+    parameters:
+      safeParseJson(source.parameters || defaults.parameters, {}) || {},
+  };
+}
+
+function normalizeAiParameterEntryRow(row, publishedSnapshot = null) {
+  const currentSnapshot = normalizeAiParameterEntrySnapshot({
+    capabilityKey: row?.capability_key,
+    title: row?.title,
+    description: row?.description,
+    isEnabled: row?.is_enabled,
+    modelOverride: row?.model_override,
+    timeoutMs: row?.timeout_ms,
+    systemPrompt: row?.system_prompt,
+    userPromptTemplate: row?.user_prompt_template,
+    outputSchema: safeParseJson(row?.output_schema_json, {}),
+    parameters: safeParseJson(row?.parameters_json, {}),
+  }, row?.capability_key);
+  const published = publishedSnapshot
+    ? normalizeAiParameterEntrySnapshot(
+        publishedSnapshot,
+        row?.capability_key || currentSnapshot.capabilityKey,
+      )
+    : null;
+
+  return {
+    id: row?.id ? Number(row.id) : null,
+    capabilityKey: currentSnapshot.capabilityKey,
+    title: currentSnapshot.title,
+    description: currentSnapshot.description,
+    isEnabled: currentSnapshot.isEnabled,
+    modelOverride: currentSnapshot.modelOverride,
+    timeoutMs: Number(currentSnapshot.timeoutMs || 120000),
+    systemPrompt: currentSnapshot.systemPrompt,
+    userPromptTemplate: currentSnapshot.userPromptTemplate,
+    outputSchema: currentSnapshot.outputSchema,
+    parameters: currentSnapshot.parameters,
+    draftRevisionNumber: row?.draft_revision_number
+      ? Number(row.draft_revision_number)
+      : null,
+    publishedRevisionNumber: row?.published_revision_number
+      ? Number(row.published_revision_number)
+      : null,
+    updatedAt: row?.updated_at || null,
+    updatedByUserId: row?.updated_by_user_id
+      ? Number(row.updated_by_user_id)
+      : null,
+    updatedByUserName: asText(row?.updated_by_user_name),
+    createdAt: row?.created_at || null,
+    createdByUserId: row?.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
+    createdByUserName: asText(row?.created_by_user_name),
+    published: published
+      ? {
+          revisionNumber: row?.published_revision_number
+            ? Number(row.published_revision_number)
+            : null,
+          title: published.title,
+          description: published.description,
+          isEnabled: published.isEnabled,
+          modelOverride: published.modelOverride,
+          timeoutMs: Number(published.timeoutMs || 120000),
+          systemPrompt: published.systemPrompt,
+          userPromptTemplate: published.userPromptTemplate,
+          outputSchema: published.outputSchema,
+          parameters: published.parameters,
+        }
+      : null,
+  };
+}
+
+function normalizeAiParameterRevisionRow(row, isPublished = false) {
+  const snapshot = normalizeAiParameterEntrySnapshot(
+    safeParseJson(row?.snapshot_json, {}),
+    row?.capability_key,
+  );
+  return {
+    id: row?.id ? Number(row.id) : null,
+    capabilityKey: snapshot.capabilityKey || asText(row?.capability_key),
+    revisionNumber: row?.revision_number ? Number(row.revision_number) : null,
+    changeSummary: asText(row?.change_summary),
+    createdAt: row?.created_at || null,
+    createdByUserId: row?.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
+    createdByUserName: asText(row?.created_by_user_name),
+    isPublished,
+    snapshot,
+  };
+}
+
 async function ensureCompanyProfileTable() {
   if (!ensureCompanyProfileTablePromise) {
     ensureCompanyProfileTablePromise = query(
@@ -1498,6 +1700,75 @@ async function ensureTemporaryFeatureSettingsTable() {
   await ensureTemporaryFeatureSettingsTablePromise;
 }
 
+async function ensureAiParametersSchema() {
+  if (!ensureAiParametersSchemaPromise) {
+    ensureAiParametersSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS ai_parameter_sets (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          singleton_key VARCHAR(40) NOT NULL,
+          status VARCHAR(40) NOT NULL DEFAULT 'published',
+          published_at DATETIME(3) NULL,
+          published_by_user_id BIGINT UNSIGNED NULL,
+          created_by_user_id BIGINT UNSIGNED NULL,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          CONSTRAINT uq_ai_parameter_sets_singleton UNIQUE (singleton_key),
+          CONSTRAINT fk_ai_parameter_sets_published_by FOREIGN KEY (published_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+          CONSTRAINT fk_ai_parameter_sets_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+          CONSTRAINT fk_ai_parameter_sets_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`,
+      );
+      await query(
+        `CREATE TABLE IF NOT EXISTS ai_parameter_entries (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          ai_parameter_set_id BIGINT UNSIGNED NOT NULL,
+          capability_key VARCHAR(120) NOT NULL,
+          title VARCHAR(190) NOT NULL,
+          description TEXT NULL,
+          is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+          model_override VARCHAR(80) NULL,
+          timeout_ms INT UNSIGNED NOT NULL DEFAULT 120000,
+          system_prompt LONGTEXT NOT NULL,
+          user_prompt_template LONGTEXT NOT NULL,
+          output_schema_json JSON NULL,
+          parameters_json JSON NULL,
+          draft_revision_number INT UNSIGNED NULL,
+          published_revision_number INT UNSIGNED NULL,
+          created_by_user_id BIGINT UNSIGNED NULL,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          CONSTRAINT uq_ai_parameter_entries UNIQUE (ai_parameter_set_id, capability_key),
+          CONSTRAINT fk_ai_parameter_entries_set FOREIGN KEY (ai_parameter_set_id) REFERENCES ai_parameter_sets(id) ON DELETE CASCADE,
+          CONSTRAINT fk_ai_parameter_entries_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+          CONSTRAINT fk_ai_parameter_entries_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`,
+      );
+      await query(
+        `CREATE TABLE IF NOT EXISTS ai_parameter_revisions (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          ai_parameter_entry_id BIGINT UNSIGNED NOT NULL,
+          revision_number INT UNSIGNED NOT NULL,
+          snapshot_json JSON NOT NULL,
+          change_summary VARCHAR(500) NULL,
+          created_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL,
+          CONSTRAINT uq_ai_parameter_revisions UNIQUE (ai_parameter_entry_id, revision_number),
+          CONSTRAINT fk_ai_parameter_revisions_entry FOREIGN KEY (ai_parameter_entry_id) REFERENCES ai_parameter_entries(id) ON DELETE CASCADE,
+          CONSTRAINT fk_ai_parameter_revisions_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`,
+      );
+    })().catch((error) => {
+      ensureAiParametersSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureAiParametersSchemaPromise;
+}
+
 async function ensureDefaultCompanyProfile() {
   await ensureCompanyProfileTable();
 
@@ -1555,6 +1826,77 @@ async function ensureDefaultTemporaryFeatureSettings() {
        WHERE tfs.singleton_key = 'default'
      )`,
   );
+}
+
+async function ensureDefaultAiParameterSettings() {
+  await ensureAiParametersSchema();
+
+  await query(
+    `INSERT INTO ai_parameter_sets
+      (singleton_key, status, published_at, published_by_user_id, created_by_user_id, updated_by_user_id, created_at, updated_at)
+     SELECT 'default', 'published', NOW(3), NULL, NULL, NULL, NOW(3), NOW(3)
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM ai_parameter_sets aps
+       WHERE aps.singleton_key = 'default'
+     )`,
+  );
+
+  const setRows = await query(
+    `SELECT id
+     FROM ai_parameter_sets
+     WHERE singleton_key = 'default'
+     LIMIT 1`,
+  );
+  const setId = Number(setRows[0]?.id || 0);
+  if (!setId) return null;
+
+  for (const definition of AI_PARAMETER_CAPABILITY_DEFINITIONS) {
+    const existingRows = await query(
+      `SELECT id
+       FROM ai_parameter_entries
+       WHERE ai_parameter_set_id = ?
+         AND capability_key = ?
+       LIMIT 1`,
+      [setId, definition.capabilityKey],
+    );
+    if (existingRows.length) continue;
+
+    const snapshot = buildDefaultAiParameterEntry(definition.capabilityKey);
+    const now = new Date();
+    const insertResult = await query(
+      `INSERT INTO ai_parameter_entries
+        (ai_parameter_set_id, capability_key, title, description, is_enabled,
+         model_override, timeout_ms, system_prompt, user_prompt_template,
+         output_schema_json, parameters_json, draft_revision_number,
+         published_revision_number, created_by_user_id, updated_by_user_id,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, NULL, NULL, ?, ?)`,
+      [
+        setId,
+        definition.capabilityKey,
+        snapshot.title,
+        snapshot.description || null,
+        snapshot.isEnabled ? 1 : 0,
+        snapshot.modelOverride || null,
+        snapshot.timeoutMs,
+        snapshot.systemPrompt,
+        snapshot.userPromptTemplate,
+        JSON.stringify(snapshot.outputSchema || {}),
+        JSON.stringify(snapshot.parameters || {}),
+        now,
+        now,
+      ],
+    );
+    await query(
+      `INSERT INTO ai_parameter_revisions
+        (ai_parameter_entry_id, revision_number, snapshot_json, change_summary, created_by_user_id, created_at)
+       VALUES (?, 1, ?, 'Configuracion inicial', NULL, ?)`,
+      [Number(insertResult.insertId), JSON.stringify(snapshot), now],
+    );
+  }
+
+  return setId;
 }
 
 function buildAddressLines(profile) {
@@ -1670,6 +2012,348 @@ export async function saveTemporaryFeatureSettings(settings, actorUserId) {
   }
 
   return getTemporaryFeatureSettings();
+}
+
+async function getDefaultAiParameterSetId(executor = query) {
+  await ensureDefaultAiParameterSettings();
+  const rows = await executeQuery(
+    executor,
+    `SELECT id
+     FROM ai_parameter_sets
+     WHERE singleton_key = 'default'
+     LIMIT 1`,
+  );
+  return Number(rows[0]?.id || 0);
+}
+
+function buildAiParameterEntrySnapshot(payload) {
+  return normalizeAiParameterEntrySnapshot(payload, payload?.capabilityKey);
+}
+
+async function getAiParameterEntryRow(capabilityKey, executor = query) {
+  const setId = await getDefaultAiParameterSetId(executor);
+  if (!setId) return null;
+  const rows = await executeQuery(
+    executor,
+    `SELECT ape.*, uc.full_name AS created_by_user_name,
+            uu.full_name AS updated_by_user_name
+     FROM ai_parameter_entries ape
+     LEFT JOIN users uc ON uc.id = ape.created_by_user_id
+     LEFT JOIN users uu ON uu.id = ape.updated_by_user_id
+     WHERE ape.ai_parameter_set_id = ?
+       AND ape.capability_key = ?
+     LIMIT 1`,
+    [setId, capabilityKey],
+  );
+  return rows[0] || null;
+}
+
+async function getAiParameterRevisionRow(entryId, revisionNumber, executor = query) {
+  const rows = await executeQuery(
+    executor,
+    `SELECT apr.*, u.full_name AS created_by_user_name
+     FROM ai_parameter_revisions apr
+     LEFT JOIN users u ON u.id = apr.created_by_user_id
+     WHERE apr.ai_parameter_entry_id = ?
+       AND apr.revision_number = ?
+     LIMIT 1`,
+    [Number(entryId), Number(revisionNumber)],
+  );
+  return rows[0] || null;
+}
+
+async function updateAiParameterSetStatus(actorUserId, executor = query) {
+  const setId = await getDefaultAiParameterSetId(executor);
+  if (!setId) return null;
+  const draftRows = await executeQuery(
+    executor,
+    `SELECT COUNT(*) AS count
+     FROM ai_parameter_entries
+     WHERE ai_parameter_set_id = ?
+       AND COALESCE(draft_revision_number, 0) <> COALESCE(published_revision_number, 0)`,
+    [setId],
+  );
+  const hasDrafts = Number(draftRows[0]?.count || 0) > 0;
+  await executeQuery(
+    executor,
+    `UPDATE ai_parameter_sets
+     SET status = ?, updated_at = NOW(3), updated_by_user_id = ?
+     WHERE id = ?`,
+    [hasDrafts ? "draft" : "published", actorUserId || null, setId],
+  );
+  return hasDrafts ? "draft" : "published";
+}
+
+export async function getAiParametersConfiguration() {
+  await ensureDefaultAiParameterSettings();
+  const setRows = await query(
+    `SELECT aps.*, up.full_name AS published_by_user_name,
+            uc.full_name AS created_by_user_name,
+            uu.full_name AS updated_by_user_name
+     FROM ai_parameter_sets aps
+     LEFT JOIN users up ON up.id = aps.published_by_user_id
+     LEFT JOIN users uc ON uc.id = aps.created_by_user_id
+     LEFT JOIN users uu ON uu.id = aps.updated_by_user_id
+     WHERE aps.singleton_key = 'default'
+     LIMIT 1`,
+  );
+  const setRow = setRows[0] || null;
+  if (!setRow) {
+    return {
+      status: "published",
+      publishedAt: null,
+      publishedByUserId: null,
+      publishedByUserName: "",
+      updatedAt: null,
+      updatedByUserId: null,
+      updatedByUserName: "",
+      entries: [],
+      capabilities: AI_PARAMETER_CAPABILITY_DEFINITIONS.map((definition) => ({
+        capabilityKey: definition.capabilityKey,
+        title: definition.title,
+        description: definition.description,
+      })),
+    };
+  }
+
+  const entryRows = await query(
+    `SELECT ape.*, uc.full_name AS created_by_user_name,
+            uu.full_name AS updated_by_user_name
+     FROM ai_parameter_entries ape
+     LEFT JOIN users uc ON uc.id = ape.created_by_user_id
+     LEFT JOIN users uu ON uu.id = ape.updated_by_user_id
+     WHERE ape.ai_parameter_set_id = ?
+     ORDER BY ape.capability_key ASC`,
+    [Number(setRow.id)],
+  );
+
+  const publishedRevisionRows = await query(
+    `SELECT ape.capability_key, apr.snapshot_json
+     FROM ai_parameter_entries ape
+     INNER JOIN ai_parameter_revisions apr
+       ON apr.ai_parameter_entry_id = ape.id
+      AND apr.revision_number = ape.published_revision_number
+     WHERE ape.ai_parameter_set_id = ?`,
+    [Number(setRow.id)],
+  );
+  const publishedByCapability = new Map(
+    publishedRevisionRows.map((row) => [
+      asText(row.capability_key),
+      safeParseJson(row.snapshot_json, {}),
+    ]),
+  );
+  const hasDrafts = entryRows.some(
+    (row) =>
+      Number(row.draft_revision_number || 0) !==
+      Number(row.published_revision_number || 0),
+  );
+
+  return {
+    status: hasDrafts ? "draft" : asText(setRow.status) || "published",
+    publishedAt: setRow.published_at || null,
+    publishedByUserId: setRow.published_by_user_id
+      ? Number(setRow.published_by_user_id)
+      : null,
+    publishedByUserName: asText(setRow.published_by_user_name),
+    updatedAt: setRow.updated_at || null,
+    updatedByUserId: setRow.updated_by_user_id
+      ? Number(setRow.updated_by_user_id)
+      : null,
+    updatedByUserName: asText(setRow.updated_by_user_name),
+    entries: entryRows.map((row) =>
+      normalizeAiParameterEntryRow(
+        row,
+        publishedByCapability.get(asText(row.capability_key)) || null,
+      ),
+    ),
+    capabilities: AI_PARAMETER_CAPABILITY_DEFINITIONS.map((definition) => ({
+      capabilityKey: definition.capabilityKey,
+      title: definition.title,
+      description: definition.description,
+    })),
+  };
+}
+
+export async function saveAiParameterEntryDraft(
+  capabilityKey,
+  payload,
+  actorUserId,
+  changeSummary = "Actualizacion manual",
+) {
+  await ensureDefaultAiParameterSettings();
+  await withTransaction(async (conn) => {
+    const entryRow = await getAiParameterEntryRow(capabilityKey, conn);
+    if (!entryRow) {
+      throw new Error(`AI parameter capability not found: ${capabilityKey}`);
+    }
+    const snapshot = buildAiParameterEntrySnapshot({
+      capabilityKey,
+      ...payload,
+    });
+    const nextRevisionRows = await executeQuery(
+      conn,
+      `SELECT COALESCE(MAX(revision_number), 0) + 1 AS next_revision
+       FROM ai_parameter_revisions
+       WHERE ai_parameter_entry_id = ?`,
+      [Number(entryRow.id)],
+    );
+    const nextRevisionNumber = Number(nextRevisionRows[0]?.next_revision || 1);
+    const now = new Date();
+
+    await executeQuery(
+      conn,
+      `INSERT INTO ai_parameter_revisions
+        (ai_parameter_entry_id, revision_number, snapshot_json, change_summary, created_by_user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        Number(entryRow.id),
+        nextRevisionNumber,
+        JSON.stringify(snapshot),
+        asText(changeSummary) || "Actualizacion manual",
+        actorUserId || null,
+        now,
+      ],
+    );
+
+    await executeQuery(
+      conn,
+      `UPDATE ai_parameter_entries
+       SET title = ?, description = ?, is_enabled = ?, model_override = ?, timeout_ms = ?,
+           system_prompt = ?, user_prompt_template = ?, output_schema_json = ?, parameters_json = ?,
+           draft_revision_number = ?, updated_by_user_id = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        snapshot.title,
+        snapshot.description || null,
+        snapshot.isEnabled ? 1 : 0,
+        snapshot.modelOverride || null,
+        snapshot.timeoutMs,
+        snapshot.systemPrompt,
+        snapshot.userPromptTemplate,
+        JSON.stringify(snapshot.outputSchema || {}),
+        JSON.stringify(snapshot.parameters || {}),
+        nextRevisionNumber,
+        actorUserId || null,
+        now,
+        Number(entryRow.id),
+      ],
+    );
+
+    await updateAiParameterSetStatus(actorUserId, conn);
+  });
+
+  return getAiParametersConfiguration();
+}
+
+export async function publishAiParameterConfiguration(actorUserId) {
+  await ensureDefaultAiParameterSettings();
+  await withTransaction(async (conn) => {
+    const setId = await getDefaultAiParameterSetId(conn);
+    const now = new Date();
+    await executeQuery(
+      conn,
+      `UPDATE ai_parameter_entries
+       SET published_revision_number = draft_revision_number,
+           updated_by_user_id = ?,
+           updated_at = ?
+       WHERE ai_parameter_set_id = ?`,
+      [actorUserId || null, now, setId],
+    );
+    await executeQuery(
+      conn,
+      `UPDATE ai_parameter_sets
+       SET status = 'published', published_at = ?, published_by_user_id = ?,
+           updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [now, actorUserId || null, now, actorUserId || null, setId],
+    );
+  });
+
+  return getAiParametersConfiguration();
+}
+
+export async function listAiParameterEntryRevisions(capabilityKey) {
+  await ensureDefaultAiParameterSettings();
+  const entryRow = await getAiParameterEntryRow(capabilityKey);
+  if (!entryRow) return [];
+  const revisionRows = await query(
+    `SELECT apr.*, ape.capability_key, u.full_name AS created_by_user_name
+     FROM ai_parameter_revisions apr
+     INNER JOIN ai_parameter_entries ape ON ape.id = apr.ai_parameter_entry_id
+     LEFT JOIN users u ON u.id = apr.created_by_user_id
+     WHERE apr.ai_parameter_entry_id = ?
+     ORDER BY apr.revision_number DESC, apr.id DESC`,
+    [Number(entryRow.id)],
+  );
+  return revisionRows.map((row) =>
+    normalizeAiParameterRevisionRow(
+      row,
+      Number(row.revision_number) ===
+        Number(entryRow.published_revision_number || 0),
+    ),
+  );
+}
+
+export async function restoreAiParameterEntryRevision(
+  capabilityKey,
+  revisionNumber,
+  actorUserId,
+) {
+  await ensureDefaultAiParameterSettings();
+  const entryRow = await getAiParameterEntryRow(capabilityKey);
+  if (!entryRow) {
+    throw new Error(`AI parameter capability not found: ${capabilityKey}`);
+  }
+  const revisionRow = await getAiParameterRevisionRow(
+    Number(entryRow.id),
+    Number(revisionNumber),
+  );
+  if (!revisionRow) {
+    throw new Error(`AI parameter revision not found: ${revisionNumber}`);
+  }
+  const snapshot = normalizeAiParameterEntrySnapshot(
+    safeParseJson(revisionRow.snapshot_json, {}),
+    capabilityKey,
+  );
+  return saveAiParameterEntryDraft(
+    capabilityKey,
+    snapshot,
+    actorUserId,
+    `Restauracion desde revision ${revisionNumber}`,
+  );
+}
+
+export async function getPublishedAiParameterEntryByCapabilityKey(capabilityKey) {
+  await ensureDefaultAiParameterSettings();
+  const entryRow = await getAiParameterEntryRow(capabilityKey);
+  if (!entryRow) {
+    return buildDefaultAiParameterEntry(capabilityKey);
+  }
+  if (!entryRow.published_revision_number) {
+    return normalizeAiParameterEntryRow(entryRow).published ||
+      normalizeAiParameterEntryRow(entryRow);
+  }
+  const revisionRow = await getAiParameterRevisionRow(
+    Number(entryRow.id),
+    Number(entryRow.published_revision_number),
+  );
+  const snapshot = normalizeAiParameterEntrySnapshot(
+    safeParseJson(revisionRow?.snapshot_json, {}),
+    capabilityKey,
+  );
+  return {
+    capabilityKey: snapshot.capabilityKey,
+    title: snapshot.title,
+    description: snapshot.description,
+    isEnabled: snapshot.isEnabled,
+    modelOverride: snapshot.modelOverride,
+    timeoutMs: snapshot.timeoutMs,
+    systemPrompt: snapshot.systemPrompt,
+    userPromptTemplate: snapshot.userPromptTemplate,
+    outputSchema: snapshot.outputSchema,
+    parameters: snapshot.parameters,
+    publishedRevisionNumber: Number(entryRow.published_revision_number || 0) || null,
+  };
 }
 
 export function buildCompanyDocumentBranding(profile) {
