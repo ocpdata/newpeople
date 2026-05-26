@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
-import { createProposalPrintJob } from "./proposals/proposalPrintStorage";
 import { api, getApiErrorMessage } from "./api";
 
 function formatDateTime(value) {
@@ -106,6 +105,129 @@ const PROPOSAL_BLOCK_TYPE_LABELS = {
   image: "Imagen",
 };
 const EXECUTIVE_SUMMARY_COMPONENT_CODE = "executive_summary";
+const BACKGROUND_COMPONENT_CODE = "background";
+
+function normalizeProposalAiMode(value, fallback = "auto") {
+  return value === "manual" ? "manual" : fallback;
+}
+
+function getDefaultProposalAiCapabilityKey(componentCode, componentKind) {
+  if (componentCode === EXECUTIVE_SUMMARY_COMPONENT_CODE) {
+    return "proposal.executive_summary";
+  }
+  if (componentCode === BACKGROUND_COMPONENT_CODE) {
+    return "proposal.background";
+  }
+  if (componentKind === "custom") {
+    return "proposal.generic_section";
+  }
+  return "proposal.generic_section";
+}
+
+function normalizeProposalComponent(component) {
+  const componentKind = component?.componentKind || "custom";
+  const aiEnabled =
+    component?.aiEnabled === undefined
+      ? Boolean(component?.aiCapabilityKey)
+      : Boolean(component.aiEnabled);
+  const aiMode = aiEnabled
+    ? normalizeProposalAiMode(component?.aiMode, "auto")
+    : null;
+  const aiCapabilityKey = aiEnabled
+    ? component?.aiCapabilityKey ||
+      getDefaultProposalAiCapabilityKey(component?.componentCode, componentKind)
+    : null;
+  return {
+    ...component,
+    componentKind,
+    isVisible:
+      component?.isVisible === undefined ? true : Boolean(component.isVisible),
+    aiEnabled,
+    aiMode,
+    aiCapabilityKey,
+  };
+}
+
+function normalizeProposalDetail(proposal) {
+  if (!proposal || typeof proposal !== "object") return proposal;
+  return {
+    ...proposal,
+    components: Array.isArray(proposal.components)
+      ? proposal.components.map(normalizeProposalComponent)
+      : [],
+  };
+}
+
+function isProposalAiEnabledComponent(component) {
+  return Boolean(component?.aiEnabled && component?.aiCapabilityKey);
+}
+
+function getProposalAiComponentCodes(proposal) {
+  return (Array.isArray(proposal?.components) ? proposal.components : [])
+    .filter((component) => isProposalAiEnabledComponent(component))
+    .map((component) => component.componentCode);
+}
+
+function createDefaultProposalAiComponentState() {
+  return {
+    sourceMode: "auto",
+    libraryContentMode: "source_text",
+    sourcePriorityMode: "balanced",
+    libraryQuery: "",
+    selectedLibraryAssetPublicIds: [],
+    showJobError: false,
+  };
+}
+
+function buildDefaultProposalAiState() {
+  return {};
+}
+
+function buildDefaultProposalAiStateFromProposal(proposal) {
+  const nextState = {};
+  (Array.isArray(proposal?.components) ? proposal.components : []).forEach(
+    (component) => {
+      if (!isProposalAiEnabledComponent(component)) {
+        return;
+      }
+      nextState[component.componentCode] = {
+        ...createDefaultProposalAiComponentState(),
+        sourceMode: normalizeProposalAiMode(component.aiMode, "auto"),
+      };
+    },
+  );
+  return nextState;
+}
+
+function getProposalAiComponentState(state, componentCode) {
+  return state?.[componentCode] || createDefaultProposalAiComponentState();
+}
+
+function buildProposalAiComponentStateFromJob(
+  job,
+  fallbackSourceMode = "auto",
+) {
+  return {
+    sourceMode:
+      job?.request?.librarySourceMode === "manual"
+        ? "manual"
+        : normalizeProposalAiMode(fallbackSourceMode, "auto"),
+    libraryContentMode:
+      job?.request?.libraryContentMode === "summary_extract"
+        ? "summary_extract"
+        : "source_text",
+    sourcePriorityMode:
+      job?.request?.sourcePriorityMode === "non_library_first" ||
+      job?.request?.sourcePriorityMode === "library_first"
+        ? job.request.sourcePriorityMode
+        : "balanced",
+    selectedLibraryAssetPublicIds: Array.isArray(
+      job?.request?.selectedLibraryAssetPublicIds,
+    )
+      ? job.request.selectedLibraryAssetPublicIds
+      : [],
+  };
+}
 
 function ProposalBlockAddIcon({ type }) {
   if (type === "heading") {
@@ -773,18 +895,13 @@ function ProposalComponentCard({
   isDirty,
   aiJob,
   aiSuggestion,
-  executiveSummarySourceMode,
-  executiveSummaryLibraryContentMode,
-  executiveSummarySourcePriorityMode,
-  executiveSummaryLibraryQuery,
-  executiveSummaryLibraryAssets,
-  executiveSummaryLibraryLoading,
-  selectedExecutiveSummaryLibraryAssetPublicIds,
-  onExecutiveSummarySourceModeChange,
-  onExecutiveSummaryLibraryContentModeChange,
-  onExecutiveSummarySourcePriorityModeChange,
-  onExecutiveSummaryLibraryQueryChange,
-  onToggleExecutiveSummaryLibraryAsset,
+  proposalAiState,
+  proposalAiLibraryAssets,
+  proposalAiLibraryLoading,
+  onProposalAiLibraryContentModeChange,
+  onProposalAiSourcePriorityModeChange,
+  onProposalAiLibraryQueryChange,
+  onToggleProposalAiLibraryAsset,
   onChangeDraft,
   onSave,
   onGenerateSuggestion,
@@ -796,14 +913,17 @@ function ProposalComponentCard({
     component.componentCode,
     draft.title || component.title || component.componentCode,
   );
-  const isExecutiveSummaryComponent =
-    component.componentCode === EXECUTIVE_SUMMARY_COMPONENT_CODE;
+  const isAiEnabledComponent = isProposalAiEnabledComponent(component);
+  const componentAiState = getProposalAiComponentState(
+    proposalAiState,
+    component.componentCode,
+  );
   const isGeneratingSuggestion =
     aiJob && ["pending", "running"].includes(aiJob.status);
-  const filteredExecutiveSummaryLibraryAssets = isExecutiveSummaryComponent
-    ? executiveSummaryLibraryAssets.filter((asset) => {
+  const filteredProposalAiLibraryAssets = isAiEnabledComponent
+    ? proposalAiLibraryAssets.filter((asset) => {
         const normalizedQuery = normalizeComparableLabel(
-          executiveSummaryLibraryQuery,
+          componentAiState.libraryQuery,
         );
         if (!normalizedQuery) return true;
 
@@ -818,20 +938,20 @@ function ProposalComponentCard({
         ).includes(normalizedQuery);
       })
     : [];
-  const selectedExecutiveSummaryAssets = isExecutiveSummaryComponent
-    ? selectedExecutiveSummaryLibraryAssetPublicIds.map(
+  const selectedProposalAiAssets = isAiEnabledComponent
+    ? componentAiState.selectedLibraryAssetPublicIds.map(
         (assetPublicId) =>
-          executiveSummaryLibraryAssets.find(
+          proposalAiLibraryAssets.find(
             (asset) => asset.publicId === assetPublicId,
           ) || null,
       )
     : [];
-  const canGenerateExecutiveSummarySuggestion =
+  const canGenerateProposalAiSuggestion =
     !busy &&
     !isGeneratingSuggestion &&
-    (!isExecutiveSummaryComponent ||
-      executiveSummarySourceMode === "auto" ||
-      selectedExecutiveSummaryLibraryAssetPublicIds.length > 0);
+    (!isAiEnabledComponent ||
+      componentAiState.sourceMode === "auto" ||
+      componentAiState.selectedLibraryAssetPublicIds.length > 0);
 
   function updateBlock(index, changes) {
     onChangeDraft(component.componentCode, {
@@ -884,50 +1004,6 @@ function ProposalComponentCard({
             ) : null}
           </div>
         </div>
-        <div className="proposal-component-card-head-actions">
-          {isExecutiveSummaryComponent ? (
-            <button
-              type="button"
-              className="proposal-component-ai-icon-button"
-              disabled={!canGenerateExecutiveSummarySuggestion}
-              onClick={() => onGenerateSuggestion(component.componentCode)}
-              aria-label={
-                isGeneratingSuggestion
-                  ? "Generando sugerencia con IA"
-                  : executiveSummarySourceMode === "manual" &&
-                      !selectedExecutiveSummaryLibraryAssetPublicIds.length
-                    ? "Selecciona al menos un activo de biblioteca"
-                  : "Generar sugerencia con IA"
-              }
-              title={
-                isGeneratingSuggestion
-                  ? aiJob?.progress?.label || "Generando sugerencia con IA"
-                  : executiveSummarySourceMode === "manual" &&
-                      !selectedExecutiveSummaryLibraryAssetPublicIds.length
-                    ? "Selecciona al menos un activo de biblioteca"
-                  : "Generar sugerencia con IA"
-              }
-            >
-              <ProposalAiIcon />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="proposal-component-save-icon-button"
-            disabled={busy}
-            onClick={() => onSave(component.componentCode)}
-            aria-label={busy ? "Guardando seccion" : "Guardar seccion"}
-            title={busy ? "Guardando..." : "Guardar seccion"}
-          >
-            {busy ? (
-              <span aria-hidden="true">...</span>
-            ) : (
-              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                <path d="M5 4.75A1.75 1.75 0 0 1 6.75 3h8.836c.464 0 .909.184 1.237.513l2.664 2.664c.329.328.513.773.513 1.237V19.25A1.75 1.75 0 0 1 18.25 21h-12.5A1.75 1.75 0 0 1 4 19.25zm2 0v4.5h8v-4.5zm0 8.5v5.75h10v-8.75h-2.25a1.75 1.75 0 0 1-1.75-1.75V5H9v4.5A1.75 1.75 0 0 1 7.25 11H7z" />
-              </svg>
-            )}
-          </button>
-        </div>
       </div>
 
       <label className="proposal-component-title-field">
@@ -944,7 +1020,7 @@ function ProposalComponentCard({
         />
       </label>
 
-      {isExecutiveSummaryComponent ? (
+      {isAiEnabledComponent ? (
         <section className="proposal-component-ai-panel">
           <div className="proposal-component-ai-panel-head">
             <div>
@@ -984,35 +1060,24 @@ function ProposalComponentCard({
             <div className="proposal-component-ai-source-mode-copy">
               <strong>Fuentes de biblioteca</strong>
               <p className="field-hint">
-                Define si la IA elige activos sugeridos automaticamente o si
-                debe usar una seleccion manual.
+                {componentAiState.sourceMode === "manual"
+                  ? "Esta seccion usa modo manual. Debes elegir explicitamente los activos de biblioteca antes de generar la sugerencia."
+                  : "Esta seccion usa modo automatico. La IA elegira automaticamente hasta 4 activos sugeridos."}
               </p>
             </div>
             <div className="proposal-component-ai-source-mode-toggle">
-              <button
-                type="button"
-                className={
-                  executiveSummarySourceMode === "auto"
-                    ? "proposal-component-ai-source-pill is-selected"
-                    : "proposal-component-ai-source-pill"
-                }
-                onClick={() => onExecutiveSummarySourceModeChange("auto")}
-              >
-                <span>Automatico</span>
-                <small>La IA elige hasta 4 activos</small>
-              </button>
-              <button
-                type="button"
-                className={
-                  executiveSummarySourceMode === "manual"
-                    ? "proposal-component-ai-source-pill is-selected"
-                    : "proposal-component-ai-source-pill"
-                }
-                onClick={() => onExecutiveSummarySourceModeChange("manual")}
-              >
-                <span>Manual</span>
-                <small>Solo usa los activos elegidos</small>
-              </button>
+              <div className="proposal-component-ai-source-pill is-selected">
+                <span>
+                  {componentAiState.sourceMode === "manual"
+                    ? "Manual"
+                    : "Automatico"}
+                </span>
+                <small>
+                  {componentAiState.sourceMode === "manual"
+                    ? "Solo usa los activos elegidos"
+                    : "La IA elige hasta 4 activos"}
+                </small>
+              </div>
             </div>
 
             <div className="proposal-component-ai-policy-grid">
@@ -1033,12 +1098,15 @@ function ProposalComponentCard({
                   <button
                     type="button"
                     className={
-                      executiveSummaryLibraryContentMode === "source_text"
+                      componentAiState.libraryContentMode === "source_text"
                         ? "proposal-component-ai-policy-pill is-selected"
                         : "proposal-component-ai-policy-pill"
                     }
                     onClick={() =>
-                      onExecutiveSummaryLibraryContentModeChange("source_text")
+                      onProposalAiLibraryContentModeChange(
+                        component.componentCode,
+                        "source_text",
+                      )
                     }
                   >
                     <ProposalAiDocumentIcon />
@@ -1047,12 +1115,13 @@ function ProposalComponentCard({
                   <button
                     type="button"
                     className={
-                      executiveSummaryLibraryContentMode === "summary_extract"
+                      componentAiState.libraryContentMode === "summary_extract"
                         ? "proposal-component-ai-policy-pill is-selected"
                         : "proposal-component-ai-policy-pill"
                     }
                     onClick={() =>
-                      onExecutiveSummaryLibraryContentModeChange(
+                      onProposalAiLibraryContentModeChange(
+                        component.componentCode,
                         "summary_extract",
                       )
                     }
@@ -1080,13 +1149,14 @@ function ProposalComponentCard({
                   <button
                     type="button"
                     className={
-                      executiveSummarySourcePriorityMode ===
+                      componentAiState.sourcePriorityMode ===
                       "non_library_first"
                         ? "proposal-component-ai-policy-pill is-selected"
                         : "proposal-component-ai-policy-pill"
                     }
                     onClick={() =>
-                      onExecutiveSummarySourcePriorityModeChange(
+                      onProposalAiSourcePriorityModeChange(
+                        component.componentCode,
                         "non_library_first",
                       )
                     }
@@ -1097,12 +1167,15 @@ function ProposalComponentCard({
                   <button
                     type="button"
                     className={
-                      executiveSummarySourcePriorityMode === "balanced"
+                      componentAiState.sourcePriorityMode === "balanced"
                         ? "proposal-component-ai-policy-pill is-selected"
                         : "proposal-component-ai-policy-pill"
                     }
                     onClick={() =>
-                      onExecutiveSummarySourcePriorityModeChange("balanced")
+                      onProposalAiSourcePriorityModeChange(
+                        component.componentCode,
+                        "balanced",
+                      )
                     }
                   >
                     <ProposalAiPriorityIcon />
@@ -1111,12 +1184,13 @@ function ProposalComponentCard({
                   <button
                     type="button"
                     className={
-                      executiveSummarySourcePriorityMode === "library_first"
+                      componentAiState.sourcePriorityMode === "library_first"
                         ? "proposal-component-ai-policy-pill is-selected"
                         : "proposal-component-ai-policy-pill"
                     }
                     onClick={() =>
-                      onExecutiveSummarySourcePriorityModeChange(
+                      onProposalAiSourcePriorityModeChange(
+                        component.componentCode,
                         "library_first",
                       )
                     }
@@ -1129,34 +1203,41 @@ function ProposalComponentCard({
             </div>
           </div>
 
-          {executiveSummarySourceMode === "manual" ? (
+          {componentAiState.sourceMode === "manual" ? (
             <div className="proposal-component-ai-library-picker">
               <label className="proposal-component-ai-library-search">
                 <span>Buscar activos</span>
                 <input
                   type="search"
-                  value={executiveSummaryLibraryQuery}
+                  value={componentAiState.libraryQuery}
                   placeholder="Buscar por titulo, resumen, fabricante o solucion"
                   onChange={(event) =>
-                    onExecutiveSummaryLibraryQueryChange(event.target.value)
+                    onProposalAiLibraryQueryChange(
+                      component.componentCode,
+                      event.target.value,
+                    )
                   }
                 />
               </label>
 
               <div className="proposal-component-ai-library-selected-bar">
                 <strong>
-                  Seleccionados: {selectedExecutiveSummaryLibraryAssetPublicIds.length}
+                  Seleccionados:{" "}
+                  {componentAiState.selectedLibraryAssetPublicIds.length}
                   /4
                 </strong>
                 <div className="proposal-component-ai-library-selected-chips">
-                  {selectedExecutiveSummaryAssets.filter(Boolean).length ? (
-                    selectedExecutiveSummaryAssets.filter(Boolean).map((asset) => (
+                  {selectedProposalAiAssets.filter(Boolean).length ? (
+                    selectedProposalAiAssets.filter(Boolean).map((asset) => (
                       <button
                         key={asset.publicId}
                         type="button"
                         className="proposal-component-ai-library-selected-chip"
                         onClick={() =>
-                          onToggleExecutiveSummaryLibraryAsset(asset.publicId)
+                          onToggleProposalAiLibraryAsset(
+                            component.componentCode,
+                            asset.publicId,
+                          )
                         }
                       >
                         <span>{asset.title}</span>
@@ -1171,7 +1252,7 @@ function ProposalComponentCard({
                 </div>
               </div>
 
-              {executiveSummaryLibraryLoading ? (
+              {proposalAiLibraryLoading ? (
                 <div className="proposal-component-ai-status-row">
                   <span
                     className="proposal-component-ai-spinner"
@@ -1179,16 +1260,18 @@ function ProposalComponentCard({
                   />
                   <span>Cargando biblioteca comercial...</span>
                 </div>
-              ) : filteredExecutiveSummaryLibraryAssets.length ? (
+              ) : filteredProposalAiLibraryAssets.length ? (
                 <div className="proposal-component-ai-library-grid">
-                  {filteredExecutiveSummaryLibraryAssets.slice(0, 8).map((asset) => {
-                    const isSelected = selectedExecutiveSummaryLibraryAssetPublicIds.includes(
-                      asset.publicId,
-                    );
-                    const manufacturerNames = getCommercialEnablementCatalogNames(
-                      asset,
-                      "manufacturer",
-                    );
+                  {filteredProposalAiLibraryAssets.slice(0, 8).map((asset) => {
+                    const isSelected =
+                      componentAiState.selectedLibraryAssetPublicIds.includes(
+                        asset.publicId,
+                      );
+                    const manufacturerNames =
+                      getCommercialEnablementCatalogNames(
+                        asset,
+                        "manufacturer",
+                      );
                     const solutionNames = getCommercialEnablementCatalogNames(
                       asset,
                       "solution",
@@ -1206,11 +1289,15 @@ function ProposalComponentCard({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() =>
-                            onToggleExecutiveSummaryLibraryAsset(asset.publicId)
+                            onToggleProposalAiLibraryAsset(
+                              component.componentCode,
+                              asset.publicId,
+                            )
                           }
                           disabled={
                             !isSelected &&
-                            selectedExecutiveSummaryLibraryAssetPublicIds.length >= 4
+                            componentAiState.selectedLibraryAssetPublicIds
+                              .length >= 4
                           }
                         />
                         <div className="proposal-component-ai-library-option-copy">
@@ -1222,13 +1309,18 @@ function ProposalComponentCard({
                           <div className="proposal-component-ai-library-option-meta">
                             <span>{asset.visibilityLabel}</span>
                             {manufacturerNames.map((name) => (
-                              <span key={`${asset.publicId}-${name}`}>{name}</span>
+                              <span key={`${asset.publicId}-${name}`}>
+                                {name}
+                              </span>
                             ))}
                             {solutionNames.map((name) => (
-                              <span key={`${asset.publicId}-${name}`}>{name}</span>
+                              <span key={`${asset.publicId}-${name}`}>
+                                {name}
+                              </span>
                             ))}
                             <span>
-                              {asset.files.length} archivo(s) · {asset.links.length} URL(s)
+                              {asset.files.length} archivo(s) ·{" "}
+                              {asset.links.length} URL(s)
                             </span>
                           </div>
                         </div>
@@ -1240,8 +1332,8 @@ function ProposalComponentCard({
                 <div className="proposal-component-ai-library-empty">
                   <strong>No hay activos disponibles</strong>
                   <span>
-                    Ajusta tu busqueda o verifica que existan activos publicados y
-                    compartibles con cliente.
+                    Ajusta tu busqueda o verifica que existan activos publicados
+                    y compartibles con cliente.
                   </span>
                 </div>
               )}
@@ -1249,14 +1341,15 @@ function ProposalComponentCard({
           ) : (
             <p className="field-hint proposal-component-ai-helper-note">
               La IA elegira automaticamente hasta 4 activos publicados y
-              compartibles con cliente usando {" "}
+              compartibles con cliente usando{" "}
               {formatExecutiveSummaryLibraryContentModeLabel(
-                executiveSummaryLibraryContentMode,
+                componentAiState.libraryContentMode,
               ).toLowerCase()}{" "}
-              con prioridad {" "}
+              con prioridad{" "}
               {formatExecutiveSummarySourcePriorityModeLabel(
-                executiveSummarySourcePriorityMode,
-              ).toLowerCase()}.
+                componentAiState.sourcePriorityMode,
+              ).toLowerCase()}
+              .
             </p>
           )}
 
@@ -1288,13 +1381,15 @@ function ProposalComponentCard({
                     Activos: {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
                   </span>
                   <span>
-                    Contenido: {formatExecutiveSummaryLibraryContentModeLabel(
+                    Contenido:{" "}
+                    {formatExecutiveSummaryLibraryContentModeLabel(
                       aiSuggestion.sources?.generationPolicy
                         ?.libraryContentMode,
                     )}
                   </span>
                   <span>
-                    Prioridad: {formatExecutiveSummarySourcePriorityModeLabel(
+                    Prioridad:{" "}
+                    {formatExecutiveSummarySourcePriorityModeLabel(
                       aiSuggestion.sources?.generationPolicy
                         ?.sourcePriorityMode,
                     )}
@@ -1340,10 +1435,10 @@ function ProposalComponentCard({
               />
               <span>{aiJob?.progress?.label || "Generando sugerencia..."}</span>
             </div>
-          ) : aiJob?.status === "failed" ? (
+          ) : aiJob?.status === "failed" && componentAiState.showJobError ? (
             <div className="proposal-component-ai-error">
               {aiJob.error?.message ||
-                "No fue posible generar una sugerencia para este resumen."}
+                "No fue posible generar una sugerencia para esta seccion."}
             </div>
           ) : (
             <p className="field-hint">
@@ -1371,6 +1466,50 @@ function ProposalComponentCard({
             <ProposalBlockAddIcon type={type} />
           </button>
         ))}
+        <div className="proposal-component-toolbar-actions">
+          {isAiEnabledComponent ? (
+            <button
+              type="button"
+              className="proposal-component-ai-icon-button"
+              disabled={!canGenerateProposalAiSuggestion}
+              onClick={() => onGenerateSuggestion(component.componentCode)}
+              aria-label={
+                isGeneratingSuggestion
+                  ? "Generando sugerencia con IA"
+                  : componentAiState.sourceMode === "manual" &&
+                      !componentAiState.selectedLibraryAssetPublicIds.length
+                    ? "Selecciona al menos un activo de biblioteca"
+                    : "Generar sugerencia con IA"
+              }
+              title={
+                isGeneratingSuggestion
+                  ? aiJob?.progress?.label || "Generando sugerencia con IA"
+                  : componentAiState.sourceMode === "manual" &&
+                      !componentAiState.selectedLibraryAssetPublicIds.length
+                    ? "Selecciona al menos un activo de biblioteca"
+                    : "Generar sugerencia con IA"
+              }
+            >
+              <ProposalAiIcon />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="proposal-component-save-icon-button"
+            disabled={busy}
+            onClick={() => onSave(component.componentCode)}
+            aria-label={busy ? "Guardando seccion" : "Guardar seccion"}
+            title={busy ? "Guardando..." : "Guardar seccion"}
+          >
+            {busy ? (
+              <span aria-hidden="true">...</span>
+            ) : (
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M5 4.75A1.75 1.75 0 0 1 6.75 3h8.836c.464 0 .909.184 1.237.513l2.664 2.664c.329.328.513.773.513 1.237V19.25A1.75 1.75 0 0 1 18.25 21h-12.5A1.75 1.75 0 0 1 4 19.25zm2 0v4.5h8v-4.5zm0 8.5v5.75h10v-8.75h-2.25a1.75 1.75 0 0 1-1.75-1.75V5H9v4.5A1.75 1.75 0 0 1 7.25 11H7z" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="proposal-component-block-list">
@@ -1471,13 +1610,9 @@ function ProposalEditorModal({
   proposalAssets,
   componentGenerationJobs,
   componentSuggestions,
-  executiveSummarySourceMode,
-  executiveSummaryLibraryContentMode,
-  executiveSummarySourcePriorityMode,
-  executiveSummaryLibraryQuery,
-  executiveSummaryLibraryAssets,
-  executiveSummaryLibraryLoading,
-  selectedExecutiveSummaryLibraryAssetPublicIds,
+  proposalAiState,
+  proposalAiLibraryAssets,
+  proposalAiLibraryLoading,
   busyAction,
   onClose,
   onOpenPreview,
@@ -1488,11 +1623,10 @@ function ProposalEditorModal({
   onSaveMetadata,
   onComponentDraftChange,
   onSaveComponent,
-  onExecutiveSummarySourceModeChange,
-  onExecutiveSummaryLibraryContentModeChange,
-  onExecutiveSummarySourcePriorityModeChange,
-  onExecutiveSummaryLibraryQueryChange,
-  onToggleExecutiveSummaryLibraryAsset,
+  onProposalAiLibraryContentModeChange,
+  onProposalAiSourcePriorityModeChange,
+  onProposalAiLibraryQueryChange,
+  onToggleProposalAiLibraryAsset,
   onGenerateSuggestion,
   onRefreshSuggestionStatus,
   onApplySuggestion,
@@ -1740,37 +1874,20 @@ function ProposalEditorModal({
                     isDirty={dirtyComponentCodes.has(component.componentCode)}
                     aiJob={componentGenerationJobs[component.componentCode]}
                     aiSuggestion={componentSuggestions[component.componentCode]}
-                    executiveSummarySourceMode={executiveSummarySourceMode}
-                    executiveSummaryLibraryContentMode={
-                      executiveSummaryLibraryContentMode
+                    proposalAiState={proposalAiState}
+                    proposalAiLibraryAssets={proposalAiLibraryAssets}
+                    proposalAiLibraryLoading={proposalAiLibraryLoading}
+                    onProposalAiLibraryContentModeChange={
+                      onProposalAiLibraryContentModeChange
                     }
-                    executiveSummarySourcePriorityMode={
-                      executiveSummarySourcePriorityMode
+                    onProposalAiSourcePriorityModeChange={
+                      onProposalAiSourcePriorityModeChange
                     }
-                    executiveSummaryLibraryQuery={executiveSummaryLibraryQuery}
-                    executiveSummaryLibraryAssets={
-                      executiveSummaryLibraryAssets
+                    onProposalAiLibraryQueryChange={
+                      onProposalAiLibraryQueryChange
                     }
-                    executiveSummaryLibraryLoading={
-                      executiveSummaryLibraryLoading
-                    }
-                    selectedExecutiveSummaryLibraryAssetPublicIds={
-                      selectedExecutiveSummaryLibraryAssetPublicIds
-                    }
-                    onExecutiveSummarySourceModeChange={
-                      onExecutiveSummarySourceModeChange
-                    }
-                    onExecutiveSummaryLibraryContentModeChange={
-                      onExecutiveSummaryLibraryContentModeChange
-                    }
-                    onExecutiveSummarySourcePriorityModeChange={
-                      onExecutiveSummarySourcePriorityModeChange
-                    }
-                    onExecutiveSummaryLibraryQueryChange={
-                      onExecutiveSummaryLibraryQueryChange
-                    }
-                    onToggleExecutiveSummaryLibraryAsset={
-                      onToggleExecutiveSummaryLibraryAsset
+                    onToggleProposalAiLibraryAsset={
+                      onToggleProposalAiLibraryAsset
                     }
                     onChangeDraft={(componentCode, nextDraft) =>
                       onComponentDraftChange((current) => ({
@@ -1799,6 +1916,7 @@ export default function ProposalsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const createRequestRef = useRef("");
   const proposalsLoadRequestRef = useRef(0);
+  const appliedProposalSuggestionJobRef = useRef(new Map());
   const [proposals, setProposals] = useState([]);
   const [proposalSearchTerm, setProposalSearchTerm] = useState("");
   const [proposalStatusFilter, setProposalStatusFilter] = useState("all");
@@ -1832,21 +1950,69 @@ export default function ProposalsPage() {
   const [componentDrafts, setComponentDrafts] = useState({});
   const [componentGenerationJobs, setComponentGenerationJobs] = useState({});
   const [componentSuggestions, setComponentSuggestions] = useState({});
-  const [executiveSummarySourceMode, setExecutiveSummarySourceMode] =
-    useState("auto");
-  const [executiveSummaryLibraryContentMode, setExecutiveSummaryLibraryContentMode] =
-    useState("source_text");
-  const [executiveSummarySourcePriorityMode, setExecutiveSummarySourcePriorityMode] =
-    useState("balanced");
-  const [executiveSummaryLibraryQuery, setExecutiveSummaryLibraryQuery] =
-    useState("");
-  const [executiveSummaryLibraryAssets, setExecutiveSummaryLibraryAssets] =
-    useState([]);
-  const [executiveSummaryLibraryLoading, setExecutiveSummaryLibraryLoading] =
+  const [proposalAiState, setProposalAiState] = useState(
+    buildDefaultProposalAiState(),
+  );
+  const [proposalAiLibraryAssets, setProposalAiLibraryAssets] = useState([]);
+  const [proposalAiLibraryLoading, setProposalAiLibraryLoading] =
     useState(false);
-  const [executiveSummaryLibraryLoaded, setExecutiveSummaryLibraryLoaded] =
-    useState(false);
-  const [selectedExecutiveSummaryLibraryAssetPublicIds, setSelectedExecutiveSummaryLibraryAssetPublicIds] = useState([]);
+  const [proposalAiLibraryLoaded, setProposalAiLibraryLoaded] = useState(false);
+  const proposalAiComponentCodes = useMemo(
+    () => getProposalAiComponentCodes(selectedProposal),
+    [selectedProposal],
+  );
+  const proposalAiHasActiveJob = proposalAiComponentCodes.some(
+    (componentCode) => {
+      const job = componentGenerationJobs[componentCode] || null;
+      return job && !isProposalAiJobTerminal(job);
+    },
+  );
+  const proposalAiRequiresLibraryAssets = proposalAiComponentCodes.some(
+    (componentCode) =>
+      getProposalAiComponentState(proposalAiState, componentCode).sourceMode ===
+      "manual",
+  );
+
+  function setProposalAiComponentState(componentCode, nextValue) {
+    setProposalAiState((current) => {
+      const previousState = getProposalAiComponentState(current, componentCode);
+      const resolvedState =
+        typeof nextValue === "function"
+          ? nextValue(previousState)
+          : { ...previousState, ...nextValue };
+      return {
+        ...current,
+        [componentCode]: resolvedState,
+      };
+    });
+  }
+
+  function resetAllProposalAiState() {
+    appliedProposalSuggestionJobRef.current.clear();
+    setComponentGenerationJobs({});
+    setComponentSuggestions({});
+    setProposalAiState(buildDefaultProposalAiState());
+    setProposalAiLibraryAssets([]);
+    setProposalAiLibraryLoading(false);
+    setProposalAiLibraryLoaded(false);
+  }
+
+  function resetProposalAiComponentState(componentCode) {
+    setComponentGenerationJobs((current) => {
+      const next = { ...current };
+      delete next[componentCode];
+      return next;
+    });
+    setComponentSuggestions((current) => {
+      const next = { ...current };
+      delete next[componentCode];
+      return next;
+    });
+    setProposalAiComponentState(
+      componentCode,
+      createDefaultProposalAiComponentState(),
+    );
+  }
 
   const selectedProposalId =
     Number(searchParams.get("proposalId") || 0) || null;
@@ -1936,23 +2102,79 @@ export default function ProposalsPage() {
   }, [proposals, proposalSearchTerm, proposalStatusFilter]);
 
   useEffect(() => {
-    if (!selectedProposal) {
-      setMetadataDraft({ title: "", statusCode: "active" });
-      setComponentDrafts({});
-      setComponentGenerationJobs({});
-      setComponentSuggestions({});
-      setExecutiveSummarySourceMode("auto");
-      setExecutiveSummaryLibraryContentMode("source_text");
-      setExecutiveSummarySourcePriorityMode("balanced");
-      setExecutiveSummaryLibraryQuery("");
-      setExecutiveSummaryLibraryAssets([]);
-      setExecutiveSummaryLibraryLoaded(false);
-      setSelectedExecutiveSummaryLibraryAssetPublicIds([]);
-      return;
-    }
-    setMetadataDraft(buildMetadataDraftFromProposal(selectedProposal));
-    setComponentDrafts(buildComponentDraftMap(selectedProposal.components));
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (!selectedProposal) {
+        setMetadataDraft({ title: "", statusCode: "active" });
+        setComponentDrafts({});
+        resetAllProposalAiState();
+        return;
+      }
+
+      setMetadataDraft(buildMetadataDraftFromProposal(selectedProposal));
+      setComponentDrafts(buildComponentDraftMap(selectedProposal.components));
+      setProposalAiState(
+        buildDefaultProposalAiStateFromProposal(selectedProposal),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProposal]);
+
+  async function refreshLatestProposalAiGeneration(proposalId, componentCode) {
+    const numericProposalId = Number(proposalId || 0);
+    if (
+      !numericProposalId ||
+      !proposalAiComponentCodes.includes(componentCode)
+    ) {
+      return null;
+    }
+
+    const { data } = await api.get(
+      `/api/proposals/${numericProposalId}/components/${componentCode}/generation-jobs/latest`,
+    );
+    const nextJob = normalizeProposalAiJob(data?.job);
+
+    setComponentGenerationJobs((current) => {
+      const next = { ...current };
+      if (nextJob) {
+        next[componentCode] = nextJob;
+      } else {
+        delete next[componentCode];
+      }
+      return next;
+    });
+
+    setProposalAiComponentState(
+      componentCode,
+      buildProposalAiComponentStateFromJob(
+        nextJob,
+        normalizeProposalAiMode(
+          selectedProposal?.components?.find(
+            (component) => component.componentCode === componentCode,
+          )?.aiMode,
+          "auto",
+        ),
+      ),
+    );
+
+    const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
+    setComponentSuggestions((current) => {
+      const next = { ...current };
+      if (nextSuggestion) {
+        next[componentCode] = nextSuggestion;
+      } else {
+        delete next[componentCode];
+      }
+      return next;
+    });
+
+    return nextJob;
+  }
 
   useEffect(() => {
     if (!selectedProposal?.id) {
@@ -1961,96 +2183,56 @@ export default function ProposalsPage() {
 
     let cancelled = false;
 
-    async function loadLatestExecutiveSummaryGeneration() {
+    async function loadLatestProposalAiGenerations() {
       try {
-        const { data } = await api.get(
-          `/api/proposals/${selectedProposal.id}/components/executive_summary/generation-jobs/latest`,
+        const entries = await Promise.all(
+          proposalAiComponentCodes.map(async (componentCode) => {
+            const { data } = await api.get(
+              `/api/proposals/${selectedProposal.id}/components/${componentCode}/generation-jobs/latest`,
+            );
+            return [componentCode, normalizeProposalAiJob(data?.job)];
+          }),
         );
         if (cancelled) return;
-        const nextJob = normalizeProposalAiJob(data?.job);
-        setComponentGenerationJobs(
-          nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
-        );
-        setExecutiveSummarySourceMode(
-          nextJob?.request?.librarySourceMode === "manual" ? "manual" : "auto",
-        );
-        setExecutiveSummaryLibraryContentMode(
-          nextJob?.request?.libraryContentMode === "summary_extract"
-            ? "summary_extract"
-            : "source_text",
-        );
-        setExecutiveSummarySourcePriorityMode(
-          nextJob?.request?.sourcePriorityMode === "non_library_first" ||
-            nextJob?.request?.sourcePriorityMode === "library_first"
-            ? nextJob.request.sourcePriorityMode
-            : "balanced",
-        );
-        setSelectedExecutiveSummaryLibraryAssetPublicIds(
-          Array.isArray(nextJob?.request?.selectedLibraryAssetPublicIds)
-            ? nextJob.request.selectedLibraryAssetPublicIds
-            : [],
-        );
-        const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
-        setComponentSuggestions(
-          nextSuggestion
-            ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextSuggestion }
-            : {},
-        );
+
+        const nextJobs = {};
+        const nextSuggestions = {};
+        const nextState =
+          buildDefaultProposalAiStateFromProposal(selectedProposal);
+        entries.forEach(([componentCode, nextJob]) => {
+          if (nextJob) {
+            nextJobs[componentCode] = nextJob;
+          }
+          const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
+          if (nextSuggestion) {
+            nextSuggestions[componentCode] = nextSuggestion;
+          }
+          nextState[componentCode] = buildProposalAiComponentStateFromJob(
+            nextJob,
+            normalizeProposalAiMode(
+              selectedProposal?.components?.find(
+                (component) => component.componentCode === componentCode,
+              )?.aiMode,
+              "auto",
+            ),
+          );
+        });
+
+        setComponentGenerationJobs(nextJobs);
+        setComponentSuggestions(nextSuggestions);
+        setProposalAiState(nextState);
       } catch {
         if (cancelled) return;
-        setComponentGenerationJobs({});
-        setComponentSuggestions({});
+        resetAllProposalAiState();
       }
     }
 
-    loadLatestExecutiveSummaryGeneration();
+    loadLatestProposalAiGenerations();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedProposal?.id]);
-
-  async function refreshLatestExecutiveSummaryGeneration(proposalId) {
-    const numericProposalId = Number(proposalId || 0);
-    if (!numericProposalId) return null;
-
-    const { data } = await api.get(
-      `/api/proposals/${numericProposalId}/components/executive_summary/generation-jobs/latest`,
-    );
-    const nextJob = normalizeProposalAiJob(data?.job);
-
-    setComponentGenerationJobs(
-      nextJob ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextJob } : {},
-    );
-    setExecutiveSummarySourceMode(
-      nextJob?.request?.librarySourceMode === "manual" ? "manual" : "auto",
-    );
-    setExecutiveSummaryLibraryContentMode(
-      nextJob?.request?.libraryContentMode === "summary_extract"
-        ? "summary_extract"
-        : "source_text",
-    );
-    setExecutiveSummarySourcePriorityMode(
-      nextJob?.request?.sourcePriorityMode === "non_library_first" ||
-        nextJob?.request?.sourcePriorityMode === "library_first"
-        ? nextJob.request.sourcePriorityMode
-        : "balanced",
-    );
-    setSelectedExecutiveSummaryLibraryAssetPublicIds(
-      Array.isArray(nextJob?.request?.selectedLibraryAssetPublicIds)
-        ? nextJob.request.selectedLibraryAssetPublicIds
-        : [],
-    );
-
-    const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
-    setComponentSuggestions(
-      nextSuggestion
-        ? { [EXECUTIVE_SUMMARY_COMPONENT_CODE]: nextSuggestion }
-        : {},
-    );
-
-    return nextJob;
-  }
+  }, [selectedProposal, selectedProposal?.id, proposalAiComponentCodes]);
 
   useEffect(() => {
     if (!selectedProposalId) {
@@ -2058,31 +2240,66 @@ export default function ProposalsPage() {
     }
 
     let cancelled = false;
-    const currentJob =
-      componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE] || null;
 
     const syncLatest = async () => {
       try {
-        const nextJob =
-          await refreshLatestExecutiveSummaryGeneration(selectedProposalId);
-        if (cancelled || !nextJob) {
-          return;
-        }
-        const shouldNotifyTerminalTransition =
-          Boolean(currentJob?.publicId) &&
-          currentJob.publicId === nextJob.publicId &&
-          currentJob.status !== nextJob.status &&
-          isProposalAiJobTerminal(nextJob);
-        if (shouldNotifyTerminalTransition) {
+        const results = await Promise.all(
+          proposalAiComponentCodes.map(async (componentCode) => {
+            const currentJob = componentGenerationJobs[componentCode] || null;
+            const { data } = await api.get(
+              `/api/proposals/${selectedProposalId}/components/${componentCode}/generation-jobs/latest`,
+            );
+            const nextJob = normalizeProposalAiJob(data?.job);
+            return { componentCode, currentJob, nextJob };
+          }),
+        );
+        if (cancelled) return;
+        const nextJobs = {};
+        const nextSuggestions = {};
+        results.forEach(({ componentCode, currentJob, nextJob }) => {
+          if (nextJob) {
+            nextJobs[componentCode] = nextJob;
+          }
+          const nextSuggestion = normalizeProposalAiSuggestion(nextJob?.result);
+          if (nextSuggestion) {
+            nextSuggestions[componentCode] = nextSuggestion;
+          }
+          setProposalAiComponentState(
+            componentCode,
+            buildProposalAiComponentStateFromJob(
+              nextJob,
+              normalizeProposalAiMode(
+                selectedProposal?.components?.find(
+                  (component) => component.componentCode === componentCode,
+                )?.aiMode,
+                "auto",
+              ),
+            ),
+          );
+          if (!nextJob) return;
+          const shouldNotifyTerminalTransition =
+            Boolean(currentJob?.publicId) &&
+            currentJob.publicId === nextJob.publicId &&
+            currentJob.status !== nextJob.status &&
+            isProposalAiJobTerminal(nextJob);
+          if (!shouldNotifyTerminalTransition) return;
           if (nextJob.status === "completed") {
+            setProposalAiComponentState(componentCode, {
+              showJobError: false,
+            });
             setSuccess("Sugerencia IA lista para revisar");
           } else if (nextJob.status === "failed") {
+            setProposalAiComponentState(componentCode, {
+              showJobError: true,
+            });
             setError(
               nextJob.error?.message ||
-                "No fue posible generar la sugerencia del resumen ejecutivo",
+                "No fue posible generar la sugerencia IA para esta seccion",
             );
           }
-        }
+        });
+        setComponentGenerationJobs(nextJobs);
+        setComponentSuggestions(nextSuggestions);
       } catch (err) {
         if (cancelled) return;
         setError(
@@ -2097,9 +2314,7 @@ export default function ProposalsPage() {
     syncLatest();
 
     const intervalId = window.setInterval(() => {
-      const activeJob =
-        componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE] || null;
-      if (!activeJob || !isProposalAiJobTerminal(activeJob)) {
+      if (proposalAiHasActiveJob) {
         syncLatest();
       }
     }, 2500);
@@ -2109,24 +2324,29 @@ export default function ProposalsPage() {
       window.clearInterval(intervalId);
     };
   }, [
+    selectedProposal,
     selectedProposalId,
-    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.status,
-    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.publicId,
-    componentGenerationJobs[EXECUTIVE_SUMMARY_COMPONENT_CODE]?.updatedAt,
+    proposalAiHasActiveJob,
+    componentGenerationJobs,
+    proposalAiComponentCodes,
   ]);
 
   useEffect(() => {
-    if (!selectedProposal?.id || executiveSummarySourceMode !== "manual") {
+    if (!selectedProposal?.id) {
       return undefined;
     }
-    if (executiveSummaryLibraryLoaded || executiveSummaryLibraryLoading) {
+
+    if (!proposalAiRequiresLibraryAssets) {
+      return undefined;
+    }
+    if (proposalAiLibraryLoaded) {
       return undefined;
     }
 
     let cancelled = false;
 
-    async function loadExecutiveSummaryLibraryAssets() {
-      setExecutiveSummaryLibraryLoading(true);
+    async function loadProposalAiLibraryAssets() {
+      setProposalAiLibraryLoading(true);
       try {
         const { data } = await api.get("/api/commercial-enablement/assets", {
           params: {
@@ -2140,16 +2360,16 @@ export default function ProposalsPage() {
 
         if (cancelled) return;
 
-        setExecutiveSummaryLibraryAssets(
+        setProposalAiLibraryAssets(
           Array.isArray(data?.items)
             ? data.items.map(normalizeCommercialEnablementAssetOption)
             : [],
         );
-        setExecutiveSummaryLibraryLoaded(true);
+        setProposalAiLibraryLoaded(true);
       } catch (err) {
         if (cancelled) return;
-        setExecutiveSummaryLibraryAssets([]);
-        setExecutiveSummaryLibraryLoaded(true);
+        setProposalAiLibraryAssets([]);
+        setProposalAiLibraryLoaded(true);
         setError(
           getApiErrorMessage(
             err,
@@ -2157,20 +2377,21 @@ export default function ProposalsPage() {
           ),
         );
       } finally {
-        if (cancelled) return;
-        setExecutiveSummaryLibraryLoading(false);
+        if (!cancelled) {
+          setProposalAiLibraryLoading(false);
+        }
       }
     }
 
-    loadExecutiveSummaryLibraryAssets();
+    loadProposalAiLibraryAssets();
 
     return () => {
       cancelled = true;
     };
   }, [
     selectedProposal?.id,
-    executiveSummarySourceMode,
-    executiveSummaryLibraryLoaded,
+    proposalAiRequiresLibraryAssets,
+    proposalAiLibraryLoaded,
   ]);
 
   useEffect(() => {
@@ -2239,7 +2460,7 @@ export default function ProposalsPage() {
     setSelectedProposal(null);
     try {
       const { data } = await api.get(`/api/proposals/${proposalId}`);
-      setSelectedProposal(data || null);
+      setSelectedProposal(normalizeProposalDetail(data || null));
     } catch (err) {
       setError(
         getApiErrorMessage(
@@ -2279,25 +2500,58 @@ export default function ProposalsPage() {
       if (proposalsLoadRequestRef.current !== requestId) return;
       setError(getApiErrorMessage(err, "No fue posible cargar las propuestas"));
     } finally {
-      if (proposalsLoadRequestRef.current !== requestId) return;
-      setLoadingList(false);
+      if (proposalsLoadRequestRef.current === requestId) {
+        setLoadingList(false);
+      }
     }
   }
 
+  const loadProposalsRef = useRef(loadProposals);
+  const loadProposalDetailRef = useRef(loadProposalDetail);
+  const loadProposalTemplatesRef = useRef(loadProposalTemplates);
+  const loadProposalAssetsRef = useRef(loadProposalAssets);
+  const loadCompanyBrandingRef = useRef(loadCompanyBranding);
+
   useEffect(() => {
-    loadProposals();
-    loadProposalTemplates();
-    loadProposalAssets();
-    loadCompanyBranding();
+    loadProposalsRef.current = loadProposals;
+    loadProposalDetailRef.current = loadProposalDetail;
+    loadProposalTemplatesRef.current = loadProposalTemplates;
+    loadProposalAssetsRef.current = loadProposalAssets;
+    loadCompanyBrandingRef.current = loadCompanyBranding;
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void loadProposalsRef.current();
+      void loadProposalTemplatesRef.current();
+      void loadProposalAssetsRef.current();
+      void loadCompanyBrandingRef.current();
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (selectedProposalId) {
-      loadProposalDetail(selectedProposalId);
-      return;
-    }
+    let cancelled = false;
 
-    setSelectedProposal(null);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (selectedProposalId) {
+        void loadProposalDetailRef.current(selectedProposalId);
+        return;
+      }
+
+      setSelectedProposal(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProposalId]);
 
   useEffect(() => {
@@ -2345,7 +2599,9 @@ export default function ProposalsPage() {
             ? "La propuesta ya existia y se abrio la version actual"
             : "Propuesta creada correctamente",
         );
-        await loadProposals({ nextSelectedProposalId: nextProposalId });
+        await loadProposalsRef.current({
+          nextSelectedProposalId: nextProposalId,
+        });
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -2384,7 +2640,7 @@ export default function ProposalsPage() {
           : proposal,
       );
     });
-    setSelectedProposal(nextProposal);
+    setSelectedProposal(normalizeProposalDetail(nextProposal));
   }
 
   function closeTemplatePicker() {
@@ -2490,10 +2746,24 @@ export default function ProposalsPage() {
     if (!selectedProposal || !componentDrafts[componentCode]) return;
     setBusyAction(`save-component-${componentCode}`);
     try {
+      const suggestionTrackingKey = `${Number(selectedProposal.id)}:${componentCode}`;
+      const consumeSuggestionPublicId = proposalAiComponentCodes.includes(
+        componentCode,
+      )
+        ? appliedProposalSuggestionJobRef.current.get(suggestionTrackingKey) ||
+          null
+        : null;
       const { data } = await api.put(
         `/api/proposals/${selectedProposal.id}/components/${componentCode}`,
-        serializeComponentDraft(componentDrafts[componentCode]),
+        {
+          ...serializeComponentDraft(componentDrafts[componentCode]),
+          ...(consumeSuggestionPublicId ? { consumeSuggestionPublicId } : {}),
+        },
       );
+      if (consumeSuggestionPublicId) {
+        appliedProposalSuggestionJobRef.current.delete(suggestionTrackingKey);
+        resetProposalAiComponentState(componentCode);
+      }
       updateProposalInList(data?.proposal);
       setSuccess("Seccion actualizada");
       await loadProposalDetail(selectedProposal.id);
@@ -2504,48 +2774,68 @@ export default function ProposalsPage() {
     }
   }
 
-  function handleToggleExecutiveSummaryLibraryAsset(assetPublicId) {
-    setSelectedExecutiveSummaryLibraryAssetPublicIds((current) => {
-      if (current.includes(assetPublicId)) {
-        return current.filter((value) => value !== assetPublicId);
+  function handleToggleProposalAiLibraryAsset(componentCode, assetPublicId) {
+    setProposalAiComponentState(componentCode, (current) => {
+      if (current.selectedLibraryAssetPublicIds.includes(assetPublicId)) {
+        return {
+          ...current,
+          selectedLibraryAssetPublicIds:
+            current.selectedLibraryAssetPublicIds.filter(
+              (value) => value !== assetPublicId,
+            ),
+        };
       }
-      if (current.length >= 4) {
+      if (current.selectedLibraryAssetPublicIds.length >= 4) {
         return current;
       }
-      return [...current, assetPublicId];
+      return {
+        ...current,
+        selectedLibraryAssetPublicIds: [
+          ...current.selectedLibraryAssetPublicIds,
+          assetPublicId,
+        ],
+      };
     });
   }
 
   async function handleGenerateSuggestion(componentCode) {
     if (
       !selectedProposal ||
-      componentCode !== EXECUTIVE_SUMMARY_COMPONENT_CODE
+      !proposalAiComponentCodes.includes(componentCode)
     ) {
       return;
     }
 
+    const componentAiState = getProposalAiComponentState(
+      proposalAiState,
+      componentCode,
+    );
+
     if (
-      executiveSummarySourceMode === "manual" &&
-      selectedExecutiveSummaryLibraryAssetPublicIds.length === 0
+      componentAiState.sourceMode === "manual" &&
+      componentAiState.selectedLibraryAssetPublicIds.length === 0
     ) {
-      setError("Selecciona al menos un activo de biblioteca para usar el modo manual");
+      setError(
+        "Selecciona al menos un activo de biblioteca para usar el modo manual",
+      );
       return;
     }
 
     setBusyAction(`generate-component-${componentCode}`);
     try {
+      setProposalAiComponentState(componentCode, { showJobError: false });
       const { data } = await api.post(
-        `/api/proposals/${selectedProposal.id}/components/executive_summary/generation-jobs`,
+        `/api/proposals/${selectedProposal.id}/components/${componentCode}/generation-jobs`,
         {
           mode: "generate_parallel_suggestion",
           languageCode: "es",
           maxLibraryAssets: 4,
-          librarySourceMode: executiveSummarySourceMode,
-          libraryContentMode: executiveSummaryLibraryContentMode,
-          sourcePriorityMode: executiveSummarySourcePriorityMode,
+          librarySourceMode: componentAiState.sourceMode,
+          libraryContentMode: componentAiState.libraryContentMode,
+          sourcePriorityMode: componentAiState.sourcePriorityMode,
           selectedLibraryAssetPublicIds:
-            executiveSummarySourceMode === "manual"
-              ? selectedExecutiveSummaryLibraryAssetPublicIds
+            componentAiState.sourceMode === "manual"
+              ? componentAiState.selectedLibraryAssetPublicIds
               : [],
         },
       );
@@ -2574,7 +2864,7 @@ export default function ProposalsPage() {
       setError(
         getApiErrorMessage(
           err,
-          "No fue posible iniciar la sugerencia IA para el resumen ejecutivo",
+          "No fue posible iniciar la sugerencia IA para esta seccion",
         ),
       );
     } finally {
@@ -2584,23 +2874,26 @@ export default function ProposalsPage() {
 
   async function handleRefreshSuggestionStatus(componentCode) {
     if (
-      componentCode !== EXECUTIVE_SUMMARY_COMPONENT_CODE ||
+      !proposalAiComponentCodes.includes(componentCode) ||
       !selectedProposal?.id
     ) {
       return;
     }
 
     try {
-      const nextJob = await refreshLatestExecutiveSummaryGeneration(
+      setProposalAiComponentState(componentCode, { showJobError: true });
+      const nextJob = await refreshLatestProposalAiGeneration(
         selectedProposal.id,
+        componentCode,
       );
       if (!nextJob) return;
       if (nextJob.status === "completed") {
+        setProposalAiComponentState(componentCode, { showJobError: false });
         setSuccess("Sugerencia IA lista para revisar");
       } else if (nextJob.status === "failed") {
         setError(
           nextJob.error?.message ||
-            "No fue posible generar la sugerencia del resumen ejecutivo",
+            "No fue posible generar la sugerencia IA para esta seccion",
         );
       }
     } catch (err) {
@@ -2616,17 +2909,25 @@ export default function ProposalsPage() {
   function handleApplySuggestion(componentCode) {
     const suggestion = componentSuggestions[componentCode];
     if (!suggestion) return;
+    const mergedSuggestionText = suggestion.blocks
+      .map((block) => String(block?.text || "").trim())
+      .filter(Boolean)
+      .join("\n\n");
     const nextComponentDraft = {
       title: suggestion.title || "",
-      blocks: suggestion.blocks.map((block) => ({
-        id: null,
-        type: block.type || "paragraph",
-        text: block.text || "",
-        items: Array.isArray(block.items) ? block.items : [],
-        assetId: null,
-        assetVersionId: null,
-        image: null,
-      })),
+      blocks: mergedSuggestionText
+        ? [
+            {
+              id: null,
+              type: "paragraph",
+              text: mergedSuggestionText,
+              items: [],
+              assetId: null,
+              assetVersionId: null,
+              image: null,
+            },
+          ]
+        : [],
     };
 
     setComponentDrafts((current) => {
@@ -2652,6 +2953,19 @@ export default function ProposalsPage() {
           : current.components,
       };
     });
+    if (
+      proposalAiComponentCodes.includes(componentCode) &&
+      selectedProposal?.id
+    ) {
+      const appliedJobPublicId =
+        componentGenerationJobs[componentCode]?.publicId || null;
+      if (appliedJobPublicId) {
+        appliedProposalSuggestionJobRef.current.set(
+          `${Number(selectedProposal.id)}:${componentCode}`,
+          appliedJobPublicId,
+        );
+      }
+    }
     setSuccess("Sugerencia aplicada al borrador");
   }
 
@@ -2759,54 +3073,6 @@ export default function ProposalsPage() {
 
   function handleClosePreview() {
     setIsPreviewOpen(false);
-  }
-
-  function openProposalPrintView(options = {}) {
-    if (!previewModel || typeof window === "undefined") return false;
-
-    const { autoPrint = false } = options;
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-      setError(
-        "El navegador bloqueo la ventana de vista previa. Permite ventanas emergentes e intenta de nuevo.",
-      );
-      return false;
-    }
-
-    try {
-      printWindow.document.title = autoPrint
-        ? "Preparando impresion..."
-        : "Preparando vista previa...";
-      printWindow.document.body.innerHTML = `
-        <div style="font-family: Arial, sans-serif; padding: 32px; color: #123044;">
-          <h1 style="margin: 0 0 12px; font-size: 22px;">Preparando documento</h1>
-          <p style="margin: 0; font-size: 14px; color: #42515c;">
-            Estamos armando la version imprimible de la propuesta.
-          </p>
-        </div>
-      `;
-    } catch {
-      // Ignore bootstrap failures and continue with navigation.
-    }
-
-    const jobId = createProposalPrintJob(previewModel, printWindow);
-    if (!jobId) {
-      printWindow.close();
-      setError("No fue posible preparar la vista previa de la propuesta");
-      return false;
-    }
-
-    const params = new URLSearchParams({ job: jobId });
-    if (autoPrint) {
-      params.set("autoprint", "1");
-    }
-
-    const printUrl = new URL(
-      `/proposals/print?${params.toString()}`,
-      window.location.origin,
-    );
-    printWindow.location.replace(printUrl.toString());
-    return true;
   }
 
   async function handleOpenPdfPreview() {
@@ -3232,19 +3498,9 @@ export default function ProposalsPage() {
         proposalAssets={proposalAssets}
         componentGenerationJobs={componentGenerationJobs}
         componentSuggestions={componentSuggestions}
-        executiveSummarySourceMode={executiveSummarySourceMode}
-        executiveSummaryLibraryContentMode={
-          executiveSummaryLibraryContentMode
-        }
-        executiveSummarySourcePriorityMode={
-          executiveSummarySourcePriorityMode
-        }
-        executiveSummaryLibraryQuery={executiveSummaryLibraryQuery}
-        executiveSummaryLibraryAssets={executiveSummaryLibraryAssets}
-        executiveSummaryLibraryLoading={executiveSummaryLibraryLoading}
-        selectedExecutiveSummaryLibraryAssetPublicIds={
-          selectedExecutiveSummaryLibraryAssetPublicIds
-        }
+        proposalAiState={proposalAiState}
+        proposalAiLibraryAssets={proposalAiLibraryAssets}
+        proposalAiLibraryLoading={proposalAiLibraryLoading}
         busyAction={busyAction}
         onClose={handleCloseProposalEditor}
         onOpenPreview={handleOpenPreview}
@@ -3255,17 +3511,20 @@ export default function ProposalsPage() {
         onSaveMetadata={handleSaveMetadata}
         onComponentDraftChange={setComponentDrafts}
         onSaveComponent={handleSaveComponent}
-        onExecutiveSummarySourceModeChange={setExecutiveSummarySourceMode}
-        onExecutiveSummaryLibraryContentModeChange={
-          setExecutiveSummaryLibraryContentMode
+        onProposalAiLibraryContentModeChange={(componentCode, value) =>
+          setProposalAiComponentState(componentCode, {
+            libraryContentMode: value,
+          })
         }
-        onExecutiveSummarySourcePriorityModeChange={
-          setExecutiveSummarySourcePriorityMode
+        onProposalAiSourcePriorityModeChange={(componentCode, value) =>
+          setProposalAiComponentState(componentCode, {
+            sourcePriorityMode: value,
+          })
         }
-        onExecutiveSummaryLibraryQueryChange={setExecutiveSummaryLibraryQuery}
-        onToggleExecutiveSummaryLibraryAsset={
-          handleToggleExecutiveSummaryLibraryAsset
+        onProposalAiLibraryQueryChange={(componentCode, value) =>
+          setProposalAiComponentState(componentCode, { libraryQuery: value })
         }
+        onToggleProposalAiLibraryAsset={handleToggleProposalAiLibraryAsset}
         onGenerateSuggestion={handleGenerateSuggestion}
         onRefreshSuggestionStatus={handleRefreshSuggestionStatus}
         onApplySuggestion={handleApplySuggestion}

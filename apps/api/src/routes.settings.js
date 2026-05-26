@@ -9,6 +9,8 @@ import {
   createInstitutionalAsset,
   addInstitutionalAssetVersion,
   archiveInstitutionalAsset,
+  createProposalContentComponent,
+  deleteProposalContentComponent,
   getAiParametersConfiguration,
   getCompanyDocumentBranding,
   getCompanyProfile,
@@ -20,9 +22,11 @@ import {
   PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
   publishAiParameterConfiguration,
   publishProposalContentConfiguration,
+  reorderProposalContentComponents,
   restoreAiParameterEntryRevision,
   saveAiParameterEntryDraft,
   saveProposalContentComponent,
+  setProposalContentComponentStatus,
   getTemporaryFeatureSettings,
   saveTemporaryFeatureSettings,
 } from "./settings.js";
@@ -92,7 +96,11 @@ const temporaryFeatureSettingsSchema = z.object({
 
 const aiParameterCapabilityKeySchema = z.enum([
   AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+  AI_PARAMETER_CAPABILITY_KEYS.proposalBackground,
+  AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection,
 ]);
+
+const proposalComponentKindSchema = z.enum(["system", "custom"]);
 
 const aiParameterBaseEntrySchema = z.object({
   title: z.string().trim().min(3).max(190),
@@ -110,11 +118,15 @@ const aiParameterBaseEntrySchema = z.object({
   changeSummary: optionalTrimmedString(500),
 });
 
-const aiParameterExecutiveSummarySchema = aiParameterBaseEntrySchema.superRefine(
-  (value, context) => {
+const aiParameterExecutiveSummarySchema =
+  aiParameterBaseEntrySchema.superRefine((value, context) => {
     const parameters = value.parameters || {};
     const maxLibraryAssets = Number(parameters.maxLibraryAssets);
-    if (!Number.isInteger(maxLibraryAssets) || maxLibraryAssets < 1 || maxLibraryAssets > 8) {
+    if (
+      !Number.isInteger(maxLibraryAssets) ||
+      maxLibraryAssets < 1 ||
+      maxLibraryAssets > 8
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "parameters.maxLibraryAssets debe estar entre 1 y 8",
@@ -122,7 +134,9 @@ const aiParameterExecutiveSummarySchema = aiParameterBaseEntrySchema.superRefine
       });
     }
 
-    const defaultLanguageCode = String(parameters.defaultLanguageCode || "").trim();
+    const defaultLanguageCode = String(
+      parameters.defaultLanguageCode || "",
+    ).trim();
     if (!defaultLanguageCode || defaultLanguageCode.length > 8) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -183,8 +197,7 @@ const aiParameterExecutiveSummarySchema = aiParameterBaseEntrySchema.superRefine
         path: ["parameters", "allowOverwrite"],
       });
     }
-  },
-);
+  });
 
 function getAiParameterEntrySchema(capabilityKey) {
   if (capabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary) {
@@ -201,7 +214,8 @@ function validateAiParameterWarnings(capabilityKey, payload) {
       warnings.push({
         field: "systemPrompt",
         code: "missing_json_instruction",
-        message: "Conviene indicar explicitamente que la respuesta debe ser JSON valido.",
+        message:
+          "Conviene indicar explicitamente que la respuesta debe ser JSON valido.",
       });
     }
     if (!systemPrompt.includes("documentSources")) {
@@ -215,7 +229,8 @@ function validateAiParameterWarnings(capabilityKey, payload) {
       warnings.push({
         field: "systemPrompt",
         code: "missing_generation_policy_reference",
-        message: "El prompt no menciona generationPolicy; podria ignorar prioridades de fuente.",
+        message:
+          "El prompt no menciona generationPolicy; podria ignorar prioridades de fuente.",
       });
     }
   }
@@ -372,10 +387,23 @@ const proposalLayoutConfigSchema = z
 const proposalContentComponentPayloadSchema = z
   .object({
     title: z.string().trim().min(2).max(190).optional(),
+    componentKind: proposalComponentKindSchema.optional(),
+    isVisible: z.boolean().optional(),
+    aiEnabled: z.boolean().optional(),
+    aiMode: z.enum(["auto", "manual"]).nullish(),
+    aiSettings: z.record(z.string(), z.unknown()).nullish(),
     layoutConfig: proposalLayoutConfigSchema.nullish(),
     blocks: z.array(proposalContentBlockSchema).default([]),
   })
   .superRefine((value, context) => {
+    if (value.aiEnabled && !value.aiMode) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "aiMode es obligatorio cuando aiEnabled = true",
+        path: ["aiMode"],
+      });
+    }
+
     if (!value.layoutConfig || value.layoutConfig.mode !== "manual-rows") {
       return;
     }
@@ -456,6 +484,23 @@ const proposalContentComponentPayloadSchema = z
       }
     }
   });
+
+const proposalContentComponentCreateSchema =
+  proposalContentComponentPayloadSchema.safeExtend({
+    title: z.string().trim().min(2).max(190),
+    componentCode: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(/^[a-z0-9_]+$/)
+      .optional(),
+    componentKind: proposalComponentKindSchema.optional().default("custom"),
+  });
+
+const proposalContentReorderSchema = z.object({
+  orderedComponentCodes: z.array(z.string().trim().min(1).max(80)).min(1),
+});
 
 function inferValidationIssueCode(issue) {
   const path = Array.isArray(issue.path) ? issue.path : [];
@@ -639,9 +684,11 @@ router.post(
     const capabilityKey = aiParameterCapabilityKeySchema.parse(
       req.params.capabilityKey,
     );
-    const revisionNumber = z.coerce.number().int().positive().parse(
-      req.params.revisionNumber,
-    );
+    const revisionNumber = z.coerce
+      .number()
+      .int()
+      .positive()
+      .parse(req.params.revisionNumber);
     const config = await restoreAiParameterEntryRevision(
       capabilityKey,
       revisionNumber,
@@ -860,13 +907,6 @@ router.put(
   requirePermission("configuracion.update"),
   async (req, res) => {
     const componentCode = String(req.params.componentCode || "").trim();
-    if (
-      !PROPOSAL_CONTENT_COMPONENT_DEFINITIONS.some(
-        (component) => component.code === componentCode,
-      )
-    ) {
-      return res.status(404).json({ message: "Componente no encontrado" });
-    }
 
     const parsed = proposalContentComponentPayloadSchema.safeParse(
       req.body || {},
@@ -883,6 +923,11 @@ router.put(
     const config = await saveProposalContentComponent({
       componentCode,
       title: parsed.data.title,
+      componentKind: parsed.data.componentKind,
+      isVisible: parsed.data.isVisible,
+      aiEnabled: parsed.data.aiEnabled,
+      aiMode: parsed.data.aiMode,
+      aiSettings: parsed.data.aiSettings,
       layoutConfig: parsed.data.layoutConfig,
       blocks: parsed.data.blocks,
       actorUserId: Number(req.user?.id) || null,
@@ -912,6 +957,217 @@ router.put(
       message: "Componente actualizado",
       config,
     });
+  },
+);
+
+router.post(
+  "/proposal-content-config/components",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = proposalContentComponentCreateSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+        issues: buildValidationIssues(parsed.error, req.body || {}),
+      });
+    }
+
+    const before = await getProposalContentConfiguration();
+    try {
+      const config = await createProposalContentComponent({
+        title: parsed.data.title,
+        componentCode: parsed.data.componentCode,
+        componentKind: parsed.data.componentKind,
+        isVisible: parsed.data.isVisible ?? true,
+        aiEnabled: parsed.data.aiEnabled ?? false,
+        aiMode: parsed.data.aiMode ?? null,
+        aiSettings: parsed.data.aiSettings ?? null,
+        layoutConfig: parsed.data.layoutConfig ?? null,
+        blocks: parsed.data.blocks,
+        actorUserId: Number(req.user?.id) || null,
+      });
+
+      const createdComponent = config?.components.at(-1) || null;
+      await logAuditEvent({
+        req,
+        module: "configuracion",
+        action: "created_proposal_content_component",
+        entityType: "proposal_content_component",
+        entityId: createdComponent?.id || null,
+        detail: `Componente ${createdComponent?.componentCode || parsed.data.title} creado`,
+        before,
+        after: createdComponent,
+      });
+
+      return res.status(201).json({
+        message: "Componente creado",
+        config,
+        component: createdComponent,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        message: String(error?.message || "No fue posible crear el componente"),
+      });
+    }
+  },
+);
+
+router.post(
+  "/proposal-content-config/components/reorder",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = proposalContentReorderSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const before = await getProposalContentConfiguration();
+    try {
+      const config = await reorderProposalContentComponents({
+        orderedComponentCodes: parsed.data.orderedComponentCodes,
+        actorUserId: Number(req.user?.id) || null,
+      });
+      await logAuditEvent({
+        req,
+        module: "configuracion",
+        action: "reordered_proposal_content_components",
+        entityType: "proposal_content_config",
+        entityId: config?.id || null,
+        detail: "Orden de componentes de propuesta actualizado",
+        before,
+        after: config,
+      });
+      return res.json({
+        message: "Orden actualizado",
+        config,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        message: String(
+          error?.message || "No fue posible reordenar los componentes",
+        ),
+      });
+    }
+  },
+);
+
+router.post(
+  "/proposal-content-config/components/:componentCode/archive",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const componentCode = String(req.params.componentCode || "").trim();
+    const before = await getProposalContentConfiguration();
+    try {
+      const config = await setProposalContentComponentStatus({
+        componentCode,
+        status: "archived",
+        actorUserId: Number(req.user?.id) || null,
+      });
+      await logAuditEvent({
+        req,
+        module: "configuracion",
+        action: "archived_proposal_content_component",
+        entityType: "proposal_content_component",
+        entityId:
+          config?.components.find(
+            (component) => component.componentCode === componentCode,
+          )?.id || null,
+        detail: `Componente ${componentCode} archivado`,
+        before,
+        after:
+          config?.components.find(
+            (component) => component.componentCode === componentCode,
+          ) || null,
+      });
+      return res.json({ message: "Componente archivado", config });
+    } catch (error) {
+      return res.status(400).json({
+        message: String(
+          error?.message || "No fue posible archivar el componente",
+        ),
+      });
+    }
+  },
+);
+
+router.post(
+  "/proposal-content-config/components/:componentCode/restore",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const componentCode = String(req.params.componentCode || "").trim();
+    const before = await getProposalContentConfiguration();
+    try {
+      const config = await setProposalContentComponentStatus({
+        componentCode,
+        status: "active",
+        actorUserId: Number(req.user?.id) || null,
+      });
+      await logAuditEvent({
+        req,
+        module: "configuracion",
+        action: "restored_proposal_content_component",
+        entityType: "proposal_content_component",
+        entityId:
+          config?.components.find(
+            (component) => component.componentCode === componentCode,
+          )?.id || null,
+        detail: `Componente ${componentCode} restaurado`,
+        before,
+        after:
+          config?.components.find(
+            (component) => component.componentCode === componentCode,
+          ) || null,
+      });
+      return res.json({ message: "Componente restaurado", config });
+    } catch (error) {
+      return res.status(400).json({
+        message: String(
+          error?.message || "No fue posible restaurar el componente",
+        ),
+      });
+    }
+  },
+);
+
+router.delete(
+  "/proposal-content-config/components/:componentCode",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const componentCode = String(req.params.componentCode || "").trim();
+    const before = await getProposalContentConfiguration();
+    try {
+      const removedComponent =
+        before?.components.find(
+          (component) => component.componentCode === componentCode,
+        ) || null;
+      const config = await deleteProposalContentComponent({
+        componentCode,
+        actorUserId: Number(req.user?.id) || null,
+      });
+      await logAuditEvent({
+        req,
+        module: "configuracion",
+        action: "deleted_proposal_content_component",
+        entityType: "proposal_content_component",
+        entityId: removedComponent?.id || null,
+        detail: `Componente ${componentCode} eliminado`,
+        before: removedComponent,
+        after: null,
+      });
+      return res.json({ message: "Componente eliminado", config });
+    } catch (error) {
+      return res.status(400).json({
+        message: String(
+          error?.message || "No fue posible eliminar el componente",
+        ),
+      });
+    }
   },
 );
 

@@ -228,6 +228,7 @@ const proposalTemplateCoverStyles = ["corporate", "premium", "technical"];
 const proposalTemplateStatusCodes = ["draft", "active", "archived"];
 const proposalTemplateApplyModes = ["preserve_content", "replace_content"];
 const PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE = "executive_summary";
+const PROPOSAL_BACKGROUND_JOB_COMPONENT_CODE = "background";
 const PROPOSAL_EXEC_SUMMARY_JOB_TYPE = "generate_parallel_suggestion";
 const PROPOSAL_EXEC_SUMMARY_JOB_POLL_INTERVAL_MS = 3000;
 const PROPOSAL_EXEC_SUMMARY_JOB_LEASE_SECONDS = 150;
@@ -240,6 +241,123 @@ const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SUMMARY_CHARS = 500;
 const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_SOURCE_TEXT_CHARS = 4000;
 const PROPOSAL_EXEC_SUMMARY_MAX_SECTION_ITEMS = 8;
 const PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS = 120000;
+const PROPOSAL_BACKGROUND_DEFAULT_SYSTEM_PROMPT =
+  "Redacta la seccion de antecedentes para una propuesta B2B en espanol. Responde exclusivamente con JSON valido. No inventes hechos, fechas, compromisos, entregables ni relaciones que no esten sustentados por el contexto. Sintetiza el contexto comercial previo, la situacion actual del cliente, los detonantes de la oportunidad y la informacion documental relevante. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del texto. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.";
+const PROPOSAL_GENERIC_SECTION_DEFAULT_SYSTEM_PROMPT =
+  "Redacta contenido comercial en espanol para una seccion de propuesta B2B. Responde exclusivamente con JSON valido. No inventes hechos, promesas, entregables, fechas ni capacidades que no esten respaldadas por el contexto. Adapta el texto al titulo y objetivo de la seccion objetivo. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del texto. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.";
+
+function buildProposalAiComponentConfig({
+  componentCode,
+  componentTitle,
+  aiCapabilityKey,
+}) {
+  const normalizedCode = String(componentCode || "").trim();
+  const normalizedTitle = String(componentTitle || "").trim();
+  if (
+    aiCapabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary
+  ) {
+    return {
+      componentCode: normalizedCode,
+      componentTitle: normalizedTitle || "Resumen ejecutivo",
+      defaultSuggestionTitle:
+        normalizedTitle && normalizedTitle !== "Resumen ejecutivo"
+          ? `${normalizedTitle} sugerido`
+          : "Resumen ejecutivo sugerido",
+      capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+      defaultSystemPrompt:
+        "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del resumen. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.",
+      aiDisabledMessage:
+        "La generacion asistida del resumen ejecutivo esta deshabilitada",
+      suggestionTone: "executive_commercial",
+    };
+  }
+
+  if (aiCapabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalBackground) {
+    return {
+      componentCode: normalizedCode,
+      componentTitle: normalizedTitle || "Antecedentes",
+      defaultSuggestionTitle:
+        normalizedTitle && normalizedTitle !== "Antecedentes"
+          ? `${normalizedTitle} sugeridos`
+          : "Antecedentes sugeridos",
+      capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalBackground,
+      defaultSystemPrompt: PROPOSAL_BACKGROUND_DEFAULT_SYSTEM_PROMPT,
+      aiDisabledMessage:
+        "La generacion asistida de antecedentes esta deshabilitada",
+      suggestionTone: "commercial_background",
+    };
+  }
+
+  if (aiCapabilityKey === AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection) {
+    const fallbackTitle = normalizedTitle || "Seccion comercial";
+    return {
+      componentCode: normalizedCode,
+      componentTitle: fallbackTitle,
+      defaultSuggestionTitle: `${fallbackTitle} sugerida`,
+      capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection,
+      defaultSystemPrompt: PROPOSAL_GENERIC_SECTION_DEFAULT_SYSTEM_PROMPT,
+      aiDisabledMessage:
+        "La generacion asistida no esta disponible para esta seccion",
+      suggestionTone: "commercial_section",
+    };
+  }
+
+  return null;
+}
+
+function getProposalAiComponentConfig(componentCode) {
+  const normalizedCode = String(componentCode || "").trim();
+  if (normalizedCode === PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE) {
+    return buildProposalAiComponentConfig({
+      componentCode: normalizedCode,
+      componentTitle: "Resumen ejecutivo",
+      aiCapabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+    });
+  }
+  if (normalizedCode === PROPOSAL_BACKGROUND_JOB_COMPONENT_CODE) {
+    return buildProposalAiComponentConfig({
+      componentCode: normalizedCode,
+      componentTitle: "Antecedentes",
+      aiCapabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalBackground,
+    });
+  }
+  return null;
+}
+
+async function getProposalAiComponentConfigForProposal({
+  proposalId,
+  componentCode,
+}) {
+  const normalizedProposalId = Number(proposalId || 0);
+  const normalizedComponentCode = String(componentCode || "").trim();
+  if (!normalizedProposalId || !normalizedComponentCode) {
+    return null;
+  }
+
+  const components = await listProposalComponents(normalizedProposalId);
+  const component = components.find(
+    (entry) => entry.componentCode === normalizedComponentCode,
+  );
+  if (!component) {
+    return getProposalAiComponentConfig(normalizedComponentCode);
+  }
+  if (!component.aiEnabled || !component.aiCapabilityKey) {
+    return null;
+  }
+  return buildProposalAiComponentConfig({
+    componentCode: component.componentCode,
+    componentTitle: component.title,
+    aiCapabilityKey: component.aiCapabilityKey,
+  });
+}
+
+async function proposalHasComponent(proposalId, componentCode) {
+  const components = await listProposalComponents(Number(proposalId));
+  return components.some(
+    (component) =>
+      component.componentCode === String(componentCode || "").trim(),
+  );
+}
 
 const proposalTemplateThemeSchema = z
   .object({
@@ -427,6 +545,7 @@ const proposalComponentBlockSchema = z
 const proposalComponentUpdateSchema = z.object({
   title: z.string().trim().min(2).max(190).optional(),
   blocks: z.array(proposalComponentBlockSchema).default([]),
+  consumeSuggestionPublicId: z.string().trim().max(64).optional().nullable(),
 });
 
 const proposalReplaceImageSchema = z.object({
@@ -435,60 +554,64 @@ const proposalReplaceImageSchema = z.object({
   assetVersionId: z.number().int().positive(),
 });
 
-const proposalExecutiveSummaryGenerationSchema = z.object({
-  mode: z
-    .enum([PROPOSAL_EXEC_SUMMARY_JOB_TYPE])
-    .optional()
-    .default(PROPOSAL_EXEC_SUMMARY_JOB_TYPE),
-  languageCode: z.string().trim().max(10).optional().default("es"),
-  instructions: z.string().trim().max(1000).optional().default(""),
-  maxLibraryAssets: z.number().int().positive().max(4).optional().default(4),
-  librarySourceMode: z.enum(["auto", "manual"]).optional().default("auto"),
-  libraryContentMode: z
-    .enum(["source_text", "summary_extract"])
-    .optional()
-    .default("source_text"),
-  sourcePriorityMode: z
-    .enum(["non_library_first", "library_first", "balanced"])
-    .optional()
-    .default("balanced"),
-  selectedLibraryAssetPublicIds: z
-    .array(z.string().trim().min(4).max(80))
-    .max(4)
-    .optional()
-    .default([]),
-}).superRefine((value, ctx) => {
-  const selectedIds = Array.isArray(value.selectedLibraryAssetPublicIds)
-    ? value.selectedLibraryAssetPublicIds.map((item) => String(item || "").trim())
-    : [];
-  const uniqueIds = Array.from(new Set(selectedIds.filter(Boolean)));
+const proposalExecutiveSummaryGenerationSchema = z
+  .object({
+    mode: z
+      .enum([PROPOSAL_EXEC_SUMMARY_JOB_TYPE])
+      .optional()
+      .default(PROPOSAL_EXEC_SUMMARY_JOB_TYPE),
+    languageCode: z.string().trim().max(10).optional().default("es"),
+    instructions: z.string().trim().max(1000).optional().default(""),
+    maxLibraryAssets: z.number().int().positive().max(4).optional().default(4),
+    librarySourceMode: z.enum(["auto", "manual"]).optional().default("auto"),
+    libraryContentMode: z
+      .enum(["source_text", "summary_extract"])
+      .optional()
+      .default("source_text"),
+    sourcePriorityMode: z
+      .enum(["non_library_first", "library_first", "balanced"])
+      .optional()
+      .default("balanced"),
+    selectedLibraryAssetPublicIds: z
+      .array(z.string().trim().min(4).max(80))
+      .max(4)
+      .optional()
+      .default([]),
+  })
+  .superRefine((value, ctx) => {
+    const selectedIds = Array.isArray(value.selectedLibraryAssetPublicIds)
+      ? value.selectedLibraryAssetPublicIds.map((item) =>
+          String(item || "").trim(),
+        )
+      : [];
+    const uniqueIds = Array.from(new Set(selectedIds.filter(Boolean)));
 
-  if (selectedIds.length !== uniqueIds.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["selectedLibraryAssetPublicIds"],
-      message: "No se permiten activos repetidos",
-    });
-  }
+    if (selectedIds.length !== uniqueIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectedLibraryAssetPublicIds"],
+        message: "No se permiten activos repetidos",
+      });
+    }
 
-  if (value.librarySourceMode === "manual" && uniqueIds.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["selectedLibraryAssetPublicIds"],
-      message:
-        "Debes seleccionar al menos un activo cuando el modo de fuente es manual",
-    });
-  }
+    if (value.librarySourceMode === "manual" && uniqueIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectedLibraryAssetPublicIds"],
+        message:
+          "Debes seleccionar al menos un activo cuando el modo de fuente es manual",
+      });
+    }
 
-  if (value.librarySourceMode === "auto" && uniqueIds.length > 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["selectedLibraryAssetPublicIds"],
-      message:
-        "No debes enviar activos seleccionados cuando el modo de fuente es automatico",
-    });
-  }
-});
+    if (value.librarySourceMode === "auto" && uniqueIds.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectedLibraryAssetPublicIds"],
+        message:
+          "No debes enviar activos seleccionados cuando el modo de fuente es automatico",
+      });
+    }
+  });
 
 const quotationProductListsQuerySchema = z.object({
   providerId: z.coerce.number().int().positive(),
@@ -3780,6 +3903,7 @@ export async function ensureProposalExecutiveSummaryGenerationJobSchema() {
           lease_expires_at DATETIME(3) NULL,
           started_at DATETIME(3) NULL,
           finished_at DATETIME(3) NULL,
+          consumed_at DATETIME(3) NULL,
           expires_at DATETIME(3) NULL,
           created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
           updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -3795,14 +3919,26 @@ export async function ensureProposalExecutiveSummaryGenerationJobSchema() {
             ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      await ensureTableColumn(
+        "proposal_ai_jobs",
+        "consumed_at",
+        `ALTER TABLE proposal_ai_jobs
+         ADD COLUMN consumed_at DATETIME(3) NULL
+         AFTER finished_at`,
+      );
     })();
   }
 
   return ensureProposalExecutiveSummaryGenerationJobSchemaPromise;
 }
 
-function buildProposalExecutiveSummaryJobResponse(row) {
+async function buildProposalExecutiveSummaryJobResponse(row) {
   if (!row) return null;
+  const componentConfig = await getProposalAiComponentConfigForProposal({
+    proposalId: row.proposal_id,
+    componentCode: row.component_code,
+  });
   const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
   return {
     publicId: row.public_id,
@@ -3813,6 +3949,7 @@ function buildProposalExecutiveSummaryJobResponse(row) {
     createdAt: row.created_at,
     startedAt: row.started_at || null,
     finishedAt: row.finished_at || null,
+    consumedAt: row.consumed_at || null,
     updatedAt: row.updated_at,
     requestedBy: {
       userId: Number(row.requested_by_user_id),
@@ -3876,7 +4013,7 @@ function buildProposalExecutiveSummaryJobResponse(row) {
             code: row.error_code || "generation_failed",
             message:
               row.error_message ||
-              "No fue posible generar la sugerencia del resumen ejecutivo",
+              `No fue posible generar la sugerencia de ${String(componentConfig?.componentTitle || "este componente").toLowerCase()}`,
             retryable: row.status !== "canceled",
           }
         : null,
@@ -3886,6 +4023,7 @@ function buildProposalExecutiveSummaryJobResponse(row) {
 async function getProposalExecutiveSummaryGenerationJob({
   publicId,
   proposalId,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
 }) {
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   const rows = await query(
@@ -3899,14 +4037,17 @@ async function getProposalExecutiveSummaryGenerationJob({
     [
       publicId,
       Number(proposalId),
-      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      String(componentCode || "").trim(),
       PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
     ],
   );
   return rows.length ? buildProposalExecutiveSummaryJobResponse(rows[0]) : null;
 }
 
-async function getLatestProposalExecutiveSummaryGenerationJob({ proposalId }) {
+async function getLatestProposalExecutiveSummaryGenerationJob({
+  proposalId,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+}) {
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   const rows = await query(
     `SELECT *
@@ -3914,20 +4055,120 @@ async function getLatestProposalExecutiveSummaryGenerationJob({ proposalId }) {
      WHERE proposal_id = ?
        AND component_code = ?
        AND job_type = ?
+       AND consumed_at IS NULL
      ORDER BY id DESC
      LIMIT 1`,
     [
       Number(proposalId),
-      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      String(componentCode || "").trim(),
       PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
     ],
   );
   return rows.length ? buildProposalExecutiveSummaryJobResponse(rows[0]) : null;
 }
 
+async function consumeProposalExecutiveSummaryGenerationJob({
+  proposalId,
+  publicId,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+}) {
+  await ensureProposalExecutiveSummaryGenerationJobSchema();
+  const normalizedProposalId = Number(proposalId || 0);
+  const normalizedPublicId = String(publicId || "").trim();
+  const normalizedComponentCode = String(componentCode || "").trim();
+  if (!normalizedProposalId || !normalizedPublicId) {
+    return false;
+  }
+
+  const rows = await query(
+    `SELECT id
+     FROM proposal_ai_jobs
+     WHERE proposal_id = ?
+       AND public_id = ?
+       AND component_code = ?
+       AND job_type = ?
+       AND status = 'completed'
+       AND consumed_at IS NULL
+     LIMIT 1`,
+    [
+      normalizedProposalId,
+      normalizedPublicId,
+      normalizedComponentCode,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+    ],
+  );
+
+  if (!rows.length) {
+    return false;
+  }
+
+  await query(
+    `UPDATE proposal_ai_jobs
+     SET consumed_at = NOW(3)
+     WHERE proposal_id = ?
+       AND component_code = ?
+       AND job_type = ?
+       AND status = 'completed'
+       AND consumed_at IS NULL
+       AND id <= ?`,
+    [
+      normalizedProposalId,
+      normalizedComponentCode,
+      PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
+      Number(rows[0].id),
+    ],
+  );
+
+  return true;
+}
+
+function buildProposalComponentComparableText(blocks) {
+  return normalizeProposalAiText(
+    (Array.isArray(blocks) ? blocks : [])
+      .flatMap((block) => {
+        if (block?.type === "list") {
+          return Array.isArray(block.items) ? block.items : [];
+        }
+        return [block?.text || ""];
+      })
+      .filter(Boolean)
+      .join("\n\n"),
+  );
+}
+
+async function consumeMatchingProposalExecutiveSummaryGenerationJob({
+  proposalId,
+  blocks,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+}) {
+  const latestJob = await getLatestProposalExecutiveSummaryGenerationJob({
+    proposalId,
+    componentCode,
+  });
+  if (!latestJob || latestJob.status !== "completed") {
+    return false;
+  }
+
+  const savedText = buildProposalComponentComparableText(blocks);
+  const suggestionText = normalizeProposalAiText(
+    latestJob.result?.suggestion?.plainText || "",
+  );
+
+  if (!savedText || !suggestionText || savedText !== suggestionText) {
+    return false;
+  }
+
+  return consumeProposalExecutiveSummaryGenerationJob({
+    proposalId,
+    publicId: latestJob.publicId,
+    componentCode,
+  });
+}
+
 function buildProposalExecutiveSummaryFingerprintSnapshot({
   proposal,
   component,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
   instructions,
   languageCode,
   maxLibraryAssets,
@@ -3939,7 +4180,7 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
   return {
     proposalId: Number(proposal?.id || 0),
     quotationVersionId: Number(proposal?.quotation_version_id || 0),
-    componentCode: PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+    componentCode: String(componentCode || "").trim(),
     componentTitle: component?.title || "",
     componentBlocks: Array.isArray(component?.blocks)
       ? component.blocks.map((block) => ({
@@ -3978,6 +4219,7 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
 
 async function createOrReuseProposalExecutiveSummaryGenerationJob({
   proposal,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
   requestedByUserId,
   instructions,
   languageCode,
@@ -3988,11 +4230,23 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
   selectedLibraryAssetPublicIds,
 }) {
   await ensureProposalExecutiveSummaryGenerationJobSchema();
+  const componentConfig = await getProposalAiComponentConfigForProposal({
+    proposalId: Number(proposal?.id),
+    componentCode,
+  });
+  if (!componentConfig) {
+    const error = new Error("Componente no soportado");
+    error.status = 422;
+    error.body = {
+      message: "El componente no soporta sugerencias IA",
+      error: { code: "unsupported_component", retryable: false },
+    };
+    throw error;
+  }
   const proposalDetail = await serializeProposalDetail(proposal);
   const component = Array.isArray(proposalDetail.components)
     ? proposalDetail.components.find(
-        (entry) =>
-          entry.componentCode === PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+        (entry) => entry.componentCode === componentConfig.componentCode,
       )
     : null;
 
@@ -4000,7 +4254,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
     const error = new Error("Componente no encontrado");
     error.status = 422;
     error.body = {
-      message: "La propuesta no tiene el componente Resumen ejecutivo",
+      message: `La propuesta no tiene el componente ${componentConfig.componentTitle}`,
       error: { code: "unsupported_component", retryable: false },
     };
     throw error;
@@ -4009,6 +4263,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
   const snapshot = buildProposalExecutiveSummaryFingerprintSnapshot({
     proposal,
     component,
+    componentCode: componentConfig.componentCode,
     instructions,
     languageCode,
     maxLibraryAssets,
@@ -4031,7 +4286,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
      LIMIT 1`,
     [
       Number(proposal.id),
-      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      componentConfig.componentCode,
       PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
       fingerprint,
     ],
@@ -4040,7 +4295,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
   if (reusableRows.length) {
     return {
       wasReused: true,
-      response: buildProposalExecutiveSummaryJobResponse(reusableRows[0]),
+      response: await buildProposalExecutiveSummaryJobResponse(reusableRows[0]),
     };
   }
 
@@ -4056,7 +4311,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
     [
       publicId,
       Number(proposal.id),
-      PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+      componentConfig.componentCode,
       PROPOSAL_EXEC_SUMMARY_JOB_TYPE,
       Number(requestedByUserId),
       fingerprint,
@@ -4082,7 +4337,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
 
   return {
     wasReused: false,
-    response: buildProposalExecutiveSummaryJobResponse(rows[0]),
+    response: await buildProposalExecutiveSummaryJobResponse(rows[0]),
   };
 }
 
@@ -4099,11 +4354,10 @@ async function resolveProposalExecutiveSummaryLibraryAssets({
   libraryContentMode,
   selectedLibraryAssetPublicIds,
 }) {
-  async function buildLibraryAssetContext(asset, {
-    matchScore = null,
-    matchReasons = [],
-    selectionMode,
-  }) {
+  async function buildLibraryAssetContext(
+    asset,
+    { matchScore = null, matchReasons = [], selectionMode },
+  ) {
     const sourceRows = asset?.id
       ? await query(
           `SELECT source_file_name, source_mime_type, extracted_text, extracted_text_summary
@@ -4318,8 +4572,7 @@ async function claimNextPendingProposalExecutiveSummaryGenerationJob() {
   const candidates = await query(
     `SELECT id
      FROM proposal_ai_jobs
-     WHERE component_code = ?
-       AND job_type = ?
+     WHERE job_type = ?
        AND (
          status = 'pending'
          OR (
@@ -4331,7 +4584,7 @@ async function claimNextPendingProposalExecutiveSummaryGenerationJob() {
        AND (expires_at IS NULL OR expires_at > NOW(3))
      ORDER BY created_at ASC, id ASC
      LIMIT 20`,
-    [PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE, PROPOSAL_EXEC_SUMMARY_JOB_TYPE],
+    [PROPOSAL_EXEC_SUMMARY_JOB_TYPE],
   );
 
   for (const candidate of candidates) {
@@ -4582,6 +4835,7 @@ function scoreLibraryAssetForProposalContext(item, context) {
 async function buildProposalExecutiveSummaryGenerationContext({
   proposal,
   user,
+  componentCode = PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
   instructions,
   languageCode,
   maxLibraryAssets,
@@ -4590,11 +4844,18 @@ async function buildProposalExecutiveSummaryGenerationContext({
   sourcePriorityMode,
   selectedLibraryAssetPublicIds,
 }) {
+  const componentConfig = await getProposalAiComponentConfigForProposal({
+    proposalId: Number(proposal?.id),
+    componentCode,
+  });
+  if (!componentConfig) {
+    throw new Error("Unsupported proposal AI component");
+  }
   const proposalDetail = await serializeProposalDetail(proposal);
   const currentComponent = Array.isArray(proposalDetail.components)
     ? proposalDetail.components.find(
         (component) =>
-          component.componentCode === PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+          component.componentCode === componentConfig.componentCode,
       )
     : null;
 
@@ -4687,7 +4948,7 @@ async function buildProposalExecutiveSummaryGenerationContext({
       quotationVersionId: Number(proposal.quotation_version_id),
       opportunityId: Number(proposal.opportunity_id),
       currentComponentDraft: {
-        title: currentComponent?.title || "Resumen ejecutivo",
+        title: currentComponent?.title || componentConfig.componentTitle,
         blocks: Array.isArray(currentComponent?.blocks)
           ? currentComponent.blocks.map((block) => ({
               type: block.type || "paragraph",
@@ -4801,6 +5062,8 @@ async function buildProposalExecutiveSummaryGenerationContext({
     },
     documentSources,
     generationPolicy: {
+      componentCode: componentConfig.componentCode,
+      aiCapabilityKey: componentConfig.capabilityKey,
       languageCode:
         String(languageCode || "es")
           .trim()
@@ -4816,7 +5079,9 @@ async function buildProposalExecutiveSummaryGenerationContext({
         sourcePriorityMode === "library_first"
           ? sourcePriorityMode
           : "balanced",
-      selectedLibraryAssetPublicIds: Array.isArray(selectedLibraryAssetPublicIds)
+      selectedLibraryAssetPublicIds: Array.isArray(
+        selectedLibraryAssetPublicIds,
+      )
         ? selectedLibraryAssetPublicIds
         : [],
       maxLibraryAssets: Math.min(
@@ -4831,6 +5096,18 @@ async function buildProposalExecutiveSummaryGenerationContext({
 }
 
 async function requestProposalExecutiveSummarySuggestion(context) {
+  const componentConfig = buildProposalAiComponentConfig({
+    componentCode: context?.generationPolicy?.componentCode,
+    componentTitle: context?.component?.title,
+    aiCapabilityKey: context?.generationPolicy?.aiCapabilityKey,
+  });
+  if (!componentConfig) {
+    const error = new Error(
+      "La generacion asistida no esta disponible para este componente",
+    );
+    error.code = "ai_generation_disabled";
+    throw error;
+  }
   if (!config.openai.apiKey) {
     const error = new Error(
       "La generacion asistida no esta disponible en este momento",
@@ -4840,12 +5117,10 @@ async function requestProposalExecutiveSummarySuggestion(context) {
   }
 
   const aiParameters = await getPublishedAiParameterEntryByCapabilityKey(
-    AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+    componentConfig.capabilityKey,
   );
   if (aiParameters && aiParameters.isEnabled === false) {
-    const error = new Error(
-      "La generacion asistida del resumen ejecutivo esta deshabilitada",
-    );
+    const error = new Error(componentConfig.aiDisabledMessage);
     error.code = "ai_generation_disabled";
     throw error;
   }
@@ -4856,7 +5131,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
     !Array.isArray(aiParameters.outputSchema)
       ? aiParameters.outputSchema
       : {
-          title: "Resumen ejecutivo sugerido",
+          title: componentConfig.defaultSuggestionTitle,
           paragraphs: ["string"],
           warnings: ["string"],
         };
@@ -4871,10 +5146,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
     userPromptTemplate === "{context, expectedShape}"
       ? JSON.stringify({ context: effectiveContext, expectedShape })
       : userPromptTemplate
-          .replaceAll(
-            "{{context}}",
-            JSON.stringify(effectiveContext, null, 2),
-          )
+          .replaceAll("{{context}}", JSON.stringify(effectiveContext, null, 2))
           .replaceAll(
             "{{expectedShape}}",
             JSON.stringify(expectedShape, null, 2),
@@ -4886,8 +5158,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
       {
         role: "system",
         content:
-          aiParameters?.systemPrompt ||
-          "Redacta un resumen ejecutivo comercial en espanol para una propuesta B2B. Responde exclusivamente con JSON valido. No inventes capacidades, entregables ni promesas que no esten sustentadas por el contexto. Prioriza continuidad operativa, objetivos del cliente, alcance comercial y valor de negocio. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del resumen. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.",
+          aiParameters?.systemPrompt || componentConfig.defaultSystemPrompt,
       },
       {
         role: "user",
@@ -4901,7 +5172,9 @@ async function requestProposalExecutiveSummarySuggestion(context) {
     () => controller.abort(),
     Math.max(
       5000,
-      Number(aiParameters?.timeoutMs || PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS),
+      Number(
+        aiParameters?.timeoutMs || PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+      ),
     ),
   );
 
@@ -4936,34 +5209,31 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           .filter(Boolean)
       : [];
     if (!paragraphs.length) {
-      throw new Error(
-        "OpenAI request failed: empty executive summary suggestion",
-      );
+      throw new Error("OpenAI request failed: empty proposal AI suggestion");
     }
 
     return {
       suggestion: {
         mode: "parallel",
-        componentCode: PROPOSAL_EXEC_SUMMARY_JOB_COMPONENT_CODE,
+        componentCode: componentConfig.componentCode,
         title:
           summarizeProposalAiText(
-            parsed.title || "Resumen ejecutivo sugerido",
+            parsed.title || componentConfig.defaultSuggestionTitle,
             180,
-          ) || "Resumen ejecutivo sugerido",
+          ) || componentConfig.defaultSuggestionTitle,
         blocks: paragraphs.map((text) => ({ type: "paragraph", text })),
         plainText: paragraphs.join("\n\n"),
         suggestionMetadata: {
-          tone: "executive_commercial",
+          tone: componentConfig.suggestionTone,
           languageCode:
             String(context?.generationPolicy?.languageCode || "es").trim() ||
             "es",
           generatedAt: new Date().toISOString(),
           aiParameters: {
-            capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+            capabilityKey: componentConfig.capabilityKey,
             publishedRevisionNumber:
               Number(aiParameters?.publishedRevisionNumber || 0) || null,
-            model:
-              aiParameters?.modelOverride || config.openai.model,
+            model: aiParameters?.modelOverride || config.openai.model,
           },
         },
       },
@@ -5013,8 +5283,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
               asset.contentModeUsed === "summary_extract"
                 ? "summary_extract"
                 : "source_text",
-            selectionMode:
-              asset.selectionMode === "manual" ? "manual" : "auto",
+            selectionMode: asset.selectionMode === "manual" ? "manual" : "auto",
             matchReasons: Array.isArray(asset.matchReasons)
               ? asset.matchReasons
               : [],
@@ -5037,14 +5306,15 @@ async function requestProposalExecutiveSummarySuggestion(context) {
               : "balanced",
         },
         aiParameters: {
-          capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+          capabilityKey: componentConfig.capabilityKey,
           publishedRevisionNumber:
             Number(aiParameters?.publishedRevisionNumber || 0) || null,
           model: aiParameters?.modelOverride || config.openai.model,
           timeoutMs: Math.max(
             5000,
             Number(
-              aiParameters?.timeoutMs || PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+              aiParameters?.timeoutMs ||
+                PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
             ),
           ),
         },
@@ -5063,6 +5333,20 @@ async function requestProposalExecutiveSummarySuggestion(context) {
 
 async function processProposalExecutiveSummaryGenerationJob(row) {
   try {
+    const componentConfig = await getProposalAiComponentConfigForProposal({
+      proposalId: Number(row.proposal_id),
+      componentCode: row.component_code,
+    });
+    if (!componentConfig) {
+      await finalizeProposalExecutiveSummaryGenerationJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "unsupported_component",
+        errorMessage: "El componente del job no soporta sugerencias IA",
+      });
+      return;
+    }
     const user = await getUserAuthContext(Number(row.requested_by_user_id));
     if (!user) {
       await finalizeProposalExecutiveSummaryGenerationJob({
@@ -5102,6 +5386,7 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
     const context = await buildProposalExecutiveSummaryGenerationContext({
       proposal,
       user,
+      componentCode: componentConfig.componentCode,
       instructions: row.instructions_text,
       languageCode: row.language_code,
       maxLibraryAssets: row.max_library_assets,
@@ -5115,7 +5400,7 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       jobId: Number(row.id),
       leaseToken: row.lease_token,
       phase: "generating_text",
-      label: "La IA esta redactando el resumen ejecutivo",
+      label: `La IA esta redactando ${String(componentConfig.componentTitle || "el contenido").toLowerCase()}`,
       percent: 80,
     });
 
@@ -5140,6 +5425,10 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       result,
     });
   } catch (error) {
+    const componentConfig = await getProposalAiComponentConfigForProposal({
+      proposalId: Number(row.proposal_id),
+      componentCode: row.component_code,
+    });
     await finalizeProposalExecutiveSummaryGenerationJob({
       jobId: Number(row.id),
       leaseToken: row.lease_token,
@@ -5147,7 +5436,7 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       errorCode: error?.code || "ai_generation_failed",
       errorMessage:
         String(error?.message || "").trim() ||
-        "No fue posible generar el resumen ejecutivo con IA.",
+        `No fue posible generar ${String(componentConfig?.componentTitle || "el contenido").toLowerCase()} con IA.`,
     });
   }
 }
@@ -6369,11 +6658,12 @@ router.get(
 );
 
 router.get(
-  "/proposals/:proposalId/components/executive_summary/generation-jobs/latest",
+  "/proposals/:proposalId/components/:componentCode/generation-jobs/latest",
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
     }
@@ -6385,19 +6675,33 @@ router.get(
     if (!proposal) {
       return res.status(404).json({ message: "Propuesta no encontrada" });
     }
+    if (
+      !(await getProposalAiComponentConfigForProposal({
+        proposalId,
+        componentCode,
+      }))
+    ) {
+      return res
+        .status(404)
+        .json({ message: "Componente no soporta sugerencias IA" });
+    }
 
     return res.json({
-      job: await getLatestProposalExecutiveSummaryGenerationJob({ proposalId }),
+      job: await getLatestProposalExecutiveSummaryGenerationJob({
+        proposalId,
+        componentCode,
+      }),
     });
   },
 );
 
 router.get(
-  "/proposals/:proposalId/components/executive_summary/generation-jobs/:jobPublicId",
+  "/proposals/:proposalId/components/:componentCode/generation-jobs/:jobPublicId",
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
     const jobPublicId = String(req.params.jobPublicId || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
@@ -6413,10 +6717,21 @@ router.get(
     if (!proposal) {
       return res.status(404).json({ message: "Propuesta no encontrada" });
     }
+    if (
+      !(await getProposalAiComponentConfigForProposal({
+        proposalId,
+        componentCode,
+      }))
+    ) {
+      return res
+        .status(404)
+        .json({ message: "Componente no soporta sugerencias IA" });
+    }
 
     const job = await getProposalExecutiveSummaryGenerationJob({
       publicId: jobPublicId,
       proposalId,
+      componentCode,
     });
     if (!job) {
       return res.status(404).json({
@@ -6785,7 +7100,7 @@ router.put(
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
     }
-    if (!getProposalComponentDefinitionOrNull(componentCode)) {
+    if (!(await proposalHasComponent(proposalId, componentCode))) {
       return res.status(404).json({ message: "Componente no encontrado" });
     }
 
@@ -6812,6 +7127,23 @@ router.put(
       blocks: parsed.data.blocks,
       actorUserId: Number(req.user.id),
     });
+    const aiComponentConfig = await getProposalAiComponentConfigForProposal({
+      proposalId,
+      componentCode,
+    });
+    if (aiComponentConfig && parsed.data.consumeSuggestionPublicId) {
+      await consumeProposalExecutiveSummaryGenerationJob({
+        proposalId,
+        publicId: parsed.data.consumeSuggestionPublicId,
+        componentCode,
+      });
+    } else if (aiComponentConfig) {
+      await consumeMatchingProposalExecutiveSummaryGenerationJob({
+        proposalId,
+        blocks: parsed.data.blocks,
+        componentCode,
+      });
+    }
     const synced = await refreshProposalLegacyContentFromComponents({
       proposalId,
       proposalTitle: proposal.title,
@@ -6854,11 +7186,12 @@ router.put(
 );
 
 router.post(
-  "/proposals/:proposalId/components/executive_summary/generation-jobs",
+  "/proposals/:proposalId/components/:componentCode/generation-jobs",
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
     }
@@ -6879,6 +7212,16 @@ router.post(
     });
     if (!proposal) {
       return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+    if (
+      !(await getProposalAiComponentConfigForProposal({
+        proposalId,
+        componentCode,
+      }))
+    ) {
+      return res
+        .status(404)
+        .json({ message: "Componente no soporta sugerencias IA" });
     }
 
     try {
@@ -6902,6 +7245,7 @@ router.post(
       const creation = await createOrReuseProposalExecutiveSummaryGenerationJob(
         {
           proposal,
+          componentCode,
           requestedByUserId: Number(req.user.id),
           instructions: parsed.data.instructions,
           languageCode: parsed.data.languageCode,
@@ -6942,7 +7286,7 @@ router.post(
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
     }
-    if (!getProposalComponentDefinitionOrNull(componentCode)) {
+    if (!(await proposalHasComponent(proposalId, componentCode))) {
       return res.status(404).json({ message: "Componente no encontrado" });
     }
 

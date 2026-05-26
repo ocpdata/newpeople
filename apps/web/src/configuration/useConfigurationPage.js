@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+
+const DEFAULT_SELECTED_AI_CAPABILITY_KEY = "proposal.executive_summary";
 
 const EMPTY_FORM = {
   legalName: "",
@@ -32,6 +34,24 @@ const EMPTY_PROPOSAL_CONTENT_CONFIG = {
   publishedAt: null,
   updatedAt: null,
   components: [],
+};
+
+const EMPTY_PROPOSAL_CONTENT_COMPONENT = {
+  id: null,
+  componentCode: "",
+  title: "",
+  displayOrder: 0,
+  status: "active",
+  componentKind: "custom",
+  isRequired: false,
+  isVisible: true,
+  aiEnabled: false,
+  aiMode: null,
+  aiCapabilityKey: null,
+  aiSettings: null,
+  layoutConfig: null,
+  resolvedLayoutMode: "stack",
+  blocks: [],
 };
 
 const EMPTY_AI_PARAMETER_ENTRY = {
@@ -78,10 +98,36 @@ const EMPTY_AI_PARAMETERS_CONFIG = {
     {
       capabilityKey: "proposal.executive_summary",
       title: "Resumen ejecutivo",
-      description: "Generacion del resumen ejecutivo comercial para propuestas.",
+      description:
+        "Generacion del resumen ejecutivo comercial para propuestas.",
+    },
+    {
+      capabilityKey: "proposal.background",
+      title: "Antecedentes",
+      description: "Generacion de la seccion de antecedentes para propuestas.",
+    },
+    {
+      capabilityKey: "proposal.generic_section",
+      title: "Seccion generica",
+      description:
+        "Generacion generica de contenido para secciones de propuestas.",
     },
   ],
-  entries: [EMPTY_AI_PARAMETER_ENTRY],
+  entries: [
+    EMPTY_AI_PARAMETER_ENTRY,
+    {
+      ...EMPTY_AI_PARAMETER_ENTRY,
+      capabilityKey: "proposal.background",
+      title: "Antecedentes",
+      description: "",
+    },
+    {
+      ...EMPTY_AI_PARAMETER_ENTRY,
+      capabilityKey: "proposal.generic_section",
+      title: "Seccion generica",
+      description: "",
+    },
+  ],
 };
 
 function normalizeInstitutionalAsset(asset) {
@@ -144,11 +190,27 @@ function normalizeProposalContentConfig(config) {
     updatedAt: config.updatedAt || null,
     components: Array.isArray(config.components)
       ? config.components.map((component) => ({
-          id: Number(component.id),
+          ...EMPTY_PROPOSAL_CONTENT_COMPONENT,
+          id: component.id ? Number(component.id) : null,
           componentCode: String(component.componentCode || ""),
           title: String(component.title || ""),
           displayOrder: Number(component.displayOrder || 0),
           status: String(component.status || "active"),
+          componentKind: String(component.componentKind || "custom"),
+          isRequired: Boolean(component.isRequired),
+          isVisible:
+            component.isVisible === undefined
+              ? true
+              : Boolean(component.isVisible),
+          aiEnabled: Boolean(component.aiEnabled),
+          aiMode: component.aiMode ? String(component.aiMode) : null,
+          aiCapabilityKey: component.aiCapabilityKey
+            ? String(component.aiCapabilityKey)
+            : null,
+          aiSettings:
+            component.aiSettings && typeof component.aiSettings === "object"
+              ? component.aiSettings
+              : null,
           layoutConfig: component.layoutConfig || null,
           resolvedLayoutMode: String(component.resolvedLayoutMode || ""),
           blocks: Array.isArray(component.blocks)
@@ -169,6 +231,25 @@ function normalizeProposalContentConfig(config) {
   };
 }
 
+function buildProposalContentComponentPayload(component) {
+  return {
+    title: String(component?.title || "").trim(),
+    componentKind: String(component?.componentKind || "custom"),
+    isVisible:
+      component?.isVisible === undefined ? true : Boolean(component.isVisible),
+    aiEnabled: Boolean(component?.aiEnabled),
+    aiMode: component?.aiEnabled
+      ? String(component?.aiMode || "").trim() || undefined
+      : null,
+    aiSettings:
+      component?.aiSettings && typeof component.aiSettings === "object"
+        ? component.aiSettings
+        : null,
+    layoutConfig: component?.layoutConfig || null,
+    blocks: Array.isArray(component?.blocks) ? component.blocks : [],
+  };
+}
+
 function normalizeAiParameterEntry(entry) {
   if (!entry) {
     return { ...EMPTY_AI_PARAMETER_ENTRY };
@@ -179,10 +260,7 @@ function normalizeAiParameterEntry(entry) {
     ),
     title: String(entry.title || EMPTY_AI_PARAMETER_ENTRY.title),
     description: String(entry.description || ""),
-    isEnabled:
-      entry.isEnabled === undefined
-        ? true
-        : Boolean(entry.isEnabled),
+    isEnabled: entry.isEnabled === undefined ? true : Boolean(entry.isEnabled),
     modelOverride: String(entry.modelOverride || ""),
     timeoutMs:
       entry.timeoutMs == null
@@ -460,6 +538,7 @@ export function useConfigurationPage() {
   const [proposalContentConfig, setProposalContentConfig] = useState(
     EMPTY_PROPOSAL_CONTENT_CONFIG,
   );
+  const [proposalContentLoadError, setProposalContentLoadError] = useState("");
   const [proposalComponentDefinitions, setProposalComponentDefinitions] =
     useState([]);
   const [institutionalAssets, setInstitutionalAssets] = useState([]);
@@ -467,7 +546,7 @@ export function useConfigurationPage() {
     EMPTY_AI_PARAMETERS_CONFIG,
   );
   const [selectedAiCapabilityKey, setSelectedAiCapabilityKey] = useState(
-    "proposal.executive_summary",
+    DEFAULT_SELECTED_AI_CAPABILITY_KEY,
   );
   const [aiParameterDraft, setAiParameterDraft] = useState(
     EMPTY_AI_PARAMETER_ENTRY,
@@ -513,8 +592,12 @@ export function useConfigurationPage() {
           api
             .get("/api/opportunities/workspace-playbooks")
             .catch(() => ({ data: { items: [] } })),
-          api.get("/api/settings/proposal-content-config").catch(() => ({
+          api.get("/api/settings/proposal-content-config").catch((err) => ({
             data: { config: null, componentDefinitions: [] },
+            loadError: getApiErrorMessage(
+              err,
+              "No fue posible cargar la configuracion de propuestas",
+            ),
           })),
           api
             .get("/api/settings/institutional-assets")
@@ -552,6 +635,9 @@ export function useConfigurationPage() {
         setProposalContentConfig(
           normalizeProposalContentConfig(proposalContentResponse.data?.config),
         );
+        setProposalContentLoadError(
+          String(proposalContentResponse.loadError || ""),
+        );
         setProposalComponentDefinitions(
           Array.isArray(proposalContentResponse.data?.componentDefinitions)
             ? proposalContentResponse.data.componentDefinitions
@@ -569,8 +655,11 @@ export function useConfigurationPage() {
         );
         const nextAiEntry =
           nextAiParametersConfig.entries.find(
-            (entry) => entry.capabilityKey === selectedAiCapabilityKey,
-          ) || nextAiParametersConfig.entries[0] || normalizeAiParameterEntry();
+            (entry) =>
+              entry.capabilityKey === DEFAULT_SELECTED_AI_CAPABILITY_KEY,
+          ) ||
+          nextAiParametersConfig.entries[0] ||
+          normalizeAiParameterEntry();
         setAiParametersConfig(nextAiParametersConfig);
         setSelectedAiCapabilityKey(nextAiEntry.capabilityKey);
         setAiParameterDraft(nextAiEntry);
@@ -630,7 +719,9 @@ export function useConfigurationPage() {
     [temporaryFeatureSettings, initialTemporaryFeaturesSnapshot],
   );
   const aiParametersDirty = useMemo(
-    () => serializeAiParameterDraft(aiParameterDraft) !== initialAiParameterSnapshot,
+    () =>
+      serializeAiParameterDraft(aiParameterDraft) !==
+      initialAiParameterSnapshot,
     [aiParameterDraft, initialAiParameterSnapshot],
   );
 
@@ -969,13 +1060,17 @@ export function useConfigurationPage() {
     }`;
   }, [aiParametersConfig]);
 
-  async function reloadAiParametersConfig(nextCapabilityKey = selectedAiCapabilityKey) {
+  async function reloadAiParametersConfig(
+    nextCapabilityKey = selectedAiCapabilityKey,
+  ) {
     const response = await api.get("/api/settings/ai-parameters");
     const nextConfig = normalizeAiParametersConfig(response.data?.config);
     const nextEntry =
       nextConfig.entries.find(
         (entry) => entry.capabilityKey === nextCapabilityKey,
-      ) || nextConfig.entries[0] || normalizeAiParameterEntry(null);
+      ) ||
+      nextConfig.entries[0] ||
+      normalizeAiParameterEntry(null);
     setAiParametersConfig(nextConfig);
     setSelectedAiCapabilityKey(nextEntry.capabilityKey);
     setAiParameterDraft(nextEntry);
@@ -983,14 +1078,21 @@ export function useConfigurationPage() {
     return nextEntry;
   }
 
-  async function loadAiParameterRevisions(capabilityKey = selectedAiCapabilityKey) {
-    const response = await api.get(
-      `/api/settings/ai-parameters/entries/${capabilityKey}/revisions`,
-    );
-    setAiParameterRevisions(
-      Array.isArray(response.data?.revisions) ? response.data.revisions : [],
-    );
-  }
+  const loadAiParameterRevisions = useCallback(
+    async (capabilityKey) => {
+      const nextCapabilityKey =
+        capabilityKey ||
+        selectedAiCapabilityKey ||
+        DEFAULT_SELECTED_AI_CAPABILITY_KEY;
+      const response = await api.get(
+        `/api/settings/ai-parameters/entries/${nextCapabilityKey}/revisions`,
+      );
+      setAiParameterRevisions(
+        Array.isArray(response.data?.revisions) ? response.data.revisions : [],
+      );
+    },
+    [selectedAiCapabilityKey],
+  );
 
   function updateAiParameterField(field, value) {
     setAiParameterDraft((current) => ({ ...current, [field]: value }));
@@ -1093,7 +1195,9 @@ export function useConfigurationPage() {
       const nextEntry =
         nextConfig.entries.find(
           (entry) => entry.capabilityKey === selectedAiCapabilityKey,
-        ) || nextConfig.entries[0] || normalizeAiParameterEntry(null);
+        ) ||
+        nextConfig.entries[0] ||
+        normalizeAiParameterEntry(null);
       setAiParametersConfig(nextConfig);
       setAiParameterDraft(nextEntry);
       setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
@@ -1143,31 +1247,46 @@ export function useConfigurationPage() {
 
   useEffect(() => {
     if (activeSection !== "ai_parameters") return;
-    void loadAiParameterRevisions(selectedAiCapabilityKey).catch(() => {
-      setAiParameterRevisions([]);
+    queueMicrotask(() => {
+      void loadAiParameterRevisions(selectedAiCapabilityKey).catch(() => {
+        queueMicrotask(() => {
+          setAiParameterRevisions([]);
+        });
+      });
     });
-  }, [activeSection, selectedAiCapabilityKey]);
+  }, [activeSection, selectedAiCapabilityKey, loadAiParameterRevisions]);
 
   async function reloadProposalContentWorkspace() {
-    const [configResponse, assetsResponse] = await Promise.all([
-      api.get("/api/settings/proposal-content-config"),
-      api.get("/api/settings/institutional-assets"),
-    ]);
-    setProposalContentConfig(
-      normalizeProposalContentConfig(configResponse.data?.config),
-    );
-    setProposalComponentDefinitions(
-      Array.isArray(configResponse.data?.componentDefinitions)
-        ? configResponse.data.componentDefinitions
-        : [],
-    );
-    setInstitutionalAssets(
-      Array.isArray(assetsResponse.data?.items)
-        ? assetsResponse.data.items
-            .map(normalizeInstitutionalAsset)
-            .filter(Boolean)
-        : [],
-    );
+    try {
+      const [configResponse, assetsResponse] = await Promise.all([
+        api.get("/api/settings/proposal-content-config"),
+        api.get("/api/settings/institutional-assets"),
+      ]);
+      setProposalContentConfig(
+        normalizeProposalContentConfig(configResponse.data?.config),
+      );
+      setProposalContentLoadError("");
+      setProposalComponentDefinitions(
+        Array.isArray(configResponse.data?.componentDefinitions)
+          ? configResponse.data.componentDefinitions
+          : [],
+      );
+      setInstitutionalAssets(
+        Array.isArray(assetsResponse.data?.items)
+          ? assetsResponse.data.items
+              .map(normalizeInstitutionalAsset)
+              .filter(Boolean)
+          : [],
+      );
+    } catch (err) {
+      setProposalContentLoadError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar la configuracion de propuestas",
+        ),
+      );
+      throw err;
+    }
   }
 
   async function saveProposalContentComponent(componentCode, payload) {
@@ -1177,7 +1296,7 @@ export function useConfigurationPage() {
     try {
       const response = await api.put(
         `/api/settings/proposal-content-config/components/${componentCode}`,
-        payload,
+        buildProposalContentComponentPayload(payload),
       );
       setProposalContentConfig(
         normalizeProposalContentConfig(response.data?.config),
@@ -1189,6 +1308,122 @@ export function useConfigurationPage() {
           err,
           "No fue posible guardar el contenido default de la propuesta",
         ),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function createProposalContentComponent(payload) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        "/api/settings/proposal-content-config/components",
+        buildProposalContentComponentPayload(payload),
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Componente creado");
+      return response.data?.component || null;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible crear el componente de propuesta",
+        ),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function reorderProposalContent(orderedComponentCodes) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        "/api/settings/proposal-content-config/components/reorder",
+        { orderedComponentCodes },
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Orden actualizado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible reordenar los componentes"),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function archiveProposalContentComponent(componentCode) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/proposal-content-config/components/${componentCode}/archive`,
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Componente archivado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible archivar el componente"),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function restoreProposalContentComponent(componentCode) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/settings/proposal-content-config/components/${componentCode}/restore`,
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Componente restaurado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible restaurar el componente"),
+      );
+      throw err;
+    } finally {
+      setSavingProposalContent(false);
+    }
+  }
+
+  async function deleteProposalContent(componentCode) {
+    setSavingProposalContent(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.delete(
+        `/api/settings/proposal-content-config/components/${componentCode}`,
+      );
+      setProposalContentConfig(
+        normalizeProposalContentConfig(response.data?.config),
+      );
+      setSuccess(response.data?.message || "Componente eliminado");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible eliminar el componente"),
       );
       throw err;
     } finally {
@@ -1345,6 +1580,7 @@ export function useConfigurationPage() {
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
     proposalContentConfig,
+    proposalContentLoadError,
     proposalComponentDefinitions,
     institutionalAssets,
     aiParametersConfig,
@@ -1391,6 +1627,11 @@ export function useConfigurationPage() {
     publishAiParameters,
     restoreAiParameterRevision,
     saveProposalContentComponent,
+    createProposalContentComponent,
+    reorderProposalContent,
+    archiveProposalContentComponent,
+    restoreProposalContentComponent,
+    deleteProposalContent,
     publishProposalContent,
     createProposalAsset,
     addProposalAssetVersion,

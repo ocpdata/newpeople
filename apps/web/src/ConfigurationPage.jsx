@@ -1075,12 +1075,18 @@ function ConfigurationAuditList({
 
 function ProposalContentConfigurationPanel({
   config,
+  loadError,
   componentDefinitions,
   assets,
   savingProposalContent,
   assetActionKey,
   latestUpdateText,
   onSaveComponent,
+  onCreateComponent,
+  onReorderComponents,
+  onArchiveComponent,
+  onRestoreComponent,
+  onDeleteComponent,
   onCreateAsset,
   onAddAssetVersion,
   onArchiveAsset,
@@ -1101,7 +1107,15 @@ function ProposalContentConfigurationPanel({
   const [selectedComponentCode, setSelectedComponentCode] = useState("");
   const [editorTitle, setEditorTitle] = useState("");
   const [editorBlocks, setEditorBlocks] = useState([]);
+  const [editorIsVisible, setEditorIsVisible] = useState(true);
+  const [editorAiEnabled, setEditorAiEnabled] = useState(false);
+  const [editorAiMode, setEditorAiMode] = useState("auto");
   const [layoutDraft, setLayoutDraft] = useState(createProposalLayoutDraft());
+  const [newComponentDraft, setNewComponentDraft] = useState({
+    title: "",
+    aiEnabled: false,
+    aiMode: "auto",
+  });
   const [assetDraft, setAssetDraft] = useState({
     name: "",
     category: "institutional",
@@ -1118,7 +1132,9 @@ function ProposalContentConfigurationPanel({
 
   useEffect(() => {
     if (!selectedComponentCode && orderedComponents[0]?.componentCode) {
-      setSelectedComponentCode(orderedComponents[0].componentCode);
+      queueMicrotask(() => {
+        setSelectedComponentCode(orderedComponents[0].componentCode);
+      });
     }
   }, [orderedComponents, selectedComponentCode]);
 
@@ -1288,17 +1304,40 @@ function ProposalContentConfigurationPanel({
 
   useEffect(() => {
     if (!selectedComponent) return;
-    setEditorTitle(selectedComponent.title || "");
     const nextBlocks = Array.isArray(selectedComponent.blocks)
       ? selectedComponent.blocks.map((block, index) =>
           createProposalEditorBlock(block, index),
         )
       : [];
-    setEditorBlocks(nextBlocks);
-    setLayoutDraft(
-      buildProposalLayoutDraftFromComponent(selectedComponent, nextBlocks),
-    );
+    queueMicrotask(() => {
+      setEditorTitle(selectedComponent.title || "");
+      setEditorIsVisible(
+        selectedComponent.isVisible === undefined
+          ? true
+          : Boolean(selectedComponent.isVisible),
+      );
+      setEditorAiEnabled(Boolean(selectedComponent.aiEnabled));
+      setEditorAiMode(selectedComponent.aiMode || "auto");
+      setEditorBlocks(nextBlocks);
+      setLayoutDraft(
+        buildProposalLayoutDraftFromComponent(selectedComponent, nextBlocks),
+      );
+    });
   }, [selectedComponent]);
+
+  const editorAiHelpText = useMemo(() => {
+    if (!editorAiEnabled) {
+      return "Si no usa IA, el ingreso de informacion en esta seccion sera manual.";
+    }
+    if (selectedComponent?.componentKind === "custom") {
+      return editorAiMode === "manual"
+        ? "La IA generara sugerencias genericas usando las fuentes que el usuario seleccione manualmente."
+        : "La IA generara sugerencias automaticas con una redaccion comercial generica para esta seccion.";
+    }
+    return editorAiMode === "manual"
+      ? "La IA generara sugerencias para esta seccion usando las fuentes que el usuario seleccione manualmente."
+      : "La IA generara sugerencias automaticas usando la logica propia de esta seccion.";
+  }, [editorAiEnabled, editorAiMode, selectedComponent]);
 
   async function handleCreateAsset() {
     setAssetCreateAttempted(false);
@@ -1496,6 +1535,10 @@ function ProposalContentConfigurationPanel({
     if (manualRowsValidationMessage) return false;
     const payload = {
       title: editorTitle,
+      componentKind: selectedComponent.componentKind || "custom",
+      isVisible: editorIsVisible,
+      aiEnabled: editorAiEnabled,
+      aiMode: editorAiEnabled ? editorAiMode || "auto" : null,
       layoutConfig: buildProposalLayoutConfigPayload(layoutDraft, editorBlocks),
       blocks: editorBlocks.map((block) => ({
         type: block.type,
@@ -1516,18 +1559,119 @@ function ProposalContentConfigurationPanel({
     }
   }
 
+  async function handleCreateComponent() {
+    const title = String(newComponentDraft.title || "").trim();
+    if (!title) return;
+    const createdComponent = await onCreateComponent({
+      title,
+      componentKind: "custom",
+      isVisible: true,
+      aiEnabled: Boolean(newComponentDraft.aiEnabled),
+      aiMode: newComponentDraft.aiEnabled
+        ? newComponentDraft.aiMode || "auto"
+        : null,
+      blocks: [],
+      layoutConfig: null,
+    });
+    setNewComponentDraft({ title: "", aiEnabled: false, aiMode: "auto" });
+    if (createdComponent?.componentCode) {
+      setSelectedComponentCode(createdComponent.componentCode);
+    }
+  }
+
+  async function handleMoveComponent(offset) {
+    if (!selectedComponent) return;
+    const currentIndex = orderedComponents.findIndex(
+      (component) =>
+        component.componentCode === selectedComponent.componentCode,
+    );
+    const targetIndex = currentIndex + offset;
+    if (
+      currentIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= orderedComponents.length
+    ) {
+      return;
+    }
+    const nextOrderedCodes = orderedComponents.map(
+      (component) => component.componentCode,
+    );
+    [nextOrderedCodes[currentIndex], nextOrderedCodes[targetIndex]] = [
+      nextOrderedCodes[targetIndex],
+      nextOrderedCodes[currentIndex],
+    ];
+    await onReorderComponents(nextOrderedCodes);
+    setSelectedComponentCode(selectedComponent.componentCode);
+  }
+
+  async function handleArchiveCurrentComponent() {
+    if (!selectedComponent) return;
+    await onArchiveComponent(selectedComponent.componentCode);
+  }
+
+  async function handleRestoreCurrentComponent() {
+    if (!selectedComponent) return;
+    await onRestoreComponent(selectedComponent.componentCode);
+  }
+
+  async function handleDeleteCurrentComponent() {
+    if (!selectedComponent || selectedComponent.componentKind !== "custom") {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Se eliminara la seccion ${selectedComponent.title}. Esta accion no se puede deshacer.`,
+    );
+    if (!confirmed) return;
+    await onDeleteComponent(selectedComponent.componentCode);
+    const fallbackCode = orderedComponents.find(
+      (component) =>
+        component.componentCode !== selectedComponent.componentCode,
+    )?.componentCode;
+    setSelectedComponentCode(fallbackCode || "");
+  }
+
   return (
     <div className="configuration-section-stack">
       <section className="configuration-card">
         <div className="configuration-card-heading">
           <div>
             <h4>Contenido institucional de propuestas</h4>
+
+            {loadError ? (
+              <article className="configuration-proposal-empty-state">
+                <strong>No fue posible cargar la estructura actual</strong>
+                <p>{loadError}</p>
+              </article>
+            ) : null}
             <p>
-              Edita cada componente de la estructura fija de la propuesta con
-              bloques de texto e imagen.
+              Define la estructura editable de la propuesta, su orden,
+              visibilidad y que secciones pueden usar sugerencias IA.
             </p>
           </div>
           <div className="configuration-inline-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={savingProposalContent}
+              onClick={async () => {
+                const title = window.prompt("Titulo de la nueva seccion");
+                if (!title) return;
+                const createdComponent = await onCreateComponent({
+                  title,
+                  componentKind: "custom",
+                  isVisible: true,
+                  aiEnabled: false,
+                  aiCapabilityKey: null,
+                  blocks: [],
+                  layoutConfig: null,
+                });
+                if (createdComponent?.componentCode) {
+                  setSelectedComponentCode(createdComponent.componentCode);
+                }
+              }}
+            >
+              Agregar seccion
+            </button>
             <span className="configuration-inline-pill">
               {latestUpdateText}
             </span>
@@ -1542,9 +1686,13 @@ function ProposalContentConfigurationPanel({
             </article>
             <article className="configuration-proposal-metric-card">
               <strong>
-                {orderedComponents.length - completedComponentsCount}
+                {
+                  orderedComponents.filter(
+                    (component) => component.status === "archived",
+                  ).length
+                }
               </strong>
-              <span>secciones pendientes</span>
+              <span>secciones archivadas</span>
             </article>
             <article className="configuration-proposal-metric-card">
               <strong>{activeAssets.length}</strong>
@@ -1554,26 +1702,96 @@ function ProposalContentConfigurationPanel({
 
           <div className="configuration-proposal-steps">
             <article className="configuration-proposal-step-card">
-              <strong>1. Recorre la estructura</strong>
+              <strong>1. Disena la estructura</strong>
               <p>
-                Avanza seccion por seccion con el wizard. Cada paso corresponde
-                a una parte fija de la propuesta.
+                Puedes agregar, mover, ocultar o archivar secciones sin tocar
+                propuestas ya creadas.
               </p>
             </article>
             <article className="configuration-proposal-step-card">
-              <strong>2. Usa una base o crea bloques</strong>
+              <strong>2. Define IA por seccion</strong>
               <p>
-                En Mision, Vision y Resumen ejecutivo ya tienes plantillas
-                rapidas para partir de un texto inicial.
+                Decide si cada seccion usa IA y, si la activa, si opera en modo
+                automatico o manual.
               </p>
             </article>
             <article className="configuration-proposal-step-card">
-              <strong>3. Guarda cada seccion</strong>
+              <strong>3. Edita contenido base</strong>
               <p>
-                Guarda cada seccion para dejar actualizada la base con la que
-                nacen las nuevas propuestas.
+                Cada seccion sigue teniendo bloques editables para sembrar el
+                contenido de nuevas propuestas.
               </p>
             </article>
+          </div>
+        </div>
+
+        <div className="configuration-card configuration-card-subtle">
+          <div className="configuration-form-grid">
+            <label className="field-group">
+              <span>Nueva seccion</span>
+              <input
+                type="text"
+                value={newComponentDraft.title}
+                onChange={(event) =>
+                  setNewComponentDraft((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+                placeholder="Ej. Casos de exito"
+              />
+            </label>
+            <label className="field-group">
+              <span>Usar IA</span>
+              <select
+                value={newComponentDraft.aiEnabled ? "yes" : "no"}
+                onChange={(event) =>
+                  setNewComponentDraft((current) => ({
+                    ...current,
+                    aiEnabled: event.target.value === "yes",
+                    aiMode:
+                      event.target.value === "yes"
+                        ? current.aiMode || "auto"
+                        : "auto",
+                  }))
+                }
+              >
+                <option value="no">No</option>
+                <option value="yes">Si</option>
+              </select>
+            </label>
+            {newComponentDraft.aiEnabled ? (
+              <label className="field-group">
+                <span>Modo de sugerencia</span>
+                <select
+                  value={newComponentDraft.aiMode}
+                  onChange={(event) =>
+                    setNewComponentDraft((current) => ({
+                      ...current,
+                      aiMode: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="auto">Automatico</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+            ) : null}
+            <div className="configuration-inline-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  savingProposalContent ||
+                  !String(newComponentDraft.title || "").trim()
+                }
+                onClick={() => {
+                  void handleCreateComponent();
+                }}
+              >
+                Crear seccion
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1601,6 +1819,17 @@ function ProposalContentConfigurationPanel({
                 >
                   <span>{`Paso ${index + 1}`}</span>
                   <strong>{component.title}</strong>
+                  <small>
+                    {component.componentKind === "custom"
+                      ? "Custom"
+                      : "Sistema"}
+                    {component.status === "archived" ? " · Archivada" : ""}
+                    {component.aiEnabled
+                      ? component.aiMode === "manual"
+                        ? " · IA manual"
+                        : " · IA automatica"
+                      : " · Manual"}
+                  </small>
                 </button>
               );
             })}
@@ -1616,12 +1845,70 @@ function ProposalContentConfigurationPanel({
                     </span>
                     <h5>{selectedComponent.title}</h5>
                     <p>
-                      Completa esta seccion y avanza con Siguiente. Puedes
-                      saltar a otra seccion desde los pasos superiores si lo
-                      necesitas.
+                      Ajusta metadata, contenido base y orden de esta seccion.
                     </p>
                   </div>
                   <div className="configuration-inline-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={
+                        selectedComponentIndex <= 0 || savingProposalContent
+                      }
+                      onClick={() => {
+                        void handleMoveComponent(-1);
+                      }}
+                    >
+                      Subir
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={
+                        selectedComponentIndex >=
+                          orderedComponents.length - 1 || savingProposalContent
+                      }
+                      onClick={() => {
+                        void handleMoveComponent(1);
+                      }}
+                    >
+                      Bajar
+                    </button>
+                    {selectedComponent.status === "archived" ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={savingProposalContent}
+                        onClick={() => {
+                          void handleRestoreCurrentComponent();
+                        }}
+                      >
+                        Restaurar
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={savingProposalContent}
+                        onClick={() => {
+                          void handleArchiveCurrentComponent();
+                        }}
+                      >
+                        Archivar
+                      </button>
+                    )}
+                    {selectedComponent.componentKind === "custom" ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={savingProposalContent}
+                        onClick={() => {
+                          void handleDeleteCurrentComponent();
+                        }}
+                      >
+                        Eliminar
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="configuration-step-icon-button"
@@ -1661,10 +1948,12 @@ function ProposalContentConfigurationPanel({
 
                 <div className="configuration-proposal-editor-header">
                   <div>
-                    <strong>Paso 1. Ajusta el titulo de la seccion</strong>
+                    <strong>
+                      Paso 1. Ajusta identidad y reglas de la seccion
+                    </strong>
                     <p>
-                      Este titulo aparecera como base cuando se clone el
-                      contenido a una propuesta nueva.
+                      El titulo, visibilidad y modo de uso de IA se clonan a
+                      propuestas nuevas.
                     </p>
                   </div>
                   <span className="configuration-inline-pill">
@@ -1680,6 +1969,67 @@ function ProposalContentConfigurationPanel({
                     onChange={(event) => setEditorTitle(event.target.value)}
                   />
                 </label>
+
+                <div className="configuration-form-grid">
+                  <label className="field-group">
+                    <span>Tipo de seccion</span>
+                    <input
+                      type="text"
+                      value={
+                        selectedComponent.componentKind === "custom"
+                          ? "Custom"
+                          : "Sistema"
+                      }
+                      disabled
+                    />
+                  </label>
+                  <label className="field-group">
+                    <span>Visibilidad</span>
+                    <select
+                      value={editorIsVisible ? "visible" : "hidden"}
+                      onChange={(event) =>
+                        setEditorIsVisible(event.target.value === "visible")
+                      }
+                    >
+                      <option value="visible">Visible</option>
+                      <option value="hidden">
+                        Oculta en nuevas propuestas
+                      </option>
+                    </select>
+                  </label>
+                  <label className="field-group">
+                    <span>Usa IA</span>
+                    <select
+                      value={editorAiEnabled ? "yes" : "no"}
+                      onChange={(event) => {
+                        const enabled = event.target.value === "yes";
+                        setEditorAiEnabled(enabled);
+                        if (enabled && !editorAiMode) {
+                          setEditorAiMode("auto");
+                        }
+                      }}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Si</option>
+                    </select>
+                  </label>
+                  {editorAiEnabled ? (
+                    <label className="field-group">
+                      <span>Modo de sugerencia</span>
+                      <select
+                        value={editorAiMode}
+                        onChange={(event) =>
+                          setEditorAiMode(event.target.value)
+                        }
+                      >
+                        <option value="auto">Automatico</option>
+                        <option value="manual">Manual</option>
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+
+                <p className="field-hint">{editorAiHelpText}</p>
 
                 <div className="configuration-proposal-layout-panel">
                   <div className="configuration-proposal-editor-header">
@@ -2534,7 +2884,9 @@ function AiParametersConfigurationPanel({
     : [];
 
   function toggleArrayValue(field, value, checked) {
-    const currentValues = Array.isArray(parameters[field]) ? parameters[field] : [];
+    const currentValues = Array.isArray(parameters[field])
+      ? parameters[field]
+      : [];
     const nextValues = checked
       ? Array.from(new Set([...currentValues, value]))
       : currentValues.filter((item) => item !== value);
@@ -2576,7 +2928,10 @@ function AiParametersConfigurationPanel({
           <strong>Ultimo movimiento</strong>
           <span>{latestUpdateText}</span>
           <span>
-            Publicado: {config?.publishedAt ? formatDateTime(config.publishedAt) : "Sin publicacion"}
+            Publicado:{" "}
+            {config?.publishedAt
+              ? formatDateTime(config.publishedAt)
+              : "Sin publicacion"}
           </span>
         </div>
       </section>
@@ -2588,7 +2943,9 @@ function AiParametersConfigurationPanel({
               <h4>Control operativo</h4>
               <p>Activa o ajusta el modelo y timeout de esta capacidad.</p>
             </div>
-            {dirty ? <span className="configuration-inline-pill">Sin publicar</span> : null}
+            {dirty ? (
+              <span className="configuration-inline-pill">Sin publicar</span>
+            ) : null}
           </div>
 
           <div className="configuration-form-grid">
@@ -2669,7 +3026,8 @@ function AiParametersConfigurationPanel({
                 }
               />
               <p className="field-hint">
-                Usa `{{context}}` y `{{expectedShape}}` para interpolar el contexto real.
+                Usa {"{{ context }}"} y {"{{ expectedShape }}"} para interpolar
+                el contexto real.
               </p>
             </div>
           </div>
@@ -2801,7 +3159,12 @@ function AiParametersConfigurationPanel({
                   <label key={value} className="configuration-ai-checkbox">
                     <input
                       type="checkbox"
-                      checked={Array.isArray(parameters.supportedLibraryContentModes) && parameters.supportedLibraryContentModes.includes(value)}
+                      checked={
+                        Array.isArray(
+                          parameters.supportedLibraryContentModes,
+                        ) &&
+                        parameters.supportedLibraryContentModes.includes(value)
+                      }
                       onChange={(event) =>
                         toggleArrayValue(
                           "supportedLibraryContentModes",
@@ -2826,7 +3189,12 @@ function AiParametersConfigurationPanel({
                   <label key={value} className="configuration-ai-checkbox">
                     <input
                       type="checkbox"
-                      checked={Array.isArray(parameters.supportedSourcePriorityModes) && parameters.supportedSourcePriorityModes.includes(value)}
+                      checked={
+                        Array.isArray(
+                          parameters.supportedSourcePriorityModes,
+                        ) &&
+                        parameters.supportedSourcePriorityModes.includes(value)
+                      }
                       onChange={(event) =>
                         toggleArrayValue(
                           "supportedSourcePriorityModes",
@@ -2903,11 +3271,15 @@ function AiParametersConfigurationPanel({
 
           <div className="configuration-ai-revision-list">
             {revisions.map((revision) => (
-              <article key={revision.revisionNumber} className="configuration-ai-revision-item">
+              <article
+                key={revision.revisionNumber}
+                className="configuration-ai-revision-item"
+              >
                 <div>
                   <strong>Revision {revision.revisionNumber}</strong>
                   <span>
-                    {formatDateTime(revision.createdAt)} por {revision.createdByUserName || "sistema"}
+                    {formatDateTime(revision.createdAt)} por{" "}
+                    {revision.createdByUserName || "sistema"}
                   </span>
                   <p>{revision.changeSummary || "Sin resumen"}</p>
                 </div>
@@ -2919,9 +3291,13 @@ function AiParametersConfigurationPanel({
                     type="button"
                     className="btn-secondary"
                     onClick={() => onRestoreRevision(revision.revisionNumber)}
-                    disabled={restoringKey === `${selectedCapabilityKey}:${revision.revisionNumber}`}
+                    disabled={
+                      restoringKey ===
+                      `${selectedCapabilityKey}:${revision.revisionNumber}`
+                    }
                   >
-                    {restoringKey === `${selectedCapabilityKey}:${revision.revisionNumber}`
+                    {restoringKey ===
+                    `${selectedCapabilityKey}:${revision.revisionNumber}`
                       ? "Restaurando..."
                       : "Restaurar"}
                   </button>
@@ -2952,6 +3328,7 @@ export default function ConfigurationPage() {
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
     proposalContentConfig,
+    proposalContentLoadError,
     proposalComponentDefinitions,
     institutionalAssets,
     aiParametersConfig,
@@ -2998,6 +3375,11 @@ export default function ConfigurationPage() {
     publishAiParameters,
     restoreAiParameterRevision,
     saveProposalContentComponent,
+    createProposalContentComponent,
+    reorderProposalContent,
+    archiveProposalContentComponent,
+    restoreProposalContentComponent,
+    deleteProposalContent,
     publishProposalContent,
     createProposalAsset,
     addProposalAssetVersion,
@@ -3215,7 +3597,10 @@ export default function ConfigurationPage() {
           ? `Publicado ${formatDateTime(aiParametersConfig.publishedAt)}`
           : "Sin publicacion";
     }
-    if (activeSection === "proposal_content" && proposalContentConfig.updatedAt) {
+    if (
+      activeSection === "proposal_content" &&
+      proposalContentConfig.updatedAt
+    ) {
       return `Vigente desde ${formatDateTime(proposalContentConfig.updatedAt)}`;
     }
     return companyProfile?.updatedAt
@@ -3224,7 +3609,7 @@ export default function ConfigurationPage() {
   }, [
     activeSection,
     aiParametersConfig,
-    companyProfile?.updatedAt,
+    companyProfile,
     formatDateTime,
     proposalContentConfig.updatedAt,
   ]);
@@ -3744,12 +4129,18 @@ export default function ConfigurationPage() {
           {activeSection === "proposal_content" ? (
             <ProposalContentConfigurationPanel
               config={proposalContentConfig}
+              loadError={proposalContentLoadError}
               componentDefinitions={proposalComponentDefinitions}
               assets={institutionalAssets}
               savingProposalContent={savingProposalContent}
               assetActionKey={assetActionKey}
               latestUpdateText={latestProposalContentUpdateText}
               onSaveComponent={saveProposalContentComponent}
+              onCreateComponent={createProposalContentComponent}
+              onReorderComponents={reorderProposalContent}
+              onArchiveComponent={archiveProposalContentComponent}
+              onRestoreComponent={restoreProposalContentComponent}
+              onDeleteComponent={deleteProposalContent}
               onCreateAsset={createProposalAsset}
               onAddAssetVersion={addProposalAssetVersion}
               onArchiveAsset={archiveProposalAsset}

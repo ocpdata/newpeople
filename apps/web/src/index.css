@@ -8350,7 +8350,11 @@ button:disabled {
   padding: 0.85rem;
   border-radius: 14px;
   border: 1px solid rgba(15, 118, 110, 0.14);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(243, 251, 248, 0.88));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(243, 251, 248, 0.88)
+  );
 }
 
 .proposal-component-ai-policy-head {
@@ -8736,6 +8740,13 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+.proposal-component-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
 }
 
 .proposal-component-add-icon-button {

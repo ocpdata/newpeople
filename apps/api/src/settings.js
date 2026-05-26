@@ -9,39 +9,130 @@ let ensureProposalContentSchemaPromise;
 let ensureProposalContentClonesSchemaPromise;
 
 const PROPOSAL_LAYOUT_MODES = ["stack", "horizontal-gallery", "manual-rows"];
+const PROPOSAL_COMPONENT_KINDS = ["system", "custom"];
+const PROPOSAL_COMPONENT_STATUSES = ["active", "archived"];
+const PROPOSAL_AI_MODES = ["auto", "manual"];
+
+export const AI_PARAMETER_CAPABILITY_KEYS = {
+  proposalExecutiveSummary: "proposal.executive_summary",
+  proposalBackground: "proposal.background",
+  proposalGenericSection: "proposal.generic_section",
+};
 
 export const PROPOSAL_CONTENT_COMPONENT_DEFINITIONS = [
-  { code: "document_rights", title: "Derechos del documento", displayOrder: 1 },
-  { code: "certifications", title: "Certificaciones", displayOrder: 2 },
-  { code: "presentation", title: "Presentacion", displayOrder: 3 },
-  { code: "mission", title: "Mision", displayOrder: 4 },
-  { code: "vision", title: "Vision", displayOrder: 5 },
-  { code: "key_partners", title: "Socios principales", displayOrder: 6 },
-  { code: "key_clients", title: "Principales clientes", displayOrder: 7 },
-  { code: "executive_summary", title: "Resumen ejecutivo", displayOrder: 8 },
-  { code: "background", title: "Antecedentes", displayOrder: 9 },
+  {
+    code: "document_rights",
+    title: "Derechos del documento",
+    displayOrder: 1,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "certifications",
+    title: "Certificaciones",
+    displayOrder: 2,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "presentation",
+    title: "Presentacion",
+    displayOrder: 3,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "mission",
+    title: "Mision",
+    displayOrder: 4,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "vision",
+    title: "Vision",
+    displayOrder: 5,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "key_partners",
+    title: "Socios principales",
+    displayOrder: 6,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "key_clients",
+    title: "Principales clientes",
+    displayOrder: 7,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
+  {
+    code: "executive_summary",
+    title: "Resumen ejecutivo",
+    displayOrder: 8,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
+  },
+  {
+    code: "background",
+    title: "Antecedentes",
+    displayOrder: 9,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalBackground,
+  },
   {
     code: "solution_description",
     title: "Descripcion de la solucion",
     displayOrder: 10,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
   },
-  { code: "services", title: "Servicios", displayOrder: 11 },
+  {
+    code: "services",
+    title: "Servicios",
+    displayOrder: 11,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
   {
     code: "product_brochures",
     title: "Folletos de los productos",
     displayOrder: 12,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
   },
   {
     code: "commercial_proposal",
     title: "Propuesta economica",
     displayOrder: 13,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
   },
-  { code: "next_steps", title: "Siguientes pasos", displayOrder: 14 },
+  {
+    code: "next_steps",
+    title: "Siguientes pasos",
+    displayOrder: 14,
+    componentKind: "system",
+    isVisible: true,
+    aiCapabilityKey: null,
+  },
 ];
-
-export const AI_PARAMETER_CAPABILITY_KEYS = {
-  proposalExecutiveSummary: "proposal.executive_summary",
-};
 
 const AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES = [
   "source_text",
@@ -65,10 +156,44 @@ const AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PARAMETERS = {
   maxLibraryAssets: 4,
   allowInstructionsField: true,
   defaultLanguageCode: "es",
-  supportedLibraryContentModes:
-    AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES,
-  supportedSourcePriorityModes:
-    AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES,
+  supportedLibraryContentModes: AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES,
+  supportedSourcePriorityModes: AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES,
+  targetAudience: "client",
+  allowOverwrite: false,
+};
+const AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_PROMPT =
+  "Redacta la seccion de antecedentes para una propuesta B2B en espanol. Responde exclusivamente con JSON valido. No inventes hechos, fechas, compromisos, entregables ni relaciones que no esten sustentados por el contexto. Sintetiza el contexto comercial previo, la situacion actual del cliente, los detonantes de la oportunidad y la informacion documental relevante. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del texto. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.";
+const AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_USER_PROMPT_TEMPLATE =
+  "{context, expectedShape}";
+const AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_OUTPUT_SCHEMA = {
+  title: "string",
+  paragraphs: ["string"],
+  warnings: ["string"],
+};
+const AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_PARAMETERS = {
+  maxLibraryAssets: 4,
+  allowInstructionsField: true,
+  defaultLanguageCode: "es",
+  supportedLibraryContentModes: AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES,
+  supportedSourcePriorityModes: AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES,
+  targetAudience: "client",
+  allowOverwrite: false,
+};
+const AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_PROMPT =
+  "Redacta contenido comercial en espanol para una seccion de propuesta B2B. Responde exclusivamente con JSON valido. No inventes hechos, promesas, entregables, fechas ni capacidades que no esten respaldadas por el contexto. Adapta el texto al titulo y objetivo de la seccion objetivo. Usa documentSources como fuentes documentales primarias. Trata los documentos de biblioteca con la misma prioridad estructural que los demas documentos cuando su texto este disponible. Si generationPolicy.libraryContentMode es source_text, usa el texto fuente del activo de biblioteca como documento de primer nivel. Si es summary_extract, usa solo summary y extracto resumido del activo. Si generationPolicy.sourcePriorityMode es non_library_first, prioriza fuentes no biblioteca al decidir enfoque y enfasis. Si es library_first, prioriza los documentos de biblioteca para el framing y la redaccion sin contradecir datos duros del resto del contexto. Si es balanced, reconcilia ambas familias con el mismo peso. Si generationPolicy.librarySourceMode es manual, los assets seleccionados deben influir explicitamente en el enfoque del texto. La salida debe tener title, paragraphs y warnings. paragraphs debe ser un arreglo de 1 a 3 parrafos en espanol, sin markdown.";
+const AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_USER_PROMPT_TEMPLATE =
+  "{context, expectedShape}";
+const AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_OUTPUT_SCHEMA = {
+  title: "string",
+  paragraphs: ["string"],
+  warnings: ["string"],
+};
+const AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_PARAMETERS = {
+  maxLibraryAssets: 4,
+  allowInstructionsField: true,
+  defaultLanguageCode: "es",
+  supportedLibraryContentModes: AI_PARAMETER_SUPPORTED_LIBRARY_CONTENT_MODES,
+  supportedSourcePriorityModes: AI_PARAMETER_SUPPORTED_SOURCE_PRIORITY_MODES,
   targetAudience: "client",
   allowOverwrite: false,
 };
@@ -76,8 +201,7 @@ const AI_PARAMETER_CAPABILITY_DEFINITIONS = [
   {
     capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary,
     title: "Resumen ejecutivo",
-    description:
-      "Generacion del resumen ejecutivo comercial para propuestas.",
+    description: "Generacion del resumen ejecutivo comercial para propuestas.",
     isEnabled: true,
     modelOverride: null,
     timeoutMs: 120000,
@@ -86,6 +210,33 @@ const AI_PARAMETER_CAPABILITY_DEFINITIONS = [
       AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_USER_PROMPT_TEMPLATE,
     outputSchema: AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_OUTPUT_SCHEMA,
     parameters: AI_PARAMETER_PROPOSAL_EXEC_SUMMARY_DEFAULT_PARAMETERS,
+  },
+  {
+    capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalBackground,
+    title: "Antecedentes",
+    description: "Generacion de la seccion de antecedentes para propuestas.",
+    isEnabled: true,
+    modelOverride: null,
+    timeoutMs: 120000,
+    systemPrompt: AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_PROMPT,
+    userPromptTemplate:
+      AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_USER_PROMPT_TEMPLATE,
+    outputSchema: AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_OUTPUT_SCHEMA,
+    parameters: AI_PARAMETER_PROPOSAL_BACKGROUND_DEFAULT_PARAMETERS,
+  },
+  {
+    capabilityKey: AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection,
+    title: "Seccion generica",
+    description:
+      "Generacion generica de contenido para secciones de propuestas.",
+    isEnabled: true,
+    modelOverride: null,
+    timeoutMs: 120000,
+    systemPrompt: AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_PROMPT,
+    userPromptTemplate:
+      AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_USER_PROMPT_TEMPLATE,
+    outputSchema: AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_OUTPUT_SCHEMA,
+    parameters: AI_PARAMETER_PROPOSAL_GENERIC_SECTION_DEFAULT_PARAMETERS,
   },
 ];
 
@@ -138,6 +289,183 @@ function getProposalComponentDefinition(componentCode) {
       (component) => component.code === componentCode,
     ) || null
   );
+}
+
+function buildProposalComponentCodeFromTitle(title, existingCodes = new Set()) {
+  const normalizedBase = String(title || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  const base = normalizedBase || "custom_component";
+  let candidate = `custom_${base}`;
+  let suffix = 2;
+  while (
+    existingCodes.has(candidate) ||
+    getProposalComponentDefinition(candidate)
+  ) {
+    candidate = `custom_${base}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function getDefaultProposalComponentMetadata(componentCode) {
+  const definition = getProposalComponentDefinition(componentCode);
+  const aiEnabled = Boolean(definition?.aiCapabilityKey);
+  return {
+    componentKind: definition?.componentKind || "custom",
+    isRequired: definition ? true : false,
+    isVisible:
+      typeof definition?.isVisible === "boolean" ? definition.isVisible : true,
+    aiEnabled,
+    aiMode: aiEnabled ? "auto" : null,
+    aiCapabilityKey: aiEnabled
+      ? resolveProposalComponentCapabilityKey({
+          componentCode,
+          componentKind: definition?.componentKind || "custom",
+          aiEnabled,
+          capabilityKey: definition?.aiCapabilityKey || null,
+        })
+      : null,
+    aiSettings: null,
+  };
+}
+
+function normalizeProposalComponentKind(value, fallback = "custom") {
+  const normalized = asText(value) || fallback;
+  return PROPOSAL_COMPONENT_KINDS.includes(normalized) ? normalized : fallback;
+}
+
+function normalizeProposalComponentStatus(value) {
+  const normalized = asText(value) || "active";
+  return PROPOSAL_COMPONENT_STATUSES.includes(normalized)
+    ? normalized
+    : "active";
+}
+
+function normalizeProposalAiMode(value, fallback = null) {
+  const normalized = asText(value);
+  if (normalized && PROPOSAL_AI_MODES.includes(normalized)) {
+    return normalized;
+  }
+  return fallback && PROPOSAL_AI_MODES.includes(fallback) ? fallback : null;
+}
+
+function resolveProposalComponentCapabilityKey({
+  componentCode,
+  componentKind,
+  aiEnabled,
+  capabilityKey = null,
+}) {
+  if (!aiEnabled) {
+    return null;
+  }
+
+  const normalizedCapabilityKey = asText(capabilityKey);
+  if (
+    normalizedCapabilityKey &&
+    Object.values(AI_PARAMETER_CAPABILITY_KEYS).includes(
+      normalizedCapabilityKey,
+    )
+  ) {
+    return normalizedCapabilityKey;
+  }
+
+  const normalizedCode = asText(componentCode);
+  if (normalizedCode === "executive_summary") {
+    return AI_PARAMETER_CAPABILITY_KEYS.proposalExecutiveSummary;
+  }
+  if (normalizedCode === "background") {
+    return AI_PARAMETER_CAPABILITY_KEYS.proposalBackground;
+  }
+
+  if (normalizeProposalComponentKind(componentKind, "custom") === "custom") {
+    return AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection;
+  }
+
+  return AI_PARAMETER_CAPABILITY_KEYS.proposalGenericSection;
+}
+
+function normalizeProposalComponentCapabilityKey(value, componentCode) {
+  const normalized = asText(value);
+  if (
+    normalized &&
+    Object.values(AI_PARAMETER_CAPABILITY_KEYS).includes(normalized)
+  ) {
+    return normalized;
+  }
+  return getDefaultProposalComponentMetadata(componentCode).aiCapabilityKey;
+}
+
+function normalizeProposalComponentAiEnabled(
+  value,
+  componentCode,
+  capabilityKey,
+) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return Boolean(
+    capabilityKey ||
+    getDefaultProposalComponentMetadata(componentCode).aiEnabled,
+  );
+}
+
+function normalizeProposalComponentAiSettings(value) {
+  const parsed = safeParseJson(value, null);
+  return parsed && typeof parsed === "object" ? parsed : null;
+}
+
+function normalizeProposalComponentRow(row) {
+  const componentCode = asText(row.component_code);
+  const metadataDefaults = getDefaultProposalComponentMetadata(componentCode);
+  const componentKind = normalizeProposalComponentKind(
+    row.component_kind,
+    metadataDefaults.componentKind,
+  );
+  const aiEnabled = normalizeProposalComponentAiEnabled(
+    row.ai_enabled == null ? undefined : Boolean(row.ai_enabled),
+    componentCode,
+    row.ai_capability_key,
+  );
+  const aiMode = normalizeProposalAiMode(
+    row.ai_mode,
+    aiEnabled ? metadataDefaults.aiMode || "auto" : null,
+  );
+  const aiCapabilityKey = resolveProposalComponentCapabilityKey({
+    componentCode,
+    componentKind,
+    aiEnabled,
+    capabilityKey: normalizeProposalComponentCapabilityKey(
+      row.ai_capability_key,
+      componentCode,
+    ),
+  });
+
+  return {
+    id: Number(row.id),
+    componentCode,
+    title: asText(row.title),
+    displayOrder: Number(row.display_order || 0),
+    status: normalizeProposalComponentStatus(row.status),
+    componentKind,
+    isRequired:
+      row.is_required == null
+        ? metadataDefaults.isRequired
+        : Boolean(row.is_required),
+    isVisible:
+      row.is_visible == null
+        ? metadataDefaults.isVisible
+        : Boolean(row.is_visible),
+    aiEnabled,
+    aiMode,
+    aiCapabilityKey,
+    aiSettings: normalizeProposalComponentAiSettings(row.ai_settings_json),
+  };
 }
 
 function normalizeProposalLayoutConfig(value) {
@@ -329,16 +657,13 @@ function normalizeProposalComponentRows(componentRows, blockRows) {
   }
 
   return componentRows.map((row) => {
+    const normalizedComponent = normalizeProposalComponentRow(row);
     const layoutConfig = normalizeProposalLayoutConfig(row.layout_config_json);
     return {
-      id: Number(row.id),
-      componentCode: asText(row.component_code),
-      title: asText(row.title),
-      displayOrder: Number(row.display_order || 0),
-      status: asText(row.status) || "active",
+      ...normalizedComponent,
       layoutConfig,
       resolvedLayoutMode: resolveProposalComponentLayoutMode(
-        asText(row.component_code),
+        normalizedComponent.componentCode,
         layoutConfig,
       ),
       blocks: (blocksByComponentId.get(Number(row.id)) || []).sort(
@@ -346,6 +671,47 @@ function normalizeProposalComponentRows(componentRows, blockRows) {
       ),
     };
   });
+}
+
+async function seedDefaultProposalContentComponents(
+  configId,
+  executor = query,
+) {
+  const normalizedConfigId = Number(configId || 0);
+  if (normalizedConfigId <= 0) {
+    return;
+  }
+
+  for (const component of PROPOSAL_CONTENT_COMPONENT_DEFINITIONS) {
+    await executeQuery(
+      executor,
+      `INSERT INTO proposal_content_components
+        (proposal_content_config_id, component_code, title, display_order,
+         component_kind, is_required, is_visible, ai_enabled, ai_mode,
+         ai_capability_key,
+         status, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'active', NOW(3), NOW(3)
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM proposal_content_components
+         WHERE proposal_content_config_id = ?
+           AND component_code = ?
+       )`,
+      [
+        normalizedConfigId,
+        component.code,
+        component.title,
+        component.displayOrder,
+        component.componentKind || "system",
+        component.isVisible ? 1 : 0,
+        component.aiCapabilityKey ? 1 : 0,
+        component.aiCapabilityKey ? "auto" : null,
+        component.aiCapabilityKey || null,
+        normalizedConfigId,
+        component.code,
+      ],
+    );
+  }
 }
 
 function blocksToPlainText(blocks, fallback = "") {
@@ -472,7 +838,13 @@ async function ensureProposalContentSchema() {
           component_code VARCHAR(80) NOT NULL,
           title VARCHAR(190) NOT NULL,
           display_order INT UNSIGNED NOT NULL,
+          component_kind VARCHAR(40) NOT NULL DEFAULT 'system',
           is_required TINYINT(1) NOT NULL DEFAULT 1,
+          is_visible TINYINT(1) NOT NULL DEFAULT 1,
+          ai_enabled TINYINT(1) NOT NULL DEFAULT 0,
+          ai_mode VARCHAR(20) NULL,
+          ai_capability_key VARCHAR(120) NULL,
+          ai_settings_json JSON NULL,
           status VARCHAR(40) NOT NULL DEFAULT 'active',
           layout_config_json JSON NULL,
           created_at DATETIME(3) NOT NULL,
@@ -515,36 +887,46 @@ async function ensureProposalContentSchema() {
          WHERE singleton_key = 'default'
          LIMIT 1`,
       );
-      const configId = Number(configRows[0]?.id || 0);
-      if (configId > 0) {
-        for (const component of PROPOSAL_CONTENT_COMPONENT_DEFINITIONS) {
-          await query(
-            `INSERT INTO proposal_content_components
-              (proposal_content_config_id, component_code, title, display_order, is_required, status, created_at, updated_at)
-             SELECT ?, ?, ?, ?, 1, 'active', NOW(3), NOW(3)
-             WHERE NOT EXISTS (
-               SELECT 1
-               FROM proposal_content_components
-               WHERE proposal_content_config_id = ?
-                 AND component_code = ?
-             )`,
-            [
-              configId,
-              component.code,
-              component.title,
-              component.displayOrder,
-              configId,
-              component.code,
-            ],
-          );
-        }
-      }
-
+      await ensureTableColumn(
+        "proposal_content_components",
+        "component_kind",
+        "ADD COLUMN component_kind VARCHAR(40) NOT NULL DEFAULT 'system' AFTER display_order",
+      );
+      await ensureTableColumn(
+        "proposal_content_components",
+        "is_visible",
+        "ADD COLUMN is_visible TINYINT(1) NOT NULL DEFAULT 1 AFTER is_required",
+      );
+      await ensureTableColumn(
+        "proposal_content_components",
+        "ai_enabled",
+        "ADD COLUMN ai_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER is_visible",
+      );
+      await ensureTableColumn(
+        "proposal_content_components",
+        "ai_mode",
+        "ADD COLUMN ai_mode VARCHAR(20) NULL AFTER ai_enabled",
+      );
+      await ensureTableColumn(
+        "proposal_content_components",
+        "ai_capability_key",
+        "ADD COLUMN ai_capability_key VARCHAR(120) NULL AFTER ai_mode",
+      );
+      await ensureTableColumn(
+        "proposal_content_components",
+        "ai_settings_json",
+        "ADD COLUMN ai_settings_json JSON NULL AFTER ai_capability_key",
+      );
       await ensureTableColumn(
         "proposal_content_components",
         "layout_config_json",
         "ADD COLUMN layout_config_json JSON NULL AFTER status",
       );
+
+      const configId = Number(configRows[0]?.id || 0);
+      if (configId > 0) {
+        await seedDefaultProposalContentComponents(configId);
+      }
     })().catch((error) => {
       ensureProposalContentSchemaPromise = undefined;
       throw error;
@@ -564,6 +946,13 @@ async function ensureProposalContentClonesSchema() {
           component_code VARCHAR(80) NOT NULL,
           title_snapshot VARCHAR(190) NOT NULL,
           display_order INT UNSIGNED NOT NULL,
+          component_kind VARCHAR(40) NOT NULL DEFAULT 'system',
+          is_required TINYINT(1) NOT NULL DEFAULT 1,
+          is_visible TINYINT(1) NOT NULL DEFAULT 1,
+          ai_enabled TINYINT(1) NOT NULL DEFAULT 0,
+          ai_mode VARCHAR(20) NULL,
+          ai_capability_key VARCHAR(120) NULL,
+          ai_settings_json JSON NULL,
           status VARCHAR(40) NOT NULL DEFAULT 'active',
           layout_config_json JSON NULL,
           created_by_user_id BIGINT UNSIGNED NULL,
@@ -599,6 +988,41 @@ async function ensureProposalContentClonesSchema() {
         )`,
       );
 
+      await ensureTableColumn(
+        "proposal_components",
+        "component_kind",
+        "ADD COLUMN component_kind VARCHAR(40) NOT NULL DEFAULT 'system' AFTER display_order",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "is_required",
+        "ADD COLUMN is_required TINYINT(1) NOT NULL DEFAULT 1 AFTER component_kind",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "is_visible",
+        "ADD COLUMN is_visible TINYINT(1) NOT NULL DEFAULT 1 AFTER is_required",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "ai_enabled",
+        "ADD COLUMN ai_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER is_visible",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "ai_mode",
+        "ADD COLUMN ai_mode VARCHAR(20) NULL AFTER ai_enabled",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "ai_capability_key",
+        "ADD COLUMN ai_capability_key VARCHAR(120) NULL AFTER ai_mode",
+      );
+      await ensureTableColumn(
+        "proposal_components",
+        "ai_settings_json",
+        "ADD COLUMN ai_settings_json JSON NULL AFTER ai_capability_key",
+      );
       await ensureTableColumn(
         "proposal_components",
         "layout_config_json",
@@ -860,13 +1284,28 @@ export async function getProposalContentConfiguration() {
   const config = configRows[0] || null;
   if (!config) return null;
 
-  const componentRows = await query(
-    `SELECT id, component_code, title, display_order, status, layout_config_json
+  let componentRows = await query(
+    `SELECT id, component_code, title, display_order, component_kind,
+            is_required, is_visible, ai_enabled, ai_mode, ai_capability_key,
+            ai_settings_json, status, layout_config_json
      FROM proposal_content_components
      WHERE proposal_content_config_id = ?
      ORDER BY display_order ASC, id ASC`,
     [Number(config.id)],
   );
+
+  if (!componentRows.length) {
+    await seedDefaultProposalContentComponents(Number(config.id));
+    componentRows = await query(
+      `SELECT id, component_code, title, display_order, component_kind,
+              is_required, is_visible, ai_enabled, ai_mode, ai_capability_key,
+              ai_settings_json, status, layout_config_json
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ?
+       ORDER BY display_order ASC, id ASC`,
+      [Number(config.id)],
+    );
+  }
 
   const blockRows = await query(
     `SELECT pcb.id, pcb.proposal_content_component_id AS component_id,
@@ -908,16 +1347,17 @@ export async function getProposalContentConfiguration() {
 export async function saveProposalContentComponent({
   componentCode,
   title,
+  componentKind,
+  isVisible,
+  aiEnabled,
+  aiMode,
+  aiSettings,
   layoutConfig,
   blocks,
   actorUserId,
 }) {
   await ensureProposalContentSchema();
   await ensureInstitutionalAssetsSchema();
-  const definition = getProposalComponentDefinition(componentCode);
-  if (!definition) {
-    throw new Error("Componente de propuesta no soportado");
-  }
 
   await withTransaction(async (conn) => {
     const configId = await getCurrentProposalContentConfigId(conn);
@@ -931,23 +1371,62 @@ export async function saveProposalContentComponent({
       [configId, componentCode],
     );
     const componentId = Number(componentRows[0]?.id || 0);
+    if (!componentId) {
+      throw new Error("Componente de propuesta no encontrado");
+    }
     const now = new Date();
+    const metadataDefaults = getDefaultProposalComponentMetadata(componentCode);
+    const normalizedComponentKind = normalizeProposalComponentKind(
+      componentKind,
+      metadataDefaults.componentKind,
+    );
+    const nextAiEnabled = Boolean(aiEnabled);
+    const nextAiMode = nextAiEnabled
+      ? normalizeProposalAiMode(aiMode, "auto")
+      : null;
+    const nextCapabilityKey = resolveProposalComponentCapabilityKey({
+      componentCode,
+      componentKind: normalizedComponentKind,
+      aiEnabled: nextAiEnabled,
+      capabilityKey: null,
+    });
     if (layoutConfig === undefined) {
       await executeQuery(
         conn,
         `UPDATE proposal_content_components
-         SET title = ?, updated_at = ?
+         SET title = ?, component_kind = ?, is_visible = ?,
+             ai_enabled = ?, ai_mode = ?, ai_capability_key = ?,
+             ai_settings_json = ?,
+             updated_at = ?
          WHERE id = ?`,
-        [asText(title) || definition.title, now, componentId],
+        [
+          asText(title) || metadataDefaults.title || "Seccion",
+          normalizedComponentKind,
+          isVisible == null ? 1 : isVisible ? 1 : 0,
+          nextAiEnabled ? 1 : 0,
+          nextAiMode,
+          nextCapabilityKey,
+          aiSettings ? JSON.stringify(aiSettings) : null,
+          now,
+          componentId,
+        ],
       );
     } else {
       await executeQuery(
         conn,
         `UPDATE proposal_content_components
-         SET title = ?, layout_config_json = ?, updated_at = ?
+         SET title = ?, component_kind = ?, is_visible = ?,
+             ai_enabled = ?, ai_mode = ?, ai_capability_key = ?,
+             ai_settings_json = ?, layout_config_json = ?, updated_at = ?
          WHERE id = ?`,
         [
-          asText(title) || definition.title,
+          asText(title) || metadataDefaults.title || "Seccion",
+          normalizedComponentKind,
+          isVisible == null ? 1 : isVisible ? 1 : 0,
+          nextAiEnabled ? 1 : 0,
+          nextAiMode,
+          nextCapabilityKey,
+          aiSettings ? JSON.stringify(aiSettings) : null,
           layoutConfig === null ? null : JSON.stringify(layoutConfig),
           now,
           componentId,
@@ -1000,6 +1479,260 @@ export async function saveProposalContentComponent({
   return getProposalContentConfiguration();
 }
 
+export async function createProposalContentComponent({
+  title,
+  componentCode,
+  componentKind = "custom",
+  isVisible = true,
+  aiEnabled = false,
+  aiMode = null,
+  aiSettings = null,
+  layoutConfig = null,
+  blocks = [],
+  actorUserId,
+}) {
+  await ensureProposalContentSchema();
+  await ensureInstitutionalAssetsSchema();
+  return withTransaction(async (conn) => {
+    const configId = await getCurrentProposalContentConfigId(conn);
+    const existingRows = await executeQuery(
+      conn,
+      `SELECT component_code
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ?`,
+      [configId],
+    );
+    const existingCodes = new Set(
+      existingRows.map((row) => asText(row.component_code)).filter(Boolean),
+    );
+    const nextComponentCode = asText(componentCode)
+      ? asText(componentCode)
+      : buildProposalComponentCodeFromTitle(title, existingCodes);
+    if (existingCodes.has(nextComponentCode)) {
+      throw new Error("Ya existe un componente con ese codigo");
+    }
+
+    const orderRows = await executeQuery(
+      conn,
+      `SELECT COALESCE(MAX(display_order), 0) AS max_display_order
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ?`,
+      [configId],
+    );
+    const nextDisplayOrder = Number(orderRows[0]?.max_display_order || 0) + 1;
+    const normalizedComponentKind = normalizeProposalComponentKind(
+      componentKind,
+      "custom",
+    );
+    const nextAiEnabled = Boolean(aiEnabled);
+    const normalizedAiMode = nextAiEnabled
+      ? normalizeProposalAiMode(aiMode, "auto")
+      : null;
+    const normalizedCapabilityKey = nextAiEnabled
+      ? resolveProposalComponentCapabilityKey({
+          componentCode: nextComponentCode,
+          componentKind: normalizedComponentKind,
+          aiEnabled: nextAiEnabled,
+        })
+      : null;
+    const now = new Date();
+    const insertResult = await executeQuery(
+      conn,
+      `INSERT INTO proposal_content_components
+        (proposal_content_config_id, component_code, title, display_order,
+         component_kind, is_required, is_visible, ai_enabled, ai_mode,
+         ai_capability_key,
+         ai_settings_json, status, layout_config_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+      [
+        configId,
+        nextComponentCode,
+        asText(title) || "Nueva seccion",
+        nextDisplayOrder,
+        normalizedComponentKind,
+        isVisible ? 1 : 0,
+        nextAiEnabled ? 1 : 0,
+        normalizedAiMode,
+        normalizedCapabilityKey,
+        aiSettings ? JSON.stringify(aiSettings) : null,
+        layoutConfig ? JSON.stringify(layoutConfig) : null,
+        now,
+        now,
+      ],
+    );
+
+    const componentId = Number(insertResult.insertId);
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
+      const settings =
+        block.type === "list"
+          ? { items: Array.isArray(block.items) ? block.items : [] }
+          : {};
+      await executeQuery(
+        conn,
+        `INSERT INTO proposal_content_blocks
+          (proposal_content_component_id, block_type, display_order, text_value,
+           asset_id, asset_version_id, settings_json, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+        [
+          componentId,
+          block.type,
+          index + 1,
+          asText(block.text) || null,
+          block.assetId ? Number(block.assetId) : null,
+          block.assetVersionId ? Number(block.assetVersionId) : null,
+          JSON.stringify(settings),
+          now,
+          now,
+        ],
+      );
+    }
+
+    await executeQuery(
+      conn,
+      `UPDATE proposal_content_configs
+       SET updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [now, actorUserId || null, configId],
+    );
+
+    return getProposalContentConfiguration();
+  });
+}
+
+export async function reorderProposalContentComponents({
+  orderedComponentCodes,
+  actorUserId,
+}) {
+  await ensureProposalContentSchema();
+  return withTransaction(async (conn) => {
+    const configId = await getCurrentProposalContentConfigId(conn);
+    const componentRows = await executeQuery(
+      conn,
+      `SELECT id, component_code
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ?`,
+      [configId],
+    );
+    const knownCodes = new Set(
+      componentRows.map((row) => asText(row.component_code)).filter(Boolean),
+    );
+    const normalizedCodes = orderedComponentCodes.map((code) => asText(code));
+    if (
+      normalizedCodes.length !== componentRows.length ||
+      normalizedCodes.some((code) => !knownCodes.has(code))
+    ) {
+      throw new Error(
+        "El orden enviado no coincide con los componentes actuales",
+      );
+    }
+
+    const now = new Date();
+    for (let index = 0; index < normalizedCodes.length; index += 1) {
+      await executeQuery(
+        conn,
+        `UPDATE proposal_content_components
+         SET display_order = ?, updated_at = ?
+         WHERE proposal_content_config_id = ? AND component_code = ?`,
+        [index + 1, now, configId, normalizedCodes[index]],
+      );
+    }
+    await executeQuery(
+      conn,
+      `UPDATE proposal_content_configs
+       SET updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [now, actorUserId || null, configId],
+    );
+    return getProposalContentConfiguration();
+  });
+}
+
+export async function setProposalContentComponentStatus({
+  componentCode,
+  status,
+  actorUserId,
+}) {
+  await ensureProposalContentSchema();
+  const nextStatus = normalizeProposalComponentStatus(status);
+  return withTransaction(async (conn) => {
+    const configId = await getCurrentProposalContentConfigId(conn);
+    const rows = await executeQuery(
+      conn,
+      `SELECT id, component_kind
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ? AND component_code = ?
+       LIMIT 1`,
+      [configId, componentCode],
+    );
+    const component = rows[0] || null;
+    if (!component) {
+      throw new Error("Componente no encontrado");
+    }
+    const now = new Date();
+    await executeQuery(
+      conn,
+      `UPDATE proposal_content_components
+       SET status = ?, is_visible = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        nextStatus,
+        nextStatus === "archived" ? 0 : 1,
+        now,
+        Number(component.id),
+      ],
+    );
+    await executeQuery(
+      conn,
+      `UPDATE proposal_content_configs
+       SET updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [now, actorUserId || null, configId],
+    );
+    return getProposalContentConfiguration();
+  });
+}
+
+export async function deleteProposalContentComponent({
+  componentCode,
+  actorUserId,
+}) {
+  await ensureProposalContentSchema();
+  return withTransaction(async (conn) => {
+    const configId = await getCurrentProposalContentConfigId(conn);
+    const rows = await executeQuery(
+      conn,
+      `SELECT id, component_kind
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ? AND component_code = ?
+       LIMIT 1`,
+      [configId, componentCode],
+    );
+    const component = rows[0] || null;
+    if (!component) {
+      throw new Error("Componente no encontrado");
+    }
+    if (normalizeProposalComponentKind(component.component_kind) !== "custom") {
+      throw new Error("Solo los componentes custom se pueden eliminar");
+    }
+    const now = new Date();
+    await executeQuery(
+      conn,
+      `DELETE FROM proposal_content_components
+       WHERE id = ?`,
+      [Number(component.id)],
+    );
+    await executeQuery(
+      conn,
+      `UPDATE proposal_content_configs
+       SET updated_at = ?, updated_by_user_id = ?
+       WHERE id = ?`,
+      [now, actorUserId || null, configId],
+    );
+    return getProposalContentConfiguration();
+  });
+}
+
 export async function publishProposalContentConfiguration(actorUserId) {
   await ensureProposalContentSchema();
   const configId = await getCurrentProposalContentConfigId();
@@ -1017,7 +1750,9 @@ export async function listProposalComponents(proposalId) {
   await ensureProposalContentClonesSchema();
   await ensureInstitutionalAssetsSchema();
   const componentRows = await query(
-    `SELECT id, component_code, title_snapshot AS title, display_order, status, layout_config_json
+    `SELECT id, component_code, title_snapshot AS title, display_order,
+            component_kind, is_required, is_visible, ai_enabled, ai_mode,
+            ai_capability_key, ai_settings_json, status, layout_config_json
      FROM proposal_components
      WHERE proposal_id = ?
      ORDER BY display_order ASC, id ASC`,
@@ -1061,7 +1796,9 @@ async function resolveSourceComponentRows({
   if (sourceProposalId) {
     const componentRows = await executeQuery(
       executor,
-      `SELECT id, component_code, title_snapshot AS title, display_order, status, layout_config_json
+      `SELECT id, component_code, title_snapshot AS title, display_order,
+          component_kind, is_required, is_visible, ai_enabled, ai_mode,
+          ai_capability_key, ai_settings_json, status, layout_config_json
        FROM proposal_components
        WHERE proposal_id = ?
        ORDER BY display_order ASC, id ASC`,
@@ -1086,9 +1823,13 @@ async function resolveSourceComponentRows({
   const configId = await getCurrentProposalContentConfigId(executor);
   const componentRows = await executeQuery(
     executor,
-    `SELECT id, component_code, title, display_order, status, layout_config_json
+    `SELECT id, component_code, title, display_order, component_kind,
+            is_required, is_visible, ai_enabled, ai_mode, ai_capability_key,
+            ai_settings_json, status, layout_config_json
      FROM proposal_content_components
      WHERE proposal_content_config_id = ?
+       AND status = 'active'
+       AND is_visible = 1
      ORDER BY display_order ASC, id ASC`,
     [configId],
   );
@@ -1156,14 +1897,26 @@ export async function cloneProposalComponents({
     const componentResult = await executeQuery(
       executor,
       `INSERT INTO proposal_components
-        (proposal_id, component_code, title_snapshot, display_order, status,
-         layout_config_json, created_by_user_id, updated_by_user_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (proposal_id, component_code, title_snapshot, display_order,
+         component_kind, is_required, is_visible, ai_enabled, ai_mode,
+         ai_capability_key,
+         ai_settings_json, status, layout_config_json,
+         created_by_user_id, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         Number(proposalId),
         component.componentCode,
         component.title,
         Number(component.displayOrder || 0),
+        component.componentKind || "custom",
+        component.isRequired ? 1 : 0,
+        component.isVisible ? 1 : 0,
+        component.aiEnabled ? 1 : 0,
+        component.aiEnabled
+          ? normalizeProposalAiMode(component.aiMode, "auto")
+          : null,
+        component.aiEnabled ? component.aiCapabilityKey || null : null,
+        component.aiSettings ? JSON.stringify(component.aiSettings) : null,
         component.status || "active",
         component.layoutConfig ? JSON.stringify(component.layoutConfig) : null,
         actorUserId || null,
@@ -1221,10 +1974,6 @@ export async function saveProposalComponentBlocks({
 }) {
   await ensureProposalContentClonesSchema();
   await ensureInstitutionalAssetsSchema();
-  const definition = getProposalComponentDefinition(componentCode);
-  if (!definition) {
-    throw new Error("Componente de propuesta no soportado");
-  }
 
   return withTransaction(async (conn) => {
     const now = new Date();
@@ -1238,18 +1987,55 @@ export async function saveProposalComponentBlocks({
     );
 
     let proposalComponentId = Number(rows[0]?.id || 0);
+    const fallbackSourceRows = await executeQuery(
+      conn,
+      `SELECT id, component_code, title, display_order, component_kind,
+              is_required, is_visible, ai_enabled, ai_capability_key,
+              ai_settings_json, status, layout_config_json
+       FROM proposal_content_components
+       WHERE proposal_content_config_id = ? AND component_code = ?
+       LIMIT 1`,
+      [await getCurrentProposalContentConfigId(conn), componentCode],
+    );
+    const fallbackSource = fallbackSourceRows[0]
+      ? normalizeProposalComponentRow(fallbackSourceRows[0])
+      : {
+          componentCode,
+          title: asText(title) || "Seccion",
+          displayOrder: 999,
+          componentKind:
+            getDefaultProposalComponentMetadata(componentCode).componentKind,
+          isRequired: false,
+          isVisible: true,
+          aiEnabled: false,
+          aiCapabilityKey: null,
+          aiSettings: null,
+          status: "active",
+        };
     if (!proposalComponentId) {
       const insertResult = await executeQuery(
         conn,
         `INSERT INTO proposal_components
-          (proposal_id, component_code, title_snapshot, display_order, status,
-           layout_config_json, created_by_user_id, updated_by_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', NULL, ?, ?, ?, ?)`,
+          (proposal_id, component_code, title_snapshot, display_order,
+           component_kind, is_required, is_visible, ai_enabled, ai_capability_key,
+           ai_settings_json, status, layout_config_json,
+           created_by_user_id, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?, ?)`,
         [
           Number(proposalId),
           componentCode,
-          asText(title) || definition.title,
-          Number(definition.displayOrder || 0),
+          asText(title) || fallbackSource.title,
+          Number(fallbackSource.displayOrder || 0),
+          fallbackSource.componentKind,
+          fallbackSource.isRequired ? 1 : 0,
+          fallbackSource.isVisible ? 1 : 0,
+          fallbackSource.aiEnabled ? 1 : 0,
+          fallbackSource.aiEnabled
+            ? fallbackSource.aiCapabilityKey || null
+            : null,
+          fallbackSource.aiSettings
+            ? JSON.stringify(fallbackSource.aiSettings)
+            : null,
           actorUserId || null,
           actorUserId || null,
           now,
@@ -1264,7 +2050,7 @@ export async function saveProposalComponentBlocks({
          SET title_snapshot = ?, updated_at = ?, updated_by_user_id = ?
          WHERE id = ?`,
         [
-          asText(title) || definition.title,
+          asText(title) || fallbackSource.title,
           now,
           actorUserId || null,
           proposalComponentId,
@@ -1533,7 +2319,8 @@ function normalizeAiParameterEntrySnapshot(value, fallbackCapabilityKey = "") {
       source.isEnabled === undefined
         ? Boolean(defaults.isEnabled)
         : Boolean(source.isEnabled),
-    modelOverride: asText(source.modelOverride || defaults.modelOverride) || null,
+    modelOverride:
+      asText(source.modelOverride || defaults.modelOverride) || null,
     timeoutMs: Math.max(
       5000,
       Number(source.timeoutMs || defaults.timeoutMs || 120000),
@@ -1550,18 +2337,21 @@ function normalizeAiParameterEntrySnapshot(value, fallbackCapabilityKey = "") {
 }
 
 function normalizeAiParameterEntryRow(row, publishedSnapshot = null) {
-  const currentSnapshot = normalizeAiParameterEntrySnapshot({
-    capabilityKey: row?.capability_key,
-    title: row?.title,
-    description: row?.description,
-    isEnabled: row?.is_enabled,
-    modelOverride: row?.model_override,
-    timeoutMs: row?.timeout_ms,
-    systemPrompt: row?.system_prompt,
-    userPromptTemplate: row?.user_prompt_template,
-    outputSchema: safeParseJson(row?.output_schema_json, {}),
-    parameters: safeParseJson(row?.parameters_json, {}),
-  }, row?.capability_key);
+  const currentSnapshot = normalizeAiParameterEntrySnapshot(
+    {
+      capabilityKey: row?.capability_key,
+      title: row?.title,
+      description: row?.description,
+      isEnabled: row?.is_enabled,
+      modelOverride: row?.model_override,
+      timeoutMs: row?.timeout_ms,
+      systemPrompt: row?.system_prompt,
+      userPromptTemplate: row?.user_prompt_template,
+      outputSchema: safeParseJson(row?.output_schema_json, {}),
+      parameters: safeParseJson(row?.parameters_json, {}),
+    },
+    row?.capability_key,
+  );
   const published = publishedSnapshot
     ? normalizeAiParameterEntrySnapshot(
         publishedSnapshot,
@@ -2048,7 +2838,11 @@ async function getAiParameterEntryRow(capabilityKey, executor = query) {
   return rows[0] || null;
 }
 
-async function getAiParameterRevisionRow(entryId, revisionNumber, executor = query) {
+async function getAiParameterRevisionRow(
+  entryId,
+  revisionNumber,
+  executor = query,
+) {
   const rows = await executeQuery(
     executor,
     `SELECT apr.*, u.full_name AS created_by_user_name
@@ -2323,15 +3117,19 @@ export async function restoreAiParameterEntryRevision(
   );
 }
 
-export async function getPublishedAiParameterEntryByCapabilityKey(capabilityKey) {
+export async function getPublishedAiParameterEntryByCapabilityKey(
+  capabilityKey,
+) {
   await ensureDefaultAiParameterSettings();
   const entryRow = await getAiParameterEntryRow(capabilityKey);
   if (!entryRow) {
     return buildDefaultAiParameterEntry(capabilityKey);
   }
   if (!entryRow.published_revision_number) {
-    return normalizeAiParameterEntryRow(entryRow).published ||
-      normalizeAiParameterEntryRow(entryRow);
+    return (
+      normalizeAiParameterEntryRow(entryRow).published ||
+      normalizeAiParameterEntryRow(entryRow)
+    );
   }
   const revisionRow = await getAiParameterRevisionRow(
     Number(entryRow.id),
@@ -2352,7 +3150,8 @@ export async function getPublishedAiParameterEntryByCapabilityKey(capabilityKey)
     userPromptTemplate: snapshot.userPromptTemplate,
     outputSchema: snapshot.outputSchema,
     parameters: snapshot.parameters,
-    publishedRevisionNumber: Number(entryRow.published_revision_number || 0) || null,
+    publishedRevisionNumber:
+      Number(entryRow.published_revision_number || 0) || null,
   };
 }
 
