@@ -341,6 +341,23 @@ async function getProposalAiComponentConfigForProposal({
   if (!component) {
     return getProposalAiComponentConfig(normalizedComponentCode);
   }
+
+  const activeConfig = await getProposalContentConfiguration();
+  const activeComponent = Array.isArray(activeConfig?.components)
+    ? activeConfig.components.find(
+        (entry) => entry.componentCode === normalizedComponentCode,
+      )
+    : null;
+
+  if (activeComponent?.aiEnabled && activeComponent?.aiCapabilityKey) {
+    return buildProposalAiComponentConfig({
+      componentCode: normalizedComponentCode,
+      componentTitle:
+        activeComponent.title || component.title || normalizedComponentCode,
+      aiCapabilityKey: activeComponent.aiCapabilityKey,
+    });
+  }
+
   if (!component.aiEnabled || !component.aiCapabilityKey) {
     return null;
   }
@@ -3556,6 +3573,17 @@ function buildProposalComponentSyncFingerprint(components) {
           componentCode: component.componentCode || "",
           title: component.title || "",
           displayOrder: Number(component.displayOrder || 0),
+          componentKind: component.componentKind || "custom",
+          isVisible:
+            component.isVisible === undefined
+              ? true
+              : Boolean(component.isVisible),
+          aiEnabled: Boolean(component.aiEnabled),
+          aiMode: component.aiEnabled ? component.aiMode || "auto" : null,
+          aiCapabilityKey: component.aiEnabled
+            ? component.aiCapabilityKey || null
+            : null,
+          aiSettings: component.aiSettings || null,
           status: component.status || "active",
           layoutConfig: component.layoutConfig
             ? {
@@ -3787,8 +3815,32 @@ function serializeProposalRow(proposalRow, options = {}) {
 }
 
 async function serializeProposalDetail(proposalRow) {
-  const components = await listProposalComponents(Number(proposalRow.id));
-  return serializeProposalRow(proposalRow, { components });
+  const [components, proposalContentConfig] = await Promise.all([
+    listProposalComponents(Number(proposalRow.id)),
+    getProposalContentConfiguration(),
+  ]);
+  const configComponentByCode = new Map(
+    Array.isArray(proposalContentConfig?.components)
+      ? proposalContentConfig.components.map((component) => [
+          component.componentCode,
+          component,
+        ])
+      : [],
+  );
+  const normalizedComponents = components.map((component) => {
+    const configComponent = configComponentByCode.get(component.componentCode);
+    if (!configComponent || !configComponent.aiEnabled) {
+      return component;
+    }
+
+    return {
+      ...component,
+      aiEnabled: true,
+      aiMode: configComponent.aiMode || "auto",
+      aiCapabilityKey: configComponent.aiCapabilityKey || null,
+    };
+  });
+  return serializeProposalRow(proposalRow, { components: normalizedComponents });
 }
 
 async function refreshProposalLegacyContentFromComponents({

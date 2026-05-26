@@ -1113,8 +1113,6 @@ function ProposalContentConfigurationPanel({
   const [layoutDraft, setLayoutDraft] = useState(createProposalLayoutDraft());
   const [newComponentDraft, setNewComponentDraft] = useState({
     title: "",
-    aiEnabled: false,
-    aiMode: "auto",
   });
   const [assetDraft, setAssetDraft] = useState({
     name: "",
@@ -1566,14 +1564,12 @@ function ProposalContentConfigurationPanel({
       title,
       componentKind: "custom",
       isVisible: true,
-      aiEnabled: Boolean(newComponentDraft.aiEnabled),
-      aiMode: newComponentDraft.aiEnabled
-        ? newComponentDraft.aiMode || "auto"
-        : null,
+      aiEnabled: false,
+      aiMode: null,
       blocks: [],
       layoutConfig: null,
     });
-    setNewComponentDraft({ title: "", aiEnabled: false, aiMode: "auto" });
+    setNewComponentDraft({ title: "" });
     if (createdComponent?.componentCode) {
       setSelectedComponentCode(createdComponent.componentCode);
     }
@@ -1725,8 +1721,8 @@ function ProposalContentConfigurationPanel({
           </div>
         </div>
 
-        <div className="configuration-card configuration-card-subtle">
-          <div className="configuration-form-grid">
+        <div className="configuration-card configuration-card-subtle configuration-new-section-card">
+          <div className="configuration-form-grid configuration-new-section-form">
             <label className="field-group">
               <span>Nueva seccion</span>
               <input
@@ -1741,42 +1737,6 @@ function ProposalContentConfigurationPanel({
                 placeholder="Ej. Casos de exito"
               />
             </label>
-            <label className="field-group">
-              <span>Usar IA</span>
-              <select
-                value={newComponentDraft.aiEnabled ? "yes" : "no"}
-                onChange={(event) =>
-                  setNewComponentDraft((current) => ({
-                    ...current,
-                    aiEnabled: event.target.value === "yes",
-                    aiMode:
-                      event.target.value === "yes"
-                        ? current.aiMode || "auto"
-                        : "auto",
-                  }))
-                }
-              >
-                <option value="no">No</option>
-                <option value="yes">Si</option>
-              </select>
-            </label>
-            {newComponentDraft.aiEnabled ? (
-              <label className="field-group">
-                <span>Modo de sugerencia</span>
-                <select
-                  value={newComponentDraft.aiMode}
-                  onChange={(event) =>
-                    setNewComponentDraft((current) => ({
-                      ...current,
-                      aiMode: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="auto">Automatico</option>
-                  <option value="manual">Manual</option>
-                </select>
-              </label>
-            ) : null}
             <div className="configuration-inline-actions">
               <button
                 type="button"

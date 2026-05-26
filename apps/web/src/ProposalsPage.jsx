@@ -208,10 +208,7 @@ function buildProposalAiComponentStateFromJob(
   fallbackSourceMode = "auto",
 ) {
   return {
-    sourceMode:
-      job?.request?.librarySourceMode === "manual"
-        ? "manual"
-        : normalizeProposalAiMode(fallbackSourceMode, "auto"),
+    sourceMode: normalizeProposalAiMode(fallbackSourceMode, "auto"),
     libraryContentMode:
       job?.request?.libraryContentMode === "summary_extract"
         ? "summary_extract"
@@ -905,7 +902,6 @@ function ProposalComponentCard({
   onChangeDraft,
   onSave,
   onGenerateSuggestion,
-  onRefreshSuggestionStatus,
   onApplySuggestion,
   onDismissSuggestion,
 }) {
@@ -1031,16 +1027,8 @@ function ProposalComponentCard({
               </p>
             </div>
             <div className="proposal-component-ai-panel-head-actions">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() =>
-                  onRefreshSuggestionStatus(component.componentCode)
-                }
-              >
-                Actualizar estado
-              </button>
-              {aiJob ? (
+              {aiJob &&
+              (aiJob.status !== "failed" || componentAiState.showJobError) ? (
                 <span
                   className={
                     isGeneratingSuggestion
@@ -1604,6 +1592,7 @@ function ProposalEditorModal({
   isOpen,
   proposal,
   loading,
+  hasUnsavedChanges,
   metadataDraft,
   componentDrafts,
   dirtyComponentCodes,
@@ -1628,14 +1617,110 @@ function ProposalEditorModal({
   onProposalAiLibraryQueryChange,
   onToggleProposalAiLibraryAsset,
   onGenerateSuggestion,
-  onRefreshSuggestionStatus,
   onApplySuggestion,
   onDismissSuggestion,
 }) {
+  const [activeComponentIndex, setActiveComponentIndex] = useState(0);
+
+  useEffect(() => {
+    setActiveComponentIndex(0);
+  }, [isOpen, proposal?.id]);
+
+  useEffect(() => {
+    const componentCount = Array.isArray(proposal?.components)
+      ? proposal.components.length
+      : 0;
+    if (!componentCount) {
+      if (activeComponentIndex !== 0) {
+        setActiveComponentIndex(0);
+      }
+      return;
+    }
+    if (activeComponentIndex > componentCount - 1) {
+      setActiveComponentIndex(componentCount - 1);
+    }
+  }, [proposal, activeComponentIndex]);
+
+  const proposalComponents = Array.isArray(proposal?.components)
+    ? proposal.components
+    : [];
+  const activeComponent = proposalComponents[activeComponentIndex] || null;
+  const activeComponentCode = activeComponent?.componentCode || null;
+  const hasPreviousComponent = activeComponentIndex > 0;
+  const hasNextComponent =
+    activeComponentIndex < proposalComponents.length - 1;
+  const isActiveComponentDirty = activeComponentCode
+    ? dirtyComponentCodes.has(activeComponentCode)
+    : false;
+
+  async function requestLeaveCurrentSection() {
+    if (!activeComponentCode || !isActiveComponentDirty) {
+      return true;
+    }
+
+    const shouldSaveBeforeContinue = window.confirm(
+      "Tienes cambios sin guardar en esta seccion. Aceptar: guardar y continuar. Cancelar: elegir otra opcion.",
+    );
+    if (shouldSaveBeforeContinue) {
+      const saved = await onSaveComponent(activeComponentCode);
+      return Boolean(saved);
+    }
+
+    return window.confirm(
+      "Continuar sin guardar en esta seccion? Los cambios se mantendran en el borrador local hasta que guardes.",
+    );
+  }
+
+  async function moveToComponentIndex(nextIndex) {
+    if (
+      nextIndex < 0 ||
+      nextIndex >= proposalComponents.length ||
+      nextIndex === activeComponentIndex
+    ) {
+      return;
+    }
+
+    const canLeaveCurrentSection = await requestLeaveCurrentSection();
+    if (!canLeaveCurrentSection) {
+      return;
+    }
+
+    setActiveComponentIndex(nextIndex);
+  }
+
+  async function handleSaveAndMoveNext() {
+    if (!activeComponentCode) {
+      return;
+    }
+    const saved = await onSaveComponent(activeComponentCode);
+    if (saved && hasNextComponent) {
+      setActiveComponentIndex((current) =>
+        Math.min(current + 1, proposalComponents.length - 1),
+      );
+    }
+  }
+
+  async function handleCloseRequest() {
+    if (!hasUnsavedChanges) {
+      onClose();
+      return;
+    }
+
+    const shouldClose = window.confirm(
+      "Hay cambios sin guardar en la propuesta. Cerrar sin guardar?",
+    );
+    if (shouldClose) {
+      onClose();
+    }
+  }
+
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay modal-overlay-elevated" onClick={onClose}>
+    <div
+      className="modal-overlay modal-overlay-elevated"
+      onClick={handleCloseRequest}
+    >
       <div
         className="modal-dialog modal-dialog-account modal-dialog-with-scroll-shell proposal-editor-modal"
         role="dialog"
@@ -1647,11 +1732,15 @@ function ProposalEditorModal({
           <div>
             <h3 className="modal-title">Editar propuesta</h3>
             <p className="modal-message">
-              Ajusta metadatos, contenido estructurado, plantilla visual y vista
-              previa desde un solo modal.
+              Wizard por secciones para editar contenido, validar IA y guardar
+              paso a paso.
             </p>
           </div>
-          <button type="button" className="btn-secondary" onClick={onClose}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleCloseRequest}
+          >
             Cerrar
           </button>
         </div>
@@ -1858,51 +1947,171 @@ function ProposalEditorModal({
                 </div>
               </section>
 
-              <div className="proposal-component-stack">
-                {(proposal.components || []).map((component) => (
-                  <ProposalComponentCard
-                    key={component.componentCode}
-                    component={component}
-                    draft={
-                      componentDrafts[component.componentCode] ||
-                      cloneComponentDraft(component)
-                    }
-                    assets={proposalAssets}
-                    busy={
-                      busyAction === `save-component-${component.componentCode}`
-                    }
-                    isDirty={dirtyComponentCodes.has(component.componentCode)}
-                    aiJob={componentGenerationJobs[component.componentCode]}
-                    aiSuggestion={componentSuggestions[component.componentCode]}
-                    proposalAiState={proposalAiState}
-                    proposalAiLibraryAssets={proposalAiLibraryAssets}
-                    proposalAiLibraryLoading={proposalAiLibraryLoading}
-                    onProposalAiLibraryContentModeChange={
-                      onProposalAiLibraryContentModeChange
-                    }
-                    onProposalAiSourcePriorityModeChange={
-                      onProposalAiSourcePriorityModeChange
-                    }
-                    onProposalAiLibraryQueryChange={
-                      onProposalAiLibraryQueryChange
-                    }
-                    onToggleProposalAiLibraryAsset={
-                      onToggleProposalAiLibraryAsset
-                    }
-                    onChangeDraft={(componentCode, nextDraft) =>
-                      onComponentDraftChange((current) => ({
-                        ...current,
-                        [componentCode]: nextDraft,
-                      }))
-                    }
-                    onSave={onSaveComponent}
-                    onGenerateSuggestion={onGenerateSuggestion}
-                    onRefreshSuggestionStatus={onRefreshSuggestionStatus}
-                    onApplySuggestion={onApplySuggestion}
-                    onDismissSuggestion={onDismissSuggestion}
-                  />
-                ))}
-              </div>
+              {proposalComponents.length ? (
+                <section className="proposal-editor-wizard-shell">
+                  <header className="proposal-editor-wizard-head">
+                    <div>
+                      <h4>Secciones de la propuesta</h4>
+                      <p className="field-hint">
+                        Paso {activeComponentIndex + 1} de {proposalComponents.length}
+                        . Guarda cada seccion antes de continuar.
+                      </p>
+                    </div>
+                  </header>
+
+                  <div className="proposal-editor-step-chip-list">
+                    {proposalComponents.map((component, index) => {
+                      const isActive = index === activeComponentIndex;
+                      const isDirty = dirtyComponentCodes.has(
+                        component.componentCode,
+                      );
+                      const stepTitle = getProposalSectionDisplayTitle(
+                        component.componentCode,
+                        component.title || component.componentCode,
+                      );
+
+                      return (
+                        <button
+                          key={component.componentCode}
+                          type="button"
+                          className={
+                            isActive
+                              ? "proposal-editor-step-chip is-active"
+                              : isDirty
+                                ? "proposal-editor-step-chip is-dirty"
+                                : "proposal-editor-step-chip"
+                          }
+                          onClick={() => {
+                            void moveToComponentIndex(index);
+                          }}
+                        >
+                          <span className="proposal-editor-step-chip-index">
+                            Paso {index + 1}
+                          </span>
+                          <strong>{stepTitle}</strong>
+                          <small>
+                            {isActive
+                              ? "En edicion"
+                              : isDirty
+                                ? "Con cambios"
+                                : "Sin cambios"}
+                          </small>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="proposal-component-stack proposal-component-stack-wizard">
+                    {activeComponent ? (
+                      <ProposalComponentCard
+                        key={activeComponent.componentCode}
+                        component={activeComponent}
+                        draft={
+                          componentDrafts[activeComponent.componentCode] ||
+                          cloneComponentDraft(activeComponent)
+                        }
+                        assets={proposalAssets}
+                        busy={
+                          busyAction ===
+                          `save-component-${activeComponent.componentCode}`
+                        }
+                        isDirty={dirtyComponentCodes.has(
+                          activeComponent.componentCode,
+                        )}
+                        aiJob={componentGenerationJobs[activeComponent.componentCode]}
+                        aiSuggestion={
+                          componentSuggestions[activeComponent.componentCode]
+                        }
+                        proposalAiState={proposalAiState}
+                        proposalAiLibraryAssets={proposalAiLibraryAssets}
+                        proposalAiLibraryLoading={proposalAiLibraryLoading}
+                        onProposalAiLibraryContentModeChange={
+                          onProposalAiLibraryContentModeChange
+                        }
+                        onProposalAiSourcePriorityModeChange={
+                          onProposalAiSourcePriorityModeChange
+                        }
+                        onProposalAiLibraryQueryChange={
+                          onProposalAiLibraryQueryChange
+                        }
+                        onToggleProposalAiLibraryAsset={
+                          onToggleProposalAiLibraryAsset
+                        }
+                        onChangeDraft={(componentCode, nextDraft) =>
+                          onComponentDraftChange((current) => ({
+                            ...current,
+                            [componentCode]: nextDraft,
+                          }))
+                        }
+                        onSave={onSaveComponent}
+                        onGenerateSuggestion={onGenerateSuggestion}
+                        onApplySuggestion={onApplySuggestion}
+                        onDismissSuggestion={onDismissSuggestion}
+                      />
+                    ) : null}
+                  </div>
+
+                  <footer className="proposal-editor-wizard-footer">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={!hasPreviousComponent}
+                      onClick={() => {
+                        void moveToComponentIndex(activeComponentIndex - 1);
+                      }}
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={
+                        !activeComponentCode ||
+                        busyAction === `save-component-${activeComponentCode}`
+                      }
+                      onClick={() => {
+                        if (activeComponentCode) {
+                          void onSaveComponent(activeComponentCode);
+                        }
+                      }}
+                    >
+                      Guardar seccion
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={
+                        !activeComponentCode ||
+                        !hasNextComponent ||
+                        busyAction === `save-component-${activeComponentCode}`
+                      }
+                      onClick={() => {
+                        void handleSaveAndMoveNext();
+                      }}
+                    >
+                      Guardar y siguiente
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={!hasNextComponent}
+                      onClick={() => {
+                        void moveToComponentIndex(activeComponentIndex + 1);
+                      }}
+                    >
+                      Siguiente
+                    </button>
+                  </footer>
+                </section>
+              ) : (
+                <div className="proposal-empty-state proposal-editor-empty-state">
+                  <h3>Esta propuesta no tiene secciones editables</h3>
+                  <p className="field-hint">
+                    Verifica la configuracion de contenido o crea una propuesta
+                    nueva con una plantilla activa.
+                  </p>
+                </div>
+              )}
             </>
           ) : null}
         </div>
@@ -1917,6 +2126,7 @@ export default function ProposalsPage() {
   const createRequestRef = useRef("");
   const proposalsLoadRequestRef = useRef(0);
   const appliedProposalSuggestionJobRef = useRef(new Map());
+  const componentGenerationJobsRef = useRef({});
   const [proposals, setProposals] = useState([]);
   const [proposalSearchTerm, setProposalSearchTerm] = useState("");
   const [proposalStatusFilter, setProposalStatusFilter] = useState("all");
@@ -1972,6 +2182,10 @@ export default function ProposalsPage() {
       getProposalAiComponentState(proposalAiState, componentCode).sourceMode ===
       "manual",
   );
+
+  useEffect(() => {
+    componentGenerationJobsRef.current = componentGenerationJobs;
+  }, [componentGenerationJobs]);
 
   function setProposalAiComponentState(componentCode, nextValue) {
     setProposalAiState((current) => {
@@ -2245,7 +2459,8 @@ export default function ProposalsPage() {
       try {
         const results = await Promise.all(
           proposalAiComponentCodes.map(async (componentCode) => {
-            const currentJob = componentGenerationJobs[componentCode] || null;
+            const currentJob =
+              componentGenerationJobsRef.current[componentCode] || null;
             const { data } = await api.get(
               `/api/proposals/${selectedProposalId}/components/${componentCode}/generation-jobs/latest`,
             );
@@ -2327,7 +2542,6 @@ export default function ProposalsPage() {
     selectedProposal,
     selectedProposalId,
     proposalAiHasActiveJob,
-    componentGenerationJobs,
     proposalAiComponentCodes,
   ]);
 
@@ -2743,7 +2957,7 @@ export default function ProposalsPage() {
   }
 
   async function handleSaveComponent(componentCode) {
-    if (!selectedProposal || !componentDrafts[componentCode]) return;
+    if (!selectedProposal || !componentDrafts[componentCode]) return false;
     setBusyAction(`save-component-${componentCode}`);
     try {
       const suggestionTrackingKey = `${Number(selectedProposal.id)}:${componentCode}`;
@@ -2767,8 +2981,10 @@ export default function ProposalsPage() {
       updateProposalInList(data?.proposal);
       setSuccess("Seccion actualizada");
       await loadProposalDetail(selectedProposal.id);
+      return true;
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible guardar la seccion"));
+      return false;
     } finally {
       setBusyAction("");
     }
@@ -2869,40 +3085,6 @@ export default function ProposalsPage() {
       );
     } finally {
       setBusyAction("");
-    }
-  }
-
-  async function handleRefreshSuggestionStatus(componentCode) {
-    if (
-      !proposalAiComponentCodes.includes(componentCode) ||
-      !selectedProposal?.id
-    ) {
-      return;
-    }
-
-    try {
-      setProposalAiComponentState(componentCode, { showJobError: true });
-      const nextJob = await refreshLatestProposalAiGeneration(
-        selectedProposal.id,
-        componentCode,
-      );
-      if (!nextJob) return;
-      if (nextJob.status === "completed") {
-        setProposalAiComponentState(componentCode, { showJobError: false });
-        setSuccess("Sugerencia IA lista para revisar");
-      } else if (nextJob.status === "failed") {
-        setError(
-          nextJob.error?.message ||
-            "No fue posible generar la sugerencia IA para esta seccion",
-        );
-      }
-    } catch (err) {
-      setError(
-        getApiErrorMessage(
-          err,
-          "No fue posible actualizar el estado de la sugerencia IA",
-        ),
-      );
     }
   }
 
@@ -3492,6 +3674,7 @@ export default function ProposalsPage() {
         isOpen={Boolean(selectedProposalId)}
         proposal={selectedProposal}
         loading={loadingDetail}
+        hasUnsavedChanges={previewDirty}
         metadataDraft={metadataDraft}
         componentDrafts={componentDrafts}
         dirtyComponentCodes={dirtyComponentCodes}
@@ -3526,7 +3709,6 @@ export default function ProposalsPage() {
         }
         onToggleProposalAiLibraryAsset={handleToggleProposalAiLibraryAsset}
         onGenerateSuggestion={handleGenerateSuggestion}
-        onRefreshSuggestionStatus={handleRefreshSuggestionStatus}
         onApplySuggestion={handleApplySuggestion}
         onDismissSuggestion={handleDismissSuggestion}
       />

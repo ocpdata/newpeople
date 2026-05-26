@@ -157,6 +157,20 @@
   gap: 1rem;
 }
 
+.configuration-new-section-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.configuration-new-section-form .configuration-inline-actions {
+  align-self: end;
+  flex-wrap: nowrap;
+}
+
+.configuration-new-section-form .btn-primary {
+  min-height: 42px;
+}
+
 .configuration-grid-span-full {
   grid-column: 1 / -1;
 }
@@ -275,6 +289,10 @@
 .configuration-proposal-intro {
   display: grid;
   gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.configuration-new-section-card {
   margin-bottom: 1rem;
 }
 
@@ -1657,5 +1675,13 @@
   .configuration-header-actions,
   .configuration-bottom-bar-actions {
     justify-content: stretch;
+  }
+
+  .configuration-new-section-form {
+    grid-template-columns: 1fr;
+  }
+
+  .configuration-new-section-form .configuration-inline-actions {
+    flex-wrap: wrap;
   }
 }

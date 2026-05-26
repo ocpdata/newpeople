@@ -8117,6 +8117,85 @@ button:disabled {
   gap: 1rem;
 }
 
+.proposal-editor-wizard-shell {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.proposal-editor-wizard-head h4 {
+  margin: 0;
+}
+
+.proposal-editor-wizard-head p {
+  margin: 0.3rem 0 0;
+}
+
+.proposal-editor-step-chip-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+
+.proposal-editor-step-chip {
+  display: grid;
+  gap: 0.22rem;
+  text-align: left;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid #d6e0e9;
+  background: #fff;
+  color: #1f3142;
+  cursor: pointer;
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.proposal-editor-step-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 14px rgba(36, 60, 94, 0.08);
+}
+
+.proposal-editor-step-chip.is-active {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: linear-gradient(180deg, #f4f8ff, #ecf4ff);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.11);
+}
+
+.proposal-editor-step-chip.is-dirty {
+  border-color: rgba(13, 148, 136, 0.35);
+  background: linear-gradient(180deg, #f5fffc, #edfbf7);
+}
+
+.proposal-editor-step-chip-index {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #53708f;
+}
+
+.proposal-editor-step-chip strong {
+  font-size: 0.92rem;
+}
+
+.proposal-editor-step-chip small {
+  color: #5b6e81;
+}
+
+.proposal-component-stack-wizard {
+  margin-top: 0.2rem;
+}
+
+.proposal-editor-wizard-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+  padding-top: 0.45rem;
+  border-top: 1px solid #dfE8f2;
+}
+
 .proposal-editor-empty-state {
   min-height: 240px;
   place-content: center;
@@ -8184,6 +8263,18 @@ button:disabled {
 
   .proposal-editor-modal-header {
     padding-inline: 18px;
+  }
+
+  .proposal-editor-step-chip-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .proposal-editor-wizard-footer {
+    justify-content: stretch;
+  }
+
+  .proposal-editor-wizard-footer > button {
+    flex: 1 1 calc(50% - 0.4rem);
   }
 }
 
@@ -8400,9 +8491,10 @@ button:disabled {
 
 .proposal-component-ai-policy-pill {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  gap: 0.2rem;
   min-height: 44px;
   padding: 0.7rem 0.8rem;
   border-radius: 12px;
@@ -8410,11 +8502,17 @@ button:disabled {
   background: #fff;
   color: #21443f;
   font-weight: 700;
+  text-align: center;
   cursor: pointer;
   transition:
     border-color 0.16s ease,
     box-shadow 0.16s ease,
     transform 0.16s ease;
+}
+
+.proposal-component-ai-policy-pill span {
+  display: block;
+  text-align: center;
 }
 
 .proposal-component-ai-policy-pill svg {
