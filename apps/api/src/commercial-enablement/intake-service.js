@@ -56,6 +56,26 @@ function summarizeText(value, maxChars) {
     .slice(0, maxChars);
 }
 
+function summarizeNaturalText(value, maxChars) {
+  const normalized = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+
+  const sliced = normalized.slice(0, maxChars).trim();
+  const sentenceMatch = sliced.match(/^([\s\S]*[.!?])[^.!?]*$/);
+  if (sentenceMatch?.[1]?.trim()) {
+    const sentence = sentenceMatch[1].trim();
+    if (sentence.length >= Math.min(160, Math.floor(maxChars * 0.55))) {
+      return sentence;
+    }
+  }
+
+  const wordBoundary = sliced.replace(/\s+\S*$/, "").trim();
+  return wordBoundary || sliced;
+}
+
 function normalizeLanguageCode(value) {
   const normalized = normalizeText(value).replace(/\s+/g, "_");
   if (!normalized) return null;
@@ -128,36 +148,103 @@ function detectLanguageCode({ reportedLanguage, text, hint }) {
   );
 }
 
+function buildTitleBase(value) {
+  return String(value || "")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferDocumentKindLabel(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "Documento";
+  if (/\bdata\s*sheet\b|\bdatasheet\b/.test(normalized)) {
+    return "Ficha tecnica";
+  }
+  if (/\bwhite\s*paper\b|\bwhitepaper\b/.test(normalized)) {
+    return "Documento tecnico";
+  }
+  if (/\bbrochure\b|\bflyer\b/.test(normalized)) {
+    return "Folleto comercial";
+  }
+  if (/\bcase\s*study\b/.test(normalized)) {
+    return "Caso de exito";
+  }
+  if (/\bpresentation\b|\bpresentacion\b|\bdeck\b/.test(normalized)) {
+    return "Presentacion comercial";
+  }
+  return "Documento";
+}
+
+function buildSummarySubject({ titleBase, hint }) {
+  const preferred = String(hint || titleBase || "").trim();
+  if (!preferred) return "";
+
+  const cleaned = preferred
+    .replace(/\bdata[\s_-]*sheet\b/gi, "")
+    .replace(/\bdatasheet\b/gi, "")
+    .replace(/\bwhite[\s_-]*paper\b/gi, "")
+    .replace(/\bwhitepaper\b/gi, "")
+    .replace(/\bbrochure\b/gi, "")
+    .replace(/\bflyer\b/gi, "")
+    .replace(/\bcase[\s_-]*study\b/gi, "")
+    .replace(/\bpresentation\b/gi, "")
+    .replace(/\bdeck\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || preferred;
+}
+
+function normalizeSummaryToSpanish({ summary, titleBase, hint, text }) {
+  const candidate = summarizeNaturalText(summary, MAX_SUMMARY_OUTPUT_CHARS);
+  if (candidate && detectLanguageFromText(candidate) === "es") {
+    return candidate;
+  }
+  return buildSpanishSummary({ titleBase, hint, text });
+}
+
 function buildSpanishSummary({ titleBase, hint, text }) {
   const normalizedHint = String(hint || "")
     .replace(/\s+/g, " ")
     .trim();
   const excerpt = summarizeText(text || "", 360);
+  const excerptLanguage = detectLanguageFromText(excerpt);
+  const documentKind = inferDocumentKindLabel(
+    `${titleBase || ""} ${normalizedHint || ""}`,
+  );
+  const subject = buildSummarySubject({ titleBase, hint: normalizedHint });
 
-  if (excerpt) {
+  if (excerpt && excerptLanguage === "es") {
     const sentences = excerpt
       .split(/(?<=[.!?])\s+/)
       .map((value) => value.trim())
       .filter(Boolean)
       .slice(0, 3);
     if (sentences.length) {
-      return summarizeText(
+      return summarizeNaturalText(
         sentences.join(" "),
         MAX_SUMMARY_OUTPUT_CHARS,
       );
     }
   }
 
-  if (normalizedHint) {
-    return summarizeText(
-      `Documento resumido para ${normalizedHint}. Explica el contenido principal, el uso recomendado y los puntos de valor que conviene conservar al compartirlo.`,
+  if (subject) {
+    const languageNote =
+      excerpt && excerptLanguage === "en"
+        ? " El contenido fuente original esta en ingles y requiere validacion editorial antes de compartirse."
+        : "";
+    return summarizeNaturalText(
+      `${documentKind} sobre ${subject}. Resume el contenido principal, el uso recomendado y los mensajes clave que conviene conservar al compartirlo o reutilizarlo.${languageNote}`,
       MAX_SUMMARY_OUTPUT_CHARS,
     );
   }
 
-  if (titleBase) {
-    return summarizeText(
-      `${titleBase}. Resumen preliminar del documento para entender su contenido, su aplicacion y los mensajes clave antes de compartirlo o reutilizarlo.`,
+  if (excerpt) {
+    const languageLabel = excerptLanguage === "en" ? "ingles" : "otro idioma";
+    return summarizeNaturalText(
+      `${documentKind} detectado en ${languageLabel}. Resume el contenido principal, el uso recomendado y los mensajes clave antes de compartirlo o reutilizarlo.`,
       MAX_SUMMARY_OUTPUT_CHARS,
     );
   }
@@ -246,7 +333,7 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
     if (parsed && typeof parsed === "object") {
-      const summary = summarizeText(
+      const summary = summarizeNaturalText(
         String(parsed.summary || ""),
         MAX_SUMMARY_OUTPUT_CHARS,
       );
@@ -818,6 +905,7 @@ async function analyzeIntakeSessionInternal({
     [Number(sessionRow.id)],
   );
   const text = textRows.map((row) => row.text_content || "").join("\n\n");
+  const titleBase = buildTitleBase(sessionRow.source_file_name);
 
   const heuristic = buildHeuristicDraft({
     fileName: sessionRow.source_file_name,
@@ -864,6 +952,18 @@ async function analyzeIntakeSessionInternal({
           "No fue posible obtener sugerencias IA; se usaron heuristicas.",
       },
     ];
+  }
+
+  if (analysis?.prefill?.summary && typeof analysis.prefill.summary === "object") {
+    analysis.prefill.summary = {
+      ...analysis.prefill.summary,
+      value: normalizeSummaryToSpanish({
+        summary: analysis.prefill.summary.value,
+        titleBase,
+        hint: hint || sessionRow.source_hint || "",
+        text,
+      }),
+    };
   }
 
   const basePayload = {
@@ -968,6 +1068,7 @@ export async function createCommercialEnablementIntakeSession({
     error.status = 400;
     throw error;
   }
+
   if (files.length > 1) {
     const error = new Error("Solo se permite un archivo por sesion asistida");
     error.status = 400;
