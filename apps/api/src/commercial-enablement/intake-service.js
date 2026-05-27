@@ -135,6 +135,21 @@ function uniqueStrings(values) {
   );
 }
 
+function toStringArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[;,\n]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function summarizeText(value, maxChars) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -558,6 +573,41 @@ function pickMatchingCodes(text, entries, maxResults = 3) {
     .map((entry) => entry.code);
 }
 
+function normalizeCatalogCodes(values, entries, maxResults = 5) {
+  const sourceEntries = Array.isArray(entries) ? entries : [];
+  const byCode = new Map(
+    sourceEntries.map((entry) => [normalizeText(entry.code || ""), entry.code]),
+  );
+  const byName = new Map(
+    sourceEntries.map((entry) => [normalizeText(entry.name || ""), entry.code]),
+  );
+
+  const normalized = [];
+  for (const raw of toStringArray(values)) {
+    const key = normalizeText(raw);
+    if (!key) continue;
+    const fromCode = byCode.get(key);
+    if (fromCode) {
+      normalized.push(fromCode);
+      continue;
+    }
+    const fromName = byName.get(key);
+    if (fromName) {
+      normalized.push(fromName);
+      continue;
+    }
+
+    for (const [nameKey, code] of byName.entries()) {
+      if (key.includes(nameKey) || nameKey.includes(key)) {
+        normalized.push(code);
+        break;
+      }
+    }
+  }
+
+  return uniqueStrings(normalized).slice(0, maxResults);
+}
+
 function inferAssetType({ fileName, text, catalogs }) {
   const normalizedFileName = normalizeText(fileName);
   const normalizedText = normalizeText(text);
@@ -926,6 +976,121 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
   });
 }
 
+async function requestOpenAiClassificationSuggestion({
+  catalogs,
+  text,
+  fileName,
+  hint,
+  summary,
+}) {
+  if (!config.openai.apiKey) {
+    throw createAiOnlyError({
+      status: 500,
+      code: "ai_disabled_configuration",
+      message: "La configuracion IA no esta habilitada para este entorno",
+      retryable: false,
+    });
+  }
+
+  const requestStartedAt = Date.now();
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: ANALYSIS_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text: "Devuelve exclusivamente JSON valido con clasificacion comercial. Usa solo codigos del catalogo provisto. No inventes codigos. Responde con: {\"assetTypeCode\": string|null, \"audienceCode\": string|null, \"manufacturerCodes\": string[], \"solutionCodes\": string[], \"industryCodes\": string[], \"stageCodes\": string[]}",
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: JSON.stringify({
+                  fileName,
+                  hint,
+                  summary,
+                  text: summarizeText(text, 12000),
+                  catalogs: {
+                    assetTypeCodes: (catalogs.asset_type || []).map(
+                      (entry) => entry.code,
+                    ),
+                    audienceCodes: (catalogs.audience || []).map(
+                      (entry) => entry.code,
+                    ),
+                    manufacturerCodes: (catalogs.manufacturer || []).map(
+                      (entry) => ({ code: entry.code, name: entry.name }),
+                    ),
+                    solutionCodes: (catalogs.solution || []).map((entry) => ({
+                      code: entry.code,
+                      name: entry.name,
+                    })),
+                    industryCodes: (catalogs.industry || []).map((entry) => ({
+                      code: entry.code,
+                      name: entry.name,
+                    })),
+                    stageCodes: (catalogs.stage || []).map((entry) => ({
+                      code: entry.code,
+                      name: entry.name,
+                    })),
+                  },
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    },
+  );
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw mapProviderError(response.status);
+  }
+
+  const requestId =
+    response.headers.get("x-request-id") ||
+    response.headers.get("openai-request-id") ||
+    null;
+
+  for (const part of extractJsonPayloadParts(payload)) {
+    const parsed = tryParseJsonPayloadPart(part);
+    if (parsed && typeof parsed === "object") {
+      return {
+        payload: parsed,
+        aiRun: {
+          used: true,
+          provider: "openai",
+          model: ANALYSIS_MODEL,
+          requestId,
+          latencyMs: Date.now() - requestStartedAt,
+          inputChars: summarizeText(text, 12000).length,
+          outputChars: String(part || "").length,
+        },
+      };
+    }
+  }
+
+  throw createAiOnlyError({
+    status: 502,
+    code: "ai_output_unparseable",
+    message: "No fue posible interpretar una salida IA valida para clasificacion",
+    retryable: true,
+  });
+}
+
 export async function reanalyzeCommercialEnablementAssetSummary({
   assetPublicId,
   user,
@@ -1072,16 +1237,33 @@ async function analyzeIntakeSessionInternal({
     hint: hint || sessionRow.source_hint || "",
   });
   const aiPrefill = aiResult.payload.prefill || {};
-  const aiSummary = summarizeNaturalText(
+  let aiSummary = summarizeNaturalText(
     String(aiPrefill?.summary?.value || ""),
     MAX_SUMMARY_OUTPUT_CHARS,
   );
+  let summaryAiRun = aiResult.aiRun || null;
+
+  if (!aiSummary || detectLanguageFromText(aiSummary) !== "es") {
+    const summaryFallback = await requestOpenAiSummarySuggestion({
+      text,
+      fileName: sessionRow.source_file_name,
+      hint:
+        String(hint || sessionRow.source_hint || "").trim() ||
+        "Genera un resumen comercial breve en espanol",
+    });
+    aiSummary = summarizeNaturalText(
+      String(summaryFallback?.summary || ""),
+      MAX_SUMMARY_OUTPUT_CHARS,
+    );
+    summaryAiRun = summaryFallback?.aiRun || summaryAiRun;
+  }
+
   if (!aiSummary || detectLanguageFromText(aiSummary) !== "es") {
     throw createAiOnlyError({
       status: 502,
       code: "ai_output_schema_invalid",
       message:
-        "La IA no devolvio un resumen valido en espanol para continuar",
+        "La IA no devolvio un resumen valido en espanol tras el reintento",
       retryable: true,
     });
   }
@@ -1185,6 +1367,90 @@ async function analyzeIntakeSessionInternal({
       : [],
   };
 
+  analysis.prefill.assetTypeCode.value =
+    normalizeCatalogCodes(
+      [analysis.prefill.assetTypeCode.value],
+      catalogs.asset_type,
+      1,
+    )[0] || "presentation";
+  analysis.prefill.audienceCode.value =
+    normalizeCatalogCodes(
+      [analysis.prefill.audienceCode.value],
+      catalogs.audience,
+      1,
+    )[0] || "mixed";
+  analysis.prefill.manufacturerCodes.values = normalizeCatalogCodes(
+    analysis.prefill.manufacturerCodes.values,
+    catalogs.manufacturer,
+    6,
+  );
+  analysis.prefill.solutionCodes.values = normalizeCatalogCodes(
+    analysis.prefill.solutionCodes.values,
+    catalogs.solution,
+    6,
+  );
+  analysis.prefill.industryCodes.values = normalizeCatalogCodes(
+    analysis.prefill.industryCodes.values,
+    catalogs.industry,
+    4,
+  );
+  analysis.prefill.stageCodes = {
+    values: normalizeCatalogCodes(aiPrefill?.stageCodes?.values || [], catalogs.stage, 4),
+    confidence: aiPrefill?.stageCodes?.confidence || "low",
+    decisionRequired: true,
+    evidence: Array.isArray(aiPrefill?.stageCodes?.evidence)
+      ? aiPrefill.stageCodes.evidence
+      : [],
+  };
+
+  if (
+    analysis.prefill.manufacturerCodes.values.length === 0 ||
+    analysis.prefill.solutionCodes.values.length === 0
+  ) {
+    const classify = await requestOpenAiClassificationSuggestion({
+      catalogs,
+      text,
+      fileName: sessionRow.source_file_name,
+      hint: hint || sessionRow.source_hint || "",
+      summary: aiSummary,
+    });
+    const c = classify.payload || {};
+
+    analysis.prefill.assetTypeCode.value =
+      normalizeCatalogCodes([c.assetTypeCode], catalogs.asset_type, 1)[0] ||
+      analysis.prefill.assetTypeCode.value;
+    analysis.prefill.audienceCode.value =
+      normalizeCatalogCodes([c.audienceCode], catalogs.audience, 1)[0] ||
+      analysis.prefill.audienceCode.value;
+
+    const manufacturerCodes = normalizeCatalogCodes(
+      c.manufacturerCodes,
+      catalogs.manufacturer,
+      6,
+    );
+    const solutionCodes = normalizeCatalogCodes(c.solutionCodes, catalogs.solution, 6);
+    const industryCodes = normalizeCatalogCodes(c.industryCodes, catalogs.industry, 4);
+    const stageCodes = normalizeCatalogCodes(c.stageCodes, catalogs.stage, 4);
+
+    analysis.prefill.manufacturerCodes.values = uniqueStrings([
+      ...analysis.prefill.manufacturerCodes.values,
+      ...manufacturerCodes,
+    ]);
+    analysis.prefill.solutionCodes.values = uniqueStrings([
+      ...analysis.prefill.solutionCodes.values,
+      ...solutionCodes,
+    ]);
+    analysis.prefill.industryCodes.values = uniqueStrings([
+      ...analysis.prefill.industryCodes.values,
+      ...industryCodes,
+    ]);
+    analysis.prefill.stageCodes.values = uniqueStrings([
+      ...(analysis.prefill.stageCodes.values || []),
+      ...stageCodes,
+    ]);
+    summaryAiRun = classify.aiRun || summaryAiRun;
+  }
+
   const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
 
   if (!analysis.prefill.title.value) {
@@ -1234,7 +1500,7 @@ async function analyzeIntakeSessionInternal({
          updated_at = NOW(3)
      WHERE id = ?`,
     [
-      aiResult.aiRun?.model || ANALYSIS_MODEL,
+      summaryAiRun?.model || aiResult.aiRun?.model || ANALYSIS_MODEL,
       String(hint || sessionRow.source_hint || "").trim(),
       JSON.stringify(draftPayload),
       JSON.stringify(warnings),

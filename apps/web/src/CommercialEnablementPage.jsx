@@ -2958,29 +2958,6 @@ export default function CommercialEnablementPage({ currentUser }) {
                                   />
                                 </label>
                               ) : null}
-                              <label className="enablement-library-check enablement-library-check-review">
-                                <input
-                                  type="checkbox"
-                                  checked={reviewConfirmed}
-                                  onChange={(event) =>
-                                    setReviewConfirmed(event.target.checked)
-                                  }
-                                />
-                                <span>
-                                  Confirmo que revise y corregi este borrador
-                                  antes de crear el activo.
-                                </span>
-                              </label>
-                              <div className="enablement-library-inline-actions">
-                                <button
-                                  type="button"
-                                  className="enablement-library-inline-button"
-                                  onClick={handleSaveIntakeReview}
-                                  disabled={working}
-                                >
-                                  Guardar revision antes de crear
-                                </button>
-                              </div>
                             </>
                           )}
                         </div>
@@ -3572,6 +3549,33 @@ export default function CommercialEnablementPage({ currentUser }) {
                   </section>
                 </div>
                 <div className="enablement-library-editor-actions">
+                  {isAssistedCreateMode && intakeSession?.publicId ? (
+                    <>
+                      <label className="enablement-library-check enablement-library-check-review">
+                        <input
+                          type="checkbox"
+                          checked={reviewConfirmed}
+                          onChange={(event) =>
+                            setReviewConfirmed(event.target.checked)
+                          }
+                        />
+                        <span>
+                          Confirmo que revise y corregi este borrador antes de
+                          crear el activo.
+                        </span>
+                      </label>
+                      <div className="enablement-library-inline-actions">
+                        <button
+                          type="button"
+                          className="enablement-library-inline-button"
+                          onClick={handleSaveIntakeReview}
+                          disabled={working}
+                        >
+                          Guardar sin crear
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
                   <button
                     type="submit"
                     className="enablement-library-action"
