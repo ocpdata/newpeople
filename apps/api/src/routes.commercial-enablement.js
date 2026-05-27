@@ -298,12 +298,14 @@ router.post(
         }),
       );
     } catch (error) {
-      return res.status(error.status || 500).json({
-        message:
-          error.status && error.status < 500
-            ? error.message
-            : "No fue posible analizar el documento",
-      });
+      return res.status(error.status || 500).json(
+        error.body || {
+          message:
+            error.status && error.status < 500
+              ? error.message
+              : "No fue posible analizar el documento",
+        },
+      );
     }
   },
 );
@@ -330,12 +332,14 @@ router.patch(
         }),
       );
     } catch (error) {
-      return res.status(error.status || 500).json({
-        message:
-          error.status && error.status < 500
-            ? error.message
-            : "No fue posible guardar la revision del activo",
-      });
+      return res.status(error.status || 500).json(
+        error.body || {
+          message:
+            error.status && error.status < 500
+              ? error.message
+              : "No fue posible guardar la revision del activo",
+        },
+      );
     }
   },
 );
@@ -380,12 +384,14 @@ router.post(
       });
       return res.status(201).json(resource);
     } catch (error) {
-      return res.status(error.status || 500).json({
-        message:
-          error.status && error.status < 500
-            ? error.message
-            : "No fue posible crear el activo desde la sesion asistida",
-      });
+      return res.status(error.status || 500).json(
+        error.body || {
+          message:
+            error.status && error.status < 500
+              ? error.message
+              : "No fue posible crear el activo desde la sesion asistida",
+        },
+      );
     }
   },
 );

@@ -25,6 +25,92 @@ const ANALYSIS_MODEL = config.openai.model || "gpt-4.1-mini";
 const MAX_SUMMARY_SOURCE_TEXT_CHARS = 12000;
 const MAX_SUMMARY_OUTPUT_CHARS = 900;
 
+function createAiOnlyError({
+  status,
+  code,
+  message,
+  retryable = false,
+  providerStatus = null,
+}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.retryable = Boolean(retryable);
+  error.providerStatus = providerStatus == null ? null : Number(providerStatus);
+  error.body = {
+    message,
+    error: {
+      code,
+      retryable: Boolean(retryable),
+      providerStatus: providerStatus == null ? null : Number(providerStatus),
+    },
+  };
+  return error;
+}
+
+function mapProviderError(status) {
+  const numericStatus = Number(status) || 500;
+  if (numericStatus === 429) {
+    return createAiOnlyError({
+      status: 429,
+      code: "ai_provider_rate_limited",
+      message: "El proveedor IA rechazo la solicitud por limite de tasa",
+      retryable: true,
+      providerStatus: numericStatus,
+    });
+  }
+  if (numericStatus === 408 || numericStatus === 504) {
+    return createAiOnlyError({
+      status: 504,
+      code: "ai_provider_timeout",
+      message: "El proveedor IA no respondio a tiempo",
+      retryable: true,
+      providerStatus: numericStatus,
+    });
+  }
+  if (numericStatus >= 500) {
+    return createAiOnlyError({
+      status: 503,
+      code: "ai_provider_unavailable",
+      message: "El proveedor IA no esta disponible en este momento",
+      retryable: true,
+      providerStatus: numericStatus,
+    });
+  }
+  return createAiOnlyError({
+    status: 502,
+    code: "ai_provider_unavailable",
+    message: "La respuesta del proveedor IA no fue aceptada",
+    retryable: true,
+    providerStatus: numericStatus,
+  });
+}
+
+function isAiValidatedRow(row) {
+  return (
+    String(row?.analysis_status || "") === "completed" &&
+    Boolean(String(row?.analysis_model || "").trim()) &&
+    !String(row?.analysis_error_code || "").trim()
+  );
+}
+
+function buildAiRunFromRow(row) {
+  const model = String(row?.analysis_model || "").trim();
+  const used = isAiValidatedRow(row);
+  if (!used && !model) {
+    return null;
+  }
+  return {
+    used,
+    provider: "openai",
+    model: model || null,
+    requestId: null,
+    latencyMs: null,
+    inputChars: null,
+    outputChars: null,
+  };
+}
+
 function buildPublicId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "")}`;
 }
@@ -284,8 +370,15 @@ function tryParseJsonPayloadPart(part) {
 
 async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
   if (!config.openai.apiKey) {
-    return null;
+    throw createAiOnlyError({
+      status: 500,
+      code: "ai_disabled_configuration",
+      message: "La configuracion IA no esta habilitada para este entorno",
+      retryable: false,
+    });
   }
+
+  const requestStartedAt = Date.now();
 
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
@@ -327,8 +420,13 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(`OpenAI request failed: ${response.status}`);
+    throw mapProviderError(response.status);
   }
+
+  const requestId =
+    response.headers.get("x-request-id") ||
+    response.headers.get("openai-request-id") ||
+    null;
 
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
@@ -338,12 +436,37 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
         MAX_SUMMARY_OUTPUT_CHARS,
       );
       if (summary) {
-        return { summary };
+        if (detectLanguageFromText(summary) !== "es") {
+          throw createAiOnlyError({
+            status: 502,
+            code: "ai_output_schema_invalid",
+            message:
+              "La respuesta IA no cumple el formato o idioma esperado para el resumen",
+            retryable: true,
+          });
+        }
+        return {
+          summary,
+          aiRun: {
+            used: true,
+            provider: "openai",
+            model: ANALYSIS_MODEL,
+            requestId,
+            latencyMs: Date.now() - requestStartedAt,
+            inputChars: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS).length,
+            outputChars: summary.length,
+          },
+        };
       }
     }
   }
 
-  return null;
+  throw createAiOnlyError({
+    status: 502,
+    code: "ai_output_unparseable",
+    message: "No fue posible interpretar una salida IA valida para el resumen",
+    retryable: true,
+  });
 }
 
 function buildSpanishInternalDescription({ hint, languageCode }) {
@@ -380,9 +503,11 @@ function buildStoredSessionResponse(row) {
     extractionErrorCode: row.extraction_error_code || null,
     extractionErrorMessage: row.extraction_error_message || null,
     analysisStatus: row.analysis_status || "pending",
+    analysisSource: "ai_only",
     analysisModel: row.analysis_model || null,
     analysisErrorCode: row.analysis_error_code || null,
     analysisErrorMessage: row.analysis_error_message || null,
+    aiRun: buildAiRunFromRow(row),
     sourceHint: row.source_hint || "",
     sourceSummary: row.source_summary || "",
     languageDetected: row.language_detected || null,
@@ -701,8 +826,15 @@ function buildFieldDecisions(analysis, acceptedPayload) {
 
 async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
   if (!config.openai.apiKey) {
-    return null;
+    throw createAiOnlyError({
+      status: 500,
+      code: "ai_disabled_configuration",
+      message: "La configuracion IA no esta habilitada para este entorno",
+      retryable: false,
+    });
   }
+
+  const requestStartedAt = Date.now();
 
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
@@ -760,17 +892,38 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(`OpenAI request failed: ${response.status}`);
+    throw mapProviderError(response.status);
   }
+
+  const requestId =
+    response.headers.get("x-request-id") ||
+    response.headers.get("openai-request-id") ||
+    null;
 
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
     if (parsed) {
-      return parsed;
+      return {
+        payload: parsed,
+        aiRun: {
+          used: true,
+          provider: "openai",
+          model: ANALYSIS_MODEL,
+          requestId,
+          latencyMs: Date.now() - requestStartedAt,
+          inputChars: summarizeText(text, MAX_ANALYSIS_TEXT_CHARS).length,
+          outputChars: String(part || "").length,
+        },
+      };
     }
   }
 
-  return null;
+  throw createAiOnlyError({
+    status: 502,
+    code: "ai_output_unparseable",
+    message: "No fue posible interpretar una salida IA valida para el analisis",
+    retryable: true,
+  });
 }
 
 export async function reanalyzeCommercialEnablementAssetSummary({
@@ -831,41 +984,22 @@ export async function reanalyzeCommercialEnablementAssetSummary({
     throw error;
   }
 
-  let summaryText = "";
-  let usedAi = false;
-  try {
-    const aiSuggestion = await requestOpenAiSummarySuggestion({
-      text: sourceText,
-      fileName: source.source_file_name || asset.title || "documento",
-      hint: asset.summary || asset.title || "",
-    });
-    summaryText = summarizeText(aiSuggestion?.summary || "", MAX_SUMMARY_OUTPUT_CHARS);
-    usedAi = Boolean(summaryText);
-  } catch {
-    summaryText = "";
-  }
-
+  const aiSuggestion = await requestOpenAiSummarySuggestion({
+    text: sourceText,
+    fileName: source.source_file_name || asset.title || "documento",
+    hint: asset.summary || asset.title || "",
+  });
+  const summaryText = summarizeText(
+    aiSuggestion?.summary || "",
+    MAX_SUMMARY_OUTPUT_CHARS,
+  );
   if (!summaryText) {
-    summaryText = buildSpanishSummary({
-      titleBase: asset.title,
-      hint: asset.summary || "",
-      text: sourceText,
+    throw createAiOnlyError({
+      status: 502,
+      code: "ai_output_schema_invalid",
+      message: "La respuesta IA no incluyo un resumen utilizable",
+      retryable: true,
     });
-  }
-
-  if (!summaryText) {
-    const error = new Error(
-      "No fue posible generar una propuesta de resumen util",
-    );
-    error.status = 422;
-    error.body = {
-      message: "No fue posible generar una propuesta de resumen util",
-      error: {
-        code: "asset_summary_generation_failed",
-        retryable: true,
-      },
-    };
-    throw error;
   }
 
   return {
@@ -878,7 +1012,8 @@ export async function reanalyzeCommercialEnablementAssetSummary({
       sourceFileName: source.source_file_name || "",
     },
     meta: {
-      usedAi,
+      usedAi: true,
+      aiRun: aiSuggestion.aiRun || null,
       charCount: summaryText.length,
     },
   };
@@ -896,6 +1031,15 @@ async function analyzeIntakeSessionInternal({
   }
 
   if (!forceRegenerate && sessionRow.analysis_status === "completed") {
+    if (!isAiValidatedRow(sessionRow)) {
+      throw createAiOnlyError({
+        status: 412,
+        code: "analysis_not_ai_validated",
+        message:
+          "La sesion actual no tiene un analisis IA valido; vuelve a analizar el documento",
+        retryable: false,
+      });
+    }
     return buildStoredSessionResponse(sessionRow);
   }
 
@@ -907,63 +1051,145 @@ async function analyzeIntakeSessionInternal({
   const text = textRows.map((row) => row.text_content || "").join("\n\n");
   const titleBase = buildTitleBase(sessionRow.source_file_name);
 
-  const heuristic = buildHeuristicDraft({
-    fileName: sessionRow.source_file_name,
-    text,
+  const aiResult = await requestOpenAiPrefill({
     catalogs,
+    text,
+    fileName: sessionRow.source_file_name,
     hint: hint || sessionRow.source_hint || "",
-    languageCode: detectLanguageCode({
-      reportedLanguage: sessionRow.language_detected,
-      text,
-      hint: hint || sessionRow.source_hint || "",
-    }),
   });
-  let analysis = heuristic;
-  let warnings = Array.isArray(heuristic.warnings) ? heuristic.warnings : [];
-
-  try {
-    const aiResult = await requestOpenAiPrefill({
-      catalogs,
-      text,
-      fileName: sessionRow.source_file_name,
-      hint: hint || sessionRow.source_hint || "",
+  if (!aiResult?.payload || typeof aiResult.payload !== "object") {
+    throw createAiOnlyError({
+      status: 502,
+      code: "ai_output_schema_invalid",
+      message: "La salida IA no devolvio un objeto de analisis valido",
+      retryable: true,
     });
-    if (aiResult && typeof aiResult === "object") {
-      analysis = {
-        ...heuristic,
-        ...aiResult,
-        prefill: {
-          ...heuristic.prefill,
-          ...(aiResult.prefill || {}),
-        },
-        warnings: Array.isArray(aiResult.warnings)
-          ? aiResult.warnings
-          : heuristic.warnings,
-      };
-      warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
-    }
-  } catch (error) {
-    warnings = [
-      ...warnings,
-      {
-        code: "ai_prefill_failed",
-        message:
-          String(error?.message || "").trim() ||
-          "No fue posible obtener sugerencias IA; se usaron heuristicas.",
-      },
-    ];
   }
 
-  if (analysis?.prefill?.summary && typeof analysis.prefill.summary === "object") {
-    analysis.prefill.summary = {
-      ...analysis.prefill.summary,
-      value: normalizeSummaryToSpanish({
-        summary: analysis.prefill.summary.value,
-        titleBase,
-        hint: hint || sessionRow.source_hint || "",
-        text,
-      }),
-    };
+  const languageCode = detectLanguageCode({
+    reportedLanguage: sessionRow.language_detected,
+    text,
+    hint: hint || sessionRow.source_hint || "",
+  });
+  const aiPrefill = aiResult.payload.prefill || {};
+  const aiSummary = summarizeNaturalText(
+    String(aiPrefill?.summary?.value || ""),
+    MAX_SUMMARY_OUTPUT_CHARS,
+  );
+  if (!aiSummary || detectLanguageFromText(aiSummary) !== "es") {
+    throw createAiOnlyError({
+      status: 502,
+      code: "ai_output_schema_invalid",
+      message:
+        "La IA no devolvio un resumen valido en espanol para continuar",
+      retryable: true,
+    });
+  }
+
+  const analysis = {
+    schemaVersion: "1.0",
+    analysisStatus: "ready_for_review",
+    prefill: {
+      title: {
+        value: summarizeText(String(aiPrefill?.title?.value || ""), 190),
+        confidence: aiPrefill?.title?.confidence || "medium",
+        decisionRequired: Boolean(aiPrefill?.title?.decisionRequired),
+        evidence: Array.isArray(aiPrefill?.title?.evidence)
+          ? aiPrefill.title.evidence
+          : [],
+      },
+      summary: {
+        value: aiSummary,
+        confidence: aiPrefill?.summary?.confidence || "medium",
+        decisionRequired: Boolean(aiPrefill?.summary?.decisionRequired),
+        evidence: Array.isArray(aiPrefill?.summary?.evidence)
+          ? aiPrefill.summary.evidence
+          : [],
+      },
+      internalDescription: {
+        value: summarizeText(
+          String(aiPrefill?.internalDescription?.value || ""),
+          40000,
+        ),
+        confidence: aiPrefill?.internalDescription?.confidence || "low",
+        decisionRequired: aiPrefill?.internalDescription?.decisionRequired !== false,
+        evidence: Array.isArray(aiPrefill?.internalDescription?.evidence)
+          ? aiPrefill.internalDescription.evidence
+          : [],
+      },
+      assetTypeCode: {
+        value: String(aiPrefill?.assetTypeCode?.value || "presentation"),
+        confidence: aiPrefill?.assetTypeCode?.confidence || "low",
+        decisionRequired: Boolean(aiPrefill?.assetTypeCode?.decisionRequired),
+        evidence: Array.isArray(aiPrefill?.assetTypeCode?.evidence)
+          ? aiPrefill.assetTypeCode.evidence
+          : [],
+      },
+      manufacturerCodes: {
+        values: uniqueStrings(aiPrefill?.manufacturerCodes?.values || []),
+        confidence: aiPrefill?.manufacturerCodes?.confidence || "low",
+        decisionRequired: aiPrefill?.manufacturerCodes?.decisionRequired !== false,
+        evidence: Array.isArray(aiPrefill?.manufacturerCodes?.evidence)
+          ? aiPrefill.manufacturerCodes.evidence
+          : [],
+      },
+      solutionCodes: {
+        values: uniqueStrings(aiPrefill?.solutionCodes?.values || []),
+        confidence: aiPrefill?.solutionCodes?.confidence || "low",
+        decisionRequired: Boolean(aiPrefill?.solutionCodes?.decisionRequired),
+        evidence: Array.isArray(aiPrefill?.solutionCodes?.evidence)
+          ? aiPrefill.solutionCodes.evidence
+          : [],
+      },
+      industryCodes: {
+        values: uniqueStrings(aiPrefill?.industryCodes?.values || []),
+        confidence: aiPrefill?.industryCodes?.confidence || "low",
+        decisionRequired: aiPrefill?.industryCodes?.decisionRequired !== false,
+        evidence: Array.isArray(aiPrefill?.industryCodes?.evidence)
+          ? aiPrefill.industryCodes.evidence
+          : [],
+      },
+      audienceCode: {
+        value: String(aiPrefill?.audienceCode?.value || "mixed"),
+        confidence: aiPrefill?.audienceCode?.confidence || "low",
+        decisionRequired: aiPrefill?.audienceCode?.decisionRequired !== false,
+        evidence: Array.isArray(aiPrefill?.audienceCode?.evidence)
+          ? aiPrefill.audienceCode.evidence
+          : [],
+      },
+      languageCode: {
+        value: ["es", "en"].includes(String(aiPrefill?.languageCode?.value || ""))
+          ? String(aiPrefill.languageCode.value)
+          : languageCode,
+        confidence: aiPrefill?.languageCode?.confidence || "medium",
+        decisionRequired: Boolean(aiPrefill?.languageCode?.decisionRequired),
+        evidence: Array.isArray(aiPrefill?.languageCode?.evidence)
+          ? aiPrefill.languageCode.evidence
+          : [],
+      },
+      visibilityLevel: {
+        value: null,
+        confidence: "none",
+        decisionRequired: true,
+        evidence: ["La visibilidad final requiere validacion humana."],
+      },
+      status: {
+        value: null,
+        confidence: "none",
+        decisionRequired: true,
+        evidence: ["El estado final del activo debe decidirlo el usuario."],
+      },
+    },
+    warnings: Array.isArray(aiResult.payload.warnings)
+      ? aiResult.payload.warnings
+      : [],
+  };
+
+  const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
+
+  if (!analysis.prefill.title.value) {
+    analysis.prefill.title.value =
+      titleBase || "Activo comercial sugerido por IA";
   }
 
   const basePayload = {
@@ -1008,7 +1234,7 @@ async function analyzeIntakeSessionInternal({
          updated_at = NOW(3)
      WHERE id = ?`,
     [
-      config.openai.apiKey ? ANALYSIS_MODEL : "heuristic_prefill",
+      aiResult.aiRun?.model || ANALYSIS_MODEL,
       String(hint || sessionRow.source_hint || "").trim(),
       JSON.stringify(draftPayload),
       JSON.stringify(warnings),
@@ -1219,11 +1445,31 @@ export async function analyzeCommercialEnablementIntakeSession({
     [Number(row.id)],
   );
   const refreshed = await ensureSessionAccess({ publicId, user });
-  return await analyzeIntakeSessionInternal({
-    sessionRow: refreshed,
-    hint,
-    forceRegenerate,
-  });
+  try {
+    return await analyzeIntakeSessionInternal({
+      sessionRow: refreshed,
+      hint,
+      forceRegenerate,
+    });
+  } catch (error) {
+    const failureCode = String(error?.code || "analysis_failed").trim();
+    const failureMessage = String(
+      error?.message || "No fue posible analizar el documento con IA",
+    ).trim();
+    await query(
+      `UPDATE commercial_enablement_intake_sessions
+       SET status = 'analysis_failed',
+           analysis_status = 'failed',
+           analysis_model = NULL,
+           analysis_error_code = ?,
+           analysis_error_message = ?,
+           draft_payload_json = NULL,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [failureCode, failureMessage.slice(0, 1000), Number(row.id)],
+    );
+    throw error;
+  }
 }
 
 export async function reviewCommercialEnablementIntakeSession({
@@ -1233,6 +1479,15 @@ export async function reviewCommercialEnablementIntakeSession({
   reviewConfirmed = false,
 }) {
   const row = await ensureSessionAccess({ publicId, user });
+  if (!isAiValidatedRow(row)) {
+    throw createAiOnlyError({
+      status: 412,
+      code: "analysis_not_ai_validated",
+      message:
+        "La revision solo esta disponible cuando el analisis IA se completa correctamente",
+      retryable: false,
+    });
+  }
   const analysis = {
     prefill: parseJson(row.draft_payload_json, {}),
   };
@@ -1284,6 +1539,15 @@ export async function createCommercialEnablementAssetFromIntakeSession({
   reviewConfirmed = false,
 }) {
   const row = await ensureSessionAccess({ publicId, user });
+  if (!isAiValidatedRow(row)) {
+    throw createAiOnlyError({
+      status: 412,
+      code: "analysis_not_ai_validated",
+      message:
+        "No se puede crear el activo hasta completar una sugerencia IA valida",
+      retryable: false,
+    });
+  }
   if (!reviewConfirmed) {
     const error = new Error(
       "Debes confirmar la revision manual antes de crear el activo",
