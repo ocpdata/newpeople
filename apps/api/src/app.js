@@ -23,6 +23,25 @@ export function createApp() {
   const app = express();
   const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "12mb";
 
+  function isProposalModulePath(pathname = "") {
+    return [
+      "/proposals",
+      "/proposal-templates",
+      "/proposal-assets",
+      "/api/proposals",
+      "/api/proposal-templates",
+      "/api/proposal-assets",
+    ].some((prefix) => pathname.startsWith(prefix));
+  }
+
+  function getSqlErrorDetail(err) {
+    const message = String(err?.sqlMessage || err?.message || "").trim();
+    const code = String(err?.code || "").trim();
+
+    if (!message) return "";
+    return code ? `${code}: ${message}` : message;
+  }
+
   app.use(cors());
   app.use(express.json({ limit: requestBodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: requestBodyLimit }));
@@ -70,7 +89,7 @@ export function createApp() {
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
 
-  app.use((err, _req, res, _next) => {
+  app.use((err, req, res, _next) => {
     const status = Number(err?.status) || 500;
     if (status === 413 || err?.type === "entity.too.large") {
       return res.status(413).json({
@@ -81,6 +100,18 @@ export function createApp() {
 
     if (status >= 500) {
       console.error(err);
+      const sqlDetail = getSqlErrorDetail(err);
+      const requestPath = String(req?.originalUrl || req?.path || "");
+      if (isProposalModulePath(requestPath) && sqlDetail) {
+        return res.status(500).json({
+          message: `Error interno del servidor: ${sqlDetail}`,
+          sqlError: {
+            code: String(err?.code || ""),
+            message: String(err?.sqlMessage || err?.message || ""),
+          },
+        });
+      }
+
       return res.status(500).json({ message: "Error interno del servidor" });
     }
 
