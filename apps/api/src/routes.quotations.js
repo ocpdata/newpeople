@@ -981,15 +981,17 @@ async function hasTableColumn(tableName, columnName) {
     const safeTableName = String(tableName || "")
       .replace(/[^a-zA-Z0-9_]/g, "")
       .trim();
+    const safeColumnName = String(columnName || "")
+      .replace(/[^a-zA-Z0-9_]/g, "")
+      .trim();
 
-    if (!safeTableName) {
+    if (!safeTableName || !safeColumnName) {
       throw _error;
     }
 
     // Fallback for environments with restricted information_schema access.
     const rows = await query(
-      `SHOW COLUMNS FROM \`${safeTableName}\` LIKE ?`,
-      [columnName],
+      `SHOW COLUMNS FROM \`${safeTableName}\` LIKE '${safeColumnName}'`,
     );
     hasColumn = rows.length > 0;
   }
