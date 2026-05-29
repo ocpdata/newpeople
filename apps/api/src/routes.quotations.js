@@ -810,6 +810,7 @@ let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
 let ensureQuotationVersionDocumentsSchemaPromise;
 let ensureProposalSchemaPromise;
+const tableColumnPresenceCache = new Map();
 
 const defaultProposalTemplateSeedRows = [
   {
@@ -957,19 +958,53 @@ const defaultProposalTemplateSeedRows = [
   },
 ];
 
-async function ensureTableColumn(tableName, columnName, ddl) {
-  const rows = await query(
-    `SELECT 1
-     FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = ?
-       AND COLUMN_NAME = ?
-     LIMIT 1`,
-    [tableName, columnName],
-  );
+async function hasTableColumn(tableName, columnName) {
+  const columnCacheKey = `${tableName}.${columnName}`;
 
-  if (!rows.length) {
+  if (tableColumnPresenceCache.has(columnCacheKey)) {
+    return tableColumnPresenceCache.get(columnCacheKey);
+  }
+
+  let hasColumn;
+  try {
+    const rows = await query(
+      `SELECT 1
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+         AND COLUMN_NAME = ?
+       LIMIT 1`,
+      [tableName, columnName],
+    );
+    hasColumn = rows.length > 0;
+  } catch (_error) {
+    const safeTableName = String(tableName || "")
+      .replace(/[^a-zA-Z0-9_]/g, "")
+      .trim();
+
+    if (!safeTableName) {
+      throw _error;
+    }
+
+    // Fallback for environments with restricted information_schema access.
+    const rows = await query(
+      `SHOW COLUMNS FROM \`${safeTableName}\` LIKE ?`,
+      [columnName],
+    );
+    hasColumn = rows.length > 0;
+  }
+
+  tableColumnPresenceCache.set(columnCacheKey, hasColumn);
+  return hasColumn;
+}
+
+async function ensureTableColumn(tableName, columnName, ddl) {
+  const columnCacheKey = `${tableName}.${columnName}`;
+  const hasColumn = await hasTableColumn(tableName, columnName);
+
+  if (!hasColumn) {
     await query(ddl);
+    tableColumnPresenceCache.set(columnCacheKey, true);
   }
 }
 
@@ -1267,6 +1302,22 @@ async function ensureProposalSchema() {
         `ALTER TABLE proposals
          ADD COLUMN template_snapshot_json LONGTEXT NULL
          AFTER pricing_snapshot_json`,
+      );
+
+      await ensureTableColumn(
+        "proposal_templates",
+        "archived_at",
+        `ALTER TABLE proposal_templates
+         ADD COLUMN archived_at DATETIME(3) NULL
+         AFTER updated_at`,
+      );
+
+      await ensureTableColumn(
+        "proposals",
+        "archived_at",
+        `ALTER TABLE proposals
+         ADD COLUMN archived_at DATETIME(3) NULL
+         AFTER updated_at`,
       );
 
       await query(
@@ -3022,11 +3073,14 @@ function serializeProposalTemplateRow(templateRow) {
 }
 
 async function getAvailableProposalTemplates() {
+  const hasArchivedAtColumn = await hasTableColumn(
+    "proposal_templates",
+    "archived_at",
+  );
   const rows = await query(
     `SELECT *
      FROM proposal_templates
-     WHERE archived_at IS NULL
-       AND status = 'active'
+     WHERE ${hasArchivedAtColumn ? "archived_at IS NULL AND" : ""} status = 'active'
      ORDER BY is_default DESC, name ASC, id ASC`,
   );
 
@@ -3034,11 +3088,15 @@ async function getAvailableProposalTemplates() {
 }
 
 async function getProposalTemplateById(templateId) {
+  const hasArchivedAtColumn = await hasTableColumn(
+    "proposal_templates",
+    "archived_at",
+  );
   const rows = await query(
     `SELECT *
      FROM proposal_templates
      WHERE id = ?
-       AND archived_at IS NULL
+       ${hasArchivedAtColumn ? "AND archived_at IS NULL" : ""}
      LIMIT 1`,
     [Number(templateId)],
   );
@@ -3047,11 +3105,14 @@ async function getProposalTemplateById(templateId) {
 }
 
 async function getDefaultProposalTemplate() {
+  const hasArchivedAtColumn = await hasTableColumn(
+    "proposal_templates",
+    "archived_at",
+  );
   const rows = await query(
     `SELECT *
      FROM proposal_templates
-     WHERE archived_at IS NULL
-       AND status = 'active'
+     WHERE ${hasArchivedAtColumn ? "archived_at IS NULL AND" : ""} status = 'active'
      ORDER BY is_default DESC, id ASC
      LIMIT 1`,
   );
@@ -7094,21 +7155,42 @@ router.put(
     const nextTitle =
       parsed.data.title || proposal.title || currentContent.heroTitle;
 
-    await query(
-      `UPDATE proposals
-       SET title = ?, status_code = ?,
-           content_json = ?, updated_by_user_id = ?, updated_at = NOW(3),
-           archived_at = CASE WHEN ? = 'archived' THEN COALESCE(archived_at, NOW(3)) ELSE NULL END
-       WHERE id = ?`,
-      [
-        nextTitle,
-        nextStatusCode,
-        JSON.stringify(nextContent),
-        Number(req.user.id),
-        nextStatusCode,
-        proposalId,
-      ],
+    const hasArchivedAtColumn = await hasTableColumn(
+      "proposals",
+      "archived_at",
     );
+
+    if (hasArchivedAtColumn) {
+      await query(
+        `UPDATE proposals
+         SET title = ?, status_code = ?,
+             content_json = ?, updated_by_user_id = ?, updated_at = NOW(3),
+             archived_at = CASE WHEN ? = 'archived' THEN COALESCE(archived_at, NOW(3)) ELSE NULL END
+         WHERE id = ?`,
+        [
+          nextTitle,
+          nextStatusCode,
+          JSON.stringify(nextContent),
+          Number(req.user.id),
+          nextStatusCode,
+          proposalId,
+        ],
+      );
+    } else {
+      await query(
+        `UPDATE proposals
+         SET title = ?, status_code = ?,
+             content_json = ?, updated_by_user_id = ?, updated_at = NOW(3)
+         WHERE id = ?`,
+        [
+          nextTitle,
+          nextStatusCode,
+          JSON.stringify(nextContent),
+          Number(req.user.id),
+          proposalId,
+        ],
+      );
+    }
 
     await createProposalRevision({
       proposalId,
