@@ -965,30 +965,29 @@ async function hasTableColumn(tableName, columnName) {
     return tableColumnPresenceCache.get(columnCacheKey);
   }
 
+  const safeTableName = String(tableName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+
+  if (!safeTableName || !safeColumnName) {
+    throw new Error("Invalid table or column name for proposal schema");
+  }
+
   let hasColumn;
   try {
     const rows = await query(
       `SELECT 1
        FROM information_schema.COLUMNS
        WHERE TABLE_SCHEMA = DATABASE()
-         AND TABLE_NAME = ?
-         AND COLUMN_NAME = ?
+         AND TABLE_NAME = '${safeTableName}'
+         AND COLUMN_NAME = '${safeColumnName}'
        LIMIT 1`,
-      [tableName, columnName],
     );
     hasColumn = rows.length > 0;
   } catch (_error) {
-    const safeTableName = String(tableName || "")
-      .replace(/[^a-zA-Z0-9_]/g, "")
-      .trim();
-    const safeColumnName = String(columnName || "")
-      .replace(/[^a-zA-Z0-9_]/g, "")
-      .trim();
-
-    if (!safeTableName || !safeColumnName) {
-      throw _error;
-    }
-
     // Fallback for environments with restricted information_schema access.
     const rows = await query(
       `SHOW COLUMNS FROM \`${safeTableName}\` LIKE '${safeColumnName}'`,

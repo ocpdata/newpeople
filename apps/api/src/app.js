@@ -31,6 +31,9 @@ export function createApp() {
       "/api/proposals",
       "/api/proposal-templates",
       "/api/proposal-assets",
+      "/api/quotation-versions",
+      "/api/settings/document-branding",
+      "/api/settings/proposal-content",
     ].some((prefix) => pathname.startsWith(prefix));
   }
 
