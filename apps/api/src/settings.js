@@ -263,11 +263,22 @@ async function executeQuery(executor, sql, params = []) {
 }
 
 async function ensureTableColumn(tableName, columnName, ddl) {
-  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
-    columnName,
-  ]);
+  const safeTableName = String(tableName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+
+  if (!safeTableName || !safeColumnName) {
+    throw new Error("Invalid table or column name for schema migration");
+  }
+
+  const rows = await query(
+    `SHOW COLUMNS FROM \`${safeTableName}\` LIKE '${safeColumnName}'`,
+  );
   if (!Array.isArray(rows) || rows.length === 0) {
-    await query(`ALTER TABLE ${tableName} ${ddl}`);
+    await query(`ALTER TABLE \`${safeTableName}\` ${ddl}`);
   }
 }
 
