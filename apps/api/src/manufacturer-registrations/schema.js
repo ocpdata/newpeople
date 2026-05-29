@@ -48,14 +48,23 @@ const SCHEMA_STATEMENTS = [
 ];
 
 async function ensureColumn(tableName, columnName, definition) {
-  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
-    columnName,
-  ]);
+  const safeTableName = String(tableName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  if (!safeTableName || !safeColumnName) {
+    throw new Error("Invalid table or column name for manufacturer schema");
+  }
+  const rows = await query(
+    `SHOW COLUMNS FROM \`${safeTableName}\` LIKE '${safeColumnName}'`,
+  );
   if (rows.length) {
     return;
   }
 
-  await query(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`);
+  await query(`ALTER TABLE \`${safeTableName}\` ADD COLUMN ${definition}`);
 }
 
 export async function ensureManufacturerRegistrationsSchema() {

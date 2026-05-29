@@ -317,9 +317,14 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
 ];
 
 async function ensureCommercialEnablementItemsColumn(columnName, definition) {
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  if (!safeColumnName) {
+    throw new Error("Invalid column name for commercial enablement schema");
+  }
   const rows = await query(
-    `SHOW COLUMNS FROM commercial_enablement_items LIKE ?`,
-    [columnName],
+    `SHOW COLUMNS FROM commercial_enablement_items LIKE '${safeColumnName}'`,
   );
   if (rows.length) {
     return;
@@ -331,22 +336,40 @@ async function ensureCommercialEnablementItemsColumn(columnName, definition) {
 }
 
 async function dropTableColumnIfExists(tableName, columnName) {
-  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
-    columnName,
-  ]);
+  const safeTableName = String(tableName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  if (!safeTableName || !safeColumnName) {
+    throw new Error("Invalid table or column name for commercial enablement schema");
+  }
+  const rows = await query(
+    `SHOW COLUMNS FROM \`${safeTableName}\` LIKE '${safeColumnName}'`,
+  );
   if (rows.length) {
-    await query(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`);
+    await query(`ALTER TABLE \`${safeTableName}\` DROP COLUMN \`${safeColumnName}\``);
   }
 }
 
 async function replaceTableIndex(tableName, indexName, definition) {
-  const rows = await query(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [
-    indexName,
-  ]);
-  if (rows.length) {
-    await query(`ALTER TABLE ${tableName} DROP INDEX ${indexName}`);
+  const safeTableName = String(tableName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  const safeIndexName = String(indexName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  if (!safeTableName || !safeIndexName) {
+    throw new Error("Invalid table or index name for commercial enablement schema");
   }
-  await query(`ALTER TABLE ${tableName} ADD INDEX ${indexName} ${definition}`);
+  const rows = await query(
+    `SHOW INDEX FROM \`${safeTableName}\` WHERE Key_name = '${safeIndexName}'`,
+  );
+  if (rows.length) {
+    await query(`ALTER TABLE \`${safeTableName}\` DROP INDEX \`${safeIndexName}\``);
+  }
+  await query(`ALTER TABLE \`${safeTableName}\` ADD INDEX \`${safeIndexName}\` ${definition}`);
 }
 
 export async function ensureCommercialEnablementSchema() {

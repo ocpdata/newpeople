@@ -108,6 +108,7 @@ export function createApp() {
           sqlError: {
             code: String(err?.code || ""),
             message: String(err?.sqlMessage || err?.message || ""),
+            sql: String(err?.sql || ""),
           },
         });
       }

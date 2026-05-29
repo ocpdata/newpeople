@@ -204,9 +204,14 @@ const OPPORTUNITY_WORKSPACE_SCHEMA_STATEMENTS = [
 ];
 
 async function ensureWorkspaceActionColumn(columnName, definition) {
+  const safeColumnName = String(columnName || "")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .trim();
+  if (!safeColumnName) {
+    throw new Error("Invalid column name for opportunity workspace schema");
+  }
   const rows = await query(
-    `SHOW COLUMNS FROM opportunity_workspace_actions LIKE ?`,
-    [columnName],
+    `SHOW COLUMNS FROM opportunity_workspace_actions LIKE '${safeColumnName}'`,
   );
   if (rows.length) {
     return;
