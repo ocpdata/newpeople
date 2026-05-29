@@ -3749,7 +3749,8 @@ async function canAutoSyncProposalFromCurrentConfig(proposalId) {
   );
 
   if (!rows.length) {
-    return false;
+    // Legacy proposals without revisions are safe to rehydrate from current config.
+    return true;
   }
 
   return rows.every((row) =>
@@ -7061,9 +7062,14 @@ router.post(
           templateCode: resolvedTemplateSnapshot.code,
         },
       });
-    } else if (!sourceProposalId) {
-      const canAutoSync =
-        await canAutoSyncProposalFromCurrentConfig(proposalId);
+    } else {
+      const existingComponents = await listProposalComponents(proposalId);
+      const needsBootstrapComponents = existingComponents.length === 0;
+      const canAutoSync = needsBootstrapComponents
+        ? true
+        : !sourceProposalId &&
+          (await canAutoSyncProposalFromCurrentConfig(proposalId));
+
       if (canAutoSync) {
         await cloneProposalComponents({
           proposalId,
