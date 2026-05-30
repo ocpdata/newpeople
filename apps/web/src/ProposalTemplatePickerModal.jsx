@@ -16,6 +16,21 @@ export default function ProposalTemplatePickerModal({
     return null;
   }
 
+  const selectedTemplate = templates.find(
+    (template) => Number(template.id || 0) === Number(selectedTemplateId || 0),
+  );
+
+  const getCoverLabel = (coverStyle) => {
+    switch (String(coverStyle || "").trim()) {
+      case "premium":
+        return "Executive";
+      case "technical":
+        return "Technical";
+      default:
+        return "Corporate";
+    }
+  };
+
   return (
     <div
       className="modal-overlay modal-overlay-elevated"
@@ -39,14 +54,43 @@ export default function ProposalTemplatePickerModal({
           </button>
         </div>
 
-        {loading ? <p className="field-hint">Cargando plantillas...</p> : null}
+        <div className="proposal-template-picker-intro">
+          <div className="proposal-template-picker-intro-copy">
+            <span className="proposal-template-picker-eyebrow">
+              Narrativa base
+            </span>
+            {loading ? (
+              <p className="field-hint">Cargando plantillas...</p>
+            ) : null}
+            {!loading && !templates.length ? (
+              <p className="field-hint">
+                No hay plantillas activas disponibles. Se usara la
+                predeterminada del sistema si continúas por API.
+              </p>
+            ) : null}
+            {!loading && templates.length ? (
+              <p className="proposal-template-picker-caption">
+                Elige la portada y el tono visual de la propuesta. El pricing y
+                la estructura comercial siguen heredandose de la cotizacion
+                aprobada.
+              </p>
+            ) : null}
+          </div>
 
-        {!loading && !templates.length ? (
-          <p className="field-hint">
-            No hay plantillas activas disponibles. Se usara la predeterminada
-            del sistema si continúas por API.
-          </p>
-        ) : null}
+          {!loading && templates.length ? (
+            <div className="proposal-template-picker-status-card">
+              <span className="proposal-template-picker-status-label">
+                Plantillas activas
+              </span>
+              <strong>{templates.length}</strong>
+              <p>
+                {selectedTemplate
+                  ? `Seleccion actual: ${selectedTemplate.name}`
+                  : "Selecciona una plantilla para habilitar la creacion."}
+              </p>
+            </div>
+          ) : null}
+        </div>
 
         <div className="proposal-template-picker-grid">
           {templates.map((template) => {
@@ -58,32 +102,45 @@ export default function ProposalTemplatePickerModal({
                 type="button"
                 className={
                   isSelected
-                    ? "proposal-template-card is-selected"
-                    : "proposal-template-card"
+                    ? `proposal-template-card is-${template.coverStyle || "corporate"} is-selected`
+                    : `proposal-template-card is-${template.coverStyle || "corporate"}`
                 }
+                aria-pressed={isSelected}
                 onClick={() => onSelectTemplate?.(template.id)}
               >
                 <div
                   className={`proposal-template-cover is-${template.coverStyle || "corporate"}`}
                 >
-                  <span>{template.previewTitle || template.name}</span>
+                  <div className="proposal-template-cover-head">
+                    <span className="proposal-chip proposal-chip-outline">
+                      {getCoverLabel(template.coverStyle)}
+                    </span>
+                    {isSelected ? (
+                      <span className="proposal-template-cover-badge">
+                        Lista
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="proposal-template-cover-title">
+                    {template.previewTitle || template.name}
+                  </span>
                 </div>
                 <div className="proposal-template-card-body">
                   <div className="proposal-template-card-head">
                     <strong>{template.name}</strong>
+                  </div>
+                  <p>{template.description || "Sin descripcion"}</p>
+                  <div className="proposal-template-card-meta">
                     {template.isDefault ? (
                       <span className="proposal-chip proposal-chip-soft">
                         Predeterminada
                       </span>
                     ) : null}
-                  </div>
-                  <p>{template.description || "Sin descripcion"}</p>
-                  <div className="proposal-template-card-meta">
                     <span className="proposal-chip proposal-chip-ghost">
                       {template.coverStyle || "corporate"}
                     </span>
                     {isSelected ? (
-                      <span className="proposal-chip proposal-chip-soft">
+                      <span className="proposal-chip proposal-chip-outline proposal-chip-outline-dark">
                         Seleccionada
                       </span>
                     ) : null}
@@ -97,6 +154,16 @@ export default function ProposalTemplatePickerModal({
         {footerContent}
 
         <div className="proposal-template-picker-actions">
+          <div className="proposal-template-picker-actions-copy">
+            <span className="proposal-template-picker-actions-label">
+              {selectedTemplate ? "Plantilla elegida" : "Siguiente paso"}
+            </span>
+            <strong>
+              {selectedTemplate
+                ? selectedTemplate.name
+                : "Selecciona una plantilla para continuar"}
+            </strong>
+          </div>
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancelar
           </button>
