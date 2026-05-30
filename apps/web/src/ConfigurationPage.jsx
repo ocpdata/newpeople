@@ -372,82 +372,8 @@ function SelectImageFileIcon() {
 }
 
 const PROPOSAL_SECTION_QUICK_TEMPLATES = {
-  mission: [
-    {
-      id: "institutional_mission",
-      label: "Base institucional",
-      description: "Declara proposito, cliente y forma de trabajo.",
-      title: "Mision",
-      blocks: [
-        {
-          type: "paragraph",
-          text: "Acompanamos a nuestros clientes con soluciones comerciales y operativas que convierten objetivos de negocio en resultados sostenibles.",
-        },
-        {
-          type: "list",
-          items: [
-            "Entender el contexto real del cliente",
-            "Diseñar soluciones viables y medibles",
-            "Ejecutar con disciplina, cercania y seguimiento",
-          ],
-        },
-      ],
-    },
-    {
-      id: "customer_mission",
-      label: "Enfoque al cliente",
-      description: "Mas orientada a servicio y experiencia.",
-      title: "Mision",
-      blocks: [
-        {
-          type: "heading",
-          text: "Nuestra razon de ser",
-        },
-        {
-          type: "paragraph",
-          text: "Generamos valor para cada cliente a traves de propuestas claras, servicio confiable y una ejecucion consistente de punta a punta.",
-        },
-      ],
-    },
-  ],
-  vision: [
-    {
-      id: "growth_vision",
-      label: "Vision de crecimiento",
-      description: "Proyecta liderazgo y evolucion del negocio.",
-      title: "Vision",
-      blocks: [
-        {
-          type: "paragraph",
-          text: "Ser una organizacion referente por su capacidad de integrar estrategia comercial, conocimiento tecnico y ejecucion confiable en cada proyecto.",
-        },
-        {
-          type: "list",
-          items: [
-            "Construir relaciones de largo plazo",
-            "Elevar el estandar de servicio del sector",
-            "Expandir capacidades con foco en calidad y confianza",
-          ],
-        },
-      ],
-    },
-    {
-      id: "transformational_vision",
-      label: "Vision transformadora",
-      description: "Mas aspiracional y orientada a impacto.",
-      title: "Vision",
-      blocks: [
-        {
-          type: "heading",
-          text: "Hacia donde vamos",
-        },
-        {
-          type: "paragraph",
-          text: "Queremos ser el socio elegido cuando una empresa necesita transformar su operacion comercial con claridad, velocidad y resultados visibles.",
-        },
-      ],
-    },
-  ],
+  mission: [],
+  vision: [],
   executive_summary: [
     {
       id: "problem_solution_summary",
