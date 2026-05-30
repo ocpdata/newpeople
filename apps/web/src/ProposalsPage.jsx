@@ -124,7 +124,27 @@ function getDefaultProposalAiCapabilityKey(componentCode, componentKind) {
   return "proposal.generic_section";
 }
 
+function normalizeProposalBlock(block) {
+  if (!block || typeof block !== "object") {
+    return null;
+  }
+
+  return {
+    ...block,
+    type: block.type || "paragraph",
+    text: block.text || "",
+    items: Array.isArray(block.items) ? block.items.filter(Boolean) : [],
+    assetId: block.assetId || null,
+    assetVersionId: block.assetVersionId || null,
+    image: block.image && typeof block.image === "object" ? block.image : null,
+  };
+}
+
 function normalizeProposalComponent(component) {
+  if (!component || typeof component !== "object") {
+    return null;
+  }
+
   const componentKind = component?.componentKind || "custom";
   const aiEnabled =
     component?.aiEnabled === undefined
@@ -145,6 +165,56 @@ function normalizeProposalComponent(component) {
     aiEnabled,
     aiMode,
     aiCapabilityKey,
+    layoutConfig:
+      component.layoutConfig && typeof component.layoutConfig === "object"
+        ? {
+            ...component.layoutConfig,
+            rows: Array.isArray(component.layoutConfig.rows)
+              ? component.layoutConfig.rows
+                  .map((row) => {
+                    const blockIndexes = Array.isArray(row?.blockIndexes)
+                      ? row.blockIndexes.filter((index) =>
+                          Number.isInteger(index),
+                        )
+                      : [];
+                    return blockIndexes.length ? { blockIndexes } : null;
+                  })
+                  .filter(Boolean)
+              : [],
+          }
+        : null,
+    blocks: Array.isArray(component.blocks)
+      ? component.blocks.map(normalizeProposalBlock).filter(Boolean)
+      : [],
+  };
+}
+
+function normalizeProposalPricingSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+
+  return {
+    ...snapshot,
+    summary:
+      snapshot.summary && typeof snapshot.summary === "object"
+        ? {
+            ...snapshot.summary,
+            subtotal: Number(snapshot.summary.subtotal || 0),
+            total: Number(snapshot.summary.total || 0),
+            currencyCode: snapshot.summary.currencyCode || "USD",
+          }
+        : null,
+    sections: Array.isArray(snapshot.sections)
+      ? snapshot.sections
+          .filter((section) => section && typeof section === "object")
+          .map((section) => ({
+            ...section,
+            items: Array.isArray(section.items)
+              ? section.items.filter((item) => item && typeof item === "object")
+              : [],
+          }))
+      : [],
   };
 }
 
@@ -153,8 +223,9 @@ function normalizeProposalDetail(proposal) {
   return {
     ...proposal,
     components: Array.isArray(proposal.components)
-      ? proposal.components.map(normalizeProposalComponent)
+      ? proposal.components.map(normalizeProposalComponent).filter(Boolean)
       : [],
+    pricingSnapshot: normalizeProposalPricingSnapshot(proposal.pricingSnapshot),
   };
 }
 
@@ -1742,6 +1813,7 @@ function ProposalEditorModal({
   onComponentDraftChange,
   onSaveComponent,
   onProposalAiLibraryContentModeChange,
+  onProposalAiSourceScopeModeChange,
   onProposalAiSourcePriorityModeChange,
   onProposalAiLibraryQueryChange,
   onToggleProposalAiLibraryAsset,
@@ -1776,8 +1848,7 @@ function ProposalEditorModal({
   const activeComponent = proposalComponents[activeComponentIndex] || null;
   const activeComponentCode = activeComponent?.componentCode || null;
   const hasPreviousComponent = activeComponentIndex > 0;
-  const hasNextComponent =
-    activeComponentIndex < proposalComponents.length - 1;
+  const hasNextComponent = activeComponentIndex < proposalComponents.length - 1;
   const isActiveComponentDirty = activeComponentCode
     ? dirtyComponentCodes.has(activeComponentCode)
     : false;
@@ -2082,8 +2153,9 @@ function ProposalEditorModal({
                     <div>
                       <h4>Secciones de la propuesta</h4>
                       <p className="field-hint">
-                        Paso {activeComponentIndex + 1} de {proposalComponents.length}
-                        . Guarda cada seccion antes de continuar.
+                        Paso {activeComponentIndex + 1} de{" "}
+                        {proposalComponents.length}. Guarda cada seccion antes
+                        de continuar.
                       </p>
                     </div>
                   </header>
