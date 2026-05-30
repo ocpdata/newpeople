@@ -580,6 +580,10 @@ const proposalExecutiveSummaryGenerationSchema = z
     languageCode: z.string().trim().max(10).optional().default("es"),
     instructions: z.string().trim().max(1000).optional().default(""),
     maxLibraryAssets: z.number().int().positive().max(4).optional().default(4),
+    sourceScopeMode: z
+      .enum(["both", "documents_only", "library_only"])
+      .optional()
+      .default("both"),
     librarySourceMode: z.enum(["auto", "manual"]).optional().default("auto"),
     libraryContentMode: z
       .enum(["source_text", "summary_extract"])
@@ -611,7 +615,11 @@ const proposalExecutiveSummaryGenerationSchema = z
       });
     }
 
-    if (value.librarySourceMode === "manual" && uniqueIds.length === 0) {
+    if (
+      value.sourceScopeMode !== "documents_only" &&
+      value.librarySourceMode === "manual" &&
+      uniqueIds.length === 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["selectedLibraryAssetPublicIds"],
@@ -4085,6 +4093,11 @@ async function buildProposalExecutiveSummaryJobResponse(row) {
             PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS,
         ),
       ),
+      sourceScopeMode:
+        snapshot.sourceScopeMode === "documents_only" ||
+        snapshot.sourceScopeMode === "library_only"
+          ? snapshot.sourceScopeMode
+          : "both",
       librarySourceMode:
         snapshot.librarySourceMode === "manual" ? "manual" : "auto",
       libraryContentMode:
@@ -4287,6 +4300,7 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
   instructions,
   languageCode,
   maxLibraryAssets,
+  sourceScopeMode,
   librarySourceMode,
   libraryContentMode,
   sourcePriorityMode,
@@ -4309,6 +4323,10 @@ function buildProposalExecutiveSummaryFingerprintSnapshot({
       .trim()
       .toLowerCase(),
     maxLibraryAssets: Number(maxLibraryAssets || 0),
+    sourceScopeMode:
+      sourceScopeMode === "documents_only" || sourceScopeMode === "library_only"
+        ? sourceScopeMode
+        : "both",
     librarySourceMode: librarySourceMode === "manual" ? "manual" : "auto",
     libraryContentMode:
       libraryContentMode === "summary_extract"
@@ -4339,6 +4357,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
   instructions,
   languageCode,
   maxLibraryAssets,
+  sourceScopeMode,
   librarySourceMode,
   libraryContentMode,
   sourcePriorityMode,
@@ -4382,6 +4401,7 @@ async function createOrReuseProposalExecutiveSummaryGenerationJob({
     instructions,
     languageCode,
     maxLibraryAssets,
+    sourceScopeMode,
     librarySourceMode,
     libraryContentMode,
     sourcePriorityMode,
@@ -4954,6 +4974,7 @@ async function buildProposalExecutiveSummaryGenerationContext({
   instructions,
   languageCode,
   maxLibraryAssets,
+  sourceScopeMode,
   librarySourceMode,
   libraryContentMode,
   sourcePriorityMode,
@@ -5013,22 +5034,35 @@ async function buildProposalExecutiveSummaryGenerationContext({
     String(opportunity?.sales_stage_code || "").trim(),
   ].filter(Boolean);
 
-  const matchedAssets = await resolveProposalExecutiveSummaryLibraryAssets({
-    user,
-    proposal,
-    opportunity,
-    manufacturerCodes,
-    solutionCodes,
-    industryCodes,
-    stageCodes,
-    maxLibraryAssets,
-    librarySourceMode,
-    libraryContentMode,
-    selectedLibraryAssetPublicIds,
-  });
+  const normalizedSourceScopeMode =
+    sourceScopeMode === "documents_only" || sourceScopeMode === "library_only"
+      ? sourceScopeMode
+      : "both";
+
+  const matchedAssets =
+    normalizedSourceScopeMode === "documents_only"
+      ? []
+      : await resolveProposalExecutiveSummaryLibraryAssets({
+          user,
+          proposal,
+          opportunity,
+          manufacturerCodes,
+          solutionCodes,
+          industryCodes,
+          stageCodes,
+          maxLibraryAssets,
+          librarySourceMode,
+          libraryContentMode,
+          selectedLibraryAssetPublicIds,
+        });
 
   const documentSources = [
-    ...(Array.isArray(documents) ? documents : [])
+    ...(normalizedSourceScopeMode === "library_only"
+      ? []
+      : Array.isArray(documents)
+        ? documents
+        : []
+    )
       .slice(0, PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS)
       .map((document) => ({
         sourceKind: "opportunity_document",
@@ -5184,6 +5218,7 @@ async function buildProposalExecutiveSummaryGenerationContext({
           .trim()
           .toLowerCase() || "es",
       mode: "parallel",
+      sourceScopeMode: normalizedSourceScopeMode,
       librarySourceMode: librarySourceMode === "manual" ? "manual" : "auto",
       libraryContentMode:
         libraryContentMode === "summary_extract"
@@ -5356,14 +5391,18 @@ async function requestProposalExecutiveSummarySuggestion(context) {
         opportunityAnswersUsed: Array.isArray(context?.opportunity?.answers)
           ? context.opportunity.answers.length
           : 0,
-        opportunityDocumentsUsed: Array.isArray(context?.opportunity?.documents)
-          ? context.opportunity.documents.length
+        opportunityDocumentsUsed: Array.isArray(context?.documentSources)
+          ? context.documentSources.filter(
+              (source) => source.sourceKind === "opportunity_document",
+            ).length
           : 0,
         quotationSectionsUsed: Array.isArray(context?.quotation?.sections)
           ? context.quotation.sections.length
           : 0,
-        libraryAssetsUsed: Array.isArray(context?.libraryContext?.matchedAssets)
-          ? context.libraryContext.matchedAssets.length
+        libraryAssetsUsed: Array.isArray(context?.documentSources)
+          ? context.documentSources.filter(
+              (source) => source.sourceKind === "library_asset",
+            ).length
           : 0,
         documentSourcesUsed: Array.isArray(context?.documentSources)
           ? context.documentSources.length
@@ -5405,6 +5444,11 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           }),
         ),
         generationPolicy: {
+          sourceScopeMode:
+            context?.generationPolicy?.sourceScopeMode === "documents_only" ||
+            context?.generationPolicy?.sourceScopeMode === "library_only"
+              ? context.generationPolicy.sourceScopeMode
+              : "both",
           librarySourceMode:
             context?.generationPolicy?.librarySourceMode === "manual"
               ? "manual"
@@ -5505,6 +5549,7 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       instructions: row.instructions_text,
       languageCode: row.language_code,
       maxLibraryAssets: row.max_library_assets,
+      sourceScopeMode: snapshot.sourceScopeMode,
       librarySourceMode: snapshot.librarySourceMode,
       libraryContentMode: snapshot.libraryContentMode,
       sourcePriorityMode: snapshot.sourcePriorityMode,
@@ -7366,7 +7411,10 @@ router.post(
     }
 
     try {
-      if (parsed.data.librarySourceMode === "manual") {
+      if (
+        parsed.data.sourceScopeMode !== "documents_only" &&
+        parsed.data.librarySourceMode === "manual"
+      ) {
         await resolveProposalExecutiveSummaryLibraryAssets({
           user: req.user,
           proposal,
@@ -7391,6 +7439,7 @@ router.post(
           instructions: parsed.data.instructions,
           languageCode: parsed.data.languageCode,
           maxLibraryAssets: parsed.data.maxLibraryAssets,
+          sourceScopeMode: parsed.data.sourceScopeMode,
           librarySourceMode: parsed.data.librarySourceMode,
           libraryContentMode: parsed.data.libraryContentMode,
           sourcePriorityMode: parsed.data.sourcePriorityMode,

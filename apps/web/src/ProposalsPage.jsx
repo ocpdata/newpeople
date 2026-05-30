@@ -171,6 +171,7 @@ function getProposalAiComponentCodes(proposal) {
 function createDefaultProposalAiComponentState() {
   return {
     sourceMode: "auto",
+    sourceScopeMode: "both",
     libraryContentMode: "source_text",
     sourcePriorityMode: "balanced",
     libraryQuery: "",
@@ -203,12 +204,25 @@ function getProposalAiComponentState(state, componentCode) {
   return state?.[componentCode] || createDefaultProposalAiComponentState();
 }
 
+function normalizeProposalAiSourceScopeMode(value, fallback = "both") {
+  if (value === "documents_only" || value === "library_only") {
+    return value;
+  }
+  return fallback === "documents_only" || fallback === "library_only"
+    ? fallback
+    : "both";
+}
+
 function buildProposalAiComponentStateFromJob(
   job,
   fallbackSourceMode = "auto",
 ) {
   return {
     sourceMode: normalizeProposalAiMode(fallbackSourceMode, "auto"),
+    sourceScopeMode: normalizeProposalAiSourceScopeMode(
+      job?.request?.sourceScopeMode,
+      "both",
+    ),
     libraryContentMode:
       job?.request?.libraryContentMode === "summary_extract"
         ? "summary_extract"
@@ -469,6 +483,12 @@ function formatExecutiveSummarySourcePriorityModeLabel(mode) {
   if (mode === "non_library_first") return "Documentos primero";
   if (mode === "library_first") return "Biblioteca primero";
   return "Balanceado";
+}
+
+function formatProposalAiSourceScopeModeLabel(mode) {
+  if (mode === "documents_only") return "Solo documentos";
+  if (mode === "library_only") return "Solo biblioteca";
+  return "Ambas";
 }
 
 function ProposalAiIcon() {
@@ -896,6 +916,7 @@ function ProposalComponentCard({
   proposalAiLibraryAssets,
   proposalAiLibraryLoading,
   onProposalAiLibraryContentModeChange,
+  onProposalAiSourceScopeModeChange,
   onProposalAiSourcePriorityModeChange,
   onProposalAiLibraryQueryChange,
   onToggleProposalAiLibraryAsset,
@@ -914,6 +935,10 @@ function ProposalComponentCard({
     proposalAiState,
     component.componentCode,
   );
+  const usesLibraryScope =
+    componentAiState.sourceScopeMode !== "documents_only";
+  const usesDocumentsScope =
+    componentAiState.sourceScopeMode !== "library_only";
   const isGeneratingSuggestion =
     aiJob && ["pending", "running"].includes(aiJob.status);
   const filteredProposalAiLibraryAssets = isAiEnabledComponent
@@ -1022,7 +1047,7 @@ function ProposalComponentCard({
             <div>
               <strong>Sugerencia paralela con IA</strong>
               <p className="field-hint">
-                Usa contexto de oportunidad, cotizacion y biblioteca comercial
+                Usa contexto de oportunidad, cotizacion y las fuentes elegidas
                 para proponer un texto alterno.
               </p>
             </div>
@@ -1045,153 +1070,239 @@ function ProposalComponentCard({
           </div>
 
           <div className="proposal-component-ai-source-mode-panel">
-            <div className="proposal-component-ai-source-mode-copy">
-              <strong>Fuentes de biblioteca</strong>
-              <p className="field-hint">
-                {componentAiState.sourceMode === "manual"
-                  ? "Esta seccion usa modo manual. Debes elegir explicitamente los activos de biblioteca antes de generar la sugerencia."
-                  : "Esta seccion usa modo automatico. La IA elegira automaticamente hasta 4 activos sugeridos."}
-              </p>
-            </div>
-            <div className="proposal-component-ai-source-mode-toggle">
-              <div className="proposal-component-ai-source-pill is-selected">
-                <span>
-                  {componentAiState.sourceMode === "manual"
-                    ? "Manual"
-                    : "Automatico"}
+            <div className="proposal-component-ai-policy-card proposal-component-ai-scope-card">
+              <div className="proposal-component-ai-policy-head">
+                <span className="proposal-component-ai-policy-icon">
+                  <ProposalAiPriorityIcon />
                 </span>
-                <small>
-                  {componentAiState.sourceMode === "manual"
-                    ? "Solo usa los activos elegidos"
-                    : "La IA elige hasta 4 activos"}
-                </small>
+                <div>
+                  <strong>Usar fuentes de</strong>
+                  <p className="field-hint">
+                    Define si la sugerencia toma evidencia documental de la
+                    oportunidad, de la biblioteca comercial o de ambas.
+                  </p>
+                </div>
+              </div>
+              <div className="proposal-component-ai-policy-toggle is-triple">
+                <button
+                  type="button"
+                  className={
+                    componentAiState.sourceScopeMode === "both"
+                      ? "proposal-component-ai-policy-pill is-selected"
+                      : "proposal-component-ai-policy-pill"
+                  }
+                  onClick={() =>
+                    onProposalAiSourceScopeModeChange(
+                      component.componentCode,
+                      "both",
+                    )
+                  }
+                >
+                  <ProposalAiPriorityIcon />
+                  <span>Ambas</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    componentAiState.sourceScopeMode === "documents_only"
+                      ? "proposal-component-ai-policy-pill is-selected"
+                      : "proposal-component-ai-policy-pill"
+                  }
+                  onClick={() =>
+                    onProposalAiSourceScopeModeChange(
+                      component.componentCode,
+                      "documents_only",
+                    )
+                  }
+                >
+                  <ProposalAiDocumentIcon />
+                  <span>Solo documentos</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    componentAiState.sourceScopeMode === "library_only"
+                      ? "proposal-component-ai-policy-pill is-selected"
+                      : "proposal-component-ai-policy-pill"
+                  }
+                  onClick={() =>
+                    onProposalAiSourceScopeModeChange(
+                      component.componentCode,
+                      "library_only",
+                    )
+                  }
+                >
+                  <ProposalAiDocumentIcon />
+                  <span>Solo biblioteca</span>
+                </button>
               </div>
             </div>
+
+            {usesLibraryScope ? (
+              <>
+                <div className="proposal-component-ai-source-mode-copy">
+                  <strong>Fuentes de biblioteca</strong>
+                  <p className="field-hint">
+                    {componentAiState.sourceMode === "manual"
+                      ? "Esta seccion usa modo manual. Debes elegir explicitamente los activos de biblioteca antes de generar la sugerencia."
+                      : "Esta seccion usa modo automatico. La IA elegira automaticamente hasta 4 activos sugeridos."}
+                  </p>
+                </div>
+                <div className="proposal-component-ai-source-mode-toggle">
+                  <div className="proposal-component-ai-source-pill is-selected">
+                    <span>
+                      {componentAiState.sourceMode === "manual"
+                        ? "Manual"
+                        : "Automatico"}
+                    </span>
+                    <small>
+                      {componentAiState.sourceMode === "manual"
+                        ? "Solo usa los activos elegidos"
+                        : "La IA elige hasta 4 activos"}
+                    </small>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="proposal-component-ai-source-mode-copy">
+                <strong>Alcance activo</strong>
+                <p className="field-hint">
+                  Se excluye la biblioteca comercial. La sugerencia sigue usando
+                  el contexto de oportunidad, cotizacion y borrador actual de la
+                  seccion.
+                </p>
+              </div>
+            )}
 
             <div className="proposal-component-ai-policy-grid">
-              <div className="proposal-component-ai-policy-card">
-                <div className="proposal-component-ai-policy-head">
-                  <span className="proposal-component-ai-policy-icon">
-                    <ProposalAiDocumentIcon />
-                  </span>
-                  <div>
-                    <strong>Contenido de biblioteca</strong>
-                    <p className="field-hint">
-                      Elige si cada activo aporta texto fuente o una vista breve
-                      con summary y extract.
-                    </p>
+              {usesLibraryScope ? (
+                <div className="proposal-component-ai-policy-card">
+                  <div className="proposal-component-ai-policy-head">
+                    <span className="proposal-component-ai-policy-icon">
+                      <ProposalAiDocumentIcon />
+                    </span>
+                    <div>
+                      <strong>Contenido de biblioteca</strong>
+                      <p className="field-hint">
+                        Elige si cada activo aporta texto fuente o una vista
+                        breve con summary y extract.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="proposal-component-ai-policy-toggle is-dual">
+                    <button
+                      type="button"
+                      className={
+                        componentAiState.libraryContentMode === "source_text"
+                          ? "proposal-component-ai-policy-pill is-selected"
+                          : "proposal-component-ai-policy-pill"
+                      }
+                      onClick={() =>
+                        onProposalAiLibraryContentModeChange(
+                          component.componentCode,
+                          "source_text",
+                        )
+                      }
+                    >
+                      <ProposalAiDocumentIcon />
+                      <span>Texto fuente</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        componentAiState.libraryContentMode ===
+                        "summary_extract"
+                          ? "proposal-component-ai-policy-pill is-selected"
+                          : "proposal-component-ai-policy-pill"
+                      }
+                      onClick={() =>
+                        onProposalAiLibraryContentModeChange(
+                          component.componentCode,
+                          "summary_extract",
+                        )
+                      }
+                    >
+                      <ProposalAiDocumentIcon />
+                      <span>Summary + extract</span>
+                    </button>
                   </div>
                 </div>
-                <div className="proposal-component-ai-policy-toggle is-dual">
-                  <button
-                    type="button"
-                    className={
-                      componentAiState.libraryContentMode === "source_text"
-                        ? "proposal-component-ai-policy-pill is-selected"
-                        : "proposal-component-ai-policy-pill"
-                    }
-                    onClick={() =>
-                      onProposalAiLibraryContentModeChange(
-                        component.componentCode,
-                        "source_text",
-                      )
-                    }
-                  >
-                    <ProposalAiDocumentIcon />
-                    <span>Texto fuente</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      componentAiState.libraryContentMode === "summary_extract"
-                        ? "proposal-component-ai-policy-pill is-selected"
-                        : "proposal-component-ai-policy-pill"
-                    }
-                    onClick={() =>
-                      onProposalAiLibraryContentModeChange(
-                        component.componentCode,
-                        "summary_extract",
-                      )
-                    }
-                  >
-                    <ProposalAiDocumentIcon />
-                    <span>Summary + extract</span>
-                  </button>
-                </div>
-              </div>
+              ) : null}
 
-              <div className="proposal-component-ai-policy-card">
-                <div className="proposal-component-ai-policy-head">
-                  <span className="proposal-component-ai-policy-icon">
-                    <ProposalAiPriorityIcon />
-                  </span>
-                  <div>
-                    <strong>Prioridad de fuentes</strong>
-                    <p className="field-hint">
-                      Decide si el foco narrativo favorece documentos de la
-                      oportunidad, la biblioteca o un balance entre ambos.
-                    </p>
+              {usesLibraryScope && usesDocumentsScope ? (
+                <div className="proposal-component-ai-policy-card">
+                  <div className="proposal-component-ai-policy-head">
+                    <span className="proposal-component-ai-policy-icon">
+                      <ProposalAiPriorityIcon />
+                    </span>
+                    <div>
+                      <strong>Prioridad de fuentes</strong>
+                      <p className="field-hint">
+                        Decide si el foco narrativo favorece documentos de la
+                        oportunidad, la biblioteca o un balance entre ambos.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="proposal-component-ai-policy-toggle is-triple">
+                    <button
+                      type="button"
+                      className={
+                        componentAiState.sourcePriorityMode ===
+                        "non_library_first"
+                          ? "proposal-component-ai-policy-pill is-selected"
+                          : "proposal-component-ai-policy-pill"
+                      }
+                      onClick={() =>
+                        onProposalAiSourcePriorityModeChange(
+                          component.componentCode,
+                          "non_library_first",
+                        )
+                      }
+                    >
+                      <ProposalAiPriorityIcon />
+                      <span>Documentos primero</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        componentAiState.sourcePriorityMode === "balanced"
+                          ? "proposal-component-ai-policy-pill is-selected"
+                          : "proposal-component-ai-policy-pill"
+                      }
+                      onClick={() =>
+                        onProposalAiSourcePriorityModeChange(
+                          component.componentCode,
+                          "balanced",
+                        )
+                      }
+                    >
+                      <ProposalAiPriorityIcon />
+                      <span>Balanceado</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        componentAiState.sourcePriorityMode === "library_first"
+                          ? "proposal-component-ai-policy-pill is-selected"
+                          : "proposal-component-ai-policy-pill"
+                      }
+                      onClick={() =>
+                        onProposalAiSourcePriorityModeChange(
+                          component.componentCode,
+                          "library_first",
+                        )
+                      }
+                    >
+                      <ProposalAiPriorityIcon />
+                      <span>Biblioteca primero</span>
+                    </button>
                   </div>
                 </div>
-                <div className="proposal-component-ai-policy-toggle is-triple">
-                  <button
-                    type="button"
-                    className={
-                      componentAiState.sourcePriorityMode ===
-                      "non_library_first"
-                        ? "proposal-component-ai-policy-pill is-selected"
-                        : "proposal-component-ai-policy-pill"
-                    }
-                    onClick={() =>
-                      onProposalAiSourcePriorityModeChange(
-                        component.componentCode,
-                        "non_library_first",
-                      )
-                    }
-                  >
-                    <ProposalAiPriorityIcon />
-                    <span>Documentos primero</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      componentAiState.sourcePriorityMode === "balanced"
-                        ? "proposal-component-ai-policy-pill is-selected"
-                        : "proposal-component-ai-policy-pill"
-                    }
-                    onClick={() =>
-                      onProposalAiSourcePriorityModeChange(
-                        component.componentCode,
-                        "balanced",
-                      )
-                    }
-                  >
-                    <ProposalAiPriorityIcon />
-                    <span>Balanceado</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      componentAiState.sourcePriorityMode === "library_first"
-                        ? "proposal-component-ai-policy-pill is-selected"
-                        : "proposal-component-ai-policy-pill"
-                    }
-                    onClick={() =>
-                      onProposalAiSourcePriorityModeChange(
-                        component.componentCode,
-                        "library_first",
-                      )
-                    }
-                  >
-                    <ProposalAiPriorityIcon />
-                    <span>Biblioteca primero</span>
-                  </button>
-                </div>
-              </div>
+              ) : null}
             </div>
           </div>
 
-          {componentAiState.sourceMode === "manual" ? (
+          {usesLibraryScope && componentAiState.sourceMode === "manual" ? (
             <div className="proposal-component-ai-library-picker">
               <label className="proposal-component-ai-library-search">
                 <span>Buscar activos</span>
@@ -1326,7 +1437,7 @@ function ProposalComponentCard({
                 </div>
               )}
             </div>
-          ) : (
+          ) : usesLibraryScope ? (
             <p className="field-hint proposal-component-ai-helper-note">
               La IA elegira automaticamente hasta 4 activos publicados y
               compartibles con cliente usando{" "}
@@ -1338,6 +1449,12 @@ function ProposalComponentCard({
                 componentAiState.sourcePriorityMode,
               ).toLowerCase()}
               .
+            </p>
+          ) : (
+            <p className="field-hint proposal-component-ai-helper-note">
+              La sugerencia se generara usando solo documentos de la
+              oportunidad, junto con el contexto comercial general de la
+              propuesta.
             </p>
           )}
 
@@ -1367,6 +1484,12 @@ function ProposalComponentCard({
                   </span>
                   <span>
                     Activos: {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
+                  </span>
+                  <span>
+                    Fuentes:{" "}
+                    {formatProposalAiSourceScopeModeLabel(
+                      aiSuggestion.sources?.generationPolicy?.sourceScopeMode,
+                    )}
                   </span>
                   <span>
                     Contenido:{" "}
@@ -1468,7 +1591,8 @@ function ProposalComponentCard({
               aria-label={
                 isGeneratingSuggestion
                   ? "Generando sugerencia con IA"
-                  : componentAiState.sourceMode === "manual" &&
+                  : usesLibraryScope &&
+                      componentAiState.sourceMode === "manual" &&
                       !componentAiState.selectedLibraryAssetPublicIds.length
                     ? "Selecciona al menos un activo de biblioteca"
                     : "Generar sugerencia con IA"
@@ -1476,7 +1600,8 @@ function ProposalComponentCard({
               title={
                 isGeneratingSuggestion
                   ? aiJob?.progress?.label || "Generando sugerencia con IA"
-                  : componentAiState.sourceMode === "manual" &&
+                  : usesLibraryScope &&
+                      componentAiState.sourceMode === "manual" &&
                       !componentAiState.selectedLibraryAssetPublicIds.length
                     ? "Selecciona al menos un activo de biblioteca"
                     : "Generar sugerencia con IA"
@@ -2022,7 +2147,9 @@ function ProposalEditorModal({
                         isDirty={dirtyComponentCodes.has(
                           activeComponent.componentCode,
                         )}
-                        aiJob={componentGenerationJobs[activeComponent.componentCode]}
+                        aiJob={
+                          componentGenerationJobs[activeComponent.componentCode]
+                        }
                         aiSuggestion={
                           componentSuggestions[activeComponent.componentCode]
                         }
@@ -2031,6 +2158,9 @@ function ProposalEditorModal({
                         proposalAiLibraryLoading={proposalAiLibraryLoading}
                         onProposalAiLibraryContentModeChange={
                           onProposalAiLibraryContentModeChange
+                        }
+                        onProposalAiSourceScopeModeChange={
+                          onProposalAiSourceScopeModeChange
                         }
                         onProposalAiSourcePriorityModeChange={
                           onProposalAiSourcePriorityModeChange
@@ -2183,8 +2313,10 @@ export default function ProposalsPage() {
   );
   const proposalAiRequiresLibraryAssets = proposalAiComponentCodes.some(
     (componentCode) =>
+      getProposalAiComponentState(proposalAiState, componentCode)
+        .sourceScopeMode !== "documents_only" &&
       getProposalAiComponentState(proposalAiState, componentCode).sourceMode ===
-      "manual",
+        "manual",
   );
 
   useEffect(() => {
@@ -3032,6 +3164,7 @@ export default function ProposalsPage() {
     );
 
     if (
+      componentAiState.sourceScopeMode !== "documents_only" &&
       componentAiState.sourceMode === "manual" &&
       componentAiState.selectedLibraryAssetPublicIds.length === 0
     ) {
@@ -3050,10 +3183,12 @@ export default function ProposalsPage() {
           mode: "generate_parallel_suggestion",
           languageCode: "es",
           maxLibraryAssets: 4,
+          sourceScopeMode: componentAiState.sourceScopeMode,
           librarySourceMode: componentAiState.sourceMode,
           libraryContentMode: componentAiState.libraryContentMode,
           sourcePriorityMode: componentAiState.sourcePriorityMode,
           selectedLibraryAssetPublicIds:
+            componentAiState.sourceScopeMode !== "documents_only" &&
             componentAiState.sourceMode === "manual"
               ? componentAiState.selectedLibraryAssetPublicIds
               : [],
@@ -3701,6 +3836,11 @@ export default function ProposalsPage() {
         onProposalAiLibraryContentModeChange={(componentCode, value) =>
           setProposalAiComponentState(componentCode, {
             libraryContentMode: value,
+          })
+        }
+        onProposalAiSourceScopeModeChange={(componentCode, value) =>
+          setProposalAiComponentState(componentCode, {
+            sourceScopeMode: value,
           })
         }
         onProposalAiSourcePriorityModeChange={(componentCode, value) =>
