@@ -8515,6 +8515,10 @@ button:disabled {
 
 .proposal-component-ai-icon-button:disabled {
   opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.proposal-component-ai-icon-button.is-loading:disabled {
   cursor: wait;
 }
 

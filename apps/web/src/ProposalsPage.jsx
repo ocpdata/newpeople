@@ -1458,7 +1458,11 @@ function ProposalComponentCard({
           {isAiEnabledComponent ? (
             <button
               type="button"
-              className="proposal-component-ai-icon-button"
+              className={
+                isGeneratingSuggestion
+                  ? "proposal-component-ai-icon-button is-loading"
+                  : "proposal-component-ai-icon-button"
+              }
               disabled={!canGenerateProposalAiSuggestion}
               onClick={() => onGenerateSuggestion(component.componentCode)}
               aria-label={
