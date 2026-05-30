@@ -1913,7 +1913,7 @@ export async function cloneProposalComponents({
          ai_capability_key,
          ai_settings_json, status, layout_config_json,
          created_by_user_id, updated_by_user_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         Number(proposalId),
         component.componentCode,
