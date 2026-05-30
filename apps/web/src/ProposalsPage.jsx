@@ -1042,6 +1042,7 @@ function ProposalComponentCard({
     !busy &&
     !isGeneratingSuggestion &&
     (!isAiEnabledComponent ||
+      !usesLibraryScope ||
       componentAiState.sourceMode === "auto" ||
       componentAiState.selectedLibraryAssetPublicIds.length > 0);
 
