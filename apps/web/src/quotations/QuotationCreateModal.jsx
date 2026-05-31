@@ -437,6 +437,13 @@ const ITEM_TABLE_COLUMNS = [
     minWidth: 92,
     resizable: true,
   },
+  {
+    key: "isRenewal",
+    label: "Es renovacion",
+    defaultWidth: 96,
+    minWidth: 84,
+    resizable: true,
+  },
 ];
 
 function QuotationCreateModal({
@@ -1059,11 +1066,10 @@ function QuotationCreateModal({
           loadingLists: false,
           activeLists: Array.isArray(data) ? data : [],
           priceListId:
-            Array.isArray(data) && data.length
-              ? String(data[0].id)
-              : "",
+            Array.isArray(data) && data.length ? String(data[0].id) : "",
           results: Array.isArray(data) && data.length ? prev.results : [],
-          isCreateMode: Array.isArray(data) && data.length ? prev.isCreateMode : false,
+          isCreateMode:
+            Array.isArray(data) && data.length ? prev.isCreateMode : false,
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1082,10 +1088,7 @@ function QuotationCreateModal({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [
-    productPickerState.isOpen,
-    productPickerState.providerId,
-  ]);
+  }, [productPickerState.isOpen, productPickerState.providerId]);
 
   useEffect(() => {
     if (!productPickerState.isOpen || productPickerState.isCreateMode) {
@@ -2901,6 +2904,31 @@ function QuotationCreateModal({
                                                 totals.salePriceTotal,
                                               )}
                                             </td>
+                                            <td>
+                                              {isBundleParent ? (
+                                                <span className="quotation-bundle-parent-placeholder">
+                                                  --
+                                                </span>
+                                              ) : (
+                                                <label className="quotation-item-renewal-toggle">
+                                                  <input
+                                                    className="quotation-item-renewal-checkbox"
+                                                    type="checkbox"
+                                                    checked={Boolean(
+                                                      item.isRenewal,
+                                                    )}
+                                                    onChange={(event) =>
+                                                      handleUpdateCreateSectionItem(
+                                                        index,
+                                                        itemIndex,
+                                                        "isRenewal",
+                                                        event.target.checked,
+                                                      )
+                                                    }
+                                                  />
+                                                </label>
+                                              )}
+                                            </td>
                                           </tr>
                                         );
                                       },
@@ -2922,6 +2950,7 @@ function QuotationCreateModal({
                                           sectionTotals.salePriceTotal,
                                         )}
                                       </td>
+                                      <td />
                                     </tr>
                                   </tfoot>
                                 </table>

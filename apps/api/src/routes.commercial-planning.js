@@ -36,10 +36,26 @@ const publishSchema = z.object({
   justification: z.string().trim().max(2000).optional().nullable(),
 });
 
+const commissionConfigInputSchema = z.object({
+  sellerUserId: z.number().int().positive(),
+  productCommissionPct: z.number().min(0).max(100),
+  serviceCommissionPct: z.number().min(0).max(100),
+  renewalCommissionPct: z.number().min(0).max(100),
+  notes: z.string().trim().max(4000).optional().nullable(),
+});
+
+const replaceCommissionConfigsSchema = z.object({
+  configs: z.array(commissionConfigInputSchema).max(500),
+});
+
 const quarterLabel = (year, quarter) => `T${quarter} ${year}`;
 
 function roundMoney(value) {
   return Number(Number(value || 0).toFixed(2));
+}
+
+function roundPercent(value, scale = 2) {
+  return Number(Number(value || 0).toFixed(scale));
 }
 
 function mapPeriodRow(row) {
@@ -126,6 +142,558 @@ function buildChangedTargetFields(before, after) {
     expectedContributionAmount: after.expectedContributionAmount,
     notes: after.notes,
     status: after.status,
+  };
+}
+
+function mapCommissionConfigRow(row) {
+  return {
+    id: Number(row.id),
+    periodId: Number(row.period_id),
+    sellerUserId: Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "",
+    sellerUserEmail: row.seller_user_email || "",
+    productCommissionPct: roundPercent(row.product_commission_pct, 4),
+    serviceCommissionPct: roundPercent(row.service_commission_pct, 4),
+    renewalCommissionPct: roundPercent(row.renewal_commission_pct, 4),
+    notes: row.notes || "",
+    updatedAt: row.updated_at,
+    updatedByUserName: row.updated_by_name || "",
+  };
+}
+
+function getQuarterDateRange(year, quarter) {
+  const quarterIndex = Number(quarter) - 1;
+  const start = new Date(Date.UTC(Number(year), quarterIndex * 3, 1, 0, 0, 0));
+  const end = new Date(
+    Date.UTC(Number(year), quarterIndex * 3 + 3, 1, 0, 0, 0),
+  );
+  return { start, end };
+}
+
+function normalizeCommissionAmountToBase(
+  amount,
+  quotationCurrencyCode,
+  baseCurrencyCode,
+  exchangeRate,
+) {
+  const numericAmount = Number(amount || 0);
+  if (!numericAmount) return 0;
+
+  const quotationCurrency = String(quotationCurrencyCode || "")
+    .trim()
+    .toUpperCase();
+  const baseCurrency = String(baseCurrencyCode || "")
+    .trim()
+    .toUpperCase();
+  const numericExchangeRate = Number(exchangeRate || 0);
+
+  if (
+    !quotationCurrency ||
+    !baseCurrency ||
+    quotationCurrency === baseCurrency
+  ) {
+    return numericAmount;
+  }
+
+  if (!(numericExchangeRate > 0)) {
+    return numericAmount;
+  }
+
+  if (baseCurrency === "USD") {
+    return numericAmount / numericExchangeRate;
+  }
+
+  if (quotationCurrency === "USD") {
+    return numericAmount * numericExchangeRate;
+  }
+
+  return numericAmount;
+}
+
+function calculateCommissionItemAmounts(item) {
+  if (!item || String(item.itemType) === "grupo_productos") {
+    return {
+      discountedListPriceUnit: 0,
+      costUnit: 0,
+      costTotal: 0,
+      salePriceUnit: 0,
+      salePriceTotal: 0,
+      contributionAmount: 0,
+    };
+  }
+
+  const listPriceUnit = Number(item.listPriceUnit || 0);
+  const quantity = Number(item.quantity || 0);
+  const manufacturerDiscountPct = Number(item.manufacturerDiscountPct || 0);
+  const importCostPct = Number(item.importCostPct || 0);
+  const profitMarginPct = Number(item.profitMarginPct || 0);
+  const finalDiscountPct = Number(item.finalDiscountPct || 0);
+  const discountedListPriceUnit =
+    listPriceUnit * (1 - manufacturerDiscountPct / 100);
+  const costUnit = discountedListPriceUnit * (1 + importCostPct / 100);
+  const salePriceUnit =
+    profitMarginPct >= 100
+      ? 0
+      : (costUnit / (1 - profitMarginPct / 100)) * (1 - finalDiscountPct / 100);
+  const costTotal = costUnit * quantity;
+  const salePriceTotal = salePriceUnit * quantity;
+
+  return {
+    discountedListPriceUnit,
+    costUnit,
+    costTotal,
+    salePriceUnit,
+    salePriceTotal,
+    contributionAmount: salePriceTotal - costTotal,
+  };
+}
+
+function isAccessQualityProvider(providerName) {
+  return String(providerName || "")
+    .trim()
+    .toLowerCase()
+    .includes("access quality");
+}
+
+function resolveCommissionCategory(item) {
+  if (item?.isRenewal) return "renewals";
+  if (
+    String(item?.itemType || "") === "servicio_propio" &&
+    isAccessQualityProvider(item?.providerName)
+  ) {
+    return "services";
+  }
+  return "products";
+}
+
+async function getBasisVersionForPeriod(periodId, preferredVersionId = null) {
+  if (
+    Number.isInteger(Number(preferredVersionId)) &&
+    Number(preferredVersionId) > 0
+  ) {
+    const preferred = await getVersionDetail(Number(preferredVersionId));
+    if (preferred?.version?.periodId === Number(periodId)) {
+      return preferred;
+    }
+  }
+
+  const rows = await query(
+    `SELECT id
+     FROM commercial_planning_versions
+     WHERE period_id = ?
+     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, version_number DESC
+     LIMIT 1`,
+    [Number(periodId)],
+  );
+
+  if (!rows[0]?.id) return null;
+  return getVersionDetail(Number(rows[0].id));
+}
+
+async function getCommissionConfigsForPeriod(periodId) {
+  const rows = await query(
+    `SELECT c.*, u.full_name AS seller_user_name, u.email AS seller_user_email,
+            updater.full_name AS updated_by_name
+     FROM commercial_planning_commission_configs c
+     INNER JOIN users u ON u.id = c.seller_user_id
+     LEFT JOIN users updater ON updater.id = c.updated_by_user_id
+     WHERE c.period_id = ?
+     ORDER BY u.full_name`,
+    [Number(periodId)],
+  );
+
+  return rows.map(mapCommissionConfigRow);
+}
+
+async function buildCommissionConfigPayload(
+  periodId,
+  preferredVersionId = null,
+) {
+  const period = await getPeriodById(periodId);
+  if (!period) {
+    const error = new Error("Periodo no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  const [versionDetail, eligibleSellers, configs] = await Promise.all([
+    getBasisVersionForPeriod(periodId, preferredVersionId),
+    listEligibleSellers(),
+    getCommissionConfigsForPeriod(periodId),
+  ]);
+
+  const targetsBySellerId = new Map(
+    (versionDetail?.targets || []).map((target) => [
+      target.sellerUserId,
+      target,
+    ]),
+  );
+  const configsBySellerId = new Map(
+    configs.map((config) => [config.sellerUserId, config]),
+  );
+
+  const sellers = eligibleSellers.map((seller) => {
+    const target = targetsBySellerId.get(seller.id);
+    const config = configsBySellerId.get(seller.id);
+    return {
+      sellerUserId: seller.id,
+      sellerUserName: seller.fullName,
+      sellerUserEmail: seller.email,
+      salesQuotaAmount: target?.salesQuotaAmount || 0,
+      currencyCode: target?.currencyCode || period.baseCurrencyCode || "USD",
+      productCommissionPct: config?.productCommissionPct || 0,
+      serviceCommissionPct: config?.serviceCommissionPct || 0,
+      renewalCommissionPct: config?.renewalCommissionPct || 0,
+      notes: config?.notes || "",
+      updatedAt: config?.updatedAt || null,
+      updatedByUserName: config?.updatedByUserName || "",
+    };
+  });
+
+  return {
+    period,
+    version: versionDetail?.version || null,
+    sellers,
+    configs,
+  };
+}
+
+async function buildCommissionTrackingPayload(
+  periodId,
+  preferredVersionId = null,
+) {
+  const configPayload = await buildCommissionConfigPayload(
+    periodId,
+    preferredVersionId,
+  );
+  const { period, version, sellers } = configPayload;
+  const { start, end } = getQuarterDateRange(period.year, period.quarter);
+
+  const acceptedQuotations = await query(
+    `SELECT q.id AS quotation_id,
+            q.latest_version_id AS quotation_version_id,
+            qv.proposal_name,
+            qv.updated_at AS accepted_at,
+            qv.currency_code,
+            qv.exchange_rate,
+            a.name AS account_name,
+            o.name AS opportunity_name,
+            o.seller_user_id,
+            su.full_name AS seller_user_name,
+            su.email AS seller_user_email
+     FROM quotations q
+     INNER JOIN quotation_versions qv ON qv.id = q.latest_version_id
+     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+     INNER JOIN opportunities o ON o.id = q.opportunity_id
+     INNER JOIN accounts a ON a.id = o.account_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
+     WHERE qs.code = 'aceptada'
+       AND o.seller_user_id IS NOT NULL
+       AND qv.updated_at >= ?
+       AND qv.updated_at < ?
+     ORDER BY qv.updated_at DESC, q.id DESC`,
+    [start, end],
+  );
+
+  const versionIds = acceptedQuotations.map((row) =>
+    Number(row.quotation_version_id),
+  );
+  const itemsByVersionId = new Map();
+  if (versionIds.length) {
+    const placeholders = versionIds.map(() => "?").join(", ");
+    const itemRows = await query(
+      `SELECT qs.quotation_version_id,
+              qsi.id AS item_id,
+              qsi.provider_id,
+              p.name AS provider_name,
+              qsi.product_code,
+              qsi.product_description,
+              qsi.item_type,
+              qsi.is_renewal,
+              qsi.quantity,
+              qsi.list_price_unit,
+              qsi.manufacturer_discount_pct,
+              qsi.import_cost_pct,
+              qsi.profit_margin_pct,
+              qsi.final_discount_pct
+       FROM quotation_sections qs
+       INNER JOIN quotation_section_items qsi ON qsi.quotation_section_id = qs.id
+       INNER JOIN providers p ON p.id = qsi.provider_id
+       WHERE qs.quotation_version_id IN (${placeholders})
+       ORDER BY qs.quotation_version_id, qsi.display_order, qsi.id`,
+      versionIds,
+    );
+
+    itemRows.forEach((row) => {
+      const key = Number(row.quotation_version_id);
+      const existing = itemsByVersionId.get(key) || [];
+      existing.push({
+        itemId: Number(row.item_id),
+        providerId: Number(row.provider_id),
+        providerName: row.provider_name || "",
+        productCode: row.product_code || "",
+        productDescription: row.product_description || "",
+        itemType: row.item_type || "producto",
+        isRenewal: Boolean(row.is_renewal),
+        quantity: Number(row.quantity || 0),
+        listPriceUnit: Number(row.list_price_unit || 0),
+        manufacturerDiscountPct: Number(row.manufacturer_discount_pct || 0),
+        importCostPct: Number(row.import_cost_pct || 0),
+        profitMarginPct: Number(row.profit_margin_pct || 0),
+        finalDiscountPct: Number(row.final_discount_pct || 0),
+      });
+      itemsByVersionId.set(key, existing);
+    });
+  }
+
+  const summariesBySellerId = new Map(
+    sellers.map((seller) => [
+      seller.sellerUserId,
+      {
+        sellerUserId: seller.sellerUserId,
+        sellerUserName: seller.sellerUserName,
+        sellerUserEmail: seller.sellerUserEmail,
+        currencyCode: seller.currencyCode || period.baseCurrencyCode || "USD",
+        salesQuotaAmount: roundMoney(seller.salesQuotaAmount || 0),
+        productCommissionPct: roundPercent(seller.productCommissionPct, 4),
+        serviceCommissionPct: roundPercent(seller.serviceCommissionPct, 4),
+        renewalCommissionPct: roundPercent(seller.renewalCommissionPct, 4),
+        acceptedSalesAmount: 0,
+        quotaAttainmentPct: 0,
+        commissionEnabled: false,
+        acceptedQuotationCount: 0,
+        eligibleQuotationCount: 0,
+        blockedLowMarginQuotationCount: 0,
+        blockedByQuotaQuotationCount: 0,
+        eligibleProductContributionAmount: 0,
+        eligibleServiceContributionAmount: 0,
+        eligibleRenewalContributionAmount: 0,
+        calculatedProductCommissionAmount: 0,
+        calculatedServiceCommissionAmount: 0,
+        calculatedRenewalCommissionAmount: 0,
+        calculatedTotalCommissionAmount: 0,
+        quotations: [],
+      },
+    ]),
+  );
+
+  const computedQuotations = acceptedQuotations.map((quotationRow) => {
+    const quotationCurrencyCode =
+      quotationRow.currency_code || period.baseCurrencyCode || "USD";
+    const exchangeRate = Number(quotationRow.exchange_rate || 0);
+    const items = (
+      itemsByVersionId.get(Number(quotationRow.quotation_version_id)) || []
+    )
+      .filter((item) => item.itemType !== "grupo_productos")
+      .map((item) => {
+        const amounts = calculateCommissionItemAmounts(item);
+        const costTotal = normalizeCommissionAmountToBase(
+          amounts.costTotal,
+          quotationCurrencyCode,
+          period.baseCurrencyCode,
+          exchangeRate,
+        );
+        const salePriceTotal = normalizeCommissionAmountToBase(
+          amounts.salePriceTotal,
+          quotationCurrencyCode,
+          period.baseCurrencyCode,
+          exchangeRate,
+        );
+        const contributionAmount = normalizeCommissionAmountToBase(
+          amounts.contributionAmount,
+          quotationCurrencyCode,
+          period.baseCurrencyCode,
+          exchangeRate,
+        );
+        return {
+          ...item,
+          commissionCategory: resolveCommissionCategory(item),
+          costTotal: roundMoney(costTotal),
+          salePriceTotal: roundMoney(salePriceTotal),
+          contributionAmount: roundMoney(contributionAmount),
+        };
+      });
+
+    const totalSaleAmount = roundMoney(
+      items.reduce((sum, item) => sum + Number(item.salePriceTotal || 0), 0),
+    );
+    const totalCostAmount = roundMoney(
+      items.reduce((sum, item) => sum + Number(item.costTotal || 0), 0),
+    );
+    const totalContributionAmount = roundMoney(
+      totalSaleAmount - totalCostAmount,
+    );
+    const quotationMarginPct =
+      totalSaleAmount > 0
+        ? roundPercent((totalContributionAmount / totalSaleAmount) * 100, 2)
+        : 0;
+
+    return {
+      quotationId: Number(quotationRow.quotation_id),
+      quotationVersionId: Number(quotationRow.quotation_version_id),
+      proposalName:
+        quotationRow.proposal_name || `Cotizacion ${quotationRow.quotation_id}`,
+      acceptedAt: quotationRow.accepted_at,
+      accountName: quotationRow.account_name || "",
+      opportunityName: quotationRow.opportunity_name || "",
+      sellerUserId: Number(quotationRow.seller_user_id),
+      sellerUserName: quotationRow.seller_user_name || "",
+      sellerUserEmail: quotationRow.seller_user_email || "",
+      currencyCode: period.baseCurrencyCode || quotationCurrencyCode,
+      totalSaleAmount,
+      totalCostAmount,
+      totalContributionAmount,
+      quotationMarginPct,
+      items,
+    };
+  });
+
+  computedQuotations.forEach((quotation) => {
+    const summary = summariesBySellerId.get(quotation.sellerUserId) || {
+      sellerUserId: quotation.sellerUserId,
+      sellerUserName: quotation.sellerUserName,
+      sellerUserEmail: quotation.sellerUserEmail,
+      currencyCode: period.baseCurrencyCode || "USD",
+      salesQuotaAmount: 0,
+      productCommissionPct: 0,
+      serviceCommissionPct: 0,
+      renewalCommissionPct: 0,
+      acceptedSalesAmount: 0,
+      quotaAttainmentPct: 0,
+      commissionEnabled: false,
+      acceptedQuotationCount: 0,
+      eligibleQuotationCount: 0,
+      blockedLowMarginQuotationCount: 0,
+      blockedByQuotaQuotationCount: 0,
+      eligibleProductContributionAmount: 0,
+      eligibleServiceContributionAmount: 0,
+      eligibleRenewalContributionAmount: 0,
+      calculatedProductCommissionAmount: 0,
+      calculatedServiceCommissionAmount: 0,
+      calculatedRenewalCommissionAmount: 0,
+      calculatedTotalCommissionAmount: 0,
+      quotations: [],
+    };
+
+    summary.acceptedSalesAmount = roundMoney(
+      Number(summary.acceptedSalesAmount || 0) + quotation.totalSaleAmount,
+    );
+    summary.acceptedQuotationCount += 1;
+    summary.quotations.push(quotation);
+    summariesBySellerId.set(quotation.sellerUserId, summary);
+  });
+
+  const summaries = Array.from(summariesBySellerId.values()).map((summary) => {
+    const quotaAttainmentPct =
+      Number(summary.salesQuotaAmount || 0) > 0
+        ? roundPercent(
+            (Number(summary.acceptedSalesAmount || 0) /
+              Number(summary.salesQuotaAmount || 1)) *
+              100,
+            2,
+          )
+        : 0;
+    const commissionEnabled = quotaAttainmentPct >= 70;
+
+    summary.quotaAttainmentPct = quotaAttainmentPct;
+    summary.commissionEnabled = commissionEnabled;
+
+    summary.quotations = summary.quotations.map((quotation) => {
+      const passesMarginRule = Number(quotation.quotationMarginPct || 0) >= 10;
+      if (passesMarginRule && commissionEnabled) {
+        summary.eligibleQuotationCount += 1;
+      } else if (!passesMarginRule) {
+        summary.blockedLowMarginQuotationCount += 1;
+      } else {
+        summary.blockedByQuotaQuotationCount += 1;
+      }
+
+      const items = quotation.items.map((item) => {
+        const commissionPct =
+          item.commissionCategory === "renewals"
+            ? Number(summary.renewalCommissionPct || 0)
+            : item.commissionCategory === "services"
+              ? Number(summary.serviceCommissionPct || 0)
+              : Number(summary.productCommissionPct || 0);
+        const commissionAmount =
+          passesMarginRule && commissionEnabled
+            ? roundMoney(
+                (Number(item.contributionAmount || 0) * commissionPct) / 100,
+              )
+            : 0;
+
+        if (passesMarginRule && commissionEnabled) {
+          if (item.commissionCategory === "renewals") {
+            summary.eligibleRenewalContributionAmount = roundMoney(
+              Number(summary.eligibleRenewalContributionAmount || 0) +
+                Number(item.contributionAmount || 0),
+            );
+            summary.calculatedRenewalCommissionAmount = roundMoney(
+              Number(summary.calculatedRenewalCommissionAmount || 0) +
+                commissionAmount,
+            );
+          } else if (item.commissionCategory === "services") {
+            summary.eligibleServiceContributionAmount = roundMoney(
+              Number(summary.eligibleServiceContributionAmount || 0) +
+                Number(item.contributionAmount || 0),
+            );
+            summary.calculatedServiceCommissionAmount = roundMoney(
+              Number(summary.calculatedServiceCommissionAmount || 0) +
+                commissionAmount,
+            );
+          } else {
+            summary.eligibleProductContributionAmount = roundMoney(
+              Number(summary.eligibleProductContributionAmount || 0) +
+                Number(item.contributionAmount || 0),
+            );
+            summary.calculatedProductCommissionAmount = roundMoney(
+              Number(summary.calculatedProductCommissionAmount || 0) +
+                commissionAmount,
+            );
+          }
+        }
+
+        return {
+          ...item,
+          commissionPct: roundPercent(commissionPct, 4),
+          commissionAmount,
+          passesMarginRule,
+          sellerPassesQuotaRule: commissionEnabled,
+          calculationStatus: !passesMarginRule
+            ? "blocked_by_margin"
+            : !commissionEnabled
+              ? "blocked_by_quota"
+              : "eligible",
+        };
+      });
+
+      return {
+        ...quotation,
+        passesMarginRule,
+        sellerPassesQuotaRule: commissionEnabled,
+        items,
+      };
+    });
+
+    summary.calculatedTotalCommissionAmount = roundMoney(
+      Number(summary.calculatedProductCommissionAmount || 0) +
+        Number(summary.calculatedServiceCommissionAmount || 0) +
+        Number(summary.calculatedRenewalCommissionAmount || 0),
+    );
+
+    return summary;
+  });
+
+  return {
+    period,
+    version,
+    baseCurrencyCode: period.baseCurrencyCode || "USD",
+    summaries: summaries.sort((left, right) =>
+      String(left.sellerUserName || "").localeCompare(
+        String(right.sellerUserName || ""),
+        "es",
+      ),
+    ),
   };
 }
 
@@ -517,11 +1085,9 @@ router.post(
       return res.status(404).json({ message: "Periodo no encontrado" });
     }
     if (period.status === "closed") {
-      return res
-        .status(409)
-        .json({
-          message: "No se pueden crear nuevas versiones en un periodo cerrado",
-        });
+      return res.status(409).json({
+        message: "No se pueden crear nuevas versiones en un periodo cerrado",
+      });
     }
 
     const now = new Date();
@@ -664,11 +1230,9 @@ router.put(
         (sellerUserId, index, list) => list.indexOf(sellerUserId) !== index,
       );
     if (duplicateSellerIds.length) {
-      return res
-        .status(400)
-        .json({
-          message: "No se permiten vendedores duplicados en la misma version",
-        });
+      return res.status(400).json({
+        message: "No se permiten vendedores duplicados en la misma version",
+      });
     }
 
     const beforeTargets = existingDetail.targets;
@@ -749,11 +1313,9 @@ router.post(
       const validation = await validateVersion(Number(req.params.versionId));
       res.json(validation);
     } catch (error) {
-      res
-        .status(Number(error?.status) || 500)
-        .json({
-          message: error.message || "No fue posible validar la version",
-        });
+      res.status(Number(error?.status) || 500).json({
+        message: error.message || "No fue posible validar la version",
+      });
     }
   },
 );
@@ -905,6 +1467,153 @@ router.get(
   requirePermission("planeacion_comercial.read"),
   async (_req, res) => {
     res.json({ sellers: await listEligibleSellers() });
+  },
+);
+
+router.get(
+  "/periods/:periodId/commission-configs",
+  requirePermission("planeacion_comercial.read"),
+  async (req, res) => {
+    try {
+      const payload = await buildCommissionConfigPayload(
+        Number(req.params.periodId),
+        req.query.versionId ? Number(req.query.versionId) : null,
+      );
+      res.json(payload);
+    } catch (error) {
+      res.status(Number(error?.status) || 500).json({
+        message:
+          error.message ||
+          "No fue posible cargar la configuracion de comisiones",
+      });
+    }
+  },
+);
+
+router.put(
+  "/periods/:periodId/commission-configs",
+  requirePermission("planeacion_comercial.update"),
+  async (req, res) => {
+    const parsed = replaceCommissionConfigsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+
+    const periodId = Number(req.params.periodId);
+    const period = await getPeriodById(periodId);
+    if (!period) {
+      return res.status(404).json({ message: "Periodo no encontrado" });
+    }
+    if (period.status === "closed") {
+      return res
+        .status(409)
+        .json({
+          message: "No se puede editar comisiones en un periodo cerrado",
+        });
+    }
+
+    const actorUserId = Number(req.user?.id) || null;
+    const now = new Date();
+    const normalizedConfigs = parsed.data.configs.map((config) => ({
+      sellerUserId: Number(config.sellerUserId),
+      productCommissionPct: roundPercent(config.productCommissionPct, 4),
+      serviceCommissionPct: roundPercent(config.serviceCommissionPct, 4),
+      renewalCommissionPct: roundPercent(config.renewalCommissionPct, 4),
+      notes: String(config.notes || "").trim() || null,
+    }));
+
+    const duplicateSellerIds = normalizedConfigs
+      .map((config) => config.sellerUserId)
+      .filter(
+        (sellerUserId, index, list) => list.indexOf(sellerUserId) !== index,
+      );
+    if (duplicateSellerIds.length) {
+      return res.status(400).json({
+        message:
+          "No se permiten vendedores duplicados en la configuracion trimestral",
+      });
+    }
+
+    const beforeConfigs = await getCommissionConfigsForPeriod(periodId);
+
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `DELETE FROM commercial_planning_commission_configs
+         WHERE period_id = ?`,
+        [periodId],
+      );
+
+      for (const config of normalizedConfigs) {
+        await conn.query(
+          `INSERT INTO commercial_planning_commission_configs
+             (period_id, seller_user_id, product_commission_pct, service_commission_pct,
+              renewal_commission_pct, notes, created_by_user_id, updated_by_user_id,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            periodId,
+            config.sellerUserId,
+            config.productCommissionPct,
+            config.serviceCommissionPct,
+            config.renewalCommissionPct,
+            config.notes,
+            actorUserId,
+            actorUserId,
+            now,
+            now,
+          ],
+        );
+      }
+
+      await conn.query(
+        `UPDATE commercial_planning_periods
+         SET updated_by_user_id = ?, updated_at = ?
+         WHERE id = ?`,
+        [actorUserId, now, periodId],
+      );
+    });
+
+    const payload = await buildCommissionConfigPayload(
+      periodId,
+      req.query.versionId ? Number(req.query.versionId) : null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "planeacion_comercial",
+      action: "updated_commission_configs",
+      entityType: "commercial_planning_period",
+      entityId: periodId,
+      detail: `Configuracion de comisiones actualizada en ${payload.period.label}`,
+      before: { configs: beforeConfigs },
+      after: { configs: payload.configs },
+    });
+
+    res.json({
+      message: "Configuracion de comisiones actualizada correctamente",
+      ...payload,
+    });
+  },
+);
+
+router.get(
+  "/periods/:periodId/commission-tracking",
+  requirePermission("planeacion_comercial.read"),
+  async (req, res) => {
+    try {
+      const payload = await buildCommissionTrackingPayload(
+        Number(req.params.periodId),
+        req.query.versionId ? Number(req.query.versionId) : null,
+      );
+      res.json(payload);
+    } catch (error) {
+      res.status(Number(error?.status) || 500).json({
+        message:
+          error.message || "No fue posible cargar el seguimiento de comisiones",
+      });
+    }
   },
 );
 

@@ -1877,6 +1877,7 @@ CREATE TABLE IF NOT EXISTS quotation_section_items (
   product_code VARCHAR(120) NOT NULL,
   product_description TEXT NOT NULL,
   item_type VARCHAR(40) NOT NULL DEFAULT 'producto',
+  is_renewal TINYINT(1) NOT NULL DEFAULT 0,
   bundle_parent_item_id BIGINT UNSIGNED NULL,
   bundle_origin_type VARCHAR(40) NULL,
   source_provider_price_list_item_id BIGINT UNSIGNED NULL,
@@ -1920,6 +1921,21 @@ SET @stmt := (
 PREPARE s_quotation_section_items_final_discount_col FROM @stmt;
 EXECUTE s_quotation_section_items_final_discount_col;
 DEALLOCATE PREPARE s_quotation_section_items_final_discount_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN is_renewal TINYINT(1) NOT NULL DEFAULT 0 AFTER item_type',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'is_renewal'
+);
+PREPARE s_quotation_section_items_is_renewal_col FROM @stmt;
+EXECUTE s_quotation_section_items_is_renewal_col;
+DEALLOCATE PREPARE s_quotation_section_items_is_renewal_col;
 
 SET @stmt := (
   SELECT IF(

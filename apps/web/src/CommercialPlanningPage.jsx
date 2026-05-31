@@ -6,6 +6,8 @@ const TAB_OPTIONS = [
   { id: "summary", label: "Resumen" },
   { id: "periods", label: "Períodos" },
   { id: "targets", label: "Metas trimestrales" },
+  { id: "commissionConfigs", label: "Comisiones · Configuración" },
+  { id: "commissionTracking", label: "Comisiones · Seguimiento" },
   { id: "audit", label: "Auditoría" },
 ];
 
@@ -23,7 +25,9 @@ function formatPercent(value) {
 }
 
 function normalizeDecimalInput(value) {
-  return String(value || "").replace(/,/g, "").trim();
+  return String(value || "")
+    .replace(/,/g, "")
+    .trim();
 }
 
 function formatGroupedDecimalInput(value) {
@@ -145,7 +149,9 @@ function buildTargetPayload(targetDrafts) {
       continue;
     }
 
-    const salesQuotaAmount = Number(normalizeDecimalInput(draft.salesQuotaAmount));
+    const salesQuotaAmount = Number(
+      normalizeDecimalInput(draft.salesQuotaAmount),
+    );
     const expectedMarginPercent = Number(draft.expectedMarginPercent);
     if (!(salesQuotaAmount > 0)) {
       errors.push(
@@ -175,6 +181,67 @@ function buildTargetPayload(targetDrafts) {
   return { targets, errors };
 }
 
+function mergeCommissionConfigDrafts(payload) {
+  return (payload?.sellers || []).map((seller) => ({
+    sellerUserId: seller.sellerUserId,
+    sellerUserName: seller.sellerUserName,
+    sellerUserEmail: seller.sellerUserEmail,
+    salesQuotaAmount: seller.salesQuotaAmount || 0,
+    currencyCode:
+      seller.currencyCode || payload?.period?.baseCurrencyCode || "USD",
+    productCommissionPct: String(seller.productCommissionPct ?? 0),
+    serviceCommissionPct: String(seller.serviceCommissionPct ?? 0),
+    renewalCommissionPct: String(seller.renewalCommissionPct ?? 0),
+    notes: seller.notes || "",
+    updatedAt: seller.updatedAt || null,
+    updatedByUserName: seller.updatedByUserName || "",
+  }));
+}
+
+function buildCommissionConfigPayload(configDrafts) {
+  const errors = [];
+  const configs = (configDrafts || []).map((draft) => {
+    const productCommissionPct = Number(
+      normalizeDecimalInput(draft.productCommissionPct),
+    );
+    const serviceCommissionPct = Number(
+      normalizeDecimalInput(draft.serviceCommissionPct),
+    );
+    const renewalCommissionPct = Number(
+      normalizeDecimalInput(draft.renewalCommissionPct),
+    );
+
+    if (
+      Number.isNaN(productCommissionPct) ||
+      productCommissionPct < 0 ||
+      Number.isNaN(serviceCommissionPct) ||
+      serviceCommissionPct < 0 ||
+      Number.isNaN(renewalCommissionPct) ||
+      renewalCommissionPct < 0
+    ) {
+      errors.push(
+        `Los porcentajes de comisión de ${draft.sellerUserName} deben ser mayores o iguales a cero.`,
+      );
+    }
+
+    return {
+      sellerUserId: draft.sellerUserId,
+      productCommissionPct: Number.isNaN(productCommissionPct)
+        ? 0
+        : productCommissionPct,
+      serviceCommissionPct: Number.isNaN(serviceCommissionPct)
+        ? 0
+        : serviceCommissionPct,
+      renewalCommissionPct: Number.isNaN(renewalCommissionPct)
+        ? 0
+        : renewalCommissionPct,
+      notes: String(draft.notes || "").trim() || null,
+    };
+  });
+
+  return { configs, errors };
+}
+
 export default function CommercialPlanningPage({ can }) {
   const [activeTab, setActiveTab] = useState("summary");
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -189,6 +256,14 @@ export default function CommercialPlanningPage({ can }) {
   const [versionDetail, setVersionDetail] = useState(null);
   const [targetDrafts, setTargetDrafts] = useState([]);
   const [auditEntries, setAuditEntries] = useState([]);
+  const [commissionConfigDrafts, setCommissionConfigDrafts] = useState([]);
+  const [commissionConfigMeta, setCommissionConfigMeta] = useState(null);
+  const [commissionTracking, setCommissionTracking] = useState(null);
+  const [loadingCommissionConfigs, setLoadingCommissionConfigs] =
+    useState(false);
+  const [loadingCommissionTracking, setLoadingCommissionTracking] =
+    useState(false);
+  const [savingCommissionConfigs, setSavingCommissionConfigs] = useState(false);
   const [savingTargets, setSavingTargets] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [creatingVersion, setCreatingVersion] = useState(false);
@@ -352,6 +427,57 @@ export default function CommercialPlanningPage({ can }) {
     }
   }
 
+  async function loadCommissionConfigs() {
+    if (!selectedPeriodId) return;
+    setLoadingCommissionConfigs(true);
+    try {
+      const response = await api.get(
+        `/api/commercial-planning/periods/${selectedPeriodId}/commission-configs`,
+        {
+          params: {
+            versionId: selectedVersionId || undefined,
+          },
+        },
+      );
+      setCommissionConfigMeta(response.data);
+      setCommissionConfigDrafts(mergeCommissionConfigDrafts(response.data));
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar la configuración de comisiones",
+        ),
+      );
+    } finally {
+      setLoadingCommissionConfigs(false);
+    }
+  }
+
+  async function loadCommissionTracking() {
+    if (!selectedPeriodId) return;
+    setLoadingCommissionTracking(true);
+    try {
+      const response = await api.get(
+        `/api/commercial-planning/periods/${selectedPeriodId}/commission-tracking`,
+        {
+          params: {
+            versionId: selectedVersionId || undefined,
+          },
+        },
+      );
+      setCommissionTracking(response.data);
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar el seguimiento de comisiones",
+        ),
+      );
+    } finally {
+      setLoadingCommissionTracking(false);
+    }
+  }
+
   useEffect(() => {
     // Initial page bootstrap intentionally triggers these data loads.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -374,8 +500,16 @@ export default function CommercialPlanningPage({ can }) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       loadAudit();
     }
+    if (activeTab === "commissionConfigs") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadCommissionConfigs();
+    }
+    if (activeTab === "commissionTracking") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadCommissionTracking();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, periodDetail?.period?.id]);
+  }, [activeTab, periodDetail?.period?.id, selectedVersionId]);
 
   useEffect(() => {
     if (!isHelpOpen) return undefined;
@@ -403,6 +537,14 @@ export default function CommercialPlanningPage({ can }) {
 
   function updateTargetDraft(sellerUserId, field, value) {
     setTargetDrafts((current) =>
+      current.map((item) =>
+        item.sellerUserId === sellerUserId ? { ...item, [field]: value } : item,
+      ),
+    );
+  }
+
+  function updateCommissionConfigDraft(sellerUserId, field, value) {
+    setCommissionConfigDrafts((current) =>
       current.map((item) =>
         item.sellerUserId === sellerUserId ? { ...item, [field]: value } : item,
       ),
@@ -549,6 +691,43 @@ export default function CommercialPlanningPage({ can }) {
     }
   }
 
+  async function handleSaveCommissionConfigs() {
+    if (!selectedPeriodId) return;
+    const payload = buildCommissionConfigPayload(commissionConfigDrafts);
+    if (payload.errors.length) {
+      setError(payload.errors[0]);
+      return;
+    }
+
+    setSavingCommissionConfigs(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        `/api/commercial-planning/periods/${selectedPeriodId}/commission-configs`,
+        payload,
+        {
+          params: {
+            versionId: selectedVersionId || undefined,
+          },
+        },
+      );
+      setSuccess(response.data.message);
+      setCommissionConfigMeta(response.data);
+      setCommissionConfigDrafts(mergeCommissionConfigDrafts(response.data));
+      await loadCommissionTracking();
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible guardar la configuración de comisiones",
+        ),
+      );
+    } finally {
+      setSavingCommissionConfigs(false);
+    }
+  }
+
   if (loading) {
     return (
       <section className="panel centered">
@@ -567,7 +746,10 @@ export default function CommercialPlanningPage({ can }) {
       String(item.salesQuotaAmount).trim() &&
       String(item.expectedMarginPercent).trim(),
   ).length;
-  const pendingTargetsCount = Math.max(eligibleSellerCount - filledTargetsCount, 0);
+  const pendingTargetsCount = Math.max(
+    eligibleSellerCount - filledTargetsCount,
+    0,
+  );
   const activeYear = periodDetail?.period?.year || null;
   const yearlyPeriods = activeYear
     ? periods
@@ -616,19 +798,26 @@ export default function CommercialPlanningPage({ can }) {
                 ?
               </button>
               {isHelpOpen ? (
-                <div className="commercial-planning-help-popover" role="dialog" aria-label="Ayuda de planeación comercial">
+                <div
+                  className="commercial-planning-help-popover"
+                  role="dialog"
+                  aria-label="Ayuda de planeación comercial"
+                >
                   <strong>Para qué sirve este módulo</strong>
                   <p>
-                    Centraliza la planeación trimestral por vendedor para definir
-                    cuota, margen esperado y contribución antes de publicar una
-                    versión oficial.
+                    Centraliza la planeación trimestral por vendedor para
+                    definir cuota, margen esperado y contribución antes de
+                    publicar una versión oficial.
                   </p>
                   <strong>Cómo usarlo</strong>
                   <ol className="commercial-planning-help-list">
                     <li>Selecciona o crea el período del trimestre.</li>
                     <li>Genera una versión en borrador.</li>
                     <li>Captura o ajusta metas por vendedor.</li>
-                    <li>Revisa validaciones y publica cuando la versión quede lista.</li>
+                    <li>
+                      Revisa validaciones y publica cuando la versión quede
+                      lista.
+                    </li>
                   </ol>
                 </div>
               ) : null}
@@ -639,7 +828,6 @@ export default function CommercialPlanningPage({ can }) {
             contribución esperada por vendedor.
           </p>
         </div>
-
       </header>
 
       {error ? <div className="form-error">{error}</div> : null}
@@ -834,7 +1022,9 @@ export default function CommercialPlanningPage({ can }) {
                 </div>
                 <div className="commercial-planning-context-pills">
                   <span className="commercial-planning-status-pill">
-                    {summary ? getVersionStatusLabel(summary.status) : "Sin versión"}
+                    {summary
+                      ? getVersionStatusLabel(summary.status)
+                      : "Sin versión"}
                   </span>
                   {summary?.baseCurrencyCode ? (
                     <span className="commercial-planning-status-pill">
@@ -883,7 +1073,10 @@ export default function CommercialPlanningPage({ can }) {
               <div className="commercial-planning-seller-summary">
                 <div className="commercial-planning-seller-summary-header">
                   <h4>Detalle por vendedor</h4>
-                  <p>Cuota, margen esperado y contribución estimada de la versión seleccionada.</p>
+                  <p>
+                    Cuota, margen esperado y contribución estimada de la versión
+                    seleccionada.
+                  </p>
                 </div>
 
                 <div className="commercial-planning-seller-summary-table-wrap">
@@ -910,14 +1103,20 @@ export default function CommercialPlanningPage({ can }) {
                             <td>
                               {formatCurrency(
                                 item.salesQuotaAmount || 0,
-                                item.currencyCode || summary?.baseCurrencyCode || "USD",
+                                item.currencyCode ||
+                                  summary?.baseCurrencyCode ||
+                                  "USD",
                               )}
                             </td>
-                            <td>{formatPercent(item.expectedMarginPercent || 0)}</td>
+                            <td>
+                              {formatPercent(item.expectedMarginPercent || 0)}
+                            </td>
                             <td>
                               {formatCurrency(
                                 contribution,
-                                item.currencyCode || summary?.baseCurrencyCode || "USD",
+                                item.currencyCode ||
+                                  summary?.baseCurrencyCode ||
+                                  "USD",
                               )}
                             </td>
                           </tr>
@@ -962,14 +1161,20 @@ export default function CommercialPlanningPage({ can }) {
                         <td>
                           {formatCurrency(
                             period.totalQuotaAmount,
-                            period.baseCurrencyCode || summary?.baseCurrencyCode || "USD",
+                            period.baseCurrencyCode ||
+                              summary?.baseCurrencyCode ||
+                              "USD",
                           )}
                         </td>
-                        <td>{formatPercent(period.expectedMarginAveragePercent)}</td>
+                        <td>
+                          {formatPercent(period.expectedMarginAveragePercent)}
+                        </td>
                         <td>
                           {formatCurrency(
                             period.totalContributionAmount,
-                            period.baseCurrencyCode || summary?.baseCurrencyCode || "USD",
+                            period.baseCurrencyCode ||
+                              summary?.baseCurrencyCode ||
+                              "USD",
                           )}
                         </td>
                       </tr>
@@ -983,7 +1188,9 @@ export default function CommercialPlanningPage({ can }) {
                         <strong>
                           {formatCurrency(
                             yearlyQuotaTotal,
-                            summary?.baseCurrencyCode || yearlyPeriods[0]?.baseCurrencyCode || "USD",
+                            summary?.baseCurrencyCode ||
+                              yearlyPeriods[0]?.baseCurrencyCode ||
+                              "USD",
                           )}
                         </strong>
                       </td>
@@ -994,7 +1201,9 @@ export default function CommercialPlanningPage({ can }) {
                         <strong>
                           {formatCurrency(
                             yearlyContributionTotal,
-                            summary?.baseCurrencyCode || yearlyPeriods[0]?.baseCurrencyCode || "USD",
+                            summary?.baseCurrencyCode ||
+                              yearlyPeriods[0]?.baseCurrencyCode ||
+                              "USD",
                           )}
                         </strong>
                       </td>
@@ -1123,7 +1332,9 @@ export default function CommercialPlanningPage({ can }) {
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={formatGroupedDecimalInput(item.salesQuotaAmount)}
+                          value={formatGroupedDecimalInput(
+                            item.salesQuotaAmount,
+                          )}
                           onChange={(event) =>
                             updateTargetDraft(
                               item.sellerUserId,
@@ -1216,6 +1427,366 @@ export default function CommercialPlanningPage({ can }) {
             </table>
           </div>
         </section>
+      ) : null}
+
+      {activeTab === "commissionConfigs" ? (
+        <section className="commercial-planning-card">
+          <div className="commercial-planning-card-header">
+            <div>
+              <h3>Configuración trimestral de comisiones</h3>
+              <p>
+                Define los porcentajes de productos, servicios y renovaciones
+                por vendedor para el período seleccionado.
+              </p>
+            </div>
+            {canUpdate ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveCommissionConfigs}
+                disabled={
+                  savingCommissionConfigs ||
+                  !selectedPeriodId ||
+                  commissionConfigMeta?.period?.status === "closed"
+                }
+              >
+                {savingCommissionConfigs
+                  ? "Guardando..."
+                  : "Guardar configuración"}
+              </button>
+            ) : null}
+          </div>
+
+          {loadingCommissionConfigs ? (
+            <div className="field-hint">
+              Cargando configuración de comisiones...
+            </div>
+          ) : (
+            <div className="commercial-planning-table-wrap">
+              <table className="commercial-planning-table">
+                <thead>
+                  <tr>
+                    <th>Vendedor</th>
+                    <th>Cuota</th>
+                    <th>% Productos</th>
+                    <th>% Servicios</th>
+                    <th>% Renovaciones</th>
+                    <th>Notas</th>
+                    <th>Última actualización</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {commissionConfigDrafts.map((item) => (
+                    <tr key={`commission-config-${item.sellerUserId}`}>
+                      <td>
+                        <strong>{item.sellerUserName}</strong>
+                        <div className="field-hint">{item.sellerUserEmail}</div>
+                      </td>
+                      <td>
+                        {formatCurrency(
+                          item.salesQuotaAmount || 0,
+                          item.currencyCode ||
+                            commissionConfigMeta?.period?.baseCurrencyCode ||
+                            "USD",
+                        )}
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.productCommissionPct}
+                          onChange={(event) =>
+                            updateCommissionConfigDraft(
+                              item.sellerUserId,
+                              "productCommissionPct",
+                              event.target.value,
+                            )
+                          }
+                          disabled={
+                            !canUpdate ||
+                            commissionConfigMeta?.period?.status === "closed"
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.serviceCommissionPct}
+                          onChange={(event) =>
+                            updateCommissionConfigDraft(
+                              item.sellerUserId,
+                              "serviceCommissionPct",
+                              event.target.value,
+                            )
+                          }
+                          disabled={
+                            !canUpdate ||
+                            commissionConfigMeta?.period?.status === "closed"
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.renewalCommissionPct}
+                          onChange={(event) =>
+                            updateCommissionConfigDraft(
+                              item.sellerUserId,
+                              "renewalCommissionPct",
+                              event.target.value,
+                            )
+                          }
+                          disabled={
+                            !canUpdate ||
+                            commissionConfigMeta?.period?.status === "closed"
+                          }
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          rows="2"
+                          value={item.notes}
+                          onChange={(event) =>
+                            updateCommissionConfigDraft(
+                              item.sellerUserId,
+                              "notes",
+                              event.target.value,
+                            )
+                          }
+                          disabled={
+                            !canUpdate ||
+                            commissionConfigMeta?.period?.status === "closed"
+                          }
+                        />
+                      </td>
+                      <td>
+                        {item.updatedAt
+                          ? formatDateTime(item.updatedAt)
+                          : "Sin cambios"}
+                        {item.updatedByUserName ? (
+                          <div className="field-hint">
+                            {item.updatedByUserName}
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                  {!commissionConfigDrafts.length ? (
+                    <tr>
+                      <td colSpan="7" className="centered">
+                        No hay vendedores elegibles para configurar comisiones.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {activeTab === "commissionTracking" ? (
+        <div className="commercial-planning-section-stack">
+          <section className="commercial-planning-card">
+            <div className="commercial-planning-card-header">
+              <div>
+                <h3>Seguimiento trimestral de comisiones</h3>
+                <p>
+                  Consolida cuota, cumplimiento, margen elegible y comisión
+                  calculada sobre cotizaciones aceptadas del trimestre.
+                </p>
+              </div>
+            </div>
+
+            {loadingCommissionTracking ? (
+              <div className="field-hint">
+                Calculando seguimiento de comisiones...
+              </div>
+            ) : (
+              <div className="commercial-planning-table-wrap">
+                <table className="commercial-planning-table">
+                  <thead>
+                    <tr>
+                      <th>Vendedor</th>
+                      <th>Cuota</th>
+                      <th>Venta aceptada</th>
+                      <th>% cumplimiento</th>
+                      <th>Habilitado</th>
+                      <th>Cot. elegibles</th>
+                      <th>Bloqueadas margen</th>
+                      <th>Contribución elegible</th>
+                      <th>Comisión total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(commissionTracking?.summaries || []).map((item) => {
+                      const eligibleContribution =
+                        Number(item.eligibleProductContributionAmount || 0) +
+                        Number(item.eligibleServiceContributionAmount || 0) +
+                        Number(item.eligibleRenewalContributionAmount || 0);
+
+                      return (
+                        <tr key={`commission-summary-${item.sellerUserId}`}>
+                          <td>
+                            <strong>{item.sellerUserName}</strong>
+                            <div className="field-hint">
+                              {item.sellerUserEmail}
+                            </div>
+                          </td>
+                          <td>
+                            {formatCurrency(
+                              item.salesQuotaAmount || 0,
+                              item.currencyCode ||
+                                commissionTracking?.baseCurrencyCode ||
+                                "USD",
+                            )}
+                          </td>
+                          <td>
+                            {formatCurrency(
+                              item.acceptedSalesAmount || 0,
+                              item.currencyCode ||
+                                commissionTracking?.baseCurrencyCode ||
+                                "USD",
+                            )}
+                          </td>
+                          <td>{formatPercent(item.quotaAttainmentPct || 0)}</td>
+                          <td>{item.commissionEnabled ? "Sí" : "No"}</td>
+                          <td>{item.eligibleQuotationCount || 0}</td>
+                          <td>{item.blockedLowMarginQuotationCount || 0}</td>
+                          <td>
+                            {formatCurrency(
+                              eligibleContribution,
+                              item.currencyCode ||
+                                commissionTracking?.baseCurrencyCode ||
+                                "USD",
+                            )}
+                          </td>
+                          <td>
+                            {formatCurrency(
+                              item.calculatedTotalCommissionAmount || 0,
+                              item.currencyCode ||
+                                commissionTracking?.baseCurrencyCode ||
+                                "USD",
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!(commissionTracking?.summaries || []).length ? (
+                      <tr>
+                        <td colSpan="9" className="centered">
+                          No hay datos de comisiones para el período
+                          seleccionado.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {!loadingCommissionTracking
+            ? (commissionTracking?.summaries || []).map((seller) => (
+                <section
+                  key={`commission-detail-${seller.sellerUserId}`}
+                  className="commercial-planning-card"
+                >
+                  <div className="commercial-planning-card-header">
+                    <div>
+                      <h3>{seller.sellerUserName}</h3>
+                      <p>
+                        Detalle de cotizaciones aceptadas y cálculo por item del
+                        trimestre.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="commercial-planning-table-wrap">
+                    <table className="commercial-planning-table commercial-planning-commission-detail-table">
+                      <thead>
+                        <tr>
+                          <th>Cotización</th>
+                          <th>Fecha aceptación</th>
+                          <th>Cuenta</th>
+                          <th>Venta</th>
+                          <th>Margen</th>
+                          <th>Estado</th>
+                          <th>Comisión</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(seller.quotations || []).map((quotation) => (
+                          <tr
+                            key={`quotation-${seller.sellerUserId}-${quotation.quotationId}`}
+                          >
+                            <td>
+                              <strong>{quotation.proposalName}</strong>
+                              <div className="field-hint">
+                                #{quotation.quotationId}
+                              </div>
+                            </td>
+                            <td>{formatDateTime(quotation.acceptedAt)}</td>
+                            <td>
+                              {quotation.accountName}
+                              {quotation.opportunityName ? (
+                                <div className="field-hint">
+                                  {quotation.opportunityName}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td>
+                              {formatCurrency(
+                                quotation.totalSaleAmount || 0,
+                                seller.currencyCode ||
+                                  commissionTracking?.baseCurrencyCode ||
+                                  "USD",
+                              )}
+                            </td>
+                            <td>
+                              {formatPercent(quotation.quotationMarginPct || 0)}
+                            </td>
+                            <td>
+                              {!quotation.passesMarginRule
+                                ? "Bloqueada por margen"
+                                : !quotation.sellerPassesQuotaRule
+                                  ? "Bloqueada por cuota"
+                                  : "Elegible"}
+                            </td>
+                            <td>
+                              {formatCurrency(
+                                (quotation.items || []).reduce(
+                                  (sum, item) =>
+                                    sum + Number(item.commissionAmount || 0),
+                                  0,
+                                ),
+                                seller.currencyCode ||
+                                  commissionTracking?.baseCurrencyCode ||
+                                  "USD",
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {!(seller.quotations || []).length ? (
+                          <tr>
+                            <td colSpan="7" className="centered">
+                              Sin cotizaciones aceptadas para este vendedor en
+                              el trimestre.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ))
+            : null}
+        </div>
       ) : null}
 
       {activeTab === "periods" ? (
@@ -1311,7 +1882,8 @@ export default function CommercialPlanningPage({ can }) {
               </div>
 
               <div className="commercial-planning-create-period-note">
-                El nuevo período quedará listo para capturar metas apenas se cree.
+                El nuevo período quedará listo para capturar metas apenas se
+                cree.
               </div>
 
               <form
@@ -1320,7 +1892,9 @@ export default function CommercialPlanningPage({ can }) {
               >
                 <div className="commercial-planning-period-form-top">
                   <label className="commercial-planning-period-field commercial-planning-period-field-year">
-                    <span className="commercial-planning-period-field-label">Año</span>
+                    <span className="commercial-planning-period-field-label">
+                      Año
+                    </span>
                     <input
                       type="number"
                       value={periodForm.year}
@@ -1335,7 +1909,9 @@ export default function CommercialPlanningPage({ can }) {
                     />
                   </label>
                   <label className="commercial-planning-period-field commercial-planning-period-field-quarter">
-                    <span className="commercial-planning-period-field-label">Trimestre</span>
+                    <span className="commercial-planning-period-field-label">
+                      Trimestre
+                    </span>
                     <select
                       value={periodForm.quarter}
                       onChange={(event) =>
@@ -1352,7 +1928,9 @@ export default function CommercialPlanningPage({ can }) {
                     </select>
                   </label>
                   <label className="commercial-planning-period-field commercial-planning-period-field-currency">
-                    <span className="commercial-planning-period-field-label">Moneda</span>
+                    <span className="commercial-planning-period-field-label">
+                      Moneda
+                    </span>
                     <select
                       value={periodForm.baseCurrencyCode}
                       onChange={(event) =>

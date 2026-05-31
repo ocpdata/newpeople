@@ -831,6 +831,7 @@ const itemSchema = z.object({
   profitMarginPct: z.number().min(0).max(100),
   finalDiscountPct: z.number().min(0).max(100).optional().default(0),
   itemType: z.enum(quotationItemTypes).optional().default("producto"),
+  isRenewal: z.boolean().optional().default(false),
   bundleParentClientItemId: z
     .string()
     .trim()
@@ -1875,10 +1876,16 @@ async function ensureQuotationSectionItemsSchema() {
          AFTER product_description`,
       );
       await ensureQuotationSectionItemsColumn(
+        "is_renewal",
+        `ALTER TABLE quotation_section_items
+        ADD COLUMN is_renewal TINYINT(1) NOT NULL DEFAULT 0
+        AFTER item_type`,
+      );
+      await ensureQuotationSectionItemsColumn(
         "bundle_parent_item_id",
         `ALTER TABLE quotation_section_items
          ADD COLUMN bundle_parent_item_id BIGINT UNSIGNED NULL
-         AFTER item_type`,
+        AFTER is_renewal`,
       );
       await ensureQuotationSectionItemsColumn(
         "bundle_origin_type",
@@ -2012,6 +2019,7 @@ function validateAndNormalizeSectionItemsForCreate(items = []) {
       ...item,
       clientItemId,
       itemType: item.itemType || "producto",
+      isRenewal: Boolean(item.isRenewal),
       bundleParentClientItemId: item.bundleParentClientItemId
         ? String(item.bundleParentClientItemId).trim()
         : null,
@@ -2116,6 +2124,7 @@ function validateAndNormalizeSectionItemsForFullSave(items = []) {
       id: item.id ? Number(item.id) : null,
       localId,
       itemType: item.itemType || "producto",
+      isRenewal: Boolean(item.isRenewal),
       bundleParentLocalId: item.bundleParentLocalId
         ? String(item.bundleParentLocalId).trim()
         : null,
@@ -2270,7 +2279,7 @@ async function upsertQuotationSectionItemsForFullSave(
 
       await conn.query(
         `UPDATE quotation_section_items
-         SET provider_id = ?, product_code = ?, product_description = ?, item_type = ?,
+         SET provider_id = ?, product_code = ?, product_description = ?, item_type = ?, is_renewal = ?,
              bundle_parent_item_id = NULL, bundle_origin_type = ?,
              source_provider_price_list_item_id = ?, source_component_price_list_item_id = ?,
            quantity = ?, original_currency_code = ?, original_list_price_unit = ?, list_price_unit = ?,
@@ -2283,6 +2292,7 @@ async function upsertQuotationSectionItemsForFullSave(
           item.productCode,
           item.productDescription,
           item.itemType || "producto",
+          item.isRenewal ? 1 : 0,
           item.bundleOriginType || null,
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
@@ -2307,18 +2317,19 @@ async function upsertQuotationSectionItemsForFullSave(
     } else {
       const [result] = await conn.query(
         `INSERT INTO quotation_section_items
-          (quotation_section_id, provider_id, product_code, product_description, item_type, bundle_parent_item_id,
+          (quotation_section_id, provider_id, product_code, product_description, item_type, is_renewal, bundle_parent_item_id,
            bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
            quantity, original_currency_code, original_list_price_unit, list_price_unit,
            manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
            final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           Number(sectionId),
           Number(item.providerId),
           item.productCode,
           item.productDescription,
           item.itemType || "producto",
+          item.isRenewal ? 1 : 0,
           item.bundleOriginType || null,
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
@@ -2479,18 +2490,19 @@ async function insertQuotationSectionItems(
     );
     const [result] = await conn.query(
       `INSERT INTO quotation_section_items
-        (quotation_section_id, provider_id, product_code, product_description, item_type, bundle_parent_item_id,
+        (quotation_section_id, provider_id, product_code, product_description, item_type, is_renewal, bundle_parent_item_id,
          bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
          quantity, original_currency_code, original_list_price_unit, list_price_unit,
          manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
          final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sectionId,
         Number(item.providerId),
         item.productCode,
         item.productDescription,
         item.itemType || "producto",
+        item.isRenewal ? 1 : 0,
         item.bundleOriginType || null,
         item.sourceProviderPriceListItemId || null,
         item.sourceComponentPriceListItemId || null,
@@ -2973,7 +2985,7 @@ async function getQuotationVersionSections(versionId) {
     const items = await query(
       `SELECT qsi.id, qsi.quotation_section_id, qsi.provider_id,
               p.name AS provider_name,
-              qsi.product_code, qsi.product_description, qsi.item_type,
+              qsi.product_code, qsi.product_description, qsi.item_type, qsi.is_renewal,
               qsi.bundle_parent_item_id, qsi.bundle_origin_type,
               qsi.source_provider_price_list_item_id,
               qsi.source_component_price_list_item_id,
@@ -2998,6 +3010,7 @@ async function getQuotationVersionSections(versionId) {
         productCode: item.product_code,
         productDescription: item.product_description,
         itemType: item.item_type || "producto",
+        isRenewal: Boolean(item.is_renewal),
         bundleParentItemId: item.bundle_parent_item_id
           ? Number(item.bundle_parent_item_id)
           : null,

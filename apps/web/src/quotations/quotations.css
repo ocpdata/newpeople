@@ -265,7 +265,10 @@
 }
 
 .quotation-product-picker-filters-extended {
-  grid-template-columns: minmax(200px, 260px) minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) minmax(220px, 320px) minmax(
+      0,
+      1fr
+    );
 }
 
 .quotation-product-picker-filters-compact {
@@ -1525,6 +1528,22 @@
   min-height: 16px;
   height: 16px;
   padding: 0;
+}
+
+.quotation-item-renewal-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.quotation-items-table td .quotation-item-renewal-checkbox {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+  border-radius: 4px;
 }
 
 .quotation-column-header {

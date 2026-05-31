@@ -508,6 +508,7 @@ function buildCreateQuotationSectionItemPayload(item, itemIndex) {
     profitMarginPct: toNumber(item?.profitMarginPct),
     finalDiscountPct: toNumber(item?.finalDiscountPct),
     itemType: item?.itemType || "producto",
+    isRenewal: Boolean(item?.isRenewal),
     bundleParentClientItemId: item?.bundleParentLocalId || null,
     bundleOriginType: getCreateBundleOriginType(item),
     sourceProviderPriceListItemId:
@@ -581,6 +582,7 @@ function buildPersistedQuotationItemPayload(
     profitMarginPct: toNumber(item?.profitMarginPct),
     finalDiscountPct: toNumber(item?.finalDiscountPct),
     itemType: item?.itemType || "producto",
+    isRenewal: Boolean(item?.isRenewal),
     bundleParentItemId: toPositiveIntegerOrNull(item?.bundleParentItemId),
     bundleOriginType: item?.bundleOriginType || null,
     sourceProviderPriceListItemId: toPositiveIntegerOrNull(
@@ -747,6 +749,7 @@ function buildLocalEditableItemRecord(item, providers, displayOrder) {
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     itemType: item?.itemType || "producto",
+    isRenewal: Boolean(item?.isRenewal),
     bundleParentItemId: bundleParentLocalId
       ? Number(bundleParentLocalId)
       : null,
@@ -799,6 +802,7 @@ function buildLocalEditableItemDraft(item, displayOrder) {
     profitMarginPct: String(item?.profitMarginPct ?? 0),
     finalDiscountPct: String(item?.finalDiscountPct ?? 0),
     itemType: item?.itemType || "producto",
+    isRenewal: Boolean(item?.isRenewal),
     bundleParentItemId: bundleParentLocalId
       ? Number(bundleParentLocalId)
       : null,

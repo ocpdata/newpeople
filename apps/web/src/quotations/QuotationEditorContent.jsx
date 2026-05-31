@@ -186,12 +186,19 @@ const ITEM_TABLE_COLUMNS = [
     label: "Precio venta total",
     defaultWidth: 108,
   },
+  {
+    key: "isRenewal",
+    label: "Es renovacion",
+    defaultWidth: 96,
+  },
 ];
 
 function QuantityInput({ value, onChange, onBlur, min = "0" }) {
   function handleStep(delta) {
     onChange(
-      formatQuantityInputValue(stepQuantityValueByUnit(value, delta, Number(min))),
+      formatQuantityInputValue(
+        stepQuantityValueByUnit(value, delta, Number(min)),
+      ),
     );
   }
 
@@ -212,7 +219,9 @@ function QuantityInput({ value, onChange, onBlur, min = "0" }) {
             handleStep(-1);
           }
         }}
-        onChange={(event) => onChange(formatQuantityInputValue(event.target.value))}
+        onChange={(event) =>
+          onChange(formatQuantityInputValue(event.target.value))
+        }
         onBlur={onBlur}
       />
       <div className="quotation-quantity-step-buttons">
@@ -1135,7 +1144,9 @@ function QuotationEditorContent({
     ? selectedVersion.allDocuments
     : [];
   const visibleDocuments =
-    documentViewMode === "all" ? allQuotationDocuments : currentVersionDocuments;
+    documentViewMode === "all"
+      ? allQuotationDocuments
+      : currentVersionDocuments;
   const isUploadingDocuments = busyAction === "upload-quotation-documents";
 
   useEffect(() => {
@@ -1720,11 +1731,10 @@ function QuotationEditorContent({
           loadingLists: false,
           activeLists: Array.isArray(data) ? data : [],
           priceListId:
-            Array.isArray(data) && data.length
-              ? String(data[0].id)
-              : "",
+            Array.isArray(data) && data.length ? String(data[0].id) : "",
           results: Array.isArray(data) && data.length ? prev.results : [],
-          isCreateMode: Array.isArray(data) && data.length ? prev.isCreateMode : false,
+          isCreateMode:
+            Array.isArray(data) && data.length ? prev.isCreateMode : false,
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1743,10 +1753,7 @@ function QuotationEditorContent({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [
-    productPickerState.isOpen,
-    productPickerState.providerId,
-  ]);
+  }, [productPickerState.isOpen, productPickerState.providerId]);
 
   useEffect(() => {
     if (!productPickerState.isOpen || productPickerState.isCreateMode) {
@@ -3294,6 +3301,39 @@ function QuotationEditorContent({
                                 <td>
                                   {formatQuotationAmount(totals.salePriceTotal)}
                                 </td>
+                                <td>
+                                  {isBundleParent ? (
+                                    <span className="quotation-bundle-parent-placeholder">
+                                      --
+                                    </span>
+                                  ) : (
+                                    <label className="quotation-item-renewal-toggle">
+                                      <input
+                                        className="quotation-item-renewal-checkbox"
+                                        type="checkbox"
+                                        checked={Boolean(
+                                          itemDraftValue.isRenewal,
+                                        )}
+                                        onChange={(event) =>
+                                          updateDraftEntry(
+                                            setItemEdits,
+                                            item.id,
+                                            itemDraftValue,
+                                            "isRenewal",
+                                            event.target.checked,
+                                          )
+                                        }
+                                        onBlur={(event) =>
+                                          saveExistingItemDraft(item.id, {
+                                            ...itemDraftValue,
+                                            isRenewal:
+                                              event.currentTarget.checked,
+                                          })
+                                        }
+                                      />
+                                    </label>
+                                  )}
+                                </td>
                               </tr>
                             );
                           })}
@@ -3312,6 +3352,7 @@ function QuotationEditorContent({
                                 displayedSectionTotals.salePriceTotal,
                               )}
                             </td>
+                            <td />
                           </tr>
                         </tfoot>
                       </table>
@@ -3584,7 +3625,11 @@ function QuotationEditorContent({
             </p>
           </div>
           <div className="quotation-documents-toolbar">
-            <div className="quotation-documents-view-toggle" role="tablist" aria-label="Vista de documentos">
+            <div
+              className="quotation-documents-view-toggle"
+              role="tablist"
+              aria-label="Vista de documentos"
+            >
               <button
                 type="button"
                 className={`btn-secondary quotation-documents-view-button${documentViewMode === "current" ? " is-active" : ""}`}
@@ -3621,28 +3666,39 @@ function QuotationEditorContent({
         {visibleDocuments.length ? (
           <div className="quotation-documents-list">
             {visibleDocuments.map((document) => (
-              <div key={`${documentViewMode}-${document.id}`} className="quotation-document-card">
+              <div
+                key={`${documentViewMode}-${document.id}`}
+                className="quotation-document-card"
+              >
                 <div className="quotation-document-main">
                   <div className="quotation-document-title-row">
                     <strong>{document.originalFileName || "Documento"}</strong>
                     {documentViewMode === "all" ? (
-                      <span className="record-id-badge">V{document.versionNumber}</span>
+                      <span className="record-id-badge">
+                        V{document.versionNumber}
+                      </span>
                     ) : null}
                   </div>
                   <div className="quotation-document-meta">
-                    <span>{formatQuotationDocumentSize(document.byteSize)}</span>
+                    <span>
+                      {formatQuotationDocumentSize(document.byteSize)}
+                    </span>
                     {document.uploadedByUserName ? (
                       <span>{document.uploadedByUserName}</span>
                     ) : null}
                     {document.createdAt ? (
-                      <span>{formatQuotationDocumentDate(document.createdAt)}</span>
+                      <span>
+                        {formatQuotationDocumentDate(document.createdAt)}
+                      </span>
                     ) : null}
                   </div>
                 </div>
                 <button
                   type="button"
                   className="btn-secondary"
-                  disabled={busyAction === `download-quotation-document-${document.id}`}
+                  disabled={
+                    busyAction === `download-quotation-document-${document.id}`
+                  }
                   onClick={() => handleDownloadQuotationDocument(document)}
                 >
                   Descargar

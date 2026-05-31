@@ -72,12 +72,34 @@ const CREATE_TARGETS_TABLE_SQL = `
   )
 `;
 
+const CREATE_COMMISSION_CONFIGS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS commercial_planning_commission_configs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    period_id BIGINT UNSIGNED NOT NULL,
+    seller_user_id BIGINT UNSIGNED NOT NULL,
+    product_commission_pct DECIMAL(7,4) NOT NULL DEFAULT 0,
+    service_commission_pct DECIMAL(7,4) NOT NULL DEFAULT 0,
+    renewal_commission_pct DECIMAL(7,4) NOT NULL DEFAULT 0,
+    notes TEXT NULL,
+    created_by_user_id BIGINT UNSIGNED NULL,
+    updated_by_user_id BIGINT UNSIGNED NULL,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    CONSTRAINT uq_commercial_planning_commission_config UNIQUE (period_id, seller_user_id),
+    CONSTRAINT fk_commercial_planning_commission_config_period FOREIGN KEY (period_id) REFERENCES commercial_planning_periods(id) ON DELETE CASCADE,
+    CONSTRAINT fk_commercial_planning_commission_config_seller FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_commercial_planning_commission_config_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_commercial_planning_commission_config_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  )
+`;
+
 export async function ensureCommercialPlanningSchema() {
   if (!ensureCommercialPlanningSchemaPromise) {
     ensureCommercialPlanningSchemaPromise = (async () => {
       await query(CREATE_PERIODS_TABLE_SQL);
       await query(CREATE_VERSIONS_TABLE_SQL);
       await query(CREATE_TARGETS_TABLE_SQL);
+      await query(CREATE_COMMISSION_CONFIGS_TABLE_SQL);
     })().finally(() => {
       ensureCommercialPlanningSchemaPromise = undefined;
     });

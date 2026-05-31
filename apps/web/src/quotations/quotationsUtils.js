@@ -231,6 +231,7 @@ export function buildItemDraft(providerOptions) {
     profitMarginPct: "0",
     finalDiscountPct: "0",
     itemType: "producto",
+    isRenewal: false,
     bundleParentLocalId: null,
     bundleOriginType: null,
     sourceProviderPriceListItemId: null,
@@ -244,7 +245,9 @@ export function toNumber(value) {
 }
 
 export function formatQuantityInputValue(value) {
-  const rawValue = String(value ?? "").replace(/\s+/g, "").replace(/,/g, "");
+  const rawValue = String(value ?? "")
+    .replace(/\s+/g, "")
+    .replace(/,/g, "");
   if (!rawValue) return "";
 
   const endsWithDecimalPoint = rawValue.endsWith(".");
@@ -407,13 +410,17 @@ export function syncQuotationItemDraftPricing(item, pricingContext = {}) {
   }
 
   const pricing = buildQuotationItemPricing(item, pricingContext);
+  const rawOriginalListPriceUnit = item?.originalListPriceUnit;
 
   return {
     ...item,
     quotationCurrencyCode: pricing.quotationCurrencyCode,
     quotationExchangeRate: pricing.exchangeRate,
     originalCurrencyCode: pricing.originalCurrencyCode,
-    originalListPriceUnit: String(pricing.originalListPriceUnit),
+    originalListPriceUnit:
+      rawOriginalListPriceUnit == null
+        ? String(pricing.originalListPriceUnit)
+        : String(rawOriginalListPriceUnit),
     listPriceUnit: String(pricing.listPriceUnit),
   };
 }
@@ -852,6 +859,7 @@ export function buildItemEdits(version) {
           profitMarginPct: String(item.profitMarginPct),
           finalDiscountPct: String(item.finalDiscountPct ?? 0),
           itemType: item.itemType || "producto",
+          isRenewal: Boolean(item.isRenewal),
           bundleParentItemId: item.bundleParentItemId
             ? Number(item.bundleParentItemId)
             : null,
