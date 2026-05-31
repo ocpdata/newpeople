@@ -2639,38 +2639,6 @@ INNER JOIN contact_influence_levels cil_default ON cil_default.code = 'media'
 SET c.influence_level_id = cil_default.id
 WHERE c.influence_level_id IS NULL;
 
-SET @stmt := (
-  SELECT IF(
-    COUNT(*) = 0,
-    'ALTER TABLE contacts MODIFY COLUMN hierarchy_level_id BIGINT UNSIGNED NOT NULL AFTER purchase_participation_id',
-    'SELECT 1'
-  )
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'contacts'
-    AND COLUMN_NAME = 'hierarchy_level_id'
-    AND IS_NULLABLE = 'NO'
-);
-PREPARE s_contacts_hierarchy_level_not_null FROM @stmt;
-EXECUTE s_contacts_hierarchy_level_not_null;
-DEALLOCATE PREPARE s_contacts_hierarchy_level_not_null;
-
-SET @stmt := (
-  SELECT IF(
-    COUNT(*) = 0,
-    'ALTER TABLE contacts MODIFY COLUMN influence_level_id BIGINT UNSIGNED NOT NULL AFTER relationship_type_id',
-    'SELECT 1'
-  )
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'contacts'
-    AND COLUMN_NAME = 'influence_level_id'
-    AND IS_NULLABLE = 'NO'
-);
-PREPARE s_contacts_influence_level_not_null FROM @stmt;
-EXECUTE s_contacts_influence_level_not_null;
-DEALLOCATE PREPARE s_contacts_influence_level_not_null;
-
 INSERT INTO contact_employment_statuses (code, name, is_active) VALUES
   ('labora', 'Labora', 1),
   ('no_labora', 'No labora', 1),
