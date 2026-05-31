@@ -13,6 +13,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Cotizaciones](./cotizaciones.md)
+- [Comisiones](./comisiones.md)
 - [Proveedores](./proveedores.md)
 - [Auditoria](./auditoria.md)
 - [Pruebas](./pruebas.md)
@@ -49,6 +50,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Cotizaciones: modulo documentado con workflow propio, guardado completo por version,
   bundles de catalogo y manuales, vista previa oficial en PDF generada por backend,
   y separacion entre precio original del proveedor y precio convertido por tipo de cambio.
+- Comisiones: documento nuevo para reglas trimestrales de configuracion y seguimiento en Planeacion Comercial, con umbral de cuota, margen minimo por cotizacion y calculo por item.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
   subtitulo, boton primario, barra pills + busqueda inline).
