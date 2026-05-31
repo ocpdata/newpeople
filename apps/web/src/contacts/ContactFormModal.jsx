@@ -417,8 +417,7 @@ export default function ContactFormModal({
             <div className="grid-form account-grid-main">
               <div className="field-group">
                 <label>
-                  Participación de compra{" "}
-                  <span className="required-mark">*</span>
+                  Poder de decisión <span className="required-mark">*</span>
                 </label>
                 <select
                   value={form.purchaseParticipationId}
@@ -429,6 +428,23 @@ export default function ContactFormModal({
                 >
                   <option value="">Selecciona participación</option>
                   {catalogs.purchaseParticipations.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field-group">
+                <label>
+                  Nivel jerárquico <span className="required-mark">*</span>
+                </label>
+                <select
+                  value={form.hierarchyLevelId}
+                  onChange={(e) => onChange("hierarchyLevelId", e.target.value)}
+                  required
+                >
+                  <option value="">Selecciona nivel</option>
+                  {catalogs.hierarchyLevels.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
                     </option>
@@ -456,6 +472,24 @@ export default function ContactFormModal({
               </div>
               <div className="field-group">
                 <label>
+                  Capacidad de influencia{" "}
+                  <span className="required-mark">*</span>
+                </label>
+                <select
+                  value={form.influenceLevelId}
+                  onChange={(e) => onChange("influenceLevelId", e.target.value)}
+                  required
+                >
+                  <option value="">Selecciona capacidad</option>
+                  {catalogs.influenceLevels.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field-group" style={{ gridColumn: "1 / -1" }}>
+                <label>
                   Situación en empresa <span className="required-mark">*</span>
                 </label>
                 <select
@@ -473,7 +507,7 @@ export default function ContactFormModal({
                   ))}
                 </select>
               </div>
-              <div className="field-group">
+              <div className="field-group" style={{ gridColumn: "1 / -1" }}>
                 <label>Jefe</label>
                 <select
                   value={form.managerContactId}
@@ -487,7 +521,7 @@ export default function ContactFormModal({
                   ))}
                 </select>
               </div>
-              <div className="field-group">
+              <div className="field-group" style={{ gridColumn: "1 / -1" }}>
                 <label>Influye en</label>
                 <select
                   value={form.influencesContactId}

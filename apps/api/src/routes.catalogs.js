@@ -3,6 +3,7 @@ import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { listProductTypes } from "./productTypes.js";
 import { ensureAccountInteractionsSchema } from "./account-interactions/schema.js";
+import { ensureContactSchema } from "./contacts/schema.js";
 
 const router = express.Router();
 const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
@@ -16,6 +17,10 @@ let ensureQuotationValidityCatalogPromise;
 let ensureQuotationWarrantyCatalogPromise;
 let ensureQuotationPaymentTermsCatalogPromise;
 let ensureQuotationStatusesCatalogPromise;
+
+async function ensureContactCatalogsSchema() {
+  await ensureContactSchema();
+}
 
 async function ensureQuotationStatusesCatalog() {
   if (!ensureQuotationStatusesCatalogPromise) {
@@ -703,7 +708,12 @@ router.get(
 router.get(
   "/contact-purchase-participations",
   requirePermission("contactos.read"),
-  async (_req, res) => {
+  async (_req, res, next) => {
+    try {
+      await ensureContactCatalogsSchema();
+    } catch (error) {
+      return next(error);
+    }
     const rows = await query(
       "SELECT id, code, name FROM contact_purchase_participations WHERE is_active = 1 ORDER BY id",
     );
@@ -714,9 +724,46 @@ router.get(
 router.get(
   "/contact-relationship-types",
   requirePermission("contactos.read"),
-  async (_req, res) => {
+  async (_req, res, next) => {
+    try {
+      await ensureContactCatalogsSchema();
+    } catch (error) {
+      return next(error);
+    }
     const rows = await query(
       "SELECT id, code, name FROM contact_relationship_types WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/contact-hierarchy-levels",
+  requirePermission("contactos.read"),
+  async (_req, res, next) => {
+    try {
+      await ensureContactCatalogsSchema();
+    } catch (error) {
+      return next(error);
+    }
+    const rows = await query(
+      "SELECT id, code, name FROM contact_hierarchy_levels WHERE is_active = 1 ORDER BY id",
+    );
+    res.json(rows);
+  },
+);
+
+router.get(
+  "/contact-influence-levels",
+  requirePermission("contactos.read"),
+  async (_req, res, next) => {
+    try {
+      await ensureContactCatalogsSchema();
+    } catch (error) {
+      return next(error);
+    }
+    const rows = await query(
+      "SELECT id, code, name FROM contact_influence_levels WHERE is_active = 1 ORDER BY id",
     );
     res.json(rows);
   },

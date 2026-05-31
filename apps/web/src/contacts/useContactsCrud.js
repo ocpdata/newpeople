@@ -76,7 +76,9 @@ function normalizeContactSegment(segment) {
     return segment.toUpperCase();
   }
 
-  return segment.replace(/[A-Za-zÀ-ÿ]+/g, (word) => capitalizeContactWord(word));
+  return segment.replace(/[A-Za-zÀ-ÿ]+/g, (word) =>
+    capitalizeContactWord(word),
+  );
 }
 
 function normalizeContactToken(token, index) {
@@ -153,7 +155,9 @@ export function useContactsCrud({
     accounts: [],
     countries: [],
     purchaseParticipations: [],
+    hierarchyLevels: [],
     relationshipTypes: [],
+    influenceLevels: [],
     employmentStatuses: [],
     activationStatuses: [],
   });
@@ -173,7 +177,9 @@ export function useContactsCrud({
     addressLine: "",
     postalCode: "",
     purchaseParticipationId: "",
+    hierarchyLevelId: "",
     relationshipTypeId: "",
+    influenceLevelId: "",
     employmentStatusId: "",
     activationStatusId: "",
     managerContactId: "",
@@ -185,12 +191,10 @@ export function useContactsCrud({
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
-  const canDirectCreateContacts = explicitContactPermissions.has(
-    "contactos.create",
-  );
-  const canRequestContacts = explicitContactPermissions.has(
-    "contactos.request",
-  );
+  const canDirectCreateContacts =
+    explicitContactPermissions.has("contactos.create");
+  const canRequestContacts =
+    explicitContactPermissions.has("contactos.request");
   const canCreateOrRequestContacts =
     canDirectCreateContacts || (canRequestContacts && contactsPendingEnabled);
   const canChangeContactActivationStatus = canDirectCreateContacts;
@@ -239,10 +243,15 @@ export function useContactsCrud({
         catalogs.purchaseParticipations,
         "ninguno",
       ),
+      hierarchyLevelId: findCatalogIdByCode(
+        catalogs.hierarchyLevels,
+        "usuario",
+      ),
       relationshipTypeId: findCatalogIdByCode(
         catalogs.relationshipTypes,
-        "ninguno",
+        "media",
       ),
+      influenceLevelId: findCatalogIdByCode(catalogs.influenceLevels, "media"),
       employmentStatusId: String(catalogs.employmentStatuses?.[0]?.id || ""),
       activationStatusId: findCatalogIdByCode(
         catalogs.activationStatuses,
@@ -264,7 +273,9 @@ export function useContactsCrud({
         accountsRes,
         countriesRes,
         purchaseRes,
+        hierarchyRes,
         relationshipRes,
+        influenceRes,
         employmentRes,
         activationRes,
         temporaryFeaturesRes,
@@ -273,7 +284,9 @@ export function useContactsCrud({
         api.get("/api/catalogs/contact-accounts"),
         api.get("/api/catalogs/contact-countries"),
         api.get("/api/catalogs/contact-purchase-participations"),
+        api.get("/api/catalogs/contact-hierarchy-levels"),
         api.get("/api/catalogs/contact-relationship-types"),
+        api.get("/api/catalogs/contact-influence-levels"),
         api.get("/api/catalogs/contact-employment-statuses"),
         api.get("/api/catalogs/contact-activation-statuses"),
         api
@@ -286,7 +299,9 @@ export function useContactsCrud({
         accounts: accountsRes.data || [],
         countries: countriesRes.data || [],
         purchaseParticipations: purchaseRes.data || [],
+        hierarchyLevels: hierarchyRes.data || [],
         relationshipTypes: relationshipRes.data || [],
+        influenceLevels: influenceRes.data || [],
         employmentStatuses: employmentRes.data || [],
         activationStatuses: activationRes.data || [],
       });
@@ -312,15 +327,18 @@ export function useContactsCrud({
     return normalizeText(contact.activation_status) === "desactivado";
   }
 
-  const getContactStatusLabel = useCallback((contact) => {
-    const normalizedStatus = normalizeText(contact?.activation_status);
-    if (normalizedStatus === "pendiente de activacion") {
-      return contactsPendingEnabled
-        ? "Pendiente de activacion"
-        : "Desactivado";
-    }
-    return normalizedStatus === "activado" ? "Activado" : "Desactivado";
-  }, [contactsPendingEnabled]);
+  const getContactStatusLabel = useCallback(
+    (contact) => {
+      const normalizedStatus = normalizeText(contact?.activation_status);
+      if (normalizedStatus === "pendiente de activacion") {
+        return contactsPendingEnabled
+          ? "Pendiente de activacion"
+          : "Desactivado";
+      }
+      return normalizedStatus === "activado" ? "Activado" : "Desactivado";
+    },
+    [contactsPendingEnabled],
+  );
 
   function getContactStatusBadgeClass(contact) {
     if (isContactPending(contact)) {
@@ -408,7 +426,9 @@ export function useContactsCrud({
         addressLine: data.address_line || "",
         postalCode: data.postal_code || "",
         purchaseParticipationId: String(data.purchase_participation_id || ""),
+        hierarchyLevelId: String(data.hierarchy_level_id || ""),
         relationshipTypeId: String(data.relationship_type_id || ""),
+        influenceLevelId: String(data.influence_level_id || ""),
         employmentStatusId: String(data.employment_status_id || ""),
         activationStatusId: String(data.activation_status_id || ""),
         managerContactId: data.manager_contact_id
@@ -535,7 +555,9 @@ export function useContactsCrud({
       addressLine: sourceForm.addressLine || undefined,
       postalCode: sourceForm.postalCode || undefined,
       purchaseParticipationId: Number(sourceForm.purchaseParticipationId),
+      hierarchyLevelId: Number(sourceForm.hierarchyLevelId),
       relationshipTypeId: Number(sourceForm.relationshipTypeId),
+      influenceLevelId: Number(sourceForm.influenceLevelId),
       employmentStatusId: Number(sourceForm.employmentStatusId),
       activationStatusId: Number(sourceForm.activationStatusId),
       managerContactId: sourceForm.managerContactId
@@ -636,8 +658,10 @@ export function useContactsCrud({
           return contactsPendingEnabled && isContactPending(contact);
         }
         if (contactStatusFilter === "inactive")
-          return isContactInactive(contact) ||
-            (!contactsPendingEnabled && isContactPending(contact));
+          return (
+            isContactInactive(contact) ||
+            (!contactsPendingEnabled && isContactPending(contact))
+          );
         return isContactActive(contact);
       }),
     [contacts, contactStatusFilter, contactsPendingEnabled],
@@ -812,7 +836,9 @@ export function useContactsCrud({
           accountsRes,
           countriesRes,
           purchaseRes,
+          hierarchyRes,
           relationshipRes,
+          influenceRes,
           employmentRes,
           activationRes,
           temporaryFeaturesRes,
@@ -821,7 +847,9 @@ export function useContactsCrud({
           api.get("/api/catalogs/contact-accounts"),
           api.get("/api/catalogs/contact-countries"),
           api.get("/api/catalogs/contact-purchase-participations"),
+          api.get("/api/catalogs/contact-hierarchy-levels"),
           api.get("/api/catalogs/contact-relationship-types"),
+          api.get("/api/catalogs/contact-influence-levels"),
           api.get("/api/catalogs/contact-employment-statuses"),
           api.get("/api/catalogs/contact-activation-statuses"),
           api
@@ -836,7 +864,9 @@ export function useContactsCrud({
           accounts: accountsRes.data || [],
           countries: countriesRes.data || [],
           purchaseParticipations: purchaseRes.data || [],
+          hierarchyLevels: hierarchyRes.data || [],
           relationshipTypes: relationshipRes.data || [],
+          influenceLevels: influenceRes.data || [],
           employmentStatuses: employmentRes.data || [],
           activationStatuses: activationRes.data || [],
         });
@@ -862,7 +892,11 @@ export function useContactsCrud({
       return;
     }
     setContactStatusFilterState("all");
-  }, [contactStatusFilter, contactsPendingEnabled, setContactStatusFilterState]);
+  }, [
+    contactStatusFilter,
+    contactsPendingEnabled,
+    setContactStatusFilterState,
+  ]);
 
   useEffect(() => {
     const editId = searchParams.get("edit");

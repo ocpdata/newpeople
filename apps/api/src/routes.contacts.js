@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { ensureContactSchema } from "./contacts/schema.js";
 import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
@@ -28,7 +29,9 @@ const contactSchema = z.object({
   addressLine: z.string().max(255).optional(),
   postalCode: z.string().max(20).optional(),
   purchaseParticipationId: z.number().int().positive(),
+  hierarchyLevelId: z.number().int().positive(),
   relationshipTypeId: z.number().int().positive(),
+  influenceLevelId: z.number().int().positive(),
   employmentStatusId: z.number().int().positive(),
   activationStatusId: z.number().int().positive(),
   managerContactId: z.number().int().positive().optional().nullable(),
@@ -41,6 +44,15 @@ const contactStatusSchema = z.object({
 
 const contactCreatePermissions = ["contactos.create", "contactos.request"];
 const contactGlobalReadPermission = "contactos.read_all";
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureContactSchema();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 function normalizeContactText(value) {
   return String(value || "")
@@ -651,7 +663,9 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
             c.position_title, c.phone, c.phone_extension, c.mobile, c.email,
             c.department, c.state_region, c.city, c.address_line, c.postal_code,
             a.id AS account_id, a.name AS account_name,
+            chl.name AS hierarchy_level,
             ctr.name AS relationship_type,
+            cil.name AS influence_level,
             cpp.name AS purchase_participation,
             ces.name AS employment_status,
             cas.name AS activation_status,
@@ -670,7 +684,9 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
      FROM contacts c
                ${ownershipJoin}
      INNER JOIN accounts a ON a.id = c.account_id
+    INNER JOIN contact_hierarchy_levels chl ON chl.id = c.hierarchy_level_id
      INNER JOIN contact_relationship_types ctr ON ctr.id = c.relationship_type_id
+    INNER JOIN contact_influence_levels cil ON cil.id = c.influence_level_id
      INNER JOIN contact_purchase_participations cpp ON cpp.id = c.purchase_participation_id
      INNER JOIN contact_employment_statuses ces ON ces.id = c.employment_status_id
      INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
@@ -701,7 +717,9 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
 
   const rows = await query(
     `SELECT c.*, a.name AS account_name,
+            chl.name AS hierarchy_level,
             ctr.name AS relationship_type,
+            cil.name AS influence_level,
             cpp.name AS purchase_participation,
             ces.name AS employment_status,
             cas.name AS activation_status,
@@ -721,7 +739,9 @@ router.get("/:id", requirePermission("contactos.read"), async (req, res) => {
      FROM contacts c
      ${ownershipJoin}
      INNER JOIN accounts a ON a.id = c.account_id
+    INNER JOIN contact_hierarchy_levels chl ON chl.id = c.hierarchy_level_id
      INNER JOIN contact_relationship_types ctr ON ctr.id = c.relationship_type_id
+    INNER JOIN contact_influence_levels cil ON cil.id = c.influence_level_id
      INNER JOIN contact_purchase_participations cpp ON cpp.id = c.purchase_participation_id
      INNER JOIN contact_employment_statuses ces ON ces.id = c.employment_status_id
      INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
@@ -790,10 +810,11 @@ router.post(
           `INSERT INTO contacts
           (first_name, last_name, account_id, position_title, phone, phone_extension,
            mobile, email, department, country_id, state_region, city, address_line,
-           postal_code, purchase_participation_id, relationship_type_id,
-           employment_status_id, activation_status_id, manager_contact_id,
-           influences_contact_id, created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           postal_code, purchase_participation_id, hierarchy_level_id,
+           relationship_type_id, influence_level_id, employment_status_id,
+           activation_status_id, manager_contact_id, influences_contact_id,
+           created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             body.firstName,
             body.lastName,
@@ -810,7 +831,9 @@ router.post(
             body.addressLine || null,
             body.postalCode || null,
             body.purchaseParticipationId,
+            body.hierarchyLevelId,
             body.relationshipTypeId,
+            body.influenceLevelId,
             body.employmentStatusId,
             activationStatusId,
             body.managerContactId || null,
@@ -955,9 +978,9 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
        SET first_name = ?, last_name = ?, account_id = ?, position_title = ?,
            phone = ?, phone_extension = ?, mobile = ?, email = ?, department = ?,
            country_id = ?, state_region = ?, city = ?, address_line = ?, postal_code = ?,
-           purchase_participation_id = ?, relationship_type_id = ?, employment_status_id = ?,
-           activation_status_id = ?, manager_contact_id = ?, influences_contact_id = ?,
-           updated_by = ?, updated_at = ?
+           purchase_participation_id = ?, hierarchy_level_id = ?, relationship_type_id = ?,
+           influence_level_id = ?, employment_status_id = ?, activation_status_id = ?,
+           manager_contact_id = ?, influences_contact_id = ?, updated_by = ?, updated_at = ?
        WHERE id = ?`,
       [
         body.firstName,
@@ -975,7 +998,9 @@ router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
         body.addressLine || null,
         body.postalCode || null,
         body.purchaseParticipationId,
+        body.hierarchyLevelId,
         body.relationshipTypeId,
+        body.influenceLevelId,
         body.employmentStatusId,
         body.activationStatusId,
         body.managerContactId || null,

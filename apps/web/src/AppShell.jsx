@@ -31,6 +31,7 @@ const ManufacturerRegistrationsPage = lazy(
   () => import("./ManufacturerRegistrationsPage"),
 );
 const ContactsPage = lazy(() => import("./ContactsPage"));
+const ContactMappingPage = lazy(() => import("./ContactMappingPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
 const ProposalsPage = lazy(() => import("./ProposalsPage"));
@@ -304,6 +305,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/contact-mapping"
+          element={
+            can("contactos.read") ? (
+              <ContactMappingPage currentUser={currentUser} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/audit"
           element={
             can("audit.read") ? <SystemAuditPage /> : <Navigate to="/" />
@@ -349,6 +360,14 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Contactos
+                </GuardedNavLink>
+              )}
+              {can("contactos.read") && (
+                <GuardedNavLink
+                  to="/contact-mapping"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Mapeo de contactos
                 </GuardedNavLink>
               )}
               {can("oportunidades.read") && (
