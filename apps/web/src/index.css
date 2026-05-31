@@ -8863,6 +8863,83 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.proposal-brochure-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 1rem;
+  background: rgba(248, 250, 252, 0.85);
+}
+
+.proposal-brochure-panel-head {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.proposal-brochure-auto-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.proposal-brochure-count-field {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 12rem;
+}
+
+.proposal-brochure-count-field input {
+  min-height: 2.5rem;
+}
+
+.proposal-brochure-selected-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.proposal-brochure-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: #fff;
+}
+
+.proposal-brochure-card p {
+  margin: 0.35rem 0 0;
+  color: #475569;
+}
+
+.proposal-brochure-card-meta,
+.proposal-brochure-card-actions,
+.proposal-brochure-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.proposal-brochure-card-meta span,
+.proposal-brochure-warnings span {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.8);
+  color: #334155;
+  font-size: 0.82rem;
+}
+
+.btn-tertiary {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+}
+
+.btn-tertiary:disabled {
+  opacity: 0.45;
+}
+
 .proposal-component-ai-suggestion-copy {
   display: grid;
   gap: 0.75rem;

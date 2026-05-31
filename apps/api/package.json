@@ -31,6 +31,7 @@
     "music-metadata": "^11.12.3",
     "mysql2": "^3.22.1",
     "nodemailer": "^8.0.5",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
     "svg-to-pdfkit": "^0.1.8",

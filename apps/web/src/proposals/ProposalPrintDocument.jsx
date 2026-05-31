@@ -168,6 +168,10 @@ function renderProposalBlock(block, key, section) {
     );
   }
 
+  if (block.type === "brochure") {
+    return null;
+  }
+
   return null;
 }
 

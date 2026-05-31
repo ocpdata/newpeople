@@ -2,6 +2,7 @@ import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { buffer as streamToBuffer } from "node:stream/consumers";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { getUserAuthContext, requireAnyPermission } from "./auth.js";
@@ -37,6 +38,7 @@ import { createDocumentStorage } from "./opportunity-documents/storage.js";
 import {
   getCommercialEnablementAssetDetail,
   getCommercialEnablementCatalogs,
+  getCommercialEnablementFileStream,
   listCommercialEnablementAssets,
 } from "./commercial-enablement/service.js";
 
@@ -234,6 +236,9 @@ const PROPOSAL_EXEC_SUMMARY_JOB_POLL_INTERVAL_MS = 3000;
 const PROPOSAL_EXEC_SUMMARY_JOB_LEASE_SECONDS = 150;
 const PROPOSAL_EXEC_SUMMARY_JOB_RESULT_TTL_MINUTES = 180;
 const PROPOSAL_EXEC_SUMMARY_MAX_LIBRARY_ASSETS = 4;
+const PROPOSAL_BROCHURE_MAX_ITEMS = 10;
+const PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT = 3;
+const PROPOSAL_BROCHURE_RECOMMENDATION_CANDIDATE_LIMIT = 20;
 const PROPOSAL_EXEC_SUMMARY_MAX_ANSWERS = 16;
 const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENTS = 4;
 const PROPOSAL_EXEC_SUMMARY_MAX_DOCUMENT_TEXT_CHARS = 1500;
@@ -422,12 +427,45 @@ const proposalPdfImageSchema = z.object({
   fileName: z.string().trim().max(255).optional().default(""),
 });
 
+const proposalPdfBrochureSchema = z.object({
+  publicId: z.string().trim().max(120).optional().default(""),
+  title: z.string().trim().max(255).optional().default(""),
+  summary: z.string().trim().max(5000).optional().default(""),
+  assetTypeCode: z.string().trim().max(80).optional().default(""),
+  assetTypeLabel: z.string().trim().max(120).optional().default(""),
+  visibilityLabel: z.string().trim().max(120).optional().default(""),
+  files: z
+    .array(
+      z.object({
+        publicId: z.string().trim().max(120).optional().default(""),
+        fileName: z.string().trim().max(255).optional().default(""),
+        fileUrl: z.string().trim().max(10_000_000).optional().default(""),
+        publicUrl: z.string().trim().max(10_000_000).optional().default(""),
+        downloadUrl: z.string().trim().max(10_000_000).optional().default(""),
+        mimeType: z.string().trim().max(255).optional().default(""),
+      }),
+    )
+    .optional()
+    .default([]),
+  links: z
+    .array(
+      z.object({
+        label: z.string().trim().max(255).optional().default(""),
+        url: z.string().trim().max(10_000_000).optional().default(""),
+      }),
+    )
+    .optional()
+    .default([]),
+});
+
 const proposalPdfBlockSchema = z
   .object({
-    type: z.enum(["heading", "paragraph", "list", "image"]),
+    type: z.enum(["heading", "paragraph", "list", "image", "brochure"]),
     text: z.string().trim().max(50_000).optional().default(""),
     items: z.array(z.string().trim().max(1000)).optional().default([]),
     image: proposalPdfImageSchema.optional().nullable(),
+    assetPublicId: z.string().trim().max(120).optional().default(""),
+    brochure: proposalPdfBrochureSchema.optional().nullable(),
   })
   .superRefine((value, context) => {
     if (
@@ -454,6 +492,18 @@ const proposalPdfBlockSchema = z
         code: z.ZodIssueCode.custom,
         message: "La imagen requiere fileUrl",
         path: ["image", "fileUrl"],
+      });
+    }
+
+    if (
+      value.type === "brochure" &&
+      !value.assetPublicId &&
+      !value.brochure?.publicId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "El folleto requiere assetPublicId o brochure.publicId",
+        path: ["assetPublicId"],
       });
     }
   });
@@ -516,6 +566,7 @@ const proposalPdfRenderSchema = z.object({
     .optional()
     .default({}),
   sections: z.array(proposalPdfSectionSchema).optional().default([]),
+  brochureBlocks: z.array(proposalPdfBlockSchema).optional().default([]),
   pricing: z.object({
     summary: z.object({
       subtotal: z.number().nonnegative().optional().default(0),
@@ -532,20 +583,48 @@ const proposalPdfRenderSchema = z.object({
 const proposalTemplateApplySchema = z.object({
   templateId: z.number().int().positive(),
   mode: z.enum(proposalTemplateApplyModes),
+  brochureBlocks: z.array(proposalPdfBlockSchema).optional().default([]),
 });
 
 const proposalRebaseSchema = z.object({
   quotationVersionId: z.number().int().positive(),
 });
 
+const PRODUCT_BROCHURES_COMPONENT_CODE = "product_brochures";
+const PROPOSAL_BROCHURE_RECOMMENDATION_SYSTEM_PROMPT =
+  'Selecciona folletos comerciales para adjuntar a una propuesta B2B. Responde exclusivamente con JSON valido. No redactes texto narrativo. Usa solo candidatos provistos. Prioriza assets client_safe, utiles para cliente y alineados al contexto comercial. Devuelve {"recommendedAssetPublicIds": string[], "warnings": string[]}. Nunca inventes publicIds. Devuelve como maximo requestedBrochureCount elementos.';
+
+function isProductBrochuresComponentCode(value) {
+  return String(value || "").trim() === PRODUCT_BROCHURES_COMPONENT_CODE;
+}
+
+function normalizeProposalBrochureSelectionMode(value, fallback = "manual") {
+  if (value === "auto") {
+    return "auto";
+  }
+  return fallback === "auto" ? "auto" : "manual";
+}
+
+function normalizeProposalBrochureRequestedCount(
+  value,
+  fallback = PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+) {
+  const normalized = Number(value || fallback);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT;
+  }
+  return Math.min(PROPOSAL_BROCHURE_MAX_ITEMS, normalized);
+}
+
 const proposalComponentBlockSchema = z
   .object({
     id: z.number().int().positive().optional(),
-    type: z.enum(["heading", "paragraph", "list", "image"]),
+    type: z.enum(["heading", "paragraph", "list", "image", "brochure"]),
     text: z.string().optional().default(""),
     items: z.array(z.string().trim().max(1000)).optional().default([]),
     assetId: z.number().int().positive().optional().nullable(),
     assetVersionId: z.number().int().positive().optional().nullable(),
+    assetPublicId: z.string().trim().min(4).max(80).optional().nullable(),
   })
   .superRefine((value, context) => {
     if (value.type === "image") {
@@ -556,13 +635,45 @@ const proposalComponentBlockSchema = z
           path: ["assetVersionId"],
         });
       }
+      return;
+    }
+
+    if (value.type === "brochure" && !value.assetPublicId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Los bloques de folleto requieren assetPublicId",
+        path: ["assetPublicId"],
+      });
     }
   });
+
+const proposalBrochureComponentSettingsSchema = z
+  .object({
+    selectionMode: z.enum(["manual", "auto"]).optional(),
+    requestedBrochureCount: z
+      .number()
+      .int()
+      .positive()
+      .max(PROPOSAL_BROCHURE_MAX_ITEMS)
+      .optional(),
+  })
+  .strict();
 
 const proposalComponentUpdateSchema = z.object({
   title: z.string().trim().min(2).max(190).optional(),
   blocks: z.array(proposalComponentBlockSchema).default([]),
+  componentSettings: proposalBrochureComponentSettingsSchema.optional(),
   consumeSuggestionPublicId: z.string().trim().max(64).optional().nullable(),
+});
+
+const proposalBrochureRecommendationSchema = z.object({
+  requestedBrochureCount: z
+    .number()
+    .int()
+    .positive()
+    .max(PROPOSAL_BROCHURE_MAX_ITEMS)
+    .optional()
+    .default(PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT),
 });
 
 const proposalReplaceImageSchema = z.object({
@@ -628,7 +739,20 @@ const proposalExecutiveSummaryGenerationSchema = z
       });
     }
 
-    if (value.librarySourceMode === "auto" && uniqueIds.length > 0) {
+    if (value.sourceScopeMode === "documents_only" && uniqueIds.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectedLibraryAssetPublicIds"],
+        message:
+          "No debes enviar activos de biblioteca cuando el alcance es solo documentos",
+      });
+    }
+
+    if (
+      value.sourceScopeMode !== "documents_only" &&
+      value.librarySourceMode === "auto" &&
+      uniqueIds.length > 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["selectedLibraryAssetPublicIds"],
@@ -3911,7 +4035,9 @@ async function serializeProposalDetail(proposalRow) {
       aiCapabilityKey: configComponent.aiCapabilityKey || null,
     };
   });
-  return serializeProposalRow(proposalRow, { components: normalizedComponents });
+  return serializeProposalRow(proposalRow, {
+    components: normalizedComponents,
+  });
 }
 
 async function refreshProposalLegacyContentFromComponents({
@@ -4965,6 +5091,356 @@ function scoreLibraryAssetForProposalContext(item, context) {
   }
 
   return { score, reasons: Array.from(new Set(reasons)) };
+}
+
+async function resolveProposalBrochureAssetsByPublicIds({
+  user,
+  assetPublicIds,
+}) {
+  const normalizedAssetPublicIds = Array.from(
+    new Set(
+      (Array.isArray(assetPublicIds) ? assetPublicIds : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (normalizedAssetPublicIds.length > PROPOSAL_BROCHURE_MAX_ITEMS) {
+    const error = new Error("Se excedio el maximo de folletos permitidos");
+    error.status = 422;
+    error.body = {
+      message: `La seccion admite como maximo ${PROPOSAL_BROCHURE_MAX_ITEMS} folletos.`,
+      error: { code: "brochure_limit_exceeded", retryable: false },
+    };
+    throw error;
+  }
+
+  const assets = await Promise.all(
+    normalizedAssetPublicIds.map((assetPublicId) =>
+      getCommercialEnablementAssetDetail({ user, assetPublicId }),
+    ),
+  );
+
+  const invalidAssetPublicIds = normalizedAssetPublicIds.filter(
+    (assetPublicId, index) => {
+      const asset = assets[index];
+      return (
+        !asset ||
+        asset.status !== "published" ||
+        asset.visibilityLevel !== "client_safe"
+      );
+    },
+  );
+
+  if (invalidAssetPublicIds.length) {
+    const error = new Error("Activos de folleto no validos");
+    error.status = 422;
+    error.body = {
+      message:
+        "Uno o mas folletos seleccionados no son validos para esta propuesta",
+      error: { code: "invalid_brochure_assets", retryable: false },
+      details: { invalidAssetPublicIds },
+    };
+    throw error;
+  }
+
+  return {
+    assetPublicIds: normalizedAssetPublicIds,
+    brochureAssetsByPublicId: Object.fromEntries(
+      assets.map((asset) => [asset.publicId, asset]),
+    ),
+  };
+}
+
+async function buildProposalBrochureRecommendationContext({ proposal, user }) {
+  const proposalDetail = await serializeProposalDetail(proposal);
+  const currentComponent = Array.isArray(proposalDetail.components)
+    ? proposalDetail.components.find((component) =>
+        isProductBrochuresComponentCode(component.componentCode),
+      ) || null
+    : null;
+  const [opportunity, answers, documents, quotationSections, catalogs] =
+    await Promise.all([
+      getProposalOpportunityContext(Number(proposal.opportunity_id)),
+      listLatestOpportunityAnswersForProposalContext(
+        Number(proposal.opportunity_id),
+      ),
+      listOpportunityDocuments({
+        opportunityId: Number(proposal.opportunity_id),
+      }).catch(() => []),
+      getQuotationVersionSections(Number(proposal.quotation_version_id)),
+      getCommercialEnablementCatalogs(),
+    ]);
+
+  const sourceText = buildExecutiveSummarySourceText({
+    proposal,
+    currentComponent,
+    opportunity,
+    answers,
+    documents,
+    quotationSections,
+  });
+
+  return {
+    proposal,
+    opportunity,
+    quotationSections,
+    manufacturerCodes: pickMatchingCatalogCodes(
+      sourceText,
+      catalogs?.manufacturer,
+    ),
+    solutionCodes: pickMatchingCatalogCodes(sourceText, catalogs?.solution),
+    industryCodes: pickMatchingCatalogCodes(sourceText, catalogs?.industry, 2),
+    stageCodes: [String(opportunity?.sales_stage_code || "").trim()].filter(
+      Boolean,
+    ),
+    opportunityNameNormalized: normalizeProposalAiText(
+      opportunity?.name || proposal.opportunity_name || "",
+    ),
+  };
+}
+
+function selectProposalBrochureRecommendationCandidates(
+  libraryAssets,
+  context,
+) {
+  const attachableAssets = (
+    Array.isArray(libraryAssets) ? libraryAssets : []
+  ).filter(
+    (item) =>
+      (Array.isArray(item.files) && item.files.length > 0) ||
+      (Array.isArray(item.links) && item.links.length > 0),
+  );
+
+  const scoredAssets = attachableAssets
+    .map((item) => {
+      const scored = scoreLibraryAssetForProposalContext(item, {
+        manufacturerCodes: context.manufacturerCodes,
+        solutionCodes: context.solutionCodes,
+        industryCodes: context.industryCodes,
+        stageCodes: context.stageCodes,
+        opportunityNameNormalized: context.opportunityNameNormalized,
+      });
+
+      const brochureBoost =
+        item.assetTypeCode === "solution_brief" ||
+        item.assetTypeCode === "manufacturer_brief" ||
+        item.assetTypeCode === "customer_document"
+          ? 2
+          : 0;
+
+      return {
+        item,
+        score: scored.score + brochureBoost,
+        reasons: brochureBoost
+          ? [...scored.reasons, "brochure_type"]
+          : scored.reasons,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.item.usageCount - left.item.usageCount ||
+        String(left.item.title).localeCompare(String(right.item.title), "es"),
+    );
+
+  const preferred = scoredAssets.filter((entry) => entry.score > 0);
+  const fallbackPool = preferred.length ? preferred : scoredAssets;
+  return fallbackPool.slice(
+    0,
+    PROPOSAL_BROCHURE_RECOMMENDATION_CANDIDATE_LIMIT,
+  );
+}
+
+async function requestProposalBrochureRecommendations({
+  proposal,
+  user,
+  requestedBrochureCount,
+}) {
+  const requestedCount = normalizeProposalBrochureRequestedCount(
+    requestedBrochureCount,
+  );
+  const context = await buildProposalBrochureRecommendationContext({
+    proposal,
+    user,
+  });
+
+  const libraryAssetsResponse = await listCommercialEnablementAssets({
+    user,
+    filters: {
+      status: "published",
+      onlyClientSafe: "true",
+    },
+  }).catch(() => null);
+
+  const candidateEntries = selectProposalBrochureRecommendationCandidates(
+    libraryAssetsResponse?.items,
+    context,
+  );
+
+  if (!candidateEntries.length) {
+    return {
+      items: [],
+      warnings: [
+        {
+          code: "no_brochure_candidates",
+          message:
+            "No se encontraron folletos publicados y compartibles con cliente para esta propuesta.",
+        },
+      ],
+    };
+  }
+
+  const candidateMap = new Map(
+    candidateEntries.map((entry) => [entry.item.publicId, entry.item]),
+  );
+  const fallbackItems = candidateEntries
+    .slice(0, requestedCount)
+    .map((entry) => entry.item);
+
+  if (!config.openai.apiKey) {
+    return {
+      items: fallbackItems,
+      warnings: [
+        {
+          code: "brochure_ai_fallback",
+          message:
+            "Se usaron recomendaciones automaticas basadas en contexto porque la integracion IA no esta disponible.",
+        },
+      ],
+    };
+  }
+
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content: PROPOSAL_BROCHURE_RECOMMENDATION_SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            requestedBrochureCount: requestedCount,
+            proposal: {
+              proposalId: Number(proposal.id),
+              title: proposal.title || "",
+              opportunityName: proposal.opportunity_name || "",
+            },
+            opportunity: {
+              stageCode: String(context.opportunity?.sales_stage_code || ""),
+              stageName: String(context.opportunity?.sales_stage_name || ""),
+            },
+            quotationSections: Array.isArray(context.quotationSections)
+              ? context.quotationSections.map((section) => ({
+                  title: section.title || "",
+                  items: Array.isArray(section.items)
+                    ? section.items.map((item) => ({
+                        productCode: item.productCode || "",
+                        productDescription: item.productDescription || "",
+                      }))
+                    : [],
+                }))
+              : [],
+            candidates: candidateEntries.map(({ item, reasons }) => ({
+              publicId: item.publicId,
+              title: item.title,
+              summary: item.summary || "",
+              assetTypeCode: item.assetTypeCode || "",
+              assetTypeLabel: item.assetTypeLabel || "",
+              catalogs: Array.isArray(item.catalogs)
+                ? item.catalogs.map((catalog) => ({
+                    catalogType: catalog.catalogType,
+                    name: catalog.name,
+                    code: catalog.code,
+                  }))
+                : [],
+              files: Array.isArray(item.files) ? item.files.length : 0,
+              links: Array.isArray(item.links) ? item.links.length : 0,
+              matchReasons: reasons,
+            })),
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    PROPOSAL_EXEC_SUMMARY_OPENAI_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openai.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    const parsed = extractJsonObject(getOpenAiOutputText(responseData));
+    const recommendedAssetPublicIds = Array.from(
+      new Set(
+        (Array.isArray(parsed?.recommendedAssetPublicIds)
+          ? parsed.recommendedAssetPublicIds
+          : []
+        )
+          .map((value) => String(value || "").trim())
+          .filter((value) => candidateMap.has(value)),
+      ),
+    ).slice(0, requestedCount);
+
+    const recommendedItems = recommendedAssetPublicIds.length
+      ? recommendedAssetPublicIds
+          .map((assetPublicId) => candidateMap.get(assetPublicId))
+          .filter(Boolean)
+      : fallbackItems;
+
+    const warnings = Array.isArray(parsed?.warnings)
+      ? parsed.warnings
+          .map((message) => summarizeProposalAiText(message, 500))
+          .filter(Boolean)
+          .map((message) => ({ code: "model_warning", message }))
+      : [];
+
+    if (recommendedItems.length < requestedCount) {
+      warnings.push({
+        code: "brochure_results_truncated",
+        message: `Solo se encontraron ${recommendedItems.length} folletos recomendables para esta propuesta.`,
+      });
+    }
+
+    return { items: recommendedItems, warnings };
+  } catch {
+    return {
+      items: fallbackItems,
+      warnings: [
+        {
+          code: "brochure_ai_fallback",
+          message:
+            "La recomendacion IA no estuvo disponible y se uso la seleccion automatica por contexto.",
+        },
+      ],
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function buildProposalExecutiveSummaryGenerationContext({
@@ -7306,11 +7782,58 @@ router.put(
       return res.status(404).json({ message: "Propuesta no encontrada" });
     }
 
+    if (
+      !isProductBrochuresComponentCode(componentCode) &&
+      parsed.data.blocks.some((block) => block.type === "brochure")
+    ) {
+      return res.status(400).json({
+        message:
+          "Solo la seccion de folletos permite adjuntar folletos comerciales",
+      });
+    }
+
+    let nextBlocks = parsed.data.blocks;
+    let componentSettings;
+    let brochureAssetsByPublicId = {};
+
+    if (isProductBrochuresComponentCode(componentCode)) {
+      if (nextBlocks.some((block) => block.type !== "brochure")) {
+        return res.status(400).json({
+          message:
+            "La seccion de folletos solo admite adjuntos de biblioteca comercial",
+        });
+      }
+
+      const { assetPublicIds, brochureAssetsByPublicId: resolvedBrochures } =
+        await resolveProposalBrochureAssetsByPublicIds({
+          user: req.user,
+          assetPublicIds: nextBlocks.map((block) => block.assetPublicId),
+        });
+
+      nextBlocks = assetPublicIds.map((assetPublicId) => ({
+        type: "brochure",
+        assetPublicId,
+      }));
+      brochureAssetsByPublicId = resolvedBrochures;
+      componentSettings = {
+        selectionMode: normalizeProposalBrochureSelectionMode(
+          parsed.data.componentSettings?.selectionMode,
+          "manual",
+        ),
+        requestedBrochureCount: normalizeProposalBrochureRequestedCount(
+          parsed.data.componentSettings?.requestedBrochureCount,
+          PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+        ),
+      };
+    }
+
     await saveProposalComponentBlocks({
       proposalId,
       componentCode,
       title: parsed.data.title,
-      blocks: parsed.data.blocks,
+      blocks: nextBlocks,
+      componentSettings,
+      brochureAssetsByPublicId,
       actorUserId: Number(req.user.id),
     });
     const aiComponentConfig = await getProposalAiComponentConfigForProposal({
@@ -7326,7 +7849,7 @@ router.put(
     } else if (aiComponentConfig) {
       await consumeMatchingProposalExecutiveSummaryGenerationJob({
         proposalId,
-        blocks: parsed.data.blocks,
+        blocks: nextBlocks,
         componentCode,
       });
     }
@@ -7367,6 +7890,60 @@ router.put(
     return res.json({
       message: "Componente actualizado",
       proposal: await serializeProposalDetail(refreshedProposal),
+    });
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/components/:componentCode/brochure-recommendations",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const proposalId = Number(req.params.proposalId);
+    const componentCode = String(req.params.componentCode || "").trim();
+    if (!Number.isInteger(proposalId) || proposalId <= 0) {
+      return res.status(400).json({ message: "Id de propuesta invalido" });
+    }
+    if (!isProductBrochuresComponentCode(componentCode)) {
+      return res.status(404).json({ message: "Componente no soportado" });
+    }
+    if (!(await proposalHasComponent(proposalId, componentCode))) {
+      return res.status(404).json({ message: "Componente no encontrado" });
+    }
+
+    const parsed = proposalBrochureRecommendationSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+
+    const recommendation = await requestProposalBrochureRecommendations({
+      proposal,
+      user: req.user,
+      requestedBrochureCount: parsed.data.requestedBrochureCount,
+    });
+
+    return res.json({
+      requestedBrochureCount: normalizeProposalBrochureRequestedCount(
+        parsed.data.requestedBrochureCount,
+      ),
+      items: Array.isArray(recommendation.items) ? recommendation.items : [],
+      warnings: Array.isArray(recommendation.warnings)
+        ? recommendation.warnings
+        : [],
     });
   },
 );
@@ -8823,10 +9400,61 @@ router.post(
       company,
       quotationVersionId: parsed.data.quotationAttachmentRef.quotationVersionId,
     });
+    const brochureAttachments = [];
+    const brochureAttachmentKeys = new Set();
+
+    for (const block of parsed.data.brochureBlocks || []) {
+      if (block.type !== "brochure" || !block.assetPublicId) {
+        continue;
+      }
+
+      for (const file of block.brochure?.files || []) {
+        const filePublicId = String(file?.publicId || "").trim();
+        if (!filePublicId) {
+          continue;
+        }
+
+        const attachmentKey = `${block.assetPublicId}:${filePublicId}`;
+        if (brochureAttachmentKeys.has(attachmentKey)) {
+          continue;
+        }
+
+        brochureAttachmentKeys.add(attachmentKey);
+
+        try {
+          const resource = await getCommercialEnablementFileStream({
+            assetPublicId: block.assetPublicId,
+            filePublicId,
+            user: req.user,
+          });
+          if (!resource) {
+            continue;
+          }
+
+          brochureAttachments.push({
+            title:
+              String(block.brochure?.title || "").trim() ||
+              String(resource.fileName || file.fileName || "").trim() ||
+              "Folleto",
+            fileName:
+              String(resource.fileName || file.fileName || "").trim() ||
+              "folleto",
+            mimeType:
+              String(resource.mimeType || file.mimeType || "").trim() ||
+              "application/octet-stream",
+            buffer: await streamToBuffer(resource.stream),
+          });
+        } catch {
+          // Ignore missing brochure attachments and keep generating the proposal.
+        }
+      }
+    }
+
     const { buffer, fileName } = await buildProposalPdfBuffer({
       ...parsed.data,
       company,
       quotationAttachment,
+      brochureAttachments,
     });
 
     await logAuditEvent({

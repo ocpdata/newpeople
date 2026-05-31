@@ -103,9 +103,13 @@ const PROPOSAL_BLOCK_TYPE_LABELS = {
   paragraph: "Párrafo",
   list: "Lista",
   image: "Imagen",
+  brochure: "Folleto",
 };
 const EXECUTIVE_SUMMARY_COMPONENT_CODE = "executive_summary";
 const BACKGROUND_COMPONENT_CODE = "background";
+const PRODUCT_BROCHURES_COMPONENT_CODE = "product_brochures";
+const PROPOSAL_BROCHURE_MAX_ITEMS = 10;
+const PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT = 3;
 
 function normalizeProposalAiMode(value, fallback = "auto") {
   return value === "manual" ? "manual" : fallback;
@@ -124,6 +128,63 @@ function getDefaultProposalAiCapabilityKey(componentCode, componentKind) {
   return "proposal.generic_section";
 }
 
+function isProductBrochuresComponent(componentOrCode) {
+  const componentCode =
+    typeof componentOrCode === "string"
+      ? componentOrCode
+      : componentOrCode?.componentCode;
+  return (
+    String(componentCode || "").trim() === PRODUCT_BROCHURES_COMPONENT_CODE
+  );
+}
+
+function normalizeProposalBrochureSelectionMode(value, fallback = "manual") {
+  if (value === "auto") {
+    return "auto";
+  }
+  return fallback === "auto" ? "auto" : "manual";
+}
+
+function normalizeProposalBrochureRequestedCount(
+  value,
+  fallback = PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+) {
+  const normalized = Number(value || fallback);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT;
+  }
+  return Math.min(PROPOSAL_BROCHURE_MAX_ITEMS, normalized);
+}
+
+function createBrochureBlockFromAsset(asset) {
+  return {
+    id: null,
+    type: "brochure",
+    assetPublicId: asset?.publicId || "",
+    brochure: asset
+      ? {
+          publicId: asset.publicId || "",
+          title: asset.title || "",
+          summary: asset.summary || "",
+          assetTypeCode: asset.assetTypeCode || "",
+          assetTypeLabel:
+            asset.assetTypeLabel || asset.assetTypeCode || "Activo",
+          visibilityLevel: asset.visibilityLevel || "client_safe",
+          visibilityLabel: asset.visibilityLabel || "Compartible con cliente",
+          audienceCode: asset.audienceCode || "client",
+          audienceLabel: asset.audienceLabel || "Cliente",
+          files: Array.isArray(asset.files) ? asset.files : [],
+          links: Array.isArray(asset.links) ? asset.links : [],
+        }
+      : null,
+    text: "",
+    items: [],
+    assetId: null,
+    assetVersionId: null,
+    image: null,
+  };
+}
+
 function normalizeProposalBlock(block) {
   if (!block || typeof block !== "object") {
     return null;
@@ -137,6 +198,11 @@ function normalizeProposalBlock(block) {
     assetId: block.assetId || null,
     assetVersionId: block.assetVersionId || null,
     image: block.image && typeof block.image === "object" ? block.image : null,
+    assetPublicId: block.assetPublicId || null,
+    brochure:
+      block.brochure && typeof block.brochure === "object"
+        ? block.brochure
+        : null,
   };
 }
 
@@ -590,6 +656,7 @@ function ProposalAiPriorityIcon() {
 }
 
 function cloneComponentDraft(component) {
+  const isBrochureComponent = isProductBrochuresComponent(component);
   return {
     title: component.title || "",
     blocks: Array.isArray(component.blocks)
@@ -601,8 +668,22 @@ function cloneComponentDraft(component) {
           assetId: block.assetId || null,
           assetVersionId: block.assetVersionId || null,
           image: block.image || null,
+          assetPublicId: block.assetPublicId || null,
+          brochure: block.brochure || null,
         }))
       : [],
+    brochureSelectionMode: isBrochureComponent
+      ? normalizeProposalBrochureSelectionMode(
+          component?.aiSettings?.selectionMode,
+          "manual",
+        )
+      : "manual",
+    requestedBrochureCount: isBrochureComponent
+      ? normalizeProposalBrochureRequestedCount(
+          component?.aiSettings?.requestedBrochureCount,
+          PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+        )
+      : PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
   };
 }
 
@@ -622,7 +703,8 @@ function buildMetadataDraftFromProposal(proposal) {
   };
 }
 
-function serializeComponentDraft(draft) {
+function serializeComponentDraft(draft, componentCode = null) {
+  const isBrochureComponent = isProductBrochuresComponent(componentCode);
   return {
     title: draft.title,
     blocks: draft.blocks.map((block) => ({
@@ -631,7 +713,22 @@ function serializeComponentDraft(draft) {
       items: Array.isArray(block.items) ? block.items.filter(Boolean) : [],
       assetId: block.assetId || null,
       assetVersionId: block.assetVersionId || null,
+      assetPublicId: block.assetPublicId || null,
     })),
+    ...(isBrochureComponent
+      ? {
+          componentSettings: {
+            selectionMode: normalizeProposalBrochureSelectionMode(
+              draft.brochureSelectionMode,
+              "manual",
+            ),
+            requestedBrochureCount: normalizeProposalBrochureRequestedCount(
+              draft.requestedBrochureCount,
+              PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+            ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -649,6 +746,9 @@ function createEmptyBlock(type = "paragraph") {
 
 function hasPreviewableBlockContent(block) {
   if (!block) return false;
+  if (block.type === "brochure") {
+    return Boolean(block.brochure?.publicId || block.assetPublicId);
+  }
   if (block.type === "image") {
     return Boolean(
       block.image?.fileUrl || block.assetId || block.assetVersionId,
@@ -662,9 +762,13 @@ function hasPreviewableBlockContent(block) {
 
 function isProposalComponentDirty(component, componentDrafts) {
   if (!component) return false;
-  const persisted = serializeComponentDraft(cloneComponentDraft(component));
+  const persisted = serializeComponentDraft(
+    cloneComponentDraft(component),
+    component.componentCode,
+  );
   const current = serializeComponentDraft(
     componentDrafts[component.componentCode] || cloneComponentDraft(component),
+    component.componentCode,
   );
   return JSON.stringify(persisted) !== JSON.stringify(current);
 }
@@ -684,6 +788,7 @@ function buildProposalPrintModel(
     companyLegalName: companyBranding?.legalName,
   });
 
+  const brochureBlocks = [];
   const sections = (selectedProposal.components || [])
     .map((component) => {
       const draft = componentDrafts[component.componentCode];
@@ -693,6 +798,16 @@ function buildProposalPrintModel(
       )
         .map((block) => {
           if (!hasPreviewableBlockContent(block)) return null;
+
+          if (block.type === "brochure") {
+            const brochureBlock = {
+              type: "brochure",
+              brochure: block.brochure || null,
+              assetPublicId: block.assetPublicId || null,
+            };
+            brochureBlocks.push(brochureBlock);
+            return null;
+          }
 
           if (block.type === "image") {
             return block.image?.fileUrl
@@ -810,6 +925,7 @@ function buildProposalPrintModel(
     quotationId: selectedProposal.quotationId || "-",
     quotationVersionNumber: selectedProposal.quotationVersionNumber || "-",
     sections,
+    brochureBlocks,
     pricing: {
       summary: {
         subtotal: Number(pricingSummary?.subtotal || 0),
@@ -886,6 +1002,28 @@ function buildProposalPdfPayload(printModel, selectedProposal) {
           blocks: Array.isArray(section.blocks)
             ? section.blocks
                 .map((block) => {
+                  if (block.type === "brochure") {
+                    return block.brochure?.publicId || block.assetPublicId
+                      ? {
+                          type: "brochure",
+                          assetPublicId:
+                            block.brochure?.publicId || block.assetPublicId,
+                          brochure: block.brochure || null,
+                        }
+                      : null;
+                  }
+
+                  if (block.type === "brochure") {
+                    return block.brochure?.publicId || block.assetPublicId
+                      ? {
+                          type: "brochure",
+                          assetPublicId:
+                            block.brochure?.publicId || block.assetPublicId,
+                          brochure: block.brochure || null,
+                        }
+                      : null;
+                  }
+
                   if (block.type === "image") {
                     return block.image?.fileUrl
                       ? {
@@ -917,6 +1055,20 @@ function buildProposalPdfPayload(printModel, selectedProposal) {
                 .filter(Boolean)
             : [],
         }))
+      : [],
+    brochureBlocks: Array.isArray(printModel.brochureBlocks)
+      ? printModel.brochureBlocks
+          .map((block) =>
+            block.brochure?.publicId || block.assetPublicId
+              ? {
+                  type: "brochure",
+                  assetPublicId:
+                    block.brochure?.publicId || block.assetPublicId,
+                  brochure: block.brochure || null,
+                }
+              : null,
+          )
+          .filter(Boolean)
       : [],
     pricing: {
       summary: {
@@ -960,13 +1112,18 @@ function isProposalPreviewDirty(
   }
 
   const persistedComponents = (selectedProposal.components || []).map(
-    (component) => serializeComponentDraft(cloneComponentDraft(component)),
+    (component) =>
+      serializeComponentDraft(
+        cloneComponentDraft(component),
+        component.componentCode,
+      ),
   );
   const currentComponents = (selectedProposal.components || []).map(
     (component) =>
       serializeComponentDraft(
         componentDrafts[component.componentCode] ||
           cloneComponentDraft(component),
+        component.componentCode,
       ),
   );
 
@@ -986,22 +1143,30 @@ function ProposalComponentCard({
   proposalAiState,
   proposalAiLibraryAssets,
   proposalAiLibraryLoading,
+  componentBrochureSuggestion,
+  brochureLibraryQuery,
+  isBrochureRecommendationBusy,
   onProposalAiLibraryContentModeChange,
   onProposalAiSourceScopeModeChange,
   onProposalAiSourcePriorityModeChange,
   onProposalAiLibraryQueryChange,
   onToggleProposalAiLibraryAsset,
+  onBrochureLibraryQueryChange,
   onChangeDraft,
   onSave,
   onGenerateSuggestion,
+  onRecommendBrochures,
   onApplySuggestion,
+  onApplyBrochureSuggestion,
   onDismissSuggestion,
+  onDismissBrochureSuggestion,
 }) {
   const displayTitle = getProposalSectionDisplayTitle(
     component.componentCode,
     draft.title || component.title || component.componentCode,
   );
   const isAiEnabledComponent = isProposalAiEnabledComponent(component);
+  const isProductBrochureSection = isProductBrochuresComponent(component);
   const componentAiState = getProposalAiComponentState(
     proposalAiState,
     component.componentCode,
@@ -1038,6 +1203,36 @@ function ProposalComponentCard({
           ) || null,
       )
     : [];
+  const selectedBrochureBlocks = isProductBrochureSection
+    ? draft.blocks.filter((block) => block.type === "brochure")
+    : [];
+  const selectedBrochureAssets = isProductBrochureSection
+    ? selectedBrochureBlocks
+        .map(
+          (block) =>
+            proposalAiLibraryAssets.find(
+              (asset) => asset.publicId === block.assetPublicId,
+            ) ||
+            block.brochure ||
+            null,
+        )
+        .filter(Boolean)
+    : [];
+  const filteredBrochureAssets = isProductBrochureSection
+    ? proposalAiLibraryAssets.filter((asset) => {
+        const normalizedQuery = normalizeComparableLabel(brochureLibraryQuery);
+        if (!normalizedQuery) return true;
+        return normalizeComparableLabel(
+          [
+            asset.title,
+            asset.summary,
+            asset.assetTypeLabel,
+            ...getCommercialEnablementCatalogNames(asset, "manufacturer", 4),
+            ...getCommercialEnablementCatalogNames(asset, "solution", 4),
+          ].join(" "),
+        ).includes(normalizedQuery);
+      })
+    : [];
   const canGenerateProposalAiSuggestion =
     !busy &&
     !isGeneratingSuggestion &&
@@ -1045,6 +1240,50 @@ function ProposalComponentCard({
       !usesLibraryScope ||
       componentAiState.sourceMode === "auto" ||
       componentAiState.selectedLibraryAssetPublicIds.length > 0);
+
+  function updateBrochureBlocks(nextBlocks) {
+    onChangeDraft(component.componentCode, {
+      ...draft,
+      blocks: nextBlocks,
+    });
+  }
+
+  function toggleBrochureAsset(asset) {
+    const currentBlocks = Array.isArray(draft.blocks)
+      ? draft.blocks.filter((block) => block.type === "brochure")
+      : [];
+    const existingIndex = currentBlocks.findIndex(
+      (block) => block.assetPublicId === asset.publicId,
+    );
+    if (existingIndex >= 0) {
+      updateBrochureBlocks(
+        currentBlocks.filter((block) => block.assetPublicId !== asset.publicId),
+      );
+      return;
+    }
+    if (currentBlocks.length >= PROPOSAL_BROCHURE_MAX_ITEMS) {
+      return;
+    }
+    updateBrochureBlocks([
+      ...currentBlocks,
+      createBrochureBlockFromAsset(asset),
+    ]);
+  }
+
+  function moveBrochureAsset(assetPublicId, direction) {
+    const currentBlocks = Array.isArray(draft.blocks)
+      ? [...draft.blocks.filter((block) => block.type === "brochure")]
+      : [];
+    const currentIndex = currentBlocks.findIndex(
+      (block) => block.assetPublicId === assetPublicId,
+    );
+    if (currentIndex === -1) return;
+    const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (nextIndex < 0 || nextIndex >= currentBlocks.length) return;
+    const [moved] = currentBlocks.splice(currentIndex, 1);
+    currentBlocks.splice(nextIndex, 0, moved);
+    updateBrochureBlocks(currentBlocks);
+  }
 
   function updateBlock(index, changes) {
     onChangeDraft(component.componentCode, {
@@ -1113,7 +1352,317 @@ function ProposalComponentCard({
         />
       </label>
 
-      {isAiEnabledComponent ? (
+      {isProductBrochureSection ? (
+        <section className="proposal-brochure-panel">
+          <div className="proposal-brochure-panel-head">
+            <div>
+              <strong>Folletos de la biblioteca comercial</strong>
+              <p className="field-hint">
+                Selecciona folletos manualmente o pide una recomendacion
+                automatica. Esta seccion no genera texto, solo adjunta folletos.
+              </p>
+            </div>
+          </div>
+
+          <div className="proposal-component-ai-policy-card proposal-component-ai-scope-card">
+            <div className="proposal-component-ai-policy-head">
+              <span className="proposal-component-ai-policy-icon">
+                <ProposalAiPriorityIcon />
+              </span>
+              <div>
+                <strong>Modo de seleccion</strong>
+                <p className="field-hint">
+                  Manual para elegir folletos especificos o automatico con IA
+                  para recibir una recomendacion.
+                </p>
+              </div>
+            </div>
+            <div className="proposal-component-ai-policy-toggle is-dual">
+              <button
+                type="button"
+                className={
+                  draft.brochureSelectionMode === "manual"
+                    ? "proposal-component-ai-policy-pill is-selected"
+                    : "proposal-component-ai-policy-pill"
+                }
+                onClick={() =>
+                  onChangeDraft(component.componentCode, {
+                    ...draft,
+                    brochureSelectionMode: "manual",
+                  })
+                }
+              >
+                <ProposalAiDocumentIcon />
+                <span>Manual</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  draft.brochureSelectionMode === "auto"
+                    ? "proposal-component-ai-policy-pill is-selected"
+                    : "proposal-component-ai-policy-pill"
+                }
+                onClick={() =>
+                  onChangeDraft(component.componentCode, {
+                    ...draft,
+                    brochureSelectionMode: "auto",
+                  })
+                }
+              >
+                <ProposalAiIcon />
+                <span>Automatico con IA</span>
+              </button>
+            </div>
+          </div>
+
+          {draft.brochureSelectionMode === "auto" ? (
+            <div className="proposal-brochure-auto-controls">
+              <label className="proposal-brochure-count-field">
+                <span>Cantidad de folletos</span>
+                <input
+                  type="number"
+                  min="1"
+                  max={String(PROPOSAL_BROCHURE_MAX_ITEMS)}
+                  value={draft.requestedBrochureCount}
+                  onChange={(event) =>
+                    onChangeDraft(component.componentCode, {
+                      ...draft,
+                      requestedBrochureCount:
+                        normalizeProposalBrochureRequestedCount(
+                          event.target.value,
+                          PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+                        ),
+                    })
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy || isBrochureRecommendationBusy}
+                onClick={() => onRecommendBrochures(component.componentCode)}
+              >
+                {isBrochureRecommendationBusy
+                  ? "Recomendando..."
+                  : "Sugerir folletos con IA"}
+              </button>
+            </div>
+          ) : null}
+
+          {componentBrochureSuggestion ? (
+            <div className="proposal-component-ai-suggestion-card">
+              <div className="proposal-component-ai-suggestion-copy">
+                <strong>Folletos sugeridos</strong>
+                <p className="field-hint">
+                  La sugerencia reemplazara la seleccion actual solo cuando la
+                  apliques.
+                </p>
+              </div>
+              <div className="proposal-brochure-selected-list">
+                {componentBrochureSuggestion.items.map((asset) => (
+                  <article
+                    key={`${component.componentCode}-suggested-${asset.publicId}`}
+                    className="proposal-brochure-card"
+                  >
+                    <div>
+                      <strong>{asset.title}</strong>
+                      <p>{asset.summary || "Sin resumen disponible"}</p>
+                    </div>
+                    <div className="proposal-brochure-card-meta">
+                      <span>{asset.assetTypeLabel}</span>
+                      <span>
+                        {asset.files.length} archivo(s) · {asset.links.length}{" "}
+                        URL(s)
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              {componentBrochureSuggestion.warnings.length ? (
+                <div className="proposal-brochure-warnings">
+                  {componentBrochureSuggestion.warnings.map(
+                    (warning, index) => (
+                      <span key={`${component.componentCode}-warning-${index}`}>
+                        {warning.message}
+                      </span>
+                    ),
+                  )}
+                </div>
+              ) : null}
+              <div className="proposal-component-ai-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() =>
+                    onApplyBrochureSuggestion(component.componentCode)
+                  }
+                >
+                  Usar sugerencia
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() =>
+                    onDismissBrochureSuggestion(component.componentCode)
+                  }
+                >
+                  Descartar
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="proposal-component-ai-library-selected-bar">
+            <strong>
+              Folletos seleccionados: {selectedBrochureAssets.length}
+            </strong>
+            {selectedBrochureAssets.length >= PROPOSAL_BROCHURE_MAX_ITEMS ? (
+              <span className="field-hint">
+                Capacidad tecnica maxima alcanzada (
+                {PROPOSAL_BROCHURE_MAX_ITEMS}).
+              </span>
+            ) : null}
+          </div>
+
+          {selectedBrochureAssets.length ? (
+            <div className="proposal-brochure-selected-list">
+              {selectedBrochureAssets.map((asset, index) => (
+                <article
+                  key={`${component.componentCode}-selected-${asset.publicId}`}
+                  className="proposal-brochure-card"
+                >
+                  <div>
+                    <strong>{asset.title}</strong>
+                    <p>{asset.summary || "Sin resumen disponible"}</p>
+                  </div>
+                  <div className="proposal-brochure-card-meta">
+                    <span>{asset.assetTypeLabel || "Activo"}</span>
+                    <span>
+                      {(asset.files || []).length} archivo(s) ·{" "}
+                      {(asset.links || []).length} URL(s)
+                    </span>
+                  </div>
+                  <div className="proposal-brochure-card-actions">
+                    <button
+                      type="button"
+                      className="btn-tertiary"
+                      disabled={index === 0}
+                      onClick={() => moveBrochureAsset(asset.publicId, "up")}
+                    >
+                      Subir
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-tertiary"
+                      disabled={index === selectedBrochureAssets.length - 1}
+                      onClick={() => moveBrochureAsset(asset.publicId, "down")}
+                    >
+                      Bajar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-tertiary"
+                      onClick={() =>
+                        updateBrochureBlocks(
+                          selectedBrochureBlocks.filter(
+                            (block) => block.assetPublicId !== asset.publicId,
+                          ),
+                        )
+                      }
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="field-hint proposal-component-ai-helper-note">
+              Aun no hay folletos seleccionados para esta propuesta.
+            </p>
+          )}
+
+          {draft.brochureSelectionMode === "manual" ? (
+            <div className="proposal-component-ai-library-picker">
+              <label className="proposal-component-ai-library-search">
+                <span>Buscar folletos</span>
+                <input
+                  type="search"
+                  value={brochureLibraryQuery}
+                  placeholder="Buscar por titulo, resumen, fabricante o solucion"
+                  onChange={(event) =>
+                    onBrochureLibraryQueryChange(
+                      component.componentCode,
+                      event.target.value,
+                    )
+                  }
+                />
+              </label>
+
+              {proposalAiLibraryLoading ? (
+                <div className="proposal-component-ai-status-row">
+                  <span
+                    className="proposal-component-ai-spinner"
+                    aria-hidden="true"
+                  />
+                  <span>Cargando biblioteca comercial...</span>
+                </div>
+              ) : filteredBrochureAssets.length ? (
+                <div className="proposal-component-ai-library-grid">
+                  {filteredBrochureAssets.slice(0, 12).map((asset) => {
+                    const isSelected = selectedBrochureBlocks.some(
+                      (block) => block.assetPublicId === asset.publicId,
+                    );
+                    return (
+                      <label
+                        key={asset.publicId}
+                        className={
+                          isSelected
+                            ? "proposal-component-ai-library-option is-selected"
+                            : "proposal-component-ai-library-option"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleBrochureAsset(asset)}
+                          disabled={
+                            !isSelected &&
+                            selectedBrochureBlocks.length >=
+                              PROPOSAL_BROCHURE_MAX_ITEMS
+                          }
+                        />
+                        <div className="proposal-component-ai-library-option-copy">
+                          <div className="proposal-component-ai-library-option-topline">
+                            <strong>{asset.title}</strong>
+                            <span>{asset.assetTypeLabel}</span>
+                          </div>
+                          <p>{asset.summary || "Sin resumen disponible"}</p>
+                          <div className="proposal-component-ai-library-option-meta">
+                            <span>{asset.visibilityLabel}</span>
+                            <span>
+                              {asset.files.length} archivo(s) ·{" "}
+                              {asset.links.length} URL(s)
+                            </span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="proposal-component-ai-library-empty">
+                  <strong>No hay folletos disponibles</strong>
+                  <span>
+                    Ajusta tu busqueda o verifica que existan activos publicados
+                    y compartibles con cliente.
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </section>
+      ) : isAiEnabledComponent ? (
         <section className="proposal-component-ai-panel">
           <div className="proposal-component-ai-panel-head">
             <div>
@@ -1632,25 +2181,27 @@ function ProposalComponentCard({
       ) : null}
 
       <div className="proposal-component-toolbar">
-        {["heading", "paragraph", "list", "image"].map((type) => (
-          <button
-            key={type}
-            type="button"
-            className="proposal-component-add-icon-button"
-            onClick={() =>
-              onChangeDraft(component.componentCode, {
-                ...draft,
-                blocks: [...draft.blocks, createEmptyBlock(type)],
-              })
-            }
-            aria-label={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
-            title={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
-          >
-            <ProposalBlockAddIcon type={type} />
-          </button>
-        ))}
+        {isProductBrochureSection
+          ? null
+          : ["heading", "paragraph", "list", "image"].map((type) => (
+              <button
+                key={type}
+                type="button"
+                className="proposal-component-add-icon-button"
+                onClick={() =>
+                  onChangeDraft(component.componentCode, {
+                    ...draft,
+                    blocks: [...draft.blocks, createEmptyBlock(type)],
+                  })
+                }
+                aria-label={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
+                title={`Agregar ${getProposalBlockTypeLabel(type).toLowerCase()}`}
+              >
+                <ProposalBlockAddIcon type={type} />
+              </button>
+            ))}
         <div className="proposal-component-toolbar-actions">
-          {isAiEnabledComponent ? (
+          {!isProductBrochureSection && isAiEnabledComponent ? (
             <button
               type="button"
               className={
@@ -1701,90 +2252,93 @@ function ProposalComponentCard({
         </div>
       </div>
 
-      <div className="proposal-component-block-list">
-        {draft.blocks.map((block, index) => (
-          <article
-            key={`${component.componentCode}-${index}`}
-            className="proposal-component-block-card"
-          >
-            <div className="proposal-component-block-head">
-              <strong>{getProposalBlockTypeLabel(block.type)}</strong>
-              <button
-                type="button"
-                className="proposal-component-remove-icon-button"
-                onClick={() => removeBlock(index)}
-                aria-label="Quitar bloque"
-                title="Quitar bloque"
-              >
-                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                  <path d="M9.75 4.75h4.5a1 1 0 0 1 .92.61l.39.89h3.19a.75.75 0 0 1 0 1.5h-.69l-.6 9.02A2.25 2.25 0 0 1 14.22 19H9.78a2.25 2.25 0 0 1-2.24-2.23l-.6-9.02h-.69a.75.75 0 0 1 0-1.5h3.19l.39-.89a1 1 0 0 1 .92-.61zm-1.3 3 .58 8.92a.75.75 0 0 0 .75.73h4.44a.75.75 0 0 0 .75-.73l.58-8.92zm2.8 2.1a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75zm2.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75z" />
-                </svg>
-              </button>
-            </div>
-
-            {block.type === "heading" || block.type === "paragraph" ? (
-              <textarea
-                rows={block.type === "heading" ? 2 : 8}
-                value={block.text}
-                onChange={(event) =>
-                  updateBlock(index, { text: event.target.value })
-                }
-              />
-            ) : null}
-
-            {block.type === "list" ? (
-              <textarea
-                rows={5}
-                value={(block.items || []).join("\n")}
-                placeholder="Un item por linea"
-                onChange={(event) =>
-                  updateBlock(index, {
-                    items: event.target.value
-                      .split("\n")
-                      .map((value) => value.trim())
-                      .filter(Boolean),
-                  })
-                }
-              />
-            ) : null}
-
-            {block.type === "image" ? (
-              <div className="proposal-component-image-editor">
-                <select
-                  value={block.assetId || ""}
-                  onChange={(event) => selectImage(index, event.target.value)}
+      {isProductBrochureSection ? null : (
+        <div className="proposal-component-block-list">
+          {draft.blocks.map((block, index) => (
+            <article
+              key={`${component.componentCode}-${index}`}
+              className="proposal-component-block-card"
+            >
+              <div className="proposal-component-block-head">
+                <strong>{getProposalBlockTypeLabel(block.type)}</strong>
+                <button
+                  type="button"
+                  className="proposal-component-remove-icon-button"
+                  onClick={() => removeBlock(index)}
+                  aria-label="Quitar bloque"
+                  title="Quitar bloque"
                 >
-                  <option value="">Selecciona un asset</option>
-                  {assets.map((asset) => (
-                    <option key={asset.id} value={asset.id}>
-                      {asset.name} · v{asset.currentVersion?.versionNumber || 1}
-                    </option>
-                  ))}
-                </select>
-                {block.image?.fileUrl ? (
-                  <div
-                    className={
-                      component.componentCode === "certifications"
-                        ? "proposal-component-image-preview is-certifications"
-                        : "proposal-component-image-preview"
-                    }
-                  >
-                    <img
-                      src={block.image.fileUrl}
-                      alt={block.image.altText || component.title}
-                    />
-                    <span>
-                      {block.image.caption ||
-                        block.image.fileName ||
-                        "Imagen seleccionada"}
-                    </span>
-                  </div>
-                ) : null}
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M9.75 4.75h4.5a1 1 0 0 1 .92.61l.39.89h3.19a.75.75 0 0 1 0 1.5h-.69l-.6 9.02A2.25 2.25 0 0 1 14.22 19H9.78a2.25 2.25 0 0 1-2.24-2.23l-.6-9.02h-.69a.75.75 0 0 1 0-1.5h3.19l.39-.89a1 1 0 0 1 .92-.61zm-1.3 3 .58 8.92a.75.75 0 0 0 .75.73h4.44a.75.75 0 0 0 .75-.73l.58-8.92zm2.8 2.1a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75zm2.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75z" />
+                  </svg>
+                </button>
               </div>
-            ) : null}
-          </article>
-        ))}
-      </div>
+
+              {block.type === "heading" || block.type === "paragraph" ? (
+                <textarea
+                  rows={block.type === "heading" ? 2 : 8}
+                  value={block.text}
+                  onChange={(event) =>
+                    updateBlock(index, { text: event.target.value })
+                  }
+                />
+              ) : null}
+
+              {block.type === "list" ? (
+                <textarea
+                  rows={5}
+                  value={(block.items || []).join("\n")}
+                  placeholder="Un item por linea"
+                  onChange={(event) =>
+                    updateBlock(index, {
+                      items: event.target.value
+                        .split("\n")
+                        .map((value) => value.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              ) : null}
+
+              {block.type === "image" ? (
+                <div className="proposal-component-image-editor">
+                  <select
+                    value={block.assetId || ""}
+                    onChange={(event) => selectImage(index, event.target.value)}
+                  >
+                    <option value="">Selecciona un asset</option>
+                    {assets.map((asset) => (
+                      <option key={asset.id} value={asset.id}>
+                        {asset.name} · v
+                        {asset.currentVersion?.versionNumber || 1}
+                      </option>
+                    ))}
+                  </select>
+                  {block.image?.fileUrl ? (
+                    <div
+                      className={
+                        component.componentCode === "certifications"
+                          ? "proposal-component-image-preview is-certifications"
+                          : "proposal-component-image-preview"
+                      }
+                    >
+                      <img
+                        src={block.image.fileUrl}
+                        alt={block.image.altText || component.title}
+                      />
+                      <span>
+                        {block.image.caption ||
+                          block.image.fileName ||
+                          "Imagen seleccionada"}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1800,6 +2354,8 @@ function ProposalEditorModal({
   proposalAssets,
   componentGenerationJobs,
   componentSuggestions,
+  componentBrochureSuggestions,
+  brochureLibraryQueries,
   proposalAiState,
   proposalAiLibraryAssets,
   proposalAiLibraryLoading,
@@ -1819,8 +2375,12 @@ function ProposalEditorModal({
   onProposalAiLibraryQueryChange,
   onToggleProposalAiLibraryAsset,
   onGenerateSuggestion,
+  onRecommendBrochures,
   onApplySuggestion,
+  onApplyBrochureSuggestion,
   onDismissSuggestion,
+  onDismissBrochureSuggestion,
+  onBrochureLibraryQueryChange,
 }) {
   const [activeComponentIndex, setActiveComponentIndex] = useState(0);
 
@@ -2226,6 +2786,20 @@ function ProposalEditorModal({
                         aiSuggestion={
                           componentSuggestions[activeComponent.componentCode]
                         }
+                        componentBrochureSuggestion={
+                          componentBrochureSuggestions[
+                            activeComponent.componentCode
+                          ] || null
+                        }
+                        brochureLibraryQuery={
+                          brochureLibraryQueries[
+                            activeComponent.componentCode
+                          ] || ""
+                        }
+                        isBrochureRecommendationBusy={
+                          busyAction ===
+                          `recommend-brochures-${activeComponent.componentCode}`
+                        }
                         proposalAiState={proposalAiState}
                         proposalAiLibraryAssets={proposalAiLibraryAssets}
                         proposalAiLibraryLoading={proposalAiLibraryLoading}
@@ -2244,6 +2818,9 @@ function ProposalEditorModal({
                         onToggleProposalAiLibraryAsset={
                           onToggleProposalAiLibraryAsset
                         }
+                        onBrochureLibraryQueryChange={
+                          onBrochureLibraryQueryChange
+                        }
                         onChangeDraft={(componentCode, nextDraft) =>
                           onComponentDraftChange((current) => ({
                             ...current,
@@ -2252,8 +2829,13 @@ function ProposalEditorModal({
                         }
                         onSave={onSaveComponent}
                         onGenerateSuggestion={onGenerateSuggestion}
+                        onRecommendBrochures={onRecommendBrochures}
                         onApplySuggestion={onApplySuggestion}
+                        onApplyBrochureSuggestion={onApplyBrochureSuggestion}
                         onDismissSuggestion={onDismissSuggestion}
+                        onDismissBrochureSuggestion={
+                          onDismissBrochureSuggestion
+                        }
                       />
                     ) : null}
                   </div>
@@ -2367,6 +2949,9 @@ export default function ProposalsPage() {
   const [componentDrafts, setComponentDrafts] = useState({});
   const [componentGenerationJobs, setComponentGenerationJobs] = useState({});
   const [componentSuggestions, setComponentSuggestions] = useState({});
+  const [componentBrochureSuggestions, setComponentBrochureSuggestions] =
+    useState({});
+  const [brochureLibraryQueries, setBrochureLibraryQueries] = useState({});
   const [proposalAiState, setProposalAiState] = useState(
     buildDefaultProposalAiState(),
   );
@@ -2391,6 +2976,15 @@ export default function ProposalsPage() {
       getProposalAiComponentState(proposalAiState, componentCode).sourceMode ===
         "manual",
   );
+  const proposalHasBrochureComponent = Array.isArray(
+    selectedProposal?.components,
+  )
+    ? selectedProposal.components.some((component) =>
+        isProductBrochuresComponent(component),
+      )
+    : false;
+  const proposalRequiresCommercialLibrary =
+    proposalAiRequiresLibraryAssets || proposalHasBrochureComponent;
 
   useEffect(() => {
     componentGenerationJobsRef.current = componentGenerationJobs;
@@ -2414,6 +3008,8 @@ export default function ProposalsPage() {
     appliedProposalSuggestionJobRef.current.clear();
     setComponentGenerationJobs({});
     setComponentSuggestions({});
+    setComponentBrochureSuggestions({});
+    setBrochureLibraryQueries({});
     setProposalAiState(buildDefaultProposalAiState());
     setProposalAiLibraryAssets([]);
     setProposalAiLibraryLoading(false);
@@ -2532,12 +3128,16 @@ export default function ProposalsPage() {
       if (!selectedProposal) {
         setMetadataDraft({ title: "", statusCode: "active" });
         setComponentDrafts({});
+        setComponentBrochureSuggestions({});
+        setBrochureLibraryQueries({});
         resetAllProposalAiState();
         return;
       }
 
       setMetadataDraft(buildMetadataDraftFromProposal(selectedProposal));
       setComponentDrafts(buildComponentDraftMap(selectedProposal.components));
+      setComponentBrochureSuggestions({});
+      setBrochureLibraryQueries({});
       setProposalAiState(
         buildDefaultProposalAiStateFromProposal(selectedProposal),
       );
@@ -2759,7 +3359,7 @@ export default function ProposalsPage() {
       return undefined;
     }
 
-    if (!proposalAiRequiresLibraryAssets) {
+    if (!proposalRequiresCommercialLibrary) {
       return undefined;
     }
     if (proposalAiLibraryLoaded) {
@@ -2813,7 +3413,7 @@ export default function ProposalsPage() {
     };
   }, [
     selectedProposal?.id,
-    proposalAiRequiresLibraryAssets,
+    proposalRequiresCommercialLibrary,
     proposalAiLibraryLoaded,
   ]);
 
@@ -3179,7 +3779,10 @@ export default function ProposalsPage() {
       const { data } = await api.put(
         `/api/proposals/${selectedProposal.id}/components/${componentCode}`,
         {
-          ...serializeComponentDraft(componentDrafts[componentCode]),
+          ...serializeComponentDraft(
+            componentDrafts[componentCode],
+            componentCode,
+          ),
           ...(consumeSuggestionPublicId ? { consumeSuggestionPublicId } : {}),
         },
       );
@@ -3199,6 +3802,105 @@ export default function ProposalsPage() {
     }
   }
 
+  function setBrochureLibraryQuery(componentCode, nextValue) {
+    setBrochureLibraryQueries((current) => ({
+      ...current,
+      [componentCode]: nextValue,
+    }));
+  }
+
+  async function handleRecommendBrochures(componentCode) {
+    if (!selectedProposal || !isProductBrochuresComponent(componentCode)) {
+      return;
+    }
+
+    const draft = componentDrafts[componentCode];
+    if (!draft) {
+      return;
+    }
+
+    setBusyAction(`recommend-brochures-${componentCode}`);
+    try {
+      const { data } = await api.post(
+        `/api/proposals/${selectedProposal.id}/components/${componentCode}/brochure-recommendations`,
+        {
+          requestedBrochureCount: normalizeProposalBrochureRequestedCount(
+            draft.requestedBrochureCount,
+            PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+          ),
+        },
+      );
+
+      setComponentBrochureSuggestions((current) => ({
+        ...current,
+        [componentCode]: {
+          items: Array.isArray(data?.items)
+            ? data.items.map(normalizeCommercialEnablementAssetOption)
+            : [],
+          warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+        },
+      }));
+      setSuccess("Folletos sugeridos listos para revisar");
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible recomendar folletos para esta seccion",
+        ),
+      );
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function handleApplyBrochureSuggestion(componentCode) {
+    const suggestion = componentBrochureSuggestions[componentCode];
+    if (!suggestion) return;
+
+    const nextBlocks = suggestion.items.map((asset) =>
+      createBrochureBlockFromAsset(asset),
+    );
+
+    setComponentDrafts((current) => ({
+      ...current,
+      [componentCode]: {
+        ...(current[componentCode] || {
+          title:
+            selectedProposal?.components?.find(
+              (component) => component.componentCode === componentCode,
+            )?.title || "",
+          brochureSelectionMode: "auto",
+          requestedBrochureCount: PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+          blocks: [],
+        }),
+        title:
+          current[componentCode]?.title ||
+          selectedProposal?.components?.find(
+            (component) => component.componentCode === componentCode,
+          )?.title ||
+          "",
+        brochureSelectionMode: "auto",
+        requestedBrochureCount: normalizeProposalBrochureRequestedCount(
+          current[componentCode]?.requestedBrochureCount,
+          PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT,
+        ),
+        blocks: nextBlocks,
+      },
+    }));
+    setComponentBrochureSuggestions((current) => {
+      const next = { ...current };
+      delete next[componentCode];
+      return next;
+    });
+  }
+
+  function handleDismissBrochureSuggestion(componentCode) {
+    setComponentBrochureSuggestions((current) => {
+      const next = { ...current };
+      delete next[componentCode];
+      return next;
+    });
+  }
   function handleToggleProposalAiLibraryAsset(componentCode, assetPublicId) {
     setProposalAiComponentState(componentCode, (current) => {
       if (current.selectedLibraryAssetPublicIds.includes(assetPublicId)) {
@@ -3893,6 +4595,8 @@ export default function ProposalsPage() {
         proposalAssets={proposalAssets}
         componentGenerationJobs={componentGenerationJobs}
         componentSuggestions={componentSuggestions}
+        componentBrochureSuggestions={componentBrochureSuggestions}
+        brochureLibraryQueries={brochureLibraryQueries}
         proposalAiState={proposalAiState}
         proposalAiLibraryAssets={proposalAiLibraryAssets}
         proposalAiLibraryLoading={proposalAiLibraryLoading}
@@ -3926,8 +4630,12 @@ export default function ProposalsPage() {
         }
         onToggleProposalAiLibraryAsset={handleToggleProposalAiLibraryAsset}
         onGenerateSuggestion={handleGenerateSuggestion}
+        onRecommendBrochures={handleRecommendBrochures}
         onApplySuggestion={handleApplySuggestion}
+        onApplyBrochureSuggestion={handleApplyBrochureSuggestion}
         onDismissSuggestion={handleDismissSuggestion}
+        onDismissBrochureSuggestion={handleDismissBrochureSuggestion}
+        onBrochureLibraryQueryChange={setBrochureLibraryQuery}
       />
 
       <ProposalPrintPreviewModal

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import PDFDocument from "pdfkit";
+import { PDFDocument as PDFLibDocument } from "pdf-lib";
 import SVGtoPDF from "svg-to-pdfkit";
 import { drawQuotationPdfContent } from "./quotationPdf.js";
 
@@ -43,6 +44,7 @@ const COLORS = {
 
 const SECTION_PADDING_X = 22;
 const SECTION_CONTENT_WIDTH = PAGE_WIDTH - SECTION_PADDING_X * 2;
+const PDF_PAGE_HEIGHT = 792;
 
 function asText(value) {
   if (value == null) return "";
@@ -472,6 +474,34 @@ function normalizeModel(input) {
                     items: Array.isArray(block?.items)
                       ? block.items.map((item) => asText(item)).filter(Boolean)
                       : [],
+                    assetPublicId: asText(block?.assetPublicId),
+                    brochure: block?.brochure
+                      ? {
+                          publicId: asText(block.brochure.publicId),
+                          title: asText(block.brochure.title),
+                          summary: asText(block.brochure.summary),
+                          assetTypeCode: asText(block.brochure.assetTypeCode),
+                          assetTypeLabel: asText(block.brochure.assetTypeLabel),
+                          visibilityLabel: asText(
+                            block.brochure.visibilityLabel,
+                          ),
+                          files: Array.isArray(block?.brochure?.files)
+                            ? block.brochure.files.map((file) => ({
+                                fileName: asText(file?.fileName),
+                                fileUrl:
+                                  asText(file?.fileUrl) ||
+                                  asText(file?.publicUrl) ||
+                                  asText(file?.downloadUrl),
+                              }))
+                            : [],
+                          links: Array.isArray(block?.brochure?.links)
+                            ? block.brochure.links.map((link) => ({
+                                label: asText(link?.label),
+                                url: asText(link?.url),
+                              }))
+                            : [],
+                        }
+                      : null,
                     image: block?.image
                       ? {
                           fileUrl: asText(block.image.fileUrl),
@@ -640,6 +670,70 @@ async function drawProposalQuotationAttachment(doc, model) {
 
   drawProposalQuotationAttachmentSeparator(doc, model);
   await drawQuotationPdfContent(doc, model.quotationAttachment);
+}
+
+async function appendBrochureAttachmentsToBuffer(
+  baseBuffer,
+  brochureAttachments,
+) {
+  if (!Array.isArray(brochureAttachments) || brochureAttachments.length === 0) {
+    return baseBuffer;
+  }
+
+  const output = await PDFLibDocument.load(baseBuffer);
+
+  for (const attachment of brochureAttachments) {
+    if (!attachment?.buffer?.length) {
+      continue;
+    }
+
+    const mimeType = asText(attachment.mimeType).toLowerCase();
+    const fileName = asText(attachment.fileName) || "folleto";
+
+    if (
+      mimeType === "application/pdf" ||
+      fileName.toLowerCase().endsWith(".pdf")
+    ) {
+      const attachmentPdf = await PDFLibDocument.load(attachment.buffer, {
+        ignoreEncryption: true,
+      });
+      const copiedPages = await output.copyPages(
+        attachmentPdf,
+        attachmentPdf.getPageIndices(),
+      );
+      copiedPages.forEach((page) => output.addPage(page));
+      continue;
+    }
+
+    if (
+      mimeType === "image/png" ||
+      mimeType === "image/jpeg" ||
+      mimeType === "image/jpg"
+    ) {
+      const page = output.addPage([612, PDF_PAGE_HEIGHT]);
+      const image =
+        mimeType === "image/png"
+          ? await output.embedPng(attachment.buffer)
+          : await output.embedJpg(attachment.buffer);
+      const maxWidth = 612 - PAGE_MARGIN * 2;
+      const maxHeight = PDF_PAGE_HEIGHT - 180;
+      const scale = Math.min(
+        maxWidth / image.width,
+        maxHeight / image.height,
+        1,
+      );
+      const width = image.width * scale;
+      const height = image.height * scale;
+      page.drawImage(image, {
+        x: PAGE_MARGIN + (maxWidth - width) / 2,
+        y: PAGE_MARGIN + (maxHeight - height) / 2,
+        width,
+        height,
+      });
+    }
+  }
+
+  return Buffer.from(await output.save());
 }
 
 async function drawCompanyHeader(doc, model) {
@@ -1238,6 +1332,8 @@ async function drawBlock(doc, block, model, section) {
     } catch {
       doc.y = y;
     }
+
+    return;
   }
 }
 
@@ -1417,8 +1513,14 @@ export async function buildProposalPdfBuffer(input) {
   drawPageNumbers(doc);
   doc.end();
 
+  const baseBuffer = await bufferPromise;
+  const mergedBuffer = await appendBrochureAttachmentsToBuffer(
+    baseBuffer,
+    input?.brochureAttachments,
+  );
+
   return {
-    buffer: await bufferPromise,
+    buffer: mergedBuffer,
     fileName: `${formatFilenamePart(model.header.proposalTitle, "propuesta")}.pdf`,
   };
 }

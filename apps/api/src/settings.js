@@ -240,7 +240,13 @@ const AI_PARAMETER_CAPABILITY_DEFINITIONS = [
   },
 ];
 
-const PROPOSAL_BLOCK_TYPES = ["heading", "paragraph", "list", "image"];
+const PROPOSAL_BLOCK_TYPES = [
+  "heading",
+  "paragraph",
+  "list",
+  "image",
+  "brochure",
+];
 const INSTITUTIONAL_ASSET_STATUSES = ["draft", "active", "archived"];
 
 function safeParseJson(value, fallback) {
@@ -652,7 +658,50 @@ function normalizeProposalBlockRow(row) {
       : null;
   }
 
+  if (block.type === "brochure") {
+    block.assetPublicId = asText(settings.assetPublicId);
+    block.brochure = row.asset_snapshot_json
+      ? safeParseJson(row.asset_snapshot_json, null)
+      : block.assetPublicId
+        ? { publicId: block.assetPublicId }
+        : null;
+  }
+
   return block;
+}
+
+function buildProposalBrochureSnapshot(asset) {
+  if (!asset || typeof asset !== "object") {
+    return null;
+  }
+
+  return {
+    publicId: asText(asset.publicId),
+    title: asText(asset.title),
+    summary: asText(asset.summary),
+    assetTypeCode: asText(asset.assetTypeCode),
+    assetTypeLabel: asText(asset.assetTypeLabel),
+    visibilityLevel: asText(asset.visibilityLevel),
+    visibilityLabel: asText(asset.visibilityLabel),
+    audienceCode: asText(asset.audienceCode),
+    audienceLabel: asText(asset.audienceLabel),
+    files: Array.isArray(asset.files)
+      ? asset.files.map((file) => ({
+          publicId: asText(file?.publicId),
+          fileName: asText(file?.fileName),
+          mimeType: asText(file?.mimeType),
+          publicUrl: asText(file?.publicUrl),
+          downloadUrl: asText(file?.downloadUrl),
+        }))
+      : [],
+    links: Array.isArray(asset.links)
+      ? asset.links.map((link) => ({
+          publicId: asText(link?.publicId),
+          label: asText(link?.label),
+          url: asText(link?.url),
+        }))
+      : [],
+  };
 }
 
 function normalizeProposalComponentRows(componentRows, blockRows) {
@@ -1943,11 +1992,15 @@ export async function cloneProposalComponents({
       const settings =
         block.type === "list"
           ? { items: Array.isArray(block.items) ? block.items : [] }
-          : {};
+          : block.type === "brochure"
+            ? { assetPublicId: asText(block.assetPublicId) }
+            : {};
       const snapshot =
         block.type === "image" && block.image
           ? JSON.stringify(block.image)
-          : null;
+          : block.type === "brochure" && block.brochure
+            ? JSON.stringify(buildProposalBrochureSnapshot(block.brochure))
+            : null;
       await executeQuery(
         executor,
         `INSERT INTO proposal_blocks
@@ -1981,6 +2034,8 @@ export async function saveProposalComponentBlocks({
   componentCode,
   title,
   blocks,
+  componentSettings,
+  brochureAssetsByPublicId = {},
   actorUserId,
 }) {
   await ensureProposalContentClonesSchema();
@@ -2044,9 +2099,11 @@ export async function saveProposalComponentBlocks({
           fallbackSource.aiEnabled
             ? fallbackSource.aiCapabilityKey || null
             : null,
-          fallbackSource.aiSettings
-            ? JSON.stringify(fallbackSource.aiSettings)
-            : null,
+          componentSettings
+            ? JSON.stringify(componentSettings)
+            : fallbackSource.aiSettings
+              ? JSON.stringify(fallbackSource.aiSettings)
+              : null,
           actorUserId || null,
           actorUserId || null,
           now,
@@ -2055,18 +2112,34 @@ export async function saveProposalComponentBlocks({
       );
       proposalComponentId = Number(insertResult.insertId);
     } else {
-      await executeQuery(
-        conn,
-        `UPDATE proposal_components
-         SET title_snapshot = ?, updated_at = ?, updated_by_user_id = ?
-         WHERE id = ?`,
-        [
-          asText(title) || fallbackSource.title,
-          now,
-          actorUserId || null,
-          proposalComponentId,
-        ],
-      );
+      if (componentSettings) {
+        await executeQuery(
+          conn,
+          `UPDATE proposal_components
+           SET title_snapshot = ?, ai_settings_json = ?, updated_at = ?, updated_by_user_id = ?
+           WHERE id = ?`,
+          [
+            asText(title) || fallbackSource.title,
+            JSON.stringify(componentSettings),
+            now,
+            actorUserId || null,
+            proposalComponentId,
+          ],
+        );
+      } else {
+        await executeQuery(
+          conn,
+          `UPDATE proposal_components
+           SET title_snapshot = ?, updated_at = ?, updated_by_user_id = ?
+           WHERE id = ?`,
+          [
+            asText(title) || fallbackSource.title,
+            now,
+            actorUserId || null,
+            proposalComponentId,
+          ],
+        );
+      }
       await executeQuery(
         conn,
         `DELETE FROM proposal_blocks
@@ -2080,7 +2153,9 @@ export async function saveProposalComponentBlocks({
       const settings =
         block.type === "list"
           ? { items: Array.isArray(block.items) ? block.items : [] }
-          : {};
+          : block.type === "brochure"
+            ? { assetPublicId: asText(block.assetPublicId) }
+            : {};
       let snapshot = null;
       if (block.type === "image" && block.assetVersionId) {
         const versionRow = await getInstitutionalAssetVersionRow(
@@ -2090,6 +2165,10 @@ export async function saveProposalComponentBlocks({
         snapshot = versionRow
           ? buildInstitutionalAssetSnapshot(versionRow)
           : null;
+      } else if (block.type === "brochure") {
+        snapshot = buildProposalBrochureSnapshot(
+          brochureAssetsByPublicId[asText(block.assetPublicId)] || null,
+        );
       }
 
       await executeQuery(
