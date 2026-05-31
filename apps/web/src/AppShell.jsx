@@ -362,14 +362,6 @@ export default function AppShell({
                   Contactos
                 </GuardedNavLink>
               )}
-              {can("contactos.read") && (
-                <GuardedNavLink
-                  to="/contact-mapping"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Mapeo de contactos
-                </GuardedNavLink>
-              )}
               {can("oportunidades.read") && (
                 <GuardedNavLink
                   to="/opportunities"
@@ -413,7 +405,8 @@ export default function AppShell({
 
           {(canAccessCommercialDevelopment ||
             canAccessCommercialPlanning ||
-            canAccessCommercialEnablement) && (
+            canAccessCommercialEnablement ||
+            can("contactos.read")) && (
             <SidebarNavGroup title="Desarrollo">
               {canAccessCommercialPlanning ? (
                 <GuardedNavLink
@@ -429,6 +422,14 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Desarrollo Comercial
+                </GuardedNavLink>
+              ) : null}
+              {can("contactos.read") ? (
+                <GuardedNavLink
+                  to="/contact-mapping"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Mapeo de contactos
                 </GuardedNavLink>
               ) : null}
               {canAccessCommercialEnablement ? (
