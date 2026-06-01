@@ -5338,6 +5338,7 @@ export function useQuotationsSection({
       error,
       success,
       editorContentProps: {
+        isOpen: showEditQuotationModal,
         selectedVersion,
         selectedQuotation,
         closeEditQuotationModal,

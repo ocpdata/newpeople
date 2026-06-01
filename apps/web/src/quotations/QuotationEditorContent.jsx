@@ -745,6 +745,7 @@ function getDetachFromManualBundleSelectionState(sectionItems, selectedIds) {
 }
 
 function QuotationEditorContent({
+  isOpen,
   selectedVersion,
   selectedQuotation,
   closeEditQuotationModal,
@@ -1177,9 +1178,12 @@ function QuotationEditorContent({
   const isUploadingDocuments = busyAction === "upload-quotation-documents";
 
   useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
     setSelectedItemIdsBySection({});
     setHighlightedItemIdsBySection({});
-    setCollapsedBundleIdsBySection({});
     setActiveDescriptionEditor({ sectionId: null, itemId: null });
     setPreferredBundleHintActionBySection({});
     setManualBundlePickerState({
@@ -1193,7 +1197,18 @@ function QuotationEditorContent({
     setExchangeRateError("");
     exchangeRateRequestSequenceRef.current = 0;
     exchangeRateManualOverrideRef.current = 0;
-  }, [selectedVersion?.id]);
+
+    setCollapsedBundleIdsBySection(
+      readQuotationEditorBundleCollapseState(selectedVersion?.id),
+    );
+  }, [isOpen, selectedVersion?.id]);
+
+  useEffect(() => {
+    writeQuotationEditorBundleCollapseState(
+      selectedVersion?.id,
+      collapsedBundleIdsBySection,
+    );
+  }, [collapsedBundleIdsBySection, selectedVersion?.id]);
 
   async function handleCommercialConditionFieldChange(field, value) {
     if (field === "exchangeRate") {
@@ -1349,6 +1364,59 @@ function QuotationEditorContent({
       });
   }
 
+function getQuotationEditorBundleCollapseStorageKey(versionId) {
+  return versionId ? `quotation-editor-bundle-collapse:${versionId}` : "";
+}
+
+function readQuotationEditorBundleCollapseState(versionId) {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
+  if (!storageKey) {
+    return {};
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(storageKey);
+    if (!storedValue) {
+      return {};
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+    return parsedValue && typeof parsedValue === "object"
+      ? parsedValue
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeQuotationEditorBundleCollapseState(versionId, state) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    const hasEntries =
+      state && Object.values(state).some((sectionIds) => sectionIds?.length);
+    if (!hasEntries) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
+
+    window.localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    // Ignore storage failures and keep the editor usable.
+  }
+}
+
   function toggleSectionItemSelection(sectionId, itemId, checked) {
     setSelectedItemIdsBySection((prev) => {
       const sectionKey = String(sectionId);
@@ -1457,6 +1525,10 @@ function QuotationEditorContent({
       const nextIds = isCollapsed
         ? currentIds.filter((currentId) => currentId !== bundleKey)
         : [...currentIds, bundleKey];
+      const nextState = {
+        ...prev,
+        [sectionKey]: nextIds,
+      };
 
       if (!isCollapsed && componentIds.length) {
         setSelectedItemIdsBySection((currentSelection) => {
@@ -1484,9 +1556,10 @@ function QuotationEditorContent({
         });
       }
 
+      writeQuotationEditorBundleCollapseState(selectedVersion?.id, nextState);
+
       return {
-        ...prev,
-        [sectionKey]: nextIds,
+        ...nextState,
       };
     });
   }
