@@ -530,10 +530,14 @@ export async function extractContentFromBuffer({
   fileName,
   extension,
 }) {
-  const resolvedExtension =
-    String(extension || "")
-      .trim()
-      .toLowerCase() || detectExtension(fileName);
+  const normalizedExtension = String(extension || "")
+    .trim()
+    .toLowerCase();
+  const resolvedExtension = normalizedExtension
+    ? normalizedExtension.startsWith(".")
+      ? normalizedExtension
+      : `.${normalizedExtension}`
+    : detectExtension(fileName);
   const detectedFormat =
     resolvedExtension.replace(/^\./, "") || mimeType || "unknown";
 

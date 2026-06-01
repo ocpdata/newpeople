@@ -21,6 +21,7 @@ import {
 } from "./QuotationCommercialFields";
 import { buildQuotationPrintModel } from "./quotationPrintModel";
 import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
+import QuotationProviderDocumentImportModal from "./QuotationProviderDocumentImportModal";
 import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
@@ -760,6 +761,21 @@ function QuotationEditorContent({
   handleSaveVersion,
   handleSaveAsNewVersion,
   handleUploadQuotationDocuments,
+  handleSetQuotationDocumentAiEnabled,
+  providerDocumentImportState,
+  providerDocumentImportEffectiveItems,
+  providerDocumentImportWorkflowStage,
+  openProviderDocumentImportModal,
+  closeProviderDocumentImportModal,
+  setProviderDocumentImportDocument,
+  setProviderDocumentImportProvider,
+  setProviderDocumentImportCommercialTermSelection,
+  setProviderDocumentImportSuggestedMatchCandidate,
+  setProviderDocumentImportSuggestedMatchResolution,
+  setProviderDocumentImportMissingItemSelection,
+  handlePreviewProviderDocumentImport,
+  handleCreateMissingProviderDocumentImportItems,
+  handleApplyProviderDocumentImport,
   handleDownloadQuotationDocument,
   handleAction,
   handleCreateSection,
@@ -1143,6 +1159,9 @@ function QuotationEditorContent({
   const allQuotationDocuments = Array.isArray(selectedVersion?.allDocuments)
     ? selectedVersion.allDocuments
     : [];
+  const eligibleQuotationDocuments = allQuotationDocuments.filter(
+    (document) => document?.aiEnabled !== false,
+  );
   const visibleDocuments =
     documentViewMode === "all"
       ? allQuotationDocuments
@@ -3233,6 +3252,7 @@ function QuotationEditorContent({
                                     </span>
                                   ) : (
                                     <input
+                                      className="quotation-margin-input"
                                       type="number"
                                       min="0"
                                       max="100"
@@ -3660,6 +3680,14 @@ function QuotationEditorContent({
             >
               {isUploadingDocuments ? "Cargando..." : "Agregar documentos"}
             </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!eligibleQuotationDocuments.length}
+              onClick={openProviderDocumentImportModal}
+            >
+              Crear desde documento con IA
+            </button>
           </div>
         </div>
 
@@ -3673,6 +3701,13 @@ function QuotationEditorContent({
                 <div className="quotation-document-main">
                   <div className="quotation-document-title-row">
                     <strong>{document.originalFileName || "Documento"}</strong>
+                    <span
+                      className={`quotation-document-ai-badge${document.aiEnabled === false ? " is-disabled" : ""}`}
+                    >
+                      {document.aiEnabled === false
+                        ? "Excluido de IA"
+                        : "Habilitado para IA"}
+                    </span>
                     {documentViewMode === "all" ? (
                       <span className="record-id-badge">
                         V{document.versionNumber}
@@ -3693,16 +3728,40 @@ function QuotationEditorContent({
                     ) : null}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={
-                    busyAction === `download-quotation-document-${document.id}`
-                  }
-                  onClick={() => handleDownloadQuotationDocument(document)}
-                >
-                  Descargar
-                </button>
+                <div className="quotation-document-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={
+                      busyAction ===
+                      `toggle-quotation-document-ai-${document.id}`
+                    }
+                    onClick={() =>
+                      handleSetQuotationDocumentAiEnabled(
+                        document.id,
+                        document.aiEnabled === false,
+                      )
+                    }
+                  >
+                    {busyAction ===
+                    `toggle-quotation-document-ai-${document.id}`
+                      ? "Guardando..."
+                      : document.aiEnabled === false
+                        ? "Permitir IA"
+                        : "Excluir de IA"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={
+                      busyAction ===
+                      `download-quotation-document-${document.id}`
+                    }
+                    onClick={() => handleDownloadQuotationDocument(document)}
+                  >
+                    Descargar
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -3713,6 +3772,47 @@ function QuotationEditorContent({
               : "Esta version aun no tiene documentos adjuntos."}
           </div>
         )}
+
+        <QuotationProviderDocumentImportModal
+          isOpen={providerDocumentImportState.isOpen}
+          documents={eligibleQuotationDocuments}
+          providerOptions={catalogs.providers}
+          selectedDocumentId={providerDocumentImportState.selectedDocumentId}
+          onDocumentChange={setProviderDocumentImportDocument}
+          confirmedProviderId={providerDocumentImportState.confirmedProviderId}
+          onProviderChange={setProviderDocumentImportProvider}
+          onClose={closeProviderDocumentImportModal}
+          onAnalyze={handlePreviewProviderDocumentImport}
+          preview={providerDocumentImportState.preview}
+          effectiveItems={providerDocumentImportEffectiveItems}
+          workflowStage={providerDocumentImportWorkflowStage}
+          previewJob={providerDocumentImportState.previewJob}
+          loadingPreview={providerDocumentImportState.loadingPreview}
+          creatingMissingItems={
+            providerDocumentImportState.creatingMissingItems
+          }
+          applying={providerDocumentImportState.applying}
+          commercialTermsSelection={
+            providerDocumentImportState.commercialTermsSelection
+          }
+          onToggleCommercialTermSelection={
+            setProviderDocumentImportCommercialTermSelection
+          }
+          onSelectSuggestedMatchCandidate={
+            setProviderDocumentImportSuggestedMatchCandidate
+          }
+          onResolveSuggestedMatch={
+            setProviderDocumentImportSuggestedMatchResolution
+          }
+          missingItemsSelection={
+            providerDocumentImportState.missingItemsSelection
+          }
+          onToggleMissingItemSelection={
+            setProviderDocumentImportMissingItemSelection
+          }
+          onApply={handleApplyProviderDocumentImport}
+          onCreateMissingItems={handleCreateMissingProviderDocumentImportItems}
+        />
       </section>
 
       <div className="quotation-edit-actions">

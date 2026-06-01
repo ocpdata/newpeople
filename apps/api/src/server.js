@@ -23,7 +23,9 @@ import { ensureProcessCommercialConfigPermissions } from "./process-commercial-c
 import { startCommercialNarrativeWorker } from "./routes.execution-commercial.js";
 import { startInteractionAnalysisWorker } from "./routes.interactions.js";
 import {
+  ensureQuotationProviderDocumentImportPreviewJobSchema,
   ensureProposalExecutiveSummaryGenerationJobSchema,
+  startQuotationProviderDocumentImportPreviewWorker,
   startProposalExecutiveSummaryGenerationWorker,
 } from "./routes.quotations.js";
 import { startOpportunityStageAnswerSuggestionWorker } from "./opportunity-stage-answer-suggestions/async.js";
@@ -51,6 +53,7 @@ export async function startServer() {
   await ensureOpportunityStageAnswerSuggestionJobSchema();
   await ensureOpportunityStageValidationJobSchema();
   await ensureOpportunityWorkspaceSchema();
+  await ensureQuotationProviderDocumentImportPreviewJobSchema();
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
@@ -62,6 +65,7 @@ export async function startServer() {
   await startCommercialNarrativeWorker();
   await startInteractionAnalysisWorker();
   await startOpportunityDocumentProcessingWorker();
+  await startQuotationProviderDocumentImportPreviewWorker();
   await startProposalExecutiveSummaryGenerationWorker();
   await startOpportunityStageAnswerSuggestionWorker();
   await startOpportunityStageValidationWorker();

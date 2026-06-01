@@ -2268,6 +2268,7 @@ CREATE TABLE IF NOT EXISTS quotation_version_documents (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   quotation_version_id BIGINT UNSIGNED NOT NULL,
   document_id BIGINT UNSIGNED NOT NULL,
+  ai_enabled TINYINT(1) NOT NULL DEFAULT 1,
   created_by_user_id BIGINT UNSIGNED NOT NULL,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
   CONSTRAINT uq_quotation_version_documents_version_document UNIQUE (quotation_version_id, document_id),
@@ -2276,6 +2277,64 @@ CREATE TABLE IF NOT EXISTS quotation_version_documents (
   CONSTRAINT fk_quotation_version_documents_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
   INDEX idx_quotation_version_documents_version (quotation_version_id, created_at),
   INDEX idx_quotation_version_documents_document (document_id)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_version_document_imports (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_id BIGINT UNSIGNED NOT NULL,
+  quotation_version_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  created_section_id BIGINT UNSIGNED NOT NULL,
+  requested_by_user_id BIGINT UNSIGNED NOT NULL,
+  preview_snapshot_json LONGTEXT NULL,
+  apply_snapshot_json LONGTEXT NULL,
+  warnings_json LONGTEXT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT fk_quotation_version_document_imports_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_document_imports_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_document_imports_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_document_imports_provider FOREIGN KEY (provider_id) REFERENCES providers(id),
+  CONSTRAINT fk_quotation_version_document_imports_section FOREIGN KEY (created_section_id) REFERENCES quotation_sections(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_version_document_imports_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_version_document_imports_document (document_id, created_at),
+  INDEX idx_quotation_version_document_imports_version (quotation_version_id, created_at),
+  INDEX idx_quotation_version_document_imports_quotation (quotation_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_provider_document_import_preview_jobs (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  public_id VARCHAR(64) NOT NULL,
+  quotation_id BIGINT UNSIGNED NOT NULL,
+  quotation_version_id BIGINT UNSIGNED NOT NULL,
+  document_id BIGINT UNSIGNED NOT NULL,
+  provider_id BIGINT UNSIGNED NULL,
+  requested_by_user_id BIGINT UNSIGNED NOT NULL,
+  status ENUM('pending','running','completed','failed','stale') NOT NULL DEFAULT 'pending',
+  request_fingerprint CHAR(64) NOT NULL,
+  progress_phase VARCHAR(80) NULL,
+  progress_label VARCHAR(255) NULL,
+  progress_percent INT UNSIGNED NOT NULL DEFAULT 0,
+  source_snapshot_json LONGTEXT NULL,
+  result_json LONGTEXT NULL,
+  error_code VARCHAR(64) NULL,
+  error_message TEXT NULL,
+  attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+  lease_token VARCHAR(64) NULL,
+  lease_expires_at DATETIME(3) NULL,
+  started_at DATETIME(3) NULL,
+  finished_at DATETIME(3) NULL,
+  expires_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_quotation_provider_document_import_preview_jobs_public_id (public_id),
+  KEY idx_quotation_provider_document_import_preview_jobs_lookup (quotation_version_id, requested_by_user_id, created_at),
+  KEY idx_quotation_provider_document_import_preview_jobs_process (status, lease_expires_at, created_at),
+  CONSTRAINT fk_quotation_provider_document_import_preview_jobs_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_provider_document_import_preview_jobs_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_provider_document_import_preview_jobs_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_provider_document_import_preview_jobs_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE SET NULL,
+  CONSTRAINT fk_quotation_provider_document_import_preview_jobs_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS document_contents (

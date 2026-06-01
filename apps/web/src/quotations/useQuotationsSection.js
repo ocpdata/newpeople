@@ -30,6 +30,225 @@ import {
 } from "./quotationsUtils";
 import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
 
+const PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS = 3000;
+const PROVIDER_DOCUMENT_IMPORT_TOTAL_POLL_TIMEOUT_MS = 300000;
+const PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS = 30000;
+const PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS = 120000;
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
+  "deliveryTime",
+  "quotationValidity",
+  "warranty",
+  "paymentTerms",
+  "currencyCode",
+];
+const PROVIDER_DOCUMENT_IMPORT_SUGGESTED_MATCH_STATUSES = [
+  "suggested_match_pending_confirmation",
+  "ambiguous_similar_match",
+];
+
+function buildProviderDocumentImportCommercialTermsSelection() {
+  return {
+    deliveryTime: true,
+    quotationValidity: true,
+    warranty: true,
+    paymentTerms: true,
+    currencyCode: true,
+  };
+}
+
+function resolveProviderDocumentImportItem(item, itemMatchResolutions = {}) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const resolution = itemMatchResolutions[String(item.previewId)] || null;
+  const suggestedMatchCandidates = Array.isArray(item.suggestedMatchCandidates)
+    ? item.suggestedMatchCandidates
+    : [];
+  const selectedSuggestedPriceListItemId = Number(
+    resolution?.selectedSuggestedPriceListItemId || 0,
+  );
+  const selectedCandidate = suggestedMatchCandidates.find(
+    (candidate) => Number(candidate.id) === selectedSuggestedPriceListItemId,
+  );
+
+  if (item.matchStatus === "matched") {
+    return {
+      ...item,
+      originalMatchStatus: item.matchStatus,
+      effectiveMatchStatus: "matched",
+      effectiveMatchedPriceListItemId: item.matchedPriceListItemId || null,
+      effectiveMatchedCandidate: selectedCandidate || null,
+      selectedSuggestedPriceListItemId: null,
+      resolutionAction: null,
+      resolutionRequired: false,
+    };
+  }
+
+  if (
+    PROVIDER_DOCUMENT_IMPORT_SUGGESTED_MATCH_STATUSES.includes(item.matchStatus)
+  ) {
+    if (resolution?.action === "use_existing" && selectedCandidate) {
+      return {
+        ...item,
+        originalMatchStatus: item.matchStatus,
+        effectiveMatchStatus: "matched",
+        effectiveMatchedPriceListItemId: Number(selectedCandidate.id),
+        effectiveMatchedCandidate: selectedCandidate,
+        selectedSuggestedPriceListItemId: Number(selectedCandidate.id),
+        resolutionAction: "use_existing",
+        resolutionRequired: false,
+      };
+    }
+
+    if (resolution?.action === "treat_as_missing") {
+      return {
+        ...item,
+        originalMatchStatus: item.matchStatus,
+        effectiveMatchStatus: "missing_in_price_list",
+        effectiveMatchedPriceListItemId: null,
+        effectiveMatchedCandidate: null,
+        selectedSuggestedPriceListItemId: null,
+        resolutionAction: "treat_as_missing",
+        resolutionRequired: false,
+      };
+    }
+
+    return {
+      ...item,
+      originalMatchStatus: item.matchStatus,
+      effectiveMatchStatus: item.matchStatus,
+      effectiveMatchedPriceListItemId: null,
+      effectiveMatchedCandidate: null,
+      selectedSuggestedPriceListItemId:
+        selectedSuggestedPriceListItemId || null,
+      resolutionAction: null,
+      resolutionRequired: true,
+    };
+  }
+
+  return {
+    ...item,
+    originalMatchStatus: item.matchStatus,
+    effectiveMatchStatus: item.matchStatus,
+    effectiveMatchedPriceListItemId: item.matchedPriceListItemId || null,
+    effectiveMatchedCandidate: null,
+    selectedSuggestedPriceListItemId: null,
+    resolutionAction: null,
+    resolutionRequired: false,
+  };
+}
+
+function buildProviderDocumentImportEffectiveItems(
+  preview,
+  itemMatchResolutions = {},
+) {
+  const items = Array.isArray(preview?.items) ? preview.items : [];
+  return items
+    .map((item) =>
+      resolveProviderDocumentImportItem(item, itemMatchResolutions),
+    )
+    .filter(Boolean);
+}
+
+function buildProviderDocumentImportWorkflowStage(
+  preview,
+  itemMatchResolutions = {},
+) {
+  const items = buildProviderDocumentImportEffectiveItems(
+    preview,
+    itemMatchResolutions,
+  );
+  if (
+    String(preview?.workflowStage || "") ===
+    "provider_mismatch_confirmation_required"
+  ) {
+    return "provider_mismatch_confirmation_required";
+  }
+  if (
+    items.some((item) => item.effectiveMatchStatus === "missing_price_list")
+  ) {
+    return "blocked_missing_price_list";
+  }
+  if (items.some((item) => item.resolutionRequired)) {
+    return "resolve_suggested_matches";
+  }
+  if (
+    items.some(
+      (item) =>
+        item.effectiveMatchStatus === "missing_in_price_list" &&
+        item.canCreateInPriceList,
+    )
+  ) {
+    return "ready_to_create_missing_items";
+  }
+  return "ready_to_apply";
+}
+
+function pruneProviderDocumentImportItemMatchResolutions(
+  preview,
+  itemMatchResolutions = {},
+) {
+  const previewIds = new Set(
+    (Array.isArray(preview?.items) ? preview.items : []).map((item) =>
+      String(item.previewId),
+    ),
+  );
+
+  return Object.entries(itemMatchResolutions).reduce(
+    (nextResolutions, [previewId, resolution]) => {
+      if (previewIds.has(String(previewId))) {
+        nextResolutions[previewId] = resolution;
+      }
+      return nextResolutions;
+    },
+    {},
+  );
+}
+
+function buildProviderDocumentImportMissingItemsSelection(
+  preview,
+  itemMatchResolutions = {},
+  currentSelection = {},
+) {
+  const items = buildProviderDocumentImportEffectiveItems(
+    preview,
+    itemMatchResolutions,
+  );
+
+  return items.reduce((selection, item) => {
+    if (
+      item?.previewId &&
+      item.effectiveMatchStatus === "missing_in_price_list" &&
+      item.canCreateInPriceList
+    ) {
+      const previewId = String(item.previewId);
+      selection[previewId] =
+        currentSelection[previewId] == null
+          ? true
+          : Boolean(currentSelection[previewId]);
+    }
+    return selection;
+  }, {});
+}
+
+function buildProviderDocumentImportState(defaultDocumentId = "") {
+  return {
+    isOpen: false,
+    selectedDocumentId: defaultDocumentId ? String(defaultDocumentId) : "",
+    confirmedProviderId: "",
+    preview: null,
+    previewJob: null,
+    loadingPreview: false,
+    creatingMissingItems: false,
+    applying: false,
+    commercialTermsSelection:
+      buildProviderDocumentImportCommercialTermsSelection(),
+    itemMatchResolutions: {},
+    missingItemsSelection: {},
+  };
+}
+
 function moveListItem(list, fromIndex, toIndex) {
   if (
     !Array.isArray(list) ||
@@ -938,6 +1157,30 @@ export function useQuotationsSection({
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [providerDocumentImportState, setProviderDocumentImportState] =
+    useState(() => buildProviderDocumentImportState());
+  const providerDocumentImportEffectiveItems = useMemo(
+    () =>
+      buildProviderDocumentImportEffectiveItems(
+        providerDocumentImportState.preview,
+        providerDocumentImportState.itemMatchResolutions,
+      ),
+    [
+      providerDocumentImportState.itemMatchResolutions,
+      providerDocumentImportState.preview,
+    ],
+  );
+  const providerDocumentImportWorkflowStage = useMemo(
+    () =>
+      buildProviderDocumentImportWorkflowStage(
+        providerDocumentImportState.preview,
+        providerDocumentImportState.itemMatchResolutions,
+      ),
+    [
+      providerDocumentImportState.itemMatchResolutions,
+      providerDocumentImportState.preview,
+    ],
+  );
   const [quotationVersionsByQuotationId, setQuotationVersionsByQuotationId] =
     useState({});
   const [
@@ -959,6 +1202,7 @@ export function useQuotationsSection({
   const [quotationsPerPage, setQuotationsPerPageState] = useState(10);
   const [quotationsPage, setQuotationsPage] = useState(1);
   const selectedQuotationIdRef = useRef(selectedQuotationId);
+  const providerDocumentImportPollingTokenRef = useRef(0);
   const loadVersionRef = useRef(null);
   const initialEditSnapshotRef = useRef("");
   const [initialEditSnapshot, setInitialEditSnapshot] = useState("");
@@ -3327,6 +3571,610 @@ export function useQuotationsSection({
     [selectedVersionId],
   );
 
+  const handleSetQuotationDocumentAiEnabled = useCallback(
+    async (documentLinkId, aiEnabled) => {
+      if (!documentLinkId) {
+        return false;
+      }
+
+      setError("");
+      setSuccess("");
+      try {
+        setBusyAction(`toggle-quotation-document-ai-${documentLinkId}`);
+        const { data } = await api.patch(
+          `/api/quotation-version-documents/${documentLinkId}/ai-eligibility`,
+          { aiEnabled: Boolean(aiEnabled) },
+        );
+
+        setSelectedVersion((prev) =>
+          mergeVersionDocuments(prev, data.documents, data.allDocuments),
+        );
+        setSuccess(
+          data.message ||
+            (aiEnabled
+              ? "Documento habilitado para IA"
+              : "Documento excluido de IA"),
+        );
+        return true;
+      } catch (err) {
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible actualizar el estado de IA del documento",
+          ),
+        );
+        return false;
+      } finally {
+        setBusyAction("");
+      }
+    },
+    [],
+  );
+
+  const openProviderDocumentImportModal = useCallback(() => {
+    providerDocumentImportPollingTokenRef.current += 1;
+    const allDocuments = Array.isArray(selectedVersion?.allDocuments)
+      ? selectedVersion.allDocuments
+      : Array.isArray(selectedVersion?.documents)
+        ? selectedVersion.documents
+        : [];
+    const eligibleDocuments = allDocuments.filter(
+      (document) => document?.aiEnabled !== false,
+    );
+    const defaultDocumentId = eligibleDocuments[0]?.id || "";
+    setProviderDocumentImportState({
+      ...buildProviderDocumentImportState(defaultDocumentId),
+      isOpen: true,
+    });
+  }, [selectedVersion]);
+
+  const closeProviderDocumentImportModal = useCallback(() => {
+    providerDocumentImportPollingTokenRef.current += 1;
+    setProviderDocumentImportState(buildProviderDocumentImportState());
+  }, []);
+
+  const setProviderDocumentImportDocument = useCallback((documentId) => {
+    providerDocumentImportPollingTokenRef.current += 1;
+    setProviderDocumentImportState((current) => ({
+      ...current,
+      selectedDocumentId: String(documentId || ""),
+      preview: null,
+      previewJob: null,
+      loadingPreview: false,
+      creatingMissingItems: false,
+      applying: false,
+      commercialTermsSelection:
+        buildProviderDocumentImportCommercialTermsSelection(),
+      itemMatchResolutions: {},
+      missingItemsSelection: {},
+    }));
+  }, []);
+
+  const setProviderDocumentImportProvider = useCallback((providerId) => {
+    providerDocumentImportPollingTokenRef.current += 1;
+    setProviderDocumentImportState((current) => ({
+      ...current,
+      confirmedProviderId: String(providerId || ""),
+      preview: null,
+      previewJob: null,
+      loadingPreview: false,
+      creatingMissingItems: false,
+      applying: false,
+      commercialTermsSelection:
+        buildProviderDocumentImportCommercialTermsSelection(),
+      itemMatchResolutions: {},
+      missingItemsSelection: {},
+    }));
+  }, []);
+
+  const setProviderDocumentImportCommercialTermSelection = useCallback(
+    (field, value) => {
+      if (!PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS.includes(field)) {
+        return;
+      }
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        commercialTermsSelection: {
+          ...current.commercialTermsSelection,
+          [field]: Boolean(value),
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportMissingItemSelection = useCallback(
+    (previewId, value) => {
+      const normalizedPreviewId = String(previewId || "").trim();
+      if (!normalizedPreviewId) {
+        return;
+      }
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        missingItemsSelection: {
+          ...current.missingItemsSelection,
+          [normalizedPreviewId]: Boolean(value),
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportSuggestedMatchCandidate = useCallback(
+    (previewId, candidateId) => {
+      const normalizedPreviewId = String(previewId || "").trim();
+      if (!normalizedPreviewId) {
+        return;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        itemMatchResolutions: {
+          ...current.itemMatchResolutions,
+          [normalizedPreviewId]: {
+            ...current.itemMatchResolutions[normalizedPreviewId],
+            selectedSuggestedPriceListItemId: candidateId
+              ? Number(candidateId)
+              : null,
+          },
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportSuggestedMatchResolution = useCallback(
+    (previewId, action) => {
+      const normalizedPreviewId = String(previewId || "").trim();
+      const normalizedAction = String(action || "").trim();
+      if (!normalizedPreviewId) {
+        return;
+      }
+
+      setProviderDocumentImportState((current) => {
+        const previewItems = Array.isArray(current.preview?.items)
+          ? current.preview.items
+          : [];
+        const previewItem = previewItems.find(
+          (item) => String(item.previewId) === normalizedPreviewId,
+        );
+        if (!previewItem) {
+          return current;
+        }
+
+        const suggestedMatchCandidates = Array.isArray(
+          previewItem.suggestedMatchCandidates,
+        )
+          ? previewItem.suggestedMatchCandidates
+          : [];
+        const currentResolution =
+          current.itemMatchResolutions[normalizedPreviewId] || {};
+        const fallbackCandidateId =
+          currentResolution.selectedSuggestedPriceListItemId ||
+          (suggestedMatchCandidates.length === 1
+            ? Number(suggestedMatchCandidates[0].id)
+            : null);
+
+        const nextItemMatchResolutions = {
+          ...current.itemMatchResolutions,
+        };
+        if (
+          normalizedAction === "use_existing" &&
+          Number(fallbackCandidateId || 0) > 0
+        ) {
+          nextItemMatchResolutions[normalizedPreviewId] = {
+            action: "use_existing",
+            selectedSuggestedPriceListItemId: Number(fallbackCandidateId),
+          };
+        } else if (normalizedAction === "treat_as_missing") {
+          nextItemMatchResolutions[normalizedPreviewId] = {
+            action: "treat_as_missing",
+            selectedSuggestedPriceListItemId: null,
+          };
+        } else {
+          delete nextItemMatchResolutions[normalizedPreviewId];
+        }
+
+        const nextMissingItemsSelection = {
+          ...current.missingItemsSelection,
+        };
+        if (
+          normalizedAction === "treat_as_missing" &&
+          previewItem.canCreateInPriceList
+        ) {
+          nextMissingItemsSelection[normalizedPreviewId] = true;
+        }
+        if (normalizedAction === "use_existing") {
+          delete nextMissingItemsSelection[normalizedPreviewId];
+        }
+
+        return {
+          ...current,
+          itemMatchResolutions: nextItemMatchResolutions,
+          missingItemsSelection: nextMissingItemsSelection,
+        };
+      });
+    },
+    [],
+  );
+
+  const handlePreviewProviderDocumentImport = useCallback(async () => {
+    if (!selectedVersionId || !providerDocumentImportState.selectedDocumentId) {
+      setError("Selecciona un documento para analizar.");
+      return false;
+    }
+
+    providerDocumentImportPollingTokenRef.current += 1;
+    const pollingToken = providerDocumentImportPollingTokenRef.current;
+
+    setProviderDocumentImportState((current) => ({
+      ...current,
+      preview: null,
+      previewJob: null,
+      loadingPreview: true,
+    }));
+    setError("");
+    setSuccess("");
+
+    try {
+      const { data } = await api.post(
+        `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview`,
+        {
+          documentLinkId: Number(
+            providerDocumentImportState.selectedDocumentId,
+          ),
+          providerId: providerDocumentImportState.confirmedProviderId
+            ? Number(providerDocumentImportState.confirmedProviderId)
+            : null,
+        },
+        {
+          timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+        },
+      );
+
+      let resolvedData = data;
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        previewJob: resolvedData?.job || null,
+      }));
+
+      if (!resolvedData?.result) {
+        const jobId = String(resolvedData?.job?.id || "").trim();
+        if (!jobId) {
+          throw new Error(
+            "No fue posible obtener el identificador del job de analisis",
+          );
+        }
+
+        const deadline =
+          Date.now() + PROVIDER_DOCUMENT_IMPORT_TOTAL_POLL_TIMEOUT_MS;
+        let nextDelay = Math.max(
+          Number(
+            resolvedData?.job?.pollAfterMs ||
+              PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS,
+          ),
+          0,
+        );
+
+        while (providerDocumentImportPollingTokenRef.current === pollingToken) {
+          if (Date.now() >= deadline) {
+            resolvedData = {
+              error: {
+                code: "poll_timeout",
+                message:
+                  "El analisis del documento sigue tardando mas de 5 minutos. Puedes intentarlo de nuevo desde el modal.",
+              },
+            };
+            break;
+          }
+
+          if (nextDelay > 0) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, nextDelay);
+            });
+          }
+
+          if (providerDocumentImportPollingTokenRef.current !== pollingToken) {
+            return false;
+          }
+
+          const pollResponse = await api.get(
+            `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview/jobs/${jobId}`,
+            {
+              timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+            },
+          );
+          resolvedData = pollResponse.data;
+
+          setProviderDocumentImportState((current) => ({
+            ...current,
+            previewJob: resolvedData?.job || current.previewJob,
+          }));
+
+          if (resolvedData?.result) {
+            break;
+          }
+
+          const jobStatus = String(resolvedData?.job?.status || "");
+          if (["failed", "stale", "expired"].includes(jobStatus)) {
+            break;
+          }
+
+          nextDelay = Math.max(
+            Number(
+              resolvedData?.job?.pollAfterMs ||
+                PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS,
+            ),
+            0,
+          );
+          nextDelay = Math.min(nextDelay, Math.max(deadline - Date.now(), 0));
+        }
+      }
+
+      if (providerDocumentImportPollingTokenRef.current !== pollingToken) {
+        return false;
+      }
+
+      if (!resolvedData?.result) {
+        setError(
+          String(resolvedData?.error?.message || "").trim() ||
+            "No fue posible analizar el documento del proveedor",
+        );
+        return false;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        preview: resolvedData.result,
+        previewJob: resolvedData?.job || current.previewJob,
+        creatingMissingItems: false,
+        confirmedProviderId: current.confirmedProviderId
+          ? current.confirmedProviderId
+          : resolvedData.result.confirmedProvider?.id
+            ? String(resolvedData.result.confirmedProvider.id)
+            : "",
+        commercialTermsSelection:
+          buildProviderDocumentImportCommercialTermsSelection(),
+        itemMatchResolutions: {},
+        missingItemsSelection: buildProviderDocumentImportMissingItemsSelection(
+          resolvedData.result,
+          {},
+        ),
+      }));
+      return true;
+    } catch (err) {
+      if (providerDocumentImportPollingTokenRef.current === pollingToken) {
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible analizar el documento del proveedor",
+          ),
+        );
+      }
+      return false;
+    } finally {
+      if (providerDocumentImportPollingTokenRef.current === pollingToken) {
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          loadingPreview: false,
+        }));
+      }
+    }
+  }, [
+    providerDocumentImportState.confirmedProviderId,
+    providerDocumentImportState.selectedDocumentId,
+    selectedVersionId,
+  ]);
+
+  const handleCreateMissingProviderDocumentImportItems =
+    useCallback(async () => {
+      if (
+        !selectedVersionId ||
+        !providerDocumentImportState.preview ||
+        !providerDocumentImportState.selectedDocumentId ||
+        !providerDocumentImportState.confirmedProviderId
+      ) {
+        setError(
+          "Confirma documento, proveedor y analisis antes de crear faltantes.",
+        );
+        return false;
+      }
+
+      const selectedMissingItems = providerDocumentImportEffectiveItems
+        .filter(
+          (item) =>
+            item.effectiveMatchStatus === "missing_in_price_list" &&
+            item.canCreateInPriceList &&
+            providerDocumentImportState.missingItemsSelection[
+              String(item.previewId)
+            ],
+        )
+        .map((item) => ({
+          previewId: item.previewId,
+          providerCode: item.providerCode,
+          productDescription: item.productDescription,
+          quantity: Number(item.quantity || 1),
+          originalCurrencyCode: item.originalCurrencyCode || null,
+          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
+          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
+          resolutionAction: item.resolutionAction || null,
+          selectedSuggestedPriceListItemId:
+            item.selectedSuggestedPriceListItemId || null,
+          selectedForPriceListCreation: true,
+        }));
+
+      if (!selectedMissingItems.length) {
+        setError(
+          "Selecciona al menos un item faltante para crear en la lista del proveedor.",
+        );
+        return false;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        creatingMissingItems: true,
+      }));
+      setError("");
+      setSuccess("");
+
+      try {
+        const { data } = await api.post(
+          `/api/quotation-versions/${selectedVersionId}/provider-document-import/create-missing-items`,
+          {
+            documentLinkId: Number(
+              providerDocumentImportState.selectedDocumentId,
+            ),
+            confirmedProviderId: Number(
+              providerDocumentImportState.confirmedProviderId,
+            ),
+            items: selectedMissingItems,
+          },
+        );
+
+        setProviderDocumentImportState((current) => {
+          const nextItemMatchResolutions =
+            pruneProviderDocumentImportItemMatchResolutions(
+              data.preview,
+              current.itemMatchResolutions,
+            );
+          return {
+            ...current,
+            preview: data.preview || current.preview,
+            creatingMissingItems: false,
+            itemMatchResolutions: nextItemMatchResolutions,
+            missingItemsSelection:
+              buildProviderDocumentImportMissingItemsSelection(
+                data.preview,
+                nextItemMatchResolutions,
+              ),
+          };
+        });
+        setSuccess(
+          data.message || "Items faltantes creados en la lista del proveedor",
+        );
+        return true;
+      } catch (err) {
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible crear los items faltantes en la lista del proveedor",
+          ),
+        );
+        return false;
+      } finally {
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          creatingMissingItems: false,
+        }));
+      }
+    }, [
+      providerDocumentImportState.confirmedProviderId,
+      providerDocumentImportEffectiveItems,
+      providerDocumentImportState.missingItemsSelection,
+      providerDocumentImportState.preview,
+      providerDocumentImportState.selectedDocumentId,
+      selectedVersionId,
+    ]);
+
+  const handleApplyProviderDocumentImport = useCallback(async () => {
+    if (
+      !selectedVersionId ||
+      !selectedQuotationId ||
+      !providerDocumentImportState.preview ||
+      !providerDocumentImportState.selectedDocumentId ||
+      !providerDocumentImportState.confirmedProviderId
+    ) {
+      setError("Confirma documento, proveedor y analisis antes de aplicar.");
+      return false;
+    }
+
+    setProviderDocumentImportState((current) => ({
+      ...current,
+      applying: true,
+    }));
+    setError("");
+    setSuccess("");
+    try {
+      const matchedItems = providerDocumentImportEffectiveItems.filter(
+        (item) => item.effectiveMatchStatus === "matched",
+      );
+      if (!matchedItems.length) {
+        setError(
+          "No hay items resueltos contra la lista del proveedor para aplicar.",
+        );
+        return false;
+      }
+
+      const payload = {
+        documentLinkId: Number(providerDocumentImportState.selectedDocumentId),
+        confirmedProviderId: Number(
+          providerDocumentImportState.confirmedProviderId,
+        ),
+        commercialTerms: providerDocumentImportState.preview.commercialTerms,
+        commercialTermsSelection:
+          providerDocumentImportState.commercialTermsSelection,
+        items: matchedItems.map((item) => ({
+          previewId: item.previewId,
+          providerCode: item.providerCode,
+          productDescription: item.productDescription,
+          quantity: Number(item.quantity || 1),
+          originalCurrencyCode: item.originalCurrencyCode || null,
+          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
+          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
+          matchedPriceListItemId: item.effectiveMatchedPriceListItemId || null,
+          matchStatus: item.effectiveMatchStatus || "matched",
+          resolutionAction: item.resolutionAction || null,
+          selectedSuggestedPriceListItemId:
+            item.selectedSuggestedPriceListItemId || null,
+          sourceSnippet: item.sourceSnippet || null,
+          warnings: Array.isArray(item.warnings) ? item.warnings : [],
+        })),
+      };
+
+      const { data } = await api.post(
+        `/api/quotation-versions/${selectedVersionId}/provider-document-import/apply`,
+        payload,
+        { timeout: PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS },
+      );
+      closeProviderDocumentImportModal();
+      try {
+        await loadVersion(selectedQuotationId, selectedVersionId, {
+          preserveMessage: true,
+        });
+        setSuccess(data.message || "Importacion aplicada");
+      } catch (reloadError) {
+        setSuccess(data.message || "Importacion aplicada");
+        setError(
+          getApiErrorMessage(
+            reloadError,
+            "La importacion se aplico, pero no fue posible recargar la cotizacion",
+          ),
+        );
+      }
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible aplicar la importacion"),
+      );
+      return false;
+    } finally {
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        applying: false,
+      }));
+    }
+  }, [
+    closeProviderDocumentImportModal,
+    loadVersion,
+    providerDocumentImportState.commercialTermsSelection,
+    providerDocumentImportState.confirmedProviderId,
+    providerDocumentImportEffectiveItems,
+    providerDocumentImportState.preview,
+    providerDocumentImportState.selectedDocumentId,
+    selectedQuotationId,
+    selectedVersionId,
+  ]);
+
   const handleDownloadQuotationDocument = useCallback(async (document) => {
     if (!document?.id) {
       return;
@@ -4452,6 +5300,21 @@ export function useQuotationsSection({
         handleSaveVersion,
         handleSaveAsNewVersion,
         handleUploadQuotationDocuments,
+        handleSetQuotationDocumentAiEnabled,
+        providerDocumentImportState,
+        providerDocumentImportEffectiveItems,
+        providerDocumentImportWorkflowStage,
+        openProviderDocumentImportModal,
+        closeProviderDocumentImportModal,
+        setProviderDocumentImportDocument,
+        setProviderDocumentImportProvider,
+        setProviderDocumentImportCommercialTermSelection,
+        setProviderDocumentImportSuggestedMatchCandidate,
+        setProviderDocumentImportSuggestedMatchResolution,
+        setProviderDocumentImportMissingItemSelection,
+        handlePreviewProviderDocumentImport,
+        handleCreateMissingProviderDocumentImportItems,
+        handleApplyProviderDocumentImport,
         handleDownloadQuotationDocument,
         handleAction,
         sectionDraft,
@@ -4526,6 +5389,23 @@ export function useQuotationsSection({
       allowedActions,
       handleSaveVersion,
       handleUploadQuotationDocuments,
+      handleSetQuotationDocumentAiEnabled,
+      handleSetQuotationDocumentAiEnabled,
+      handleSetQuotationDocumentAiEnabled,
+      providerDocumentImportState,
+      providerDocumentImportEffectiveItems,
+      providerDocumentImportWorkflowStage,
+      openProviderDocumentImportModal,
+      closeProviderDocumentImportModal,
+      setProviderDocumentImportDocument,
+      setProviderDocumentImportProvider,
+      setProviderDocumentImportCommercialTermSelection,
+      setProviderDocumentImportSuggestedMatchCandidate,
+      setProviderDocumentImportSuggestedMatchResolution,
+      setProviderDocumentImportMissingItemSelection,
+      handlePreviewProviderDocumentImport,
+      handleCreateMissingProviderDocumentImportItems,
+      handleApplyProviderDocumentImport,
       handleDownloadQuotationDocument,
       handleAction,
       sectionDraft,
