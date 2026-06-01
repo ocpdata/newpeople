@@ -497,6 +497,180 @@ export function calculateQuotationItemTotals(item, options = {}) {
   };
 }
 
+export function resolveQuotationItemSaleTarget({
+  item,
+  targetSalePriceTotal,
+  recalculateField,
+  includeVat = false,
+  vatPct = DEFAULT_QUOTATION_VAT_PCT,
+}) {
+  const quantity = Math.max(toNumber(item?.quantity), 0);
+  const listPriceUnit = Math.max(toNumber(item?.listPriceUnit), 0);
+  const manufacturerDiscountPct = toNumber(item?.manufacturerDiscountPct);
+  const importCostPct = toNumber(item?.importCostPct);
+  const profitMarginPct = toNumber(item?.profitMarginPct);
+  const finalDiscountPct = toNumber(item?.finalDiscountPct);
+  const effectiveVatPct = includeVat ? Math.max(toNumber(vatPct), 0) : 0;
+  const vatFactor = 1 + effectiveVatPct / 100;
+  const currentTotals = calculateQuotationItemTotals(item, {
+    vatPct: effectiveVatPct,
+  });
+
+  if (!(quantity > 0)) {
+    return {
+      ok: false,
+      message: "La fila debe tener una cantidad mayor a cero.",
+    };
+  }
+
+  const targetTotal = roundQuotationMoney(targetSalePriceTotal);
+  if (!(targetTotal > 0)) {
+    return {
+      ok: false,
+      message: "El precio de venta total debe ser mayor a cero.",
+    };
+  }
+
+  const targetSalePriceUnit = targetTotal / quantity;
+  const targetNetSalePriceUnit = targetSalePriceUnit / vatFactor;
+  const finalDiscountFactor = 1 - finalDiscountPct / 100;
+  const profitFactor = 1 - profitMarginPct / 100;
+  const importFactor = 1 + importCostPct / 100;
+  const costUnit =
+    listPriceUnit * (1 - manufacturerDiscountPct / 100) * importFactor;
+  let nextValue = null;
+  let nextItem = null;
+
+  if (recalculateField === "profitMarginPct") {
+    if (!(finalDiscountFactor > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible alcanzar ese total ajustando solo el margen.",
+      };
+    }
+
+    const targetSalePriceBase = targetNetSalePriceUnit / finalDiscountFactor;
+    if (!(targetSalePriceBase > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible alcanzar ese total ajustando solo el margen.",
+      };
+    }
+
+    nextValue = (1 - costUnit / targetSalePriceBase) * 100;
+    if (!(nextValue >= 0 && nextValue < 100)) {
+      return {
+        ok: false,
+        message:
+          "El margen resultante queda fuera de rango permitido.",
+      };
+    }
+
+    nextItem = {
+      ...item,
+      profitMarginPct: roundQuotationUnitPrice(nextValue),
+    };
+  } else if (recalculateField === "manufacturerDiscountPct") {
+    if (!(finalDiscountFactor > 0) || !(profitFactor > 0) || !(importFactor > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible alcanzar ese total ajustando solo el descuento del proveedor.",
+      };
+    }
+
+    if (!(listPriceUnit > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible ajustar el descuento del proveedor sin precio de lista.",
+      };
+    }
+
+    const targetSalePriceBase = targetNetSalePriceUnit / finalDiscountFactor;
+    const targetCostUnit = targetSalePriceBase * profitFactor;
+    const targetDiscountedListPriceUnit = targetCostUnit / importFactor;
+    nextValue = (1 - targetDiscountedListPriceUnit / listPriceUnit) * 100;
+    if (!(nextValue >= 0 && nextValue <= 100)) {
+      return {
+        ok: false,
+        message:
+          "El descuento del proveedor resultante queda fuera de rango permitido.",
+      };
+    }
+
+    nextItem = {
+      ...item,
+      manufacturerDiscountPct: roundQuotationUnitPrice(nextValue),
+    };
+  } else if (recalculateField === "finalDiscountPct") {
+    if (!(profitFactor > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible alcanzar ese total ajustando solo el descuento final.",
+      };
+    }
+
+    const currentSalePriceBase = costUnit / profitFactor;
+    if (!(currentSalePriceBase > 0)) {
+      return {
+        ok: false,
+        message:
+          "No es posible alcanzar ese total ajustando solo el descuento final.",
+      };
+    }
+
+    nextValue = (1 - targetNetSalePriceUnit / currentSalePriceBase) * 100;
+    if (!(nextValue >= 0 && nextValue <= 100)) {
+      return {
+        ok: false,
+        message:
+          "El descuento final resultante queda fuera de rango permitido.",
+      };
+    }
+
+    nextItem = {
+      ...item,
+      finalDiscountPct: roundQuotationUnitPrice(nextValue),
+    };
+  } else {
+    return {
+      ok: false,
+      message: "Selecciona que variable deseas recalcular.",
+    };
+  }
+
+  const nextTotals = calculateQuotationItemTotals(nextItem, {
+    vatPct: effectiveVatPct,
+  });
+  const currentNetTotal = effectiveVatPct
+    ? currentTotals.salePriceTotal / vatFactor
+    : currentTotals.salePriceTotal;
+  const nextNetTotal = effectiveVatPct
+    ? nextTotals.salePriceTotal / vatFactor
+    : nextTotals.salePriceTotal;
+
+  return {
+    ok: true,
+    field: recalculateField,
+    nextValue: roundQuotationUnitPrice(nextValue),
+    currentTotals: {
+      netTotal: roundQuotationMoney(currentNetTotal),
+      vatTotal: roundQuotationMoney(currentTotals.salePriceTotal - currentNetTotal),
+      salePriceTotal: roundQuotationMoney(currentTotals.salePriceTotal),
+    },
+    nextTotals: {
+      netTotal: roundQuotationMoney(nextNetTotal),
+      vatTotal: roundQuotationMoney(nextTotals.salePriceTotal - nextNetTotal),
+      salePriceTotal: roundQuotationMoney(nextTotals.salePriceTotal),
+    },
+    nextItem,
+  };
+}
+
 export function calculateQuotationItemDisplayTotals(item, allItems = []) {
   const baseTotals = calculateQuotationItemTotals(item);
 

@@ -13,6 +13,7 @@ import {
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
   toNumber,
+  resolveQuotationItemSaleTarget,
 } from "./quotationsUtils";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -36,6 +37,18 @@ function updateDraftEntry(setter, entryId, currentValue, field, value) {
   }));
 }
 
+
+    function SaleAdjustmentIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M4 6h10" />
+          <path d="M4 12h8" />
+          <path d="M4 18h6" />
+          <path d="M17 8v8" />
+          <path d="m13 12 4-4 4 4" />
+        </svg>
+      );
+    }
 function formatQuotationDocumentSize(byteSize) {
   const numericValue = Number(byteSize || 0);
   if (!numericValue) return "0 KB";
@@ -123,6 +136,30 @@ const ITEM_TABLE_COLUMNS = [
     defaultWidth: 120,
   },
   {
+
+    const SALE_ADJUSTMENT_FIELD_OPTIONS = [
+      {
+        value: "profitMarginPct",
+        label: "Margen %",
+        helper: "Mantiene el precio de lista y ajusta solo el margen.",
+      },
+      {
+        value: "manufacturerDiscountPct",
+        label: "Descuento proveedor %",
+        helper:
+          "Mantiene el precio de lista y ajusta solo el descuento del proveedor.",
+      },
+      {
+        value: "finalDiscountPct",
+        label: "Descuento final %",
+        helper:
+          "Mantiene el precio de lista y ajusta solo el descuento final ofrecido al cliente.",
+      },
+    ];
+
+    const SALE_ADJUSTMENT_FIELD_LABELS = Object.fromEntries(
+      SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => [option.value, option.label]),
+    );
     key: "productDescription",
     label: "Descripcion",
     defaultWidth: 220,
@@ -843,6 +880,13 @@ function QuotationEditorContent({
     sectionId: null,
     itemId: null,
   });
+  const [saleAdjustmentDialogState, setSaleAdjustmentDialogState] = useState({
+    isOpen: false,
+    sectionId: null,
+    itemId: null,
+    targetSalePriceTotal: "",
+    recalculateField: "profitMarginPct",
+  });
   const [isPrintPreviewModalOpen, setIsPrintPreviewModalOpen] = useState(false);
   const [documentViewMode, setDocumentViewMode] = useState("current");
   const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
@@ -1197,6 +1241,13 @@ function QuotationEditorContent({
     setExchangeRateError("");
     exchangeRateRequestSequenceRef.current = 0;
     exchangeRateManualOverrideRef.current = 0;
+    setSaleAdjustmentDialogState({
+      isOpen: false,
+      sectionId: null,
+      itemId: null,
+      targetSalePriceTotal: "",
+      recalculateField: "profitMarginPct",
+    });
 
     setCollapsedBundleIdsBySection(
       readQuotationEditorBundleCollapseState(selectedVersion?.id),
@@ -2090,6 +2141,26 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
     }));
   }
 
+  function closeSaleAdjustmentDialog() {
+    setSaleAdjustmentDialogState({
+      isOpen: false,
+      sectionId: null,
+      itemId: null,
+      targetSalePriceTotal: "",
+      recalculateField: "profitMarginPct",
+    });
+  }
+
+  function openSaleAdjustmentDialog(sectionId, itemId, currentSalePriceTotal) {
+    setSaleAdjustmentDialogState({
+      isOpen: true,
+      sectionId: String(sectionId),
+      itemId: String(itemId),
+      targetSalePriceTotal: formatQuotationMoneyInputValue(currentSalePriceTotal),
+      recalculateField: "profitMarginPct",
+    });
+  }
+
   function saveExistingItemDraft(itemId, explicitDraft) {
     handleSaveItem(itemId, explicitDraft);
   }
@@ -2344,6 +2415,14 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
               const sectionHighlightedItemIds =
                 highlightedItemIdsBySection[String(section.id)] || [];
               const sectionDisplayItems = buildSectionDisplayItems(section);
+              const effectiveSectionItems =
+                effectiveSummarySections.find(
+                  (candidateSection) =>
+                    Number(candidateSection.id) === Number(section.id),
+                )?.items || sectionDisplayItems;
+              const effectiveSectionItemsById = new Map(
+                effectiveSectionItems.map((item) => [String(item.localId), item]),
+              );
               const collapsedBundleIds = new Set(
                 collapsedBundleIdsBySection[String(section.id)] || [],
               );
@@ -2377,10 +2456,7 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                       item;
                     const totals = calculateQuotationItemDisplayTotals(
                       effectiveItem,
-                      effectiveSummarySections.find(
-                        (candidateSection) =>
-                          Number(candidateSection.id) === Number(section.id),
-                      )?.items || sectionDisplayItems,
+                      effectiveSectionItems,
                     );
 
                     return {
@@ -2413,6 +2489,54 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                 !manualBundleSelection.ok &&
                 !attachManualBundleSelection.ok &&
                 !detachManualBundleSelection.ok;
+              const selectedRowItemId =
+                sectionSelectedItemIds.length === 1
+                  ? String(sectionSelectedItemIds[0])
+                  : null;
+              const selectedRowItem = selectedRowItemId
+                ? sectionDisplayItems.find(
+                    (item) => String(item.id) === selectedRowItemId,
+                  ) || null
+                : null;
+              const selectedEffectiveRowItem = selectedRowItemId
+                ? effectiveSectionItemsById.get(selectedRowItemId) ||
+                  selectedRowItem ||
+                  null
+                : null;
+              const selectedRowTotals = selectedEffectiveRowItem
+                ? calculateQuotationItemDisplayTotals(
+                    selectedEffectiveRowItem,
+                    effectiveSectionItems,
+                  )
+                : null;
+              const selectedRowIsBundleParent = Boolean(
+                selectedEffectiveRowItem &&
+                  selectedEffectiveRowItem.itemType === "grupo_productos" &&
+                  !selectedEffectiveRowItem.isBundleComponent,
+              );
+              const saleAdjustmentFinalDiscountDisabled =
+                summaryDistributionMode === "per_item";
+              const saleAdjustmentPreview =
+                saleAdjustmentDialogState.isOpen &&
+                saleAdjustmentDialogState.sectionId === String(section.id) &&
+                saleAdjustmentDialogState.itemId === selectedRowItemId &&
+                selectedEffectiveRowItem &&
+                String(saleAdjustmentDialogState.targetSalePriceTotal || "").trim()
+                  ? resolveQuotationItemSaleTarget({
+                      item: selectedEffectiveRowItem,
+                      targetSalePriceTotal: Number(
+                        sanitizeQuotationMoneyInputValue(
+                          saleAdjustmentDialogState.targetSalePriceTotal,
+                        ),
+                      ),
+                      recalculateField:
+                        saleAdjustmentDialogState.recalculateField,
+                      includeVat: summaryVatMode === "per_item",
+                      vatPct:
+                        selectedEffectiveRowItem.vatPct ||
+                        DEFAULT_QUOTATION_VAT_PCT,
+                    })
+                  : null;
               const manualBundleHintMessage = showManualBundleHint
                 ? getBundleHintMessage({
                     manualSelection: manualBundleSelection,
@@ -2564,6 +2688,33 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                             onClick={() => unhighlightSelectedItems(section.id)}
                           >
                             <HighlightOffIcon />
+                          </QuotationIconButton>
+                          <QuotationIconButton
+                            title={
+                              sectionSelectedItemIds.length !== 1
+                                ? "Selecciona una sola fila para ajustar el precio de venta"
+                                : selectedRowIsBundleParent
+                                  ? "El bundle padre calcula su venta desde los componentes"
+                                  : "Ajustar precio de venta de la fila seleccionada"
+                            }
+                            disabled={
+                              sectionSelectedItemIds.length !== 1 ||
+                              !selectedEffectiveRowItem ||
+                              selectedRowIsBundleParent
+                            }
+                            onClick={() => {
+                              if (!selectedEffectiveRowItem || !selectedRowTotals) {
+                                return;
+                              }
+
+                              openSaleAdjustmentDialog(
+                                section.id,
+                                selectedEffectiveRowItem.id,
+                                selectedRowTotals.salePriceTotal,
+                              );
+                            }}
+                          >
+                            <SaleAdjustmentIcon />
                           </QuotationIconButton>
                           <div
                             className="quotation-bundle-icon-group"
@@ -2795,6 +2946,253 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                     <p className="field-hint quotation-create-step-hint">
                       {manualBundleHintMessage}
                     </p>
+                  ) : null}
+
+                  {saleAdjustmentDialogState.isOpen &&
+                  saleAdjustmentDialogState.sectionId === String(section.id) &&
+                  selectedEffectiveRowItem &&
+                  selectedRowItem ? (
+                    <div
+                      className="quotation-sale-adjustment-dialog"
+                      role="dialog"
+                      aria-label="Ajustar precio de venta"
+                    >
+                      <div className="quotation-sale-adjustment-header">
+                        <div>
+                          <h5>Ajustar precio de venta</h5>
+                          <p className="field-hint">
+                            Modifica el precio de venta total de la fila seleccionada sin cambiar el precio de lista. El sistema recalculara solo la variable que elijas.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="quotation-sale-adjustment-section quotation-sale-adjustment-section-details">
+                        <div className="quotation-sale-adjustment-detail-grid">
+                          <div>
+                            <span className="quotation-sale-adjustment-label">Codigo</span>
+                            <strong>{selectedRowItem.productCode || "Sin codigo"}</strong>
+                          </div>
+                          <div>
+                            <span className="quotation-sale-adjustment-label">Cantidad</span>
+                            <strong>{selectedRowItem.quantity || "0"}</strong>
+                          </div>
+                          <div>
+                            <span className="quotation-sale-adjustment-label">Proveedor</span>
+                            <strong>{selectedRowItem.providerName || "Sin proveedor"}</strong>
+                          </div>
+                          <div className="quotation-sale-adjustment-detail-wide">
+                            <span className="quotation-sale-adjustment-label">Descripcion</span>
+                            <strong>
+                              {selectedRowItem.productDescription ||
+                                "Sin descripcion"}
+                            </strong>
+                          </div>
+                        </div>
+                        <p className="field-hint">
+                          Verifica que esta sea la fila correcta antes de continuar.
+                        </p>
+                      </div>
+                      <div className="quotation-sale-adjustment-grid">
+                        <div className="quotation-sale-adjustment-column">
+                          <label htmlFor={`sale-adjustment-total-${section.id}`}>
+                            Nuevo precio de venta total
+                          </label>
+                          <input
+                            id={`sale-adjustment-total-${section.id}`}
+                            type="text"
+                            inputMode="decimal"
+                            value={saleAdjustmentDialogState.targetSalePriceTotal}
+                            onChange={(event) =>
+                              setSaleAdjustmentDialogState((prev) => ({
+                                ...prev,
+                                targetSalePriceTotal:
+                                  sanitizeQuotationMoneyInputValue(
+                                    event.target.value,
+                                  ),
+                              }))
+                            }
+                            onBlur={(event) =>
+                              setSaleAdjustmentDialogState((prev) => ({
+                                ...prev,
+                                targetSalePriceTotal:
+                                  formatQuotationMoneyInputValue(
+                                    event.target.value,
+                                  ),
+                              }))
+                            }
+                          />
+                          <p className="field-hint quotation-sale-adjustment-context">
+                            {summaryVatMode === "per_item"
+                              ? "Ingresa el total final con IVA incluido para esta fila."
+                              : "Ingresa el nuevo total de venta para esta fila."}
+                          </p>
+                        </div>
+                        <div className="quotation-sale-adjustment-column">
+                          <span className="quotation-sale-adjustment-label">Recalcular</span>
+                          <div className="quotation-sale-adjustment-options">
+                            {SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => {
+                              const isDisabled =
+                                option.value === "finalDiscountPct" &&
+                                saleAdjustmentFinalDiscountDisabled;
+
+                              return (
+                                <label
+                                  key={option.value}
+                                  className={`quotation-sale-adjustment-option${isDisabled ? " is-disabled" : ""}`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`sale-adjustment-field-${section.id}`}
+                                    value={option.value}
+                                    checked={
+                                      saleAdjustmentDialogState.recalculateField ===
+                                      option.value
+                                    }
+                                    disabled={isDisabled}
+                                    onChange={(event) =>
+                                      setSaleAdjustmentDialogState((prev) => ({
+                                        ...prev,
+                                        recalculateField: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <span>
+                                    <strong>{option.label}</strong>
+                                    <span className="quotation-sale-adjustment-option-helper">
+                                      {option.helper}
+                                    </span>
+                                    {isDisabled ? (
+                                      <span className="quotation-sale-adjustment-option-helper">
+                                        No disponible mientras el descuento final se distribuya desde el resumen.
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="quotation-sale-adjustment-section">
+                        <h6>Vista previa</h6>
+                        {saleAdjustmentPreview?.ok ? (
+                          <div className="quotation-sale-adjustment-preview">
+                            <div className="quotation-sale-adjustment-preview-grid quotation-sale-adjustment-preview-grid-header">
+                              <span>Concepto</span>
+                              <span>Actual</span>
+                              <span>Resultado</span>
+                            </div>
+                            {summaryVatMode === "per_item" ? (
+                              <>
+                                <div className="quotation-sale-adjustment-preview-grid">
+                                  <span>Venta sin IVA</span>
+                                  <strong>
+                                    {formatQuotationAmount(
+                                      saleAdjustmentPreview.currentTotals.netTotal,
+                                    )}
+                                  </strong>
+                                  <strong>
+                                    {formatQuotationAmount(
+                                      saleAdjustmentPreview.nextTotals.netTotal,
+                                    )}
+                                  </strong>
+                                </div>
+                                <div className="quotation-sale-adjustment-preview-grid">
+                                  <span>IVA</span>
+                                  <strong>
+                                    {formatQuotationAmount(
+                                      saleAdjustmentPreview.currentTotals.vatTotal,
+                                    )}
+                                  </strong>
+                                  <strong>
+                                    {formatQuotationAmount(
+                                      saleAdjustmentPreview.nextTotals.vatTotal,
+                                    )}
+                                  </strong>
+                                </div>
+                              </>
+                            ) : null}
+                            <div className="quotation-sale-adjustment-preview-grid">
+                              <span>Venta total</span>
+                              <strong>
+                                {formatQuotationAmount(
+                                  saleAdjustmentPreview.currentTotals.salePriceTotal,
+                                )}
+                              </strong>
+                              <strong>
+                                {formatQuotationAmount(
+                                  saleAdjustmentPreview.nextTotals.salePriceTotal,
+                                )}
+                              </strong>
+                            </div>
+                            <div className="quotation-sale-adjustment-preview-grid">
+                              <span>
+                                {SALE_ADJUSTMENT_FIELD_LABELS[
+                                  saleAdjustmentDialogState.recalculateField
+                                ] || "Variable recalculada"}
+                              </span>
+                              <strong>
+                                {formatQuotationAmount(
+                                  selectedEffectiveRowItem[
+                                    saleAdjustmentDialogState.recalculateField
+                                  ],
+                                )}
+                              </strong>
+                              <strong>
+                                {formatQuotationAmount(
+                                  saleAdjustmentPreview.nextValue,
+                                )}
+                              </strong>
+                            </div>
+                            <p className="field-hint quotation-sale-adjustment-context">
+                              {summaryVatMode === "per_item"
+                                ? "El ajuste considera IVA por item para esta fila."
+                                : "El ajuste se calcula sin IVA por item."}
+                            </p>
+                            <p className="field-hint quotation-sale-adjustment-context">
+                              No cambia: precio de lista, cantidad, importacion y las demas variables no seleccionadas.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="quotation-sale-adjustment-preview quotation-sale-adjustment-preview-empty">
+                            <p className="field-hint">
+                              {saleAdjustmentPreview?.message ||
+                                "Ingresa un precio de venta total valido para ver la vista previa."}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="quotation-sale-adjustment-actions">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={closeSaleAdjustmentDialog}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={!saleAdjustmentPreview?.ok}
+                          onClick={() => {
+                            if (!saleAdjustmentPreview?.ok || !selectedRowItemId) {
+                              return;
+                            }
+
+                            const nextDraft = {
+                              ...(itemEdits[selectedRowItemId] || selectedRowItem),
+                              [saleAdjustmentDialogState.recalculateField]: String(
+                                saleAdjustmentPreview.nextValue,
+                              ),
+                            };
+
+                            saveExistingItemDraft(selectedRowItemId, nextDraft);
+                            closeSaleAdjustmentDialog();
+                          }}
+                        >
+                          Aplicar ajuste
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
 
                   {manualBundlePickerState.isOpen &&
