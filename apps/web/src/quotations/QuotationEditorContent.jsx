@@ -119,6 +119,30 @@ function buildBundleDraftComponents(product, providerOptions) {
   });
 }
 
+
+const SALE_ADJUSTMENT_FIELD_OPTIONS = [
+  {
+    value: "profitMarginPct",
+    label: "Margen %",
+    helper: "Mantiene el precio de lista y ajusta solo el margen.",
+  },
+  {
+    value: "manufacturerDiscountPct",
+    label: "Descuento proveedor %",
+    helper:
+      "Mantiene el precio de lista y ajusta solo el descuento del proveedor.",
+  },
+  {
+    value: "finalDiscountPct",
+    label: "Descuento final %",
+    helper:
+      "Mantiene el precio de lista y ajusta solo el descuento final ofrecido al cliente.",
+  },
+];
+
+const SALE_ADJUSTMENT_FIELD_LABELS = Object.fromEntries(
+  SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => [option.value, option.label]),
+);
 const ITEM_TABLE_COLUMNS = [
   {
     key: "selected",
@@ -136,30 +160,6 @@ const ITEM_TABLE_COLUMNS = [
     defaultWidth: 120,
   },
   {
-
-    const SALE_ADJUSTMENT_FIELD_OPTIONS = [
-      {
-        value: "profitMarginPct",
-        label: "Margen %",
-        helper: "Mantiene el precio de lista y ajusta solo el margen.",
-      },
-      {
-        value: "manufacturerDiscountPct",
-        label: "Descuento proveedor %",
-        helper:
-          "Mantiene el precio de lista y ajusta solo el descuento del proveedor.",
-      },
-      {
-        value: "finalDiscountPct",
-        label: "Descuento final %",
-        helper:
-          "Mantiene el precio de lista y ajusta solo el descuento final ofrecido al cliente.",
-      },
-    ];
-
-    const SALE_ADJUSTMENT_FIELD_LABELS = Object.fromEntries(
-      SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => [option.value, option.label]),
-    );
     key: "productDescription",
     label: "Descripcion",
     defaultWidth: 220,

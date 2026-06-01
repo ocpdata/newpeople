@@ -16752,6 +16752,112 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("enablement.intake analiza un documento y normaliza a espanol un resumen IA en ingles", async () => {
+    const enablementRoleId = await createRole({
+      name: `${TEST_PREFIX}_enablement_manager_intake_summary_language`,
+      permissionCodes: ["enablement_comercial.manage"],
+    });
+    cleanup.roleIds.push(enablementRoleId);
+
+    const enablementUserId = await createUser({
+      fullName: "API Enablement Intake Summary Manager",
+      email: `${TEST_PREFIX}.enablement.intake.summary@example.com`,
+      roleIds: [enablementRoleId],
+    });
+    cleanup.userIds.push(enablementUserId);
+
+    const enablementLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.enablement.intake.summary@example.com`,
+    );
+
+    const intakePublicId = `${TEST_PREFIX}_intake_summary_language`;
+    const [sessionResult] = await query(
+      `INSERT INTO commercial_enablement_intake_sessions
+        (public_id, status, uploaded_by_user_id, source_file_name, source_mime_type,
+         source_size_bytes, source_checksum, storage_provider, storage_bucket,
+         storage_key, extraction_status, analysis_status, source_hint, source_summary,
+         language_detected, page_count, extraction_preview, expires_at, created_at, updated_at)
+       VALUES (?, 'analysis_pending', ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'pending', ?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL 24 HOUR), NOW(3), NOW(3))`,
+      [
+        intakePublicId,
+        Number(enablementUserId),
+        "micetro-data-sheet.pdf",
+        "application/pdf",
+        2048,
+        `${TEST_PREFIX}_intake_summary_checksum`,
+        "local",
+        null,
+        `commercial_enablement/intake/${intakePublicId}/source.pdf`,
+        "",
+        "Resumen preliminar del documento Micetro.",
+        "en",
+        2,
+        "Data sheet Easy and intuitive DDI orchestration Get centralized visibility of your network without disruption.",
+      ],
+    );
+    const intakeSessionId = Number(sessionResult.insertId);
+
+    await query(
+      `INSERT INTO commercial_enablement_intake_extracted_content
+        (intake_session_id, content_kind, page_number, text_content, char_count, created_at)
+       VALUES (?, 'full_text', NULL, ?, ?, NOW(3))`,
+      [
+        intakeSessionId,
+        "Data sheet Easy and intuitive DDI orchestration. Get centralized visibility of your network without disruption. The big picture for DNS, DHCP, and IP address management helps users, customers, and agents access the network core and beyond.",
+        240,
+      ],
+    );
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+
+    try {
+      config.openai.apiKey = "test-key";
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            prefill: {
+              summary: {
+                value:
+                  "Data sheet Easy and intuitive DDI orchestration Get centralized visibility of your network without disruption By simplifying the access to the core and beyond.",
+                confidence: "high",
+                decisionRequired: false,
+              },
+            },
+          }),
+        }),
+      });
+
+      const response = await request(app)
+        .post(`/api/commercial-enablement/intake-sessions/${intakePublicId}/analyze`)
+        .set("Authorization", `Bearer ${enablementLogin.body.token}`)
+        .send({ forceRegenerate: true });
+
+      expect(response.status).toBe(200);
+      expect(response.body.analysisStatus).toBe("completed");
+      expect(response.body.draftPayload).toEqual(
+        expect.objectContaining({
+          summary: expect.stringMatching(/^Ficha tecnica sobre Micetro\./),
+          languageCode: "en",
+        }),
+      );
+      expect(response.body.draftPayload.summary).toContain(
+        "Resume el contenido principal",
+      );
+      expect(response.body.draftPayload.summary).not.toContain(
+        "Get centralized visibility",
+      );
+      expect(response.body.draftPayload.summary).not.toContain(
+        "Easy and intuitive",
+      );
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+  });
+
   test("configuracion.proposal-content permite guardar defaults con assets institucionales", async () => {
     const configLogin = await login(
       request(app),
