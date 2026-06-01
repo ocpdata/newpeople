@@ -18,6 +18,15 @@ const SUGGESTED_MATCH_STATUSES = [
   "ambiguous_similar_match",
 ];
 
+function getSuggestedMatchCandidateLabel(item) {
+  const candidate = item?.effectiveMatchedCandidate;
+  if (!candidate) {
+    return "";
+  }
+
+  return `${candidate.code || "Item"} · ${candidate.description || ""}`.trim();
+}
+
 function getProviderImportItemStatusLabel(item) {
   if (item.effectiveMatchStatus === "matched") {
     return item.resolutionAction === "use_existing"
@@ -91,6 +100,14 @@ function QuotationProviderDocumentImportModal({
   const previewJobPercent = Number(previewJob?.progress?.percent || 0) || 0;
   const suggestedMatchItems = previewItems.filter(
     (item) => item.resolutionRequired,
+  );
+  const suggestedMatchSourceItems = previewItems.filter((item) =>
+    SUGGESTED_MATCH_STATUSES.includes(
+      item.originalMatchStatus || item.matchStatus,
+    ),
+  );
+  const resolvedSuggestedMatchItems = suggestedMatchSourceItems.filter(
+    (item) => !item.resolutionRequired,
   );
   const selectedCreatableMissingItems = previewItems.filter(
     (item) =>
@@ -248,6 +265,163 @@ function QuotationProviderDocumentImportModal({
               </div>
             ) : null}
 
+            <section className="quotation-provider-import-items-section">
+              <div className="quotation-provider-import-table-intro">
+                <strong>Items identificados</strong>
+                <p>
+                  Esta tabla contiene los items que la IA extrajo del
+                  documento. Las resoluciones ajustan el estado de cada fila;
+                  el contenido base del documento se conserva para revisar y
+                  confirmar antes de aplicar.
+                </p>
+              </div>
+
+              <div className="quotation-provider-import-table-wrap">
+                <table className="commercial-planning-table quotation-provider-import-table">
+                  <thead>
+                    <tr>
+                      <th>Crear</th>
+                      <th>Código</th>
+                      <th>Descripción</th>
+                      <th>Cant.</th>
+                      <th>Moneda</th>
+                      <th>Costo resuelto</th>
+                      <th>Estado</th>
+                      <th>Warnings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewItems.map((item) => (
+                      <tr
+                        key={item.previewId || item.providerCode}
+                        className={
+                          item.effectiveMatchStatus === "matched"
+                            ? "quotation-provider-import-table-row-is-resolved"
+                            : item.resolutionRequired
+                              ? "quotation-provider-import-table-row-is-pending"
+                              : ""
+                        }
+                      >
+                        <td>
+                          {item.effectiveMatchStatus ===
+                          "missing_in_price_list" ? (
+                            item.canCreateInPriceList ? (
+                              <input
+                                type="checkbox"
+                                checked={Boolean(
+                                  missingItemsSelection?.[String(item.previewId)],
+                                )}
+                                onChange={(event) =>
+                                  onToggleMissingItemSelection(
+                                    item.previewId,
+                                    event.target.checked,
+                                  )
+                                }
+                              />
+                            ) : (
+                              <span className="quotation-provider-import-muted">
+                                No
+                              </span>
+                            )
+                          ) : (
+                            <span className="quotation-provider-import-muted">
+                              -
+                            </span>
+                          )}
+                        </td>
+                        <td>{item.providerCode}</td>
+                        <td>{item.productDescription}</td>
+                        <td>{item.quantity}</td>
+                        <td>{item.originalCurrencyCode || "USD"}</td>
+                        <td>{item.resolvedCostUnit}</td>
+                        <td>
+                          <div className="quotation-provider-import-status-cell">
+                            <strong>{getProviderImportItemStatusLabel(item)}</strong>
+                            {item.effectiveMatchStatus === "matched" &&
+                            item.effectiveMatchedCandidate ? (
+                              <span>
+                                {item.resolutionAction === "use_existing"
+                                  ? "Vinculado a"
+                                  : "Coincide con"}{" "}
+                                {item.effectiveMatchedCandidate.code ||
+                                  "item existente"}
+                              </span>
+                            ) : item.resolutionRequired ? (
+                              <span>Pendiente de confirmación</span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td>
+                          {(item.warnings || []).length ||
+                          item.suggestedMatchReason ||
+                          item.createBlockedReason ? (
+                            <ul>
+                              {item.suggestedMatchReason ? (
+                                <li>{item.suggestedMatchReason}</li>
+                              ) : null}
+                              {item.createBlockedReason ? (
+                                <li>{item.createBlockedReason}</li>
+                              ) : null}
+                              {item.warnings.map((warning, index) => (
+                                <li key={`${item.previewId}-${index}`}>
+                                  {warning}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span>Sin warnings</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {!previewItems.length ? (
+                      <tr>
+                        <td colSpan="8" className="centered">
+                          La IA no encontró items utilizables en el documento.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="quotation-provider-import-conditions-section">
+              <strong>Condiciones encontradas</strong>
+              <p>
+                Marca las condiciones comerciales encontradas por la IA que
+                deseas aplicar a la cotización.
+              </p>
+              <div className="quotation-provider-import-terms">
+                <div className="quotation-provider-import-terms-grid">
+                  {COMMERCIAL_TERM_ORDER.map((field) => (
+                    <label
+                      key={field}
+                      className="quotation-provider-import-term-card"
+                    >
+                      <span className="quotation-provider-import-term-title">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(termSelection[field])}
+                          onChange={(event) =>
+                            onToggleCommercialTermSelection(
+                              field,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <strong>{COMMERCIAL_TERM_LABELS[field]}</strong>
+                      </span>
+                      <span>
+                        {preview.commercialTerms?.[field] ||
+                          (field === "currencyCode" ? "USD" : "30 dias")}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </section>
+
             {workflowStage === "blocked_missing_price_list" ? (
               <div className="quotation-provider-import-warning">
                 <strong>Importacion bloqueada</strong>
@@ -287,38 +461,44 @@ function QuotationProviderDocumentImportModal({
                     existentes en la lista del proveedor. Debes confirmarlas o
                     tratarlas como faltantes antes de continuar.
                   </li>
+                  {resolvedSuggestedMatchItems.length ? (
+                    <li>
+                      {resolvedSuggestedMatchItems.length} coincidencia
+                      {resolvedSuggestedMatchItems.length === 1 ? "" : "s"} ya
+                      resuelta
+                      {resolvedSuggestedMatchItems.length === 1 ? "" : "s"}.
+                    </li>
+                  ) : null}
                 </ul>
               </div>
             ) : null}
 
-            <div className="quotation-provider-import-terms">
-              <div className="quotation-provider-import-terms-grid">
-                {COMMERCIAL_TERM_ORDER.map((field) => (
-                  <label
-                    key={field}
-                    className="quotation-provider-import-term-card"
-                  >
-                    <span className="quotation-provider-import-term-title">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(termSelection[field])}
-                        onChange={(event) =>
-                          onToggleCommercialTermSelection(
-                            field,
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      <strong>{COMMERCIAL_TERM_LABELS[field]}</strong>
-                    </span>
-                    <span>
-                      {preview.commercialTerms?.[field] ||
-                        (field === "currencyCode" ? "USD" : "30 dias")}
-                    </span>
-                  </label>
-                ))}
+            {resolvedSuggestedMatchItems.length ? (
+              <div className="quotation-provider-import-resolved-matches">
+                <strong>Coincidencias resueltas</strong>
+                <div className="quotation-provider-import-resolved-matches-list">
+                  {resolvedSuggestedMatchItems.map((item) => (
+                    <div
+                      key={`resolved-${item.previewId}`}
+                      className="quotation-provider-import-resolved-match-card"
+                    >
+                      <div>
+                        <strong>{item.providerCode}</strong>
+                        <p>{item.productDescription}</p>
+                      </div>
+                      <span className="quotation-provider-import-resolved-match-badge">
+                        Confirmado como existente
+                      </span>
+                      {getSuggestedMatchCandidateLabel(item) ? (
+                        <span className="quotation-provider-import-resolved-match-link">
+                          {getSuggestedMatchCandidateLabel(item)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {suggestedMatchItems.length ? (
               <div className="quotation-provider-import-suggestions">
@@ -341,12 +521,15 @@ function QuotationProviderDocumentImportModal({
                             <p>{item.productDescription}</p>
                           </div>
                           <span className="quotation-provider-import-suggestion-reason">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm0 13a1.25 1.25 0 1 1 1.25-1.25A1.25 1.25 0 0 1 12 16Zm1.45-4.34-.38.26a1.48 1.48 0 0 0-.57 1.17v.16h-1.5v-.22a2.96 2.96 0 0 1 1.24-2.42l.39-.27a1.3 1.3 0 0 0-1.39-2.2 1.28 1.28 0 0 0-.62 1.11H9.12a2.78 2.78 0 0 1 1.35-2.4 2.81 2.81 0 0 1 3 .03 2.8 2.8 0 0 1-.02 4.48Z" />
+                            </svg>
                             {item.suggestedMatchReason ||
                               "Coincidencia sugerida por codigo"}
                           </span>
                         </div>
                         {candidates.length > 1 ? (
-                          <label className="field-group">
+                          <label className="field-group quotation-provider-import-suggestion-select">
                             <span>Item existente sugerido</span>
                             <select
                               value={
@@ -371,6 +554,9 @@ function QuotationProviderDocumentImportModal({
                           </label>
                         ) : candidates[0] ? (
                           <div className="quotation-provider-import-suggestion-candidate">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
+                            </svg>
                             <strong>{candidates[0].code}</strong>
                             <span>{candidates[0].description}</span>
                           </div>
@@ -378,7 +564,7 @@ function QuotationProviderDocumentImportModal({
                         <div className="quotation-provider-import-suggestion-actions">
                           <button
                             type="button"
-                            className="btn-secondary"
+                            className="btn-secondary quotation-provider-import-suggestion-btn"
                             onClick={() =>
                               onResolveSuggestedMatch(
                                 item.previewId,
@@ -390,11 +576,14 @@ function QuotationProviderDocumentImportModal({
                               !item.selectedSuggestedPriceListItemId
                             }
                           >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
+                            </svg>
                             Usar existente
                           </button>
                           <button
                             type="button"
-                            className="btn-secondary"
+                            className="btn-secondary quotation-provider-import-suggestion-btn"
                             onClick={() =>
                               onResolveSuggestedMatch(
                                 item.previewId,
@@ -402,6 +591,9 @@ function QuotationProviderDocumentImportModal({
                               )
                             }
                           >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M6 6h12v1.5H6Zm2 3h8l-.54 9.2A1.8 1.8 0 0 1 13.66 20h-3.32a1.8 1.8 0 0 1-1.8-1.8Zm2.25-4.5h3.5V6h-3.5Z" />
+                            </svg>
                             Tratar como faltante
                           </button>
                         </div>
@@ -433,89 +625,6 @@ function QuotationProviderDocumentImportModal({
               </div>
             ) : null}
 
-            <div className="quotation-provider-import-table-wrap">
-              <table className="commercial-planning-table quotation-provider-import-table">
-                <thead>
-                  <tr>
-                    <th>Crear</th>
-                    <th>Código</th>
-                    <th>Descripción</th>
-                    <th>Cant.</th>
-                    <th>Moneda</th>
-                    <th>Costo resuelto</th>
-                    <th>Estado</th>
-                    <th>Warnings</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewItems.map((item) => (
-                    <tr key={item.previewId || item.providerCode}>
-                      <td>
-                        {item.effectiveMatchStatus ===
-                        "missing_in_price_list" ? (
-                          item.canCreateInPriceList ? (
-                            <input
-                              type="checkbox"
-                              checked={Boolean(
-                                missingItemsSelection?.[String(item.previewId)],
-                              )}
-                              onChange={(event) =>
-                                onToggleMissingItemSelection(
-                                  item.previewId,
-                                  event.target.checked,
-                                )
-                              }
-                            />
-                          ) : (
-                            <span className="quotation-provider-import-muted">
-                              No
-                            </span>
-                          )
-                        ) : (
-                          <span className="quotation-provider-import-muted">
-                            -
-                          </span>
-                        )}
-                      </td>
-                      <td>{item.providerCode}</td>
-                      <td>{item.productDescription}</td>
-                      <td>{item.quantity}</td>
-                      <td>{item.originalCurrencyCode || "USD"}</td>
-                      <td>{item.resolvedCostUnit}</td>
-                      <td>{getProviderImportItemStatusLabel(item)}</td>
-                      <td>
-                        {(item.warnings || []).length ||
-                        item.suggestedMatchReason ||
-                        item.createBlockedReason ? (
-                          <ul>
-                            {item.suggestedMatchReason ? (
-                              <li>{item.suggestedMatchReason}</li>
-                            ) : null}
-                            {item.createBlockedReason ? (
-                              <li>{item.createBlockedReason}</li>
-                            ) : null}
-                            {item.warnings.map((warning, index) => (
-                              <li key={`${item.previewId}-${index}`}>
-                                {warning}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <span>Sin warnings</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {!previewItems.length ? (
-                    <tr>
-                      <td colSpan="8" className="centered">
-                        La IA no encontró items utilizables en el documento.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
           </>
         ) : null}
       </div>

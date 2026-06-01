@@ -249,6 +249,16 @@ function buildProviderDocumentImportState(defaultDocumentId = "") {
   };
 }
 
+function mapQuotationContactOption(contact) {
+  return {
+    id: Number(contact.id),
+    account_id: Number(contact.accountId ?? contact.account_id),
+    full_name: contact.fullName || contact.full_name || "",
+    email: contact.email || "",
+    phone: contact.phone || "",
+  };
+}
+
 function moveListItem(list, fromIndex, toIndex) {
   if (
     !Array.isArray(list) ||
@@ -1127,6 +1137,9 @@ export function useQuotationsSection({
   const [createContactOptions, setCreateContactOptions] = useState(
     contactOptions || [],
   );
+  const [editContactOptions, setEditContactOptions] = useState(
+    contactOptions || [],
+  );
   const quotationVersionPricingContext = useMemo(
     () => ({
       currencyCode: versionForm.currencyCode,
@@ -1555,6 +1568,45 @@ export function useQuotationsSection({
       ) || null,
     [quotations, selectedQuotationId],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEditContactOptions() {
+      const selectedQuotationAccountId = Number(
+        selectedQuotation?.accountId ?? selectedQuotation?.account_id ?? 0,
+      );
+      const fallbackAccountId = Number(accountId || 0);
+      const accountIdToLoad =
+        selectedQuotationAccountId > 0
+          ? selectedQuotationAccountId
+          : fallbackAccountId;
+
+      if (!accountIdToLoad) {
+        setEditContactOptions(contactOptions || []);
+        return;
+      }
+      try {
+        const { data } = await api.get(
+          `/api/quotation-accounts/${accountIdToLoad}/contacts`,
+        );
+        if (cancelled) return;
+        setEditContactOptions(
+          Array.isArray(data) ? data.map(mapQuotationContactOption) : [],
+        );
+      } catch {
+        if (!cancelled) {
+          setEditContactOptions(contactOptions || []);
+        }
+      }
+    }
+
+    loadEditContactOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, contactOptions, selectedQuotation?.accountId, selectedQuotation?.account_id]);
   const hasCreateCommercialContext =
     Boolean(createQuotationForm.accountId) &&
     Boolean(createQuotationForm.opportunityId) &&
@@ -5293,7 +5345,7 @@ export function useQuotationsSection({
         companyBranding,
         versionForm,
         setVersionForm,
-        contactOptions,
+        contactOptions: editContactOptions,
         catalogs,
         busyAction,
         allowedActions,
@@ -5383,7 +5435,7 @@ export function useQuotationsSection({
       companyBranding,
       versionForm,
       setVersionForm,
-      contactOptions,
+      contactOptions: editContactOptions,
       catalogs,
       busyAction,
       allowedActions,

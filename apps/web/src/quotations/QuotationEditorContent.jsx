@@ -980,7 +980,15 @@ function QuotationEditorContent({
   const selectedContextContactName =
     contactOptions.find(
       (contact) => Number(contact.id) === Number(versionForm.contactId || 0),
-    )?.full_name || "";
+    )?.full_name ||
+    contactOptions.find(
+      (contact) => Number(contact.id) === Number(versionForm.contactId || 0),
+    )?.fullName ||
+    selectedVersion?.contact_name ||
+    selectedVersion?.contactName ||
+    selectedQuotation?.contactName ||
+    selectedQuotation?.contact_name ||
+    "";
   const selectedContextContact = useMemo(
     () =>
       contactOptions.find(

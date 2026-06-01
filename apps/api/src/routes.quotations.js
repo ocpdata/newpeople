@@ -1918,6 +1918,202 @@ function normalizeProviderDocumentImportText(value, maxLength = 5000) {
     .slice(0, maxLength);
 }
 
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH = 50000;
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE = "segun_notas";
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_ALIASES_BY_FIELD = {
+  deliveryTime: {
+    inmediato: "inmediato",
+    "5 dias": "5_dias",
+    "10 dias": "10_dias",
+    "15 dias": "15_dias",
+    "30 dias": "30_dias",
+    "45 dias": "45_dias",
+    "60 dias": "60_dias",
+    "de acuerdo a lo indicado en notas": "segun_notas",
+  },
+  quotationValidity: {
+    "5 dias": "5_dias",
+    "10 dias": "10_dias",
+    "15 dias": "15_dias",
+    "30 dias": "30_dias",
+    "45 dias": "45_dias",
+    "60 dias": "60_dias",
+    "de acuerdo a lo indicado en notas": "segun_notas",
+  },
+  warranty: {
+    "1 ano": "1_ano",
+    "2 anos": "2_anos",
+    "3 anos": "3_anos",
+    "4 anos": "4_anos",
+    "5 anos": "5_anos",
+    "de acuerdo a lo indicado en notas": "segun_notas",
+  },
+  paymentTerms: {
+    contado: "100_adelantado",
+    "100% adelantado": "100_adelantado",
+    "50% adelantado - 50% contra entrega": "50_adelantado_50_entrega",
+    "50% anticipo y saldo contra entrega": "50_adelantado_50_entrega",
+    "100% contra entrega": "100_entrega",
+    "factura a 15 dias": "15_dias_facturado",
+    "15 dias despues de facturado": "15_dias_facturado",
+    "factura a 30 dias": "30_dias_facturado",
+    "30 dias despues de facturado": "30_dias_facturado",
+    "45 dias despues de facturado": "45_dias_facturado",
+    "60 dias despues de facturado": "60_dias_facturado",
+    "90 dias despues de facturado": "90_dias_facturado",
+    "de acuerdo a lo indicado en notas": "segun_notas",
+  },
+};
+
+function normalizeProviderDocumentImportComparableText(value) {
+  return normalizeProviderDocumentImportText(value, 500)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function listActiveQuotationCommercialTermOptions(tableName) {
+  const allowedTables = new Set([
+    "quotation_delivery_times",
+    "quotation_validity_terms",
+    "quotation_warranty_terms",
+    "quotation_payment_terms",
+  ]);
+  if (!allowedTables.has(tableName)) {
+    return [];
+  }
+
+  const rows = await query(
+    `SELECT code, name
+     FROM ${tableName}
+     WHERE is_active = 1
+     ORDER BY display_order, id`,
+  );
+
+  return rows.map((row) => ({
+    code: String(row.code || "").trim(),
+    name: String(row.name || "").trim(),
+  }));
+}
+
+function buildProviderDocumentImportCommercialTermIndex(options = []) {
+  const byCode = new Map();
+  const byComparableName = new Map();
+
+  for (const option of options) {
+    const code = String(option?.code || "").trim();
+    const name = String(option?.name || "").trim();
+    if (!code) continue;
+    byCode.set(code.toLowerCase(), code);
+    const comparableName = normalizeProviderDocumentImportComparableText(name);
+    if (comparableName && !byComparableName.has(comparableName)) {
+      byComparableName.set(comparableName, code);
+    }
+  }
+
+  return {
+    byCode,
+    byComparableName,
+    fallbackCode:
+      byCode.get(PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE) ||
+      byCode.get(PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE.toLowerCase()) ||
+      null,
+  };
+}
+
+function resolveProviderDocumentImportCommercialTermCode({
+  field,
+  value,
+  index,
+}) {
+  const rawValue = normalizeProviderDocumentImportText(value, 180);
+  if (!rawValue) {
+    return {
+      code: "",
+      usedFallback: false,
+      unresolvedText: "",
+    };
+  }
+
+  const lowerRawValue = rawValue.toLowerCase();
+  const exactCodeMatch = index.byCode.get(lowerRawValue);
+  if (exactCodeMatch) {
+    return {
+      code: exactCodeMatch,
+      usedFallback: false,
+      unresolvedText: "",
+    };
+  }
+
+  const comparableValue = normalizeProviderDocumentImportComparableText(rawValue);
+  const byNameMatch = index.byComparableName.get(comparableValue);
+  if (byNameMatch) {
+    return {
+      code: byNameMatch,
+      usedFallback: false,
+      unresolvedText: "",
+    };
+  }
+
+  const aliasCode =
+    PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_ALIASES_BY_FIELD?.[field]?.[
+      comparableValue
+    ] || null;
+  if (aliasCode) {
+    const normalizedAliasCode = String(aliasCode).toLowerCase();
+    const aliasMatch = index.byCode.get(normalizedAliasCode);
+    if (aliasMatch) {
+      return {
+        code: aliasMatch,
+        usedFallback: false,
+        unresolvedText: "",
+      };
+    }
+  }
+
+  if (index.fallbackCode) {
+    return {
+      code: index.fallbackCode,
+      usedFallback: true,
+      unresolvedText: rawValue,
+    };
+  }
+
+  return {
+    code: rawValue,
+    usedFallback: false,
+    unresolvedText: "",
+  };
+}
+
+function appendProviderDocumentImportNotes(baseNotes, noteLines = []) {
+  const currentNotes = String(baseNotes || "").trim();
+  const normalizedNotes = normalizeProviderDocumentImportComparableText(currentNotes);
+  const uniqueLines = noteLines
+    .map((line) => normalizeProviderDocumentImportText(line, 500))
+    .filter(Boolean)
+    .filter((line) => {
+      const comparableLine = normalizeProviderDocumentImportComparableText(line);
+      return comparableLine && !normalizedNotes.includes(comparableLine);
+    });
+
+  if (!uniqueLines.length) {
+    return currentNotes;
+  }
+
+  const noteBlock = [
+    "Sugerencias IA aplicadas como 'De acuerdo a lo indicado en notas':",
+    ...uniqueLines.map((line) => `- ${line}`),
+  ].join("\n");
+
+  const combinedNotes = currentNotes
+    ? `${currentNotes}\n\n${noteBlock}`
+    : noteBlock;
+  return combinedNotes.slice(0, PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH);
+}
+
 function normalizeProviderDocumentImportCost({
   resolvedCostUnit,
   unitPrice,
@@ -11459,27 +11655,168 @@ router.post(
       paymentTerms: Boolean(parsed.data.commercialTermsSelection?.paymentTerms),
       currencyCode: Boolean(parsed.data.commercialTermsSelection?.currencyCode),
     };
-    const finalCommercialTerms = {
+    const [
+      deliveryTimeOptions,
+      quotationValidityOptions,
+      warrantyOptions,
+      paymentTermsOptions,
+    ] = await Promise.all([
+      listActiveQuotationCommercialTermOptions("quotation_delivery_times"),
+      listActiveQuotationCommercialTermOptions("quotation_validity_terms"),
+      listActiveQuotationCommercialTermOptions("quotation_warranty_terms"),
+      listActiveQuotationCommercialTermOptions("quotation_payment_terms"),
+    ]);
+    const deliveryTimeIndex = buildProviderDocumentImportCommercialTermIndex(
+      deliveryTimeOptions,
+    );
+    const quotationValidityIndex =
+      buildProviderDocumentImportCommercialTermIndex(quotationValidityOptions);
+    const warrantyIndex = buildProviderDocumentImportCommercialTermIndex(
+      warrantyOptions,
+    );
+    const paymentTermsIndex = buildProviderDocumentImportCommercialTermIndex(
+      paymentTermsOptions,
+    );
+
+    const suggestedCommercialTerms = {
+      deliveryTime:
+        parsed.data.commercialTerms?.deliveryTime ||
+        latestPreview.commercialTerms?.deliveryTime ||
+        "",
+      quotationValidity:
+        parsed.data.commercialTerms?.quotationValidity ||
+        latestPreview.commercialTerms?.quotationValidity ||
+        "",
+      warranty:
+        parsed.data.commercialTerms?.warranty ||
+        latestPreview.commercialTerms?.warranty ||
+        "",
+      paymentTerms:
+        parsed.data.commercialTerms?.paymentTerms ||
+        latestPreview.commercialTerms?.paymentTerms ||
+        "",
+    };
+    const requestedCommercialTerms = {
       deliveryTime:
         parsed.data.commercialTerms?.deliveryTime ||
         latestPreview.commercialTerms?.deliveryTime ||
         version.delivery_time ||
-        "30 dias",
+        "30_dias",
       quotationValidity:
         parsed.data.commercialTerms?.quotationValidity ||
         latestPreview.commercialTerms?.quotationValidity ||
         version.quotation_validity ||
-        "30 dias",
+        "30_dias",
       warranty:
         parsed.data.commercialTerms?.warranty ||
         latestPreview.commercialTerms?.warranty ||
         version.warranty_term ||
-        "1 ano",
+        "1_ano",
       paymentTerms:
         parsed.data.commercialTerms?.paymentTerms ||
         latestPreview.commercialTerms?.paymentTerms ||
         version.payment_terms ||
-        "30 dias",
+        "30_dias_facturado",
+    };
+    const resolvedDeliveryTime = resolveProviderDocumentImportCommercialTermCode(
+      {
+        field: "deliveryTime",
+        value: requestedCommercialTerms.deliveryTime,
+        index: deliveryTimeIndex,
+      },
+    );
+    const resolvedQuotationValidity =
+      resolveProviderDocumentImportCommercialTermCode({
+        field: "quotationValidity",
+        value: requestedCommercialTerms.quotationValidity,
+        index: quotationValidityIndex,
+      });
+    const resolvedWarranty = resolveProviderDocumentImportCommercialTermCode({
+      field: "warranty",
+      value: requestedCommercialTerms.warranty,
+      index: warrantyIndex,
+    });
+    const resolvedPaymentTerms = resolveProviderDocumentImportCommercialTermCode(
+      {
+        field: "paymentTerms",
+        value: requestedCommercialTerms.paymentTerms,
+        index: paymentTermsIndex,
+      },
+    );
+
+    const commercialFallbackNotes = [];
+    if (
+      commercialTermsSelection.deliveryTime &&
+      resolvedDeliveryTime.usedFallback &&
+      normalizeProviderDocumentImportText(suggestedCommercialTerms.deliveryTime, 180)
+    ) {
+      commercialFallbackNotes.push(
+        `Tiempo de entrega sugerido por IA: ${normalizeProviderDocumentImportText(
+          suggestedCommercialTerms.deliveryTime,
+          180,
+        )}`,
+      );
+    }
+    if (
+      commercialTermsSelection.quotationValidity &&
+      resolvedQuotationValidity.usedFallback &&
+      normalizeProviderDocumentImportText(
+        suggestedCommercialTerms.quotationValidity,
+        180,
+      )
+    ) {
+      commercialFallbackNotes.push(
+        `Validez sugerida por IA: ${normalizeProviderDocumentImportText(
+          suggestedCommercialTerms.quotationValidity,
+          180,
+        )}`,
+      );
+    }
+    if (
+      commercialTermsSelection.warranty &&
+      resolvedWarranty.usedFallback &&
+      normalizeProviderDocumentImportText(suggestedCommercialTerms.warranty, 180)
+    ) {
+      commercialFallbackNotes.push(
+        `Garantia sugerida por IA: ${normalizeProviderDocumentImportText(
+          suggestedCommercialTerms.warranty,
+          180,
+        )}`,
+      );
+    }
+    if (
+      commercialTermsSelection.paymentTerms &&
+      resolvedPaymentTerms.usedFallback &&
+      normalizeProviderDocumentImportText(
+        suggestedCommercialTerms.paymentTerms,
+        180,
+      )
+    ) {
+      commercialFallbackNotes.push(
+        `Pago sugerido por IA: ${normalizeProviderDocumentImportText(
+          suggestedCommercialTerms.paymentTerms,
+          180,
+        )}`,
+      );
+    }
+
+    const updatedQuotationNotes = appendProviderDocumentImportNotes(
+      version.quotation_notes || "",
+      commercialFallbackNotes,
+    );
+
+    const finalCommercialTerms = {
+      deliveryTime:
+        resolvedDeliveryTime.code || version.delivery_time || "30_dias",
+      quotationValidity:
+        resolvedQuotationValidity.code ||
+        version.quotation_validity ||
+        "30_dias",
+      warranty: resolvedWarranty.code || version.warranty_term || "1_ano",
+      paymentTerms:
+        resolvedPaymentTerms.code ||
+        version.payment_terms ||
+        "30_dias_facturado",
       currencyCode: normalizeProviderDocumentImportCurrencyCode(
         parsed.data.commercialTerms?.currencyCode ||
           version.currency_code ||
@@ -11597,7 +11934,7 @@ router.post(
       if (Object.values(commercialTermsSelection).some(Boolean)) {
         await conn.query(
           `UPDATE quotation_versions
-           SET delivery_time = ?, quotation_validity = ?, warranty_term = ?, payment_terms = ?, currency_code = ?,
+           SET delivery_time = ?, quotation_validity = ?, warranty_term = ?, payment_terms = ?, currency_code = ?, quotation_notes = ?,
                updated_at = ?, updated_by_user_id = ?
            WHERE id = ?`,
           [
@@ -11616,6 +11953,7 @@ router.post(
             commercialTermsSelection.currencyCode
               ? finalCommercialTerms.currencyCode
               : version.currency_code,
+            updatedQuotationNotes,
             now,
             Number(req.user.id),
             Number(versionId),
