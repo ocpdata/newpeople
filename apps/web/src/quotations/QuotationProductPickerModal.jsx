@@ -20,11 +20,35 @@ export default function QuotationProductPickerModal({
   onCancelQuickCreate,
   onQuickCreateFieldChange,
   onQuickCreateSubmit,
+  onConfirmSelection,
   formatQuotationAmount,
 }) {
   if (!isOpen) {
     return null;
   }
+
+  const isBundleParentTemplateMode = state.mode === "bundle_parent_template";
+  const selectedTemplateProduct = state.results.find(
+    (product) => String(product.id) === String(state.selectedResultId || ""),
+  );
+  const canCreateQuickItem =
+    !isBundleParentTemplateMode && canCreateQuickProduct;
+  const pickerTitle = state.isCreateMode
+    ? "Crear producto"
+    : isBundleParentTemplateMode
+      ? "Seleccionar plantilla del padre"
+      : "Seleccionar producto";
+  const pickerSubtitle = state.isCreateMode
+    ? "Completa solo los datos del nuevo item. El resto se hereda del proveedor y su lista activa."
+    : isBundleParentTemplateMode
+      ? "Selecciona un producto o servicio propio para precargar codigo, descripcion y proveedor del nuevo padre del bundle."
+      : "Selecciona proveedor y luego el producto para precargar la fila. La lista activa se detecta automaticamente.";
+  const searchLabel = isBundleParentTemplateMode
+    ? "Buscar plantilla"
+    : "Buscar producto";
+  const emptyResultsLabel = isBundleParentTemplateMode
+    ? "No hay productos o servicios propios activos que coincidan con la busqueda."
+    : "No hay productos activos en la lista seleccionada que coincidan con la busqueda.";
 
   const selectedPriceList =
     state.activeLists.find(
@@ -33,7 +57,8 @@ export default function QuotationProductPickerModal({
   const quickCreateDisabledReason = !state.providerId
     ? "Selecciona primero un proveedor"
     : !state.priceListId
-      ? "El proveedor no tiene una lista activa disponible"
+      ? state.unavailableListMessage ||
+        "El proveedor no tiene una lista activa disponible"
       : selectedPriceList?.itemType === "grupo_productos"
         ? "Desde este modal no se pueden crear bundles"
         : "";
@@ -46,16 +71,12 @@ export default function QuotationProductPickerModal({
       >
         <div className="quotation-product-picker-header">
           <div>
-            <h3 className="modal-title">
-              {state.isCreateMode ? "Crear producto" : "Seleccionar producto"}
-            </h3>
+            <h3 className="modal-title">{pickerTitle}</h3>
             <p className="field-hint opportunity-modal-subtitle">
-              {state.isCreateMode
-                ? "Completa solo los datos del nuevo item. El resto se hereda del proveedor y su lista activa."
-                : "Selecciona proveedor y luego el producto para precargar la fila. La lista activa se detecta automaticamente."}
+              {pickerSubtitle}
             </p>
           </div>
-          {!state.isCreateMode && canCreateQuickProduct ? (
+          {!state.isCreateMode && canCreateQuickItem ? (
             <button
               type="button"
               className="quotation-icon-button quotation-product-picker-create-button"
@@ -64,7 +85,10 @@ export default function QuotationProductPickerModal({
               title={quickCreateDisabledReason || "Crear producto"}
               aria-label={quickCreateDisabledReason || "Crear producto"}
             >
-              <span className="quotation-product-picker-create-icon" aria-hidden="true">
+              <span
+                className="quotation-product-picker-create-icon"
+                aria-hidden="true"
+              >
                 <PlusIcon />
               </span>
             </button>
@@ -75,7 +99,10 @@ export default function QuotationProductPickerModal({
           <div className="quotation-product-picker-filters quotation-product-picker-filters-compact">
             <div className="field-group quotation-product-picker-provider">
               <label>Proveedor</label>
-              <select value={state.providerId} onChange={(event) => onProviderChange(event.target.value)}>
+              <select
+                value={state.providerId}
+                onChange={(event) => onProviderChange(event.target.value)}
+              >
                 <option value="">Selecciona proveedor</option>
                 {catalogs.providers.map((provider) => (
                   <option key={provider.id} value={provider.id}>
@@ -86,7 +113,7 @@ export default function QuotationProductPickerModal({
             </div>
 
             <div className="field-group quotation-product-picker-search">
-              <label>Buscar producto</label>
+              <label>{searchLabel}</label>
               <input
                 autoFocus
                 disabled={!selectedPriceList}
@@ -105,7 +132,9 @@ export default function QuotationProductPickerModal({
         ) : null}
 
         {state.error ? (
-          <p className="field-hint quotation-product-picker-error">{state.error}</p>
+          <p className="field-hint quotation-product-picker-error">
+            {state.error}
+          </p>
         ) : null}
 
         {!state.isCreateMode ? (
@@ -132,7 +161,8 @@ export default function QuotationProductPickerModal({
                     <td colSpan={5} className="empty-state">
                       {state.loadingLists
                         ? "Cargando lista activa del proveedor..."
-                        : "El proveedor seleccionado no tiene una lista activa disponible."}
+                        : state.unavailableListMessage ||
+                          "El proveedor seleccionado no tiene una lista activa disponible."}
                     </td>
                   </tr>
                 ) : state.loading ? (
@@ -142,33 +172,60 @@ export default function QuotationProductPickerModal({
                     </td>
                   </tr>
                 ) : state.results.length ? (
-                  state.results.map((product) => (
-                    <tr key={product.id}>
-                      <td>{product.code}</td>
-                      <td>{product.description}</td>
-                      <td>{product.priceListName}</td>
-                      <td>
-                        {product.currencySymbol || "$"}
-                        {formatQuotationAmount(product.price)}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="quotation-icon-button"
-                          title="Seleccionar producto"
-                          onClick={() => onSelectProduct(product)}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="m20 6-11 11-5-5" />
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  state.results.map((product) => {
+                    const isSelectedTemplate =
+                      isBundleParentTemplateMode &&
+                      String(product.id) === String(state.selectedResultId);
+
+                    return (
+                      <tr
+                        key={product.id}
+                        className={isSelectedTemplate ? "is-selected" : ""}
+                      >
+                        <td>{product.code}</td>
+                        <td>{product.description}</td>
+                        <td>{product.priceListName}</td>
+                        <td>
+                          {product.currencySymbol || "$"}
+                          {formatQuotationAmount(product.price)}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={`quotation-icon-button${
+                              isSelectedTemplate ? " is-selected" : ""
+                            }`}
+                            title={
+                              isBundleParentTemplateMode
+                                ? isSelectedTemplate
+                                  ? "Plantilla seleccionada"
+                                  : "Seleccionar plantilla"
+                                : "Seleccionar producto"
+                            }
+                            aria-pressed={
+                              isBundleParentTemplateMode
+                                ? isSelectedTemplate
+                                : undefined
+                            }
+                            onClick={() => onSelectProduct(product)}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path d="m20 6-11 11-5-5" />
+                            </svg>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={5} className="empty-state">
-                      No hay productos activos en la lista seleccionada que coincidan con la busqueda.
+                      {emptyResultsLabel}
                     </td>
                   </tr>
                 )}
@@ -176,12 +233,16 @@ export default function QuotationProductPickerModal({
             </table>
           </div>
         ) : (
-          <form className="quotation-product-quick-create-form" onSubmit={onQuickCreateSubmit}>
+          <form
+            className="quotation-product-quick-create-form"
+            onSubmit={onQuickCreateSubmit}
+          >
             <section className="quotation-product-quick-create-context">
               <div className="quotation-product-quick-create-context-header">
                 <h4>Contexto heredado</h4>
                 <p className="field-hint">
-                  Estos valores se toman automaticamente del proveedor seleccionado.
+                  Estos valores se toman automaticamente del proveedor
+                  seleccionado.
                 </p>
               </div>
               <div className="quotation-product-quick-create-context-grid">
@@ -222,7 +283,8 @@ export default function QuotationProductPickerModal({
               <div className="quotation-product-quick-create-fields-header">
                 <h4>Datos del item</h4>
                 <p className="field-hint">
-                  Captura el codigo, el precio y una descripcion clara si aplica.
+                  Captura el codigo, el precio y una descripcion clara si
+                  aplica.
                 </p>
               </div>
               <div className="quotation-product-quick-create-grid">
@@ -256,7 +318,10 @@ export default function QuotationProductPickerModal({
                     rows={4}
                     value={state.createForm.description}
                     onChange={(event) =>
-                      onQuickCreateFieldChange("description", event.target.value)
+                      onQuickCreateFieldChange(
+                        "description",
+                        event.target.value,
+                      )
                     }
                     placeholder="Describe brevemente el alcance o contenido del item"
                   />
@@ -271,7 +336,11 @@ export default function QuotationProductPickerModal({
             ) : null}
 
             <div className="modal-buttons">
-              <button type="button" className="btn-secondary" onClick={onCancelQuickCreate}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={onCancelQuickCreate}
+              >
                 Volver
               </button>
               <button
@@ -288,8 +357,18 @@ export default function QuotationProductPickerModal({
 
         {!state.isCreateMode ? (
           <div className="modal-buttons">
+            {isBundleParentTemplateMode ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={onConfirmSelection}
+                disabled={!selectedTemplateProduct}
+              >
+                Usar plantilla seleccionada
+              </button>
+            ) : null}
             <button type="button" className="btn-secondary" onClick={onClose}>
-              Cerrar
+              {isBundleParentTemplateMode ? "Cancelar" : "Cerrar"}
             </button>
           </div>
         ) : null}

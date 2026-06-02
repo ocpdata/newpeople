@@ -37,18 +37,17 @@ function updateDraftEntry(setter, entryId, currentValue, field, value) {
   }));
 }
 
-
-    function SaleAdjustmentIcon() {
-      return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M4 6h10" />
-          <path d="M4 12h8" />
-          <path d="M4 18h6" />
-          <path d="M17 8v8" />
-          <path d="m13 12 4-4 4 4" />
-        </svg>
-      );
-    }
+function SaleAdjustmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M4 6h10" />
+      <path d="M4 12h8" />
+      <path d="M4 18h6" />
+      <path d="M17 8v8" />
+      <path d="m13 12 4-4 4 4" />
+    </svg>
+  );
+}
 function formatQuotationDocumentSize(byteSize) {
   const numericValue = Number(byteSize || 0);
   if (!numericValue) return "0 KB";
@@ -118,7 +117,6 @@ function buildBundleDraftComponents(product, providerOptions) {
     };
   });
 }
-
 
 const SALE_ADJUSTMENT_FIELD_OPTIONS = [
   {
@@ -408,6 +406,20 @@ function BundleManualIcon() {
   );
 }
 
+function BundleTemplateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="5" width="6" height="6" rx="1" />
+      <path d="M14 6h6" />
+      <path d="M17 3v6" />
+      <path d="M14 15h6" />
+      <path d="M17 12v6" />
+      <path d="M7 11v8" />
+      <path d="M7 15h10" />
+    </svg>
+  );
+}
+
 function BundleAttachIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -604,6 +616,13 @@ function isEditableBundleOriginType(originType) {
   return originType === "manual_bundle" || originType === "price_list_bundle";
 }
 
+function isBlankBundleSelectionItem(item) {
+  return (
+    !String(item?.productCode || "").trim() &&
+    !String(item?.productDescription || "").trim()
+  );
+}
+
 function getManualBundleSelectionState(sectionItems, selectedIds) {
   const selectedIdSet = new Set(selectedIds || []);
   const selectedItems = (sectionItems || []).filter((item) =>
@@ -614,6 +633,14 @@ function getManualBundleSelectionState(sectionItems, selectedIds) {
     return {
       ok: false,
       message: "Selecciona al menos dos filas para crear un bundle manual.",
+      items: [],
+    };
+  }
+
+  if (selectedItems.some((item) => isBlankBundleSelectionItem(item))) {
+    return {
+      ok: false,
+      message: "No puedes crear un bundle con filas seleccionadas en blanco.",
       items: [],
     };
   }
@@ -829,6 +856,7 @@ function QuotationEditorContent({
   handleCreateItem,
   handleApplyEditSectionItemProduct,
   handleCreateEditManualBundle,
+  handleCreateEditManualBundleFromTemplate,
   handleAttachEditSectionItemsToManualBundle,
   handleDetachEditSectionItemsFromManualBundle,
   handleRemoveEditSectionItems,
@@ -857,8 +885,10 @@ function QuotationEditorContent({
     providerId: "",
     priceListId: "",
     activeLists: [],
+    unavailableListMessage: "",
     loadingLists: false,
     query: "",
+    selectedResultId: "",
     isCreateMode: false,
     creating: false,
     createError: "",
@@ -1415,58 +1445,56 @@ function QuotationEditorContent({
       });
   }
 
-function getQuotationEditorBundleCollapseStorageKey(versionId) {
-  return versionId ? `quotation-editor-bundle-collapse:${versionId}` : "";
-}
-
-function readQuotationEditorBundleCollapseState(versionId) {
-  if (typeof window === "undefined") {
-    return {};
+  function getQuotationEditorBundleCollapseStorageKey(versionId) {
+    return versionId ? `quotation-editor-bundle-collapse:${versionId}` : "";
   }
 
-  const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
-  if (!storageKey) {
-    return {};
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(storageKey);
-    if (!storedValue) {
+  function readQuotationEditorBundleCollapseState(versionId) {
+    if (typeof window === "undefined") {
       return {};
     }
 
-    const parsedValue = JSON.parse(storedValue);
-    return parsedValue && typeof parsedValue === "object"
-      ? parsedValue
-      : {};
-  } catch {
-    return {};
-  }
-}
+    const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
+    if (!storageKey) {
+      return {};
+    }
 
-function writeQuotationEditorBundleCollapseState(versionId, state) {
-  if (typeof window === "undefined") {
-    return;
+    try {
+      const storedValue = window.localStorage.getItem(storageKey);
+      if (!storedValue) {
+        return {};
+      }
+
+      const parsedValue = JSON.parse(storedValue);
+      return parsedValue && typeof parsedValue === "object" ? parsedValue : {};
+    } catch {
+      return {};
+    }
   }
 
-  const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
-  if (!storageKey) {
-    return;
-  }
-
-  try {
-    const hasEntries =
-      state && Object.values(state).some((sectionIds) => sectionIds?.length);
-    if (!hasEntries) {
-      window.localStorage.removeItem(storageKey);
+  function writeQuotationEditorBundleCollapseState(versionId, state) {
+    if (typeof window === "undefined") {
       return;
     }
 
-    window.localStorage.setItem(storageKey, JSON.stringify(state));
-  } catch {
-    // Ignore storage failures and keep the editor usable.
+    const storageKey = getQuotationEditorBundleCollapseStorageKey(versionId);
+    if (!storageKey) {
+      return;
+    }
+
+    try {
+      const hasEntries =
+        state && Object.values(state).some((sectionIds) => sectionIds?.length);
+      if (!hasEntries) {
+        window.localStorage.removeItem(storageKey);
+        return;
+      }
+
+      window.localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch {
+      // Ignore storage failures and keep the editor usable.
+    }
   }
-}
 
   function toggleSectionItemSelection(sectionId, itemId, checked) {
     setSelectedItemIdsBySection((prev) => {
@@ -1682,8 +1710,10 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
       providerId: String(providerId || ""),
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: String(query || "").trim(),
+      selectedResultId: "",
       isCreateMode: false,
       creating: false,
       createError: "",
@@ -1707,8 +1737,49 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
       providerId: "",
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: "",
+      selectedResultId: "",
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
+      loading: false,
+      error: "",
+      results: [],
+    });
+  }
+
+  function openBundleParentTemplatePicker(
+    sectionId,
+    sectionItems,
+    selectedItemIds,
+  ) {
+    const selection = getManualBundleSelectionState(
+      sectionItems,
+      selectedItemIds,
+    );
+    if (!selection.ok) {
+      return;
+    }
+
+    setProductPickerState({
+      isOpen: true,
+      mode: "bundle_parent_template",
+      sectionId,
+      itemId: null,
+      providerId: "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      query: "",
+      selectedResultId: "",
       isCreateMode: false,
       creating: false,
       createError: "",
@@ -1802,6 +1873,14 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
   }
 
   async function handleSelectProduct(product) {
+    if (productPickerState.mode === "bundle_parent_template") {
+      setProductPickerState((prev) => ({
+        ...prev,
+        selectedResultId: String(product?.id || ""),
+      }));
+      return;
+    }
+
     if (
       product.itemType === "grupo_productos" &&
       productPickerState.mode !== "draft"
@@ -1852,6 +1931,7 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
         loadingLists: false,
         priceListId: "",
         activeLists: [],
+        unavailableListMessage: "",
         loading: false,
         error: "",
         results: [],
@@ -1863,6 +1943,7 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
 
     let cancelled = false;
     const timeoutId = window.setTimeout(async () => {
+      const templateMode = productPickerState.mode === "bundle_parent_template";
       setProductPickerState((prev) => ({
         ...prev,
         loadingLists: true,
@@ -1877,15 +1958,29 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
         });
 
         if (cancelled) return;
+        const hasOnlyBundleLists =
+          templateMode &&
+          Array.isArray(data) &&
+          data.length > 0 &&
+          data.every((entry) => entry.itemType === "grupo_productos");
+        const nextActiveLists = Array.isArray(data)
+          ? templateMode
+            ? data.filter((entry) => entry.itemType !== "grupo_productos")
+            : data
+          : [];
         setProductPickerState((prev) => ({
           ...prev,
           loadingLists: false,
-          activeLists: Array.isArray(data) ? data : [],
-          priceListId:
-            Array.isArray(data) && data.length ? String(data[0].id) : "",
-          results: Array.isArray(data) && data.length ? prev.results : [],
-          isCreateMode:
-            Array.isArray(data) && data.length ? prev.isCreateMode : false,
+          activeLists: nextActiveLists,
+          unavailableListMessage: hasOnlyBundleLists
+            ? "No se pueden seleccionar productos de tipo bundle en este flujo."
+            : "",
+          priceListId: nextActiveLists.length
+            ? String(nextActiveLists[0].id)
+            : "",
+          results: nextActiveLists.length ? prev.results : [],
+          selectedResultId: nextActiveLists.length ? prev.selectedResultId : "",
+          isCreateMode: nextActiveLists.length ? prev.isCreateMode : false,
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1930,6 +2025,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
       }));
 
       try {
+        const templateMode =
+          productPickerState.mode === "bundle_parent_template";
         const { data } = await api.get("/api/quotation-products/search", {
           params: {
             providerId: productPickerState.providerId,
@@ -1940,10 +2037,20 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
         });
 
         if (cancelled) return;
+        const nextResults = Array.isArray(data)
+          ? templateMode
+            ? data.filter((product) => product.itemType !== "grupo_productos")
+            : data
+          : [];
         setProductPickerState((prev) => ({
           ...prev,
           loading: false,
-          results: Array.isArray(data) ? data : [],
+          results: nextResults,
+          selectedResultId: nextResults.some(
+            (product) => String(product.id) === String(prev.selectedResultId),
+          )
+            ? prev.selectedResultId
+            : "",
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1976,8 +2083,10 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
       providerId: String(providerId || ""),
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: "",
+      selectedResultId: "",
       isCreateMode: false,
       createError: "",
       error: "",
@@ -1989,7 +2098,36 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
     setProductPickerState((prev) => ({
       ...prev,
       query: queryValue,
+      selectedResultId: "",
     }));
+  }
+
+  async function confirmBundleParentTemplateSelection() {
+    if (productPickerState.mode !== "bundle_parent_template") {
+      return;
+    }
+
+    const selectedProduct = productPickerState.results.find(
+      (product) =>
+        String(product.id) === String(productPickerState.selectedResultId),
+    );
+    if (!selectedProduct) {
+      return;
+    }
+
+    const createdIds = await handleCreateEditManualBundleFromTemplate(
+      productPickerState.sectionId,
+      selectedItemIdsBySection[String(productPickerState.sectionId)] || [],
+      selectedProduct,
+    );
+
+    if (createdIds.length) {
+      setSelectedItemIdsBySection((prev) => ({
+        ...prev,
+        [String(productPickerState.sectionId)]: createdIds,
+      }));
+      closeProductPicker();
+    }
   }
 
   function openQuickCreateProduct() {
@@ -2156,7 +2294,9 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
       isOpen: true,
       sectionId: String(sectionId),
       itemId: String(itemId),
-      targetSalePriceTotal: formatQuotationMoneyInputValue(currentSalePriceTotal),
+      targetSalePriceTotal: formatQuotationMoneyInputValue(
+        currentSalePriceTotal,
+      ),
       recalculateField: "profitMarginPct",
     });
   }
@@ -2421,7 +2561,10 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                     Number(candidateSection.id) === Number(section.id),
                 )?.items || sectionDisplayItems;
               const effectiveSectionItemsById = new Map(
-                effectiveSectionItems.map((item) => [String(item.localId), item]),
+                effectiveSectionItems.map((item) => [
+                  String(item.localId),
+                  item,
+                ]),
               );
               const collapsedBundleIds = new Set(
                 collapsedBundleIdsBySection[String(section.id)] || [],
@@ -2511,8 +2654,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                 : null;
               const selectedRowIsBundleParent = Boolean(
                 selectedEffectiveRowItem &&
-                  selectedEffectiveRowItem.itemType === "grupo_productos" &&
-                  !selectedEffectiveRowItem.isBundleComponent,
+                selectedEffectiveRowItem.itemType === "grupo_productos" &&
+                !selectedEffectiveRowItem.isBundleComponent,
               );
               const saleAdjustmentFinalDiscountDisabled =
                 summaryDistributionMode === "per_item";
@@ -2521,7 +2664,9 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                 saleAdjustmentDialogState.sectionId === String(section.id) &&
                 saleAdjustmentDialogState.itemId === selectedRowItemId &&
                 selectedEffectiveRowItem &&
-                String(saleAdjustmentDialogState.targetSalePriceTotal || "").trim()
+                String(
+                  saleAdjustmentDialogState.targetSalePriceTotal || "",
+                ).trim()
                   ? resolveQuotationItemSaleTarget({
                       item: selectedEffectiveRowItem,
                       targetSalePriceTotal: Number(
@@ -2703,7 +2848,10 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                               selectedRowIsBundleParent
                             }
                             onClick={() => {
-                              if (!selectedEffectiveRowItem || !selectedRowTotals) {
+                              if (
+                                !selectedEffectiveRowItem ||
+                                !selectedRowTotals
+                              ) {
                                 return;
                               }
 
@@ -2751,6 +2899,21 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                                   }
                                 >
                                   <BundleManualIcon />
+                                </QuotationIconButton>
+                              </span>
+                              <span>
+                                <QuotationIconButton
+                                  title="Crear bundle con padre nuevo desde plantilla"
+                                  disabled={!manualBundleSelection.ok}
+                                  onClick={() =>
+                                    openBundleParentTemplatePicker(
+                                      section.id,
+                                      sectionDisplayItems,
+                                      sectionSelectedItemIds,
+                                    )
+                                  }
+                                >
+                                  <BundleTemplateIcon />
                                 </QuotationIconButton>
                               </span>
                               <span
@@ -2961,26 +3124,40 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                         <div>
                           <h5>Ajustar precio de venta</h5>
                           <p className="field-hint">
-                            Modifica el precio de venta total de la fila seleccionada sin cambiar el precio de lista. El sistema recalculara solo la variable que elijas.
+                            Modifica el precio de venta total de la fila
+                            seleccionada sin cambiar el precio de lista. El
+                            sistema recalculara solo la variable que elijas.
                           </p>
                         </div>
                       </div>
                       <div className="quotation-sale-adjustment-section quotation-sale-adjustment-section-details">
                         <div className="quotation-sale-adjustment-detail-grid">
                           <div>
-                            <span className="quotation-sale-adjustment-label">Codigo</span>
-                            <strong>{selectedRowItem.productCode || "Sin codigo"}</strong>
+                            <span className="quotation-sale-adjustment-label">
+                              Codigo
+                            </span>
+                            <strong>
+                              {selectedRowItem.productCode || "Sin codigo"}
+                            </strong>
                           </div>
                           <div>
-                            <span className="quotation-sale-adjustment-label">Cantidad</span>
+                            <span className="quotation-sale-adjustment-label">
+                              Cantidad
+                            </span>
                             <strong>{selectedRowItem.quantity || "0"}</strong>
                           </div>
                           <div>
-                            <span className="quotation-sale-adjustment-label">Proveedor</span>
-                            <strong>{selectedRowItem.providerName || "Sin proveedor"}</strong>
+                            <span className="quotation-sale-adjustment-label">
+                              Proveedor
+                            </span>
+                            <strong>
+                              {selectedRowItem.providerName || "Sin proveedor"}
+                            </strong>
                           </div>
                           <div className="quotation-sale-adjustment-detail-wide">
-                            <span className="quotation-sale-adjustment-label">Descripcion</span>
+                            <span className="quotation-sale-adjustment-label">
+                              Descripcion
+                            </span>
                             <strong>
                               {selectedRowItem.productDescription ||
                                 "Sin descripcion"}
@@ -2988,19 +3165,24 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                           </div>
                         </div>
                         <p className="field-hint">
-                          Verifica que esta sea la fila correcta antes de continuar.
+                          Verifica que esta sea la fila correcta antes de
+                          continuar.
                         </p>
                       </div>
                       <div className="quotation-sale-adjustment-grid">
                         <div className="quotation-sale-adjustment-column">
-                          <label htmlFor={`sale-adjustment-total-${section.id}`}>
+                          <label
+                            htmlFor={`sale-adjustment-total-${section.id}`}
+                          >
                             Nuevo precio de venta total
                           </label>
                           <input
                             id={`sale-adjustment-total-${section.id}`}
                             type="text"
                             inputMode="decimal"
-                            value={saleAdjustmentDialogState.targetSalePriceTotal}
+                            value={
+                              saleAdjustmentDialogState.targetSalePriceTotal
+                            }
                             onChange={(event) =>
                               setSaleAdjustmentDialogState((prev) => ({
                                 ...prev,
@@ -3027,7 +3209,9 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                           </p>
                         </div>
                         <div className="quotation-sale-adjustment-column">
-                          <span className="quotation-sale-adjustment-label">Recalcular</span>
+                          <span className="quotation-sale-adjustment-label">
+                            Recalcular
+                          </span>
                           <div className="quotation-sale-adjustment-options">
                             {SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => {
                               const isDisabled =
@@ -3062,7 +3246,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                                     </span>
                                     {isDisabled ? (
                                       <span className="quotation-sale-adjustment-option-helper">
-                                        No disponible mientras el descuento final se distribuya desde el resumen.
+                                        No disponible mientras el descuento
+                                        final se distribuya desde el resumen.
                                       </span>
                                     ) : null}
                                   </span>
@@ -3087,7 +3272,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                                   <span>Venta sin IVA</span>
                                   <strong>
                                     {formatQuotationAmount(
-                                      saleAdjustmentPreview.currentTotals.netTotal,
+                                      saleAdjustmentPreview.currentTotals
+                                        .netTotal,
                                     )}
                                   </strong>
                                   <strong>
@@ -3100,7 +3286,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                                   <span>IVA</span>
                                   <strong>
                                     {formatQuotationAmount(
-                                      saleAdjustmentPreview.currentTotals.vatTotal,
+                                      saleAdjustmentPreview.currentTotals
+                                        .vatTotal,
                                     )}
                                   </strong>
                                   <strong>
@@ -3115,12 +3302,14 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                               <span>Venta total</span>
                               <strong>
                                 {formatQuotationAmount(
-                                  saleAdjustmentPreview.currentTotals.salePriceTotal,
+                                  saleAdjustmentPreview.currentTotals
+                                    .salePriceTotal,
                                 )}
                               </strong>
                               <strong>
                                 {formatQuotationAmount(
-                                  saleAdjustmentPreview.nextTotals.salePriceTotal,
+                                  saleAdjustmentPreview.nextTotals
+                                    .salePriceTotal,
                                 )}
                               </strong>
                             </div>
@@ -3149,7 +3338,8 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                                 : "El ajuste se calcula sin IVA por item."}
                             </p>
                             <p className="field-hint quotation-sale-adjustment-context">
-                              No cambia: precio de lista, cantidad, importacion y las demas variables no seleccionadas.
+                              No cambia: precio de lista, cantidad, importacion
+                              y las demas variables no seleccionadas.
                             </p>
                           </div>
                         ) : (
@@ -3174,15 +3364,18 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
                           className="btn-primary"
                           disabled={!saleAdjustmentPreview?.ok}
                           onClick={() => {
-                            if (!saleAdjustmentPreview?.ok || !selectedRowItemId) {
+                            if (
+                              !saleAdjustmentPreview?.ok ||
+                              !selectedRowItemId
+                            ) {
                               return;
                             }
 
                             const nextDraft = {
-                              ...(itemEdits[selectedRowItemId] || selectedRowItem),
-                              [saleAdjustmentDialogState.recalculateField]: String(
-                                saleAdjustmentPreview.nextValue,
-                              ),
+                              ...(itemEdits[selectedRowItemId] ||
+                                selectedRowItem),
+                              [saleAdjustmentDialogState.recalculateField]:
+                                String(saleAdjustmentPreview.nextValue),
                             };
 
                             saveExistingItemDraft(selectedRowItemId, nextDraft);
@@ -4358,6 +4551,7 @@ function writeQuotationEditorBundleCollapseState(versionId, state) {
         onCancelQuickCreate={cancelQuickCreateProduct}
         onQuickCreateFieldChange={handleQuickCreateFieldChange}
         onQuickCreateSubmit={handleQuickCreateSubmit}
+        onConfirmSelection={confirmBundleParentTemplateSelection}
         formatQuotationAmount={formatQuotationAmount}
       />
 

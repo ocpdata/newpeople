@@ -2018,7 +2018,9 @@ function buildProviderDocumentImportCommercialTermIndex(options = []) {
     byComparableName,
     fallbackCode:
       byCode.get(PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE) ||
-      byCode.get(PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE.toLowerCase()) ||
+      byCode.get(
+        PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE.toLowerCase(),
+      ) ||
       null,
   };
 }
@@ -2047,7 +2049,8 @@ function resolveProviderDocumentImportCommercialTermCode({
     };
   }
 
-  const comparableValue = normalizeProviderDocumentImportComparableText(rawValue);
+  const comparableValue =
+    normalizeProviderDocumentImportComparableText(rawValue);
   const byNameMatch = index.byComparableName.get(comparableValue);
   if (byNameMatch) {
     return {
@@ -2090,12 +2093,14 @@ function resolveProviderDocumentImportCommercialTermCode({
 
 function appendProviderDocumentImportNotes(baseNotes, noteLines = []) {
   const currentNotes = String(baseNotes || "").trim();
-  const normalizedNotes = normalizeProviderDocumentImportComparableText(currentNotes);
+  const normalizedNotes =
+    normalizeProviderDocumentImportComparableText(currentNotes);
   const uniqueLines = noteLines
     .map((line) => normalizeProviderDocumentImportText(line, 500))
     .filter(Boolean)
     .filter((line) => {
-      const comparableLine = normalizeProviderDocumentImportComparableText(line);
+      const comparableLine =
+        normalizeProviderDocumentImportComparableText(line);
       return comparableLine && !normalizedNotes.includes(comparableLine);
     });
 
@@ -2103,15 +2108,117 @@ function appendProviderDocumentImportNotes(baseNotes, noteLines = []) {
     return currentNotes;
   }
 
-  const noteBlock = [
-    "Sugerencias IA aplicadas como 'De acuerdo a lo indicado en notas':",
-    ...uniqueLines.map((line) => `- ${line}`),
-  ].join("\n");
+  const noteBlock = uniqueLines.map((line) => `- ${line}`).join("\n");
 
   const combinedNotes = currentNotes
     ? `${currentNotes}\n\n${noteBlock}`
     : noteBlock;
-  return combinedNotes.slice(0, PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH);
+  return combinedNotes.slice(
+    0,
+    PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH,
+  );
+}
+
+function formatProviderDocumentImportFallbackNoteValue(value) {
+  const rawValue = normalizeProviderDocumentImportText(value, 180);
+  if (!rawValue) {
+    return "";
+  }
+
+  const comparableValue = normalizeProviderDocumentImportComparableText(
+    rawValue,
+  ).replace(/[_-]+/g, " ");
+
+  if (
+    comparableValue === "de acuerdo a lo indicado en notas" ||
+    comparableValue === "segun notas" ||
+    comparableValue === "according to notes" ||
+    comparableValue === "as indicated in notes"
+  ) {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  const isoDateMatch = rawValue.match(/^(\d{4})-(\d{2})-(\d{2})$/u);
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${day}/${month}/${year}`;
+  }
+
+  const dayMatch = comparableValue.match(/^(\d+)\s*(?:dias?|days?)$/u);
+  if (dayMatch) {
+    return `${dayMatch[1]} dias`;
+  }
+
+  const yearMatch = comparableValue.match(/^(\d+)\s*(?:anos?|years?)$/u);
+  if (yearMatch) {
+    return `${yearMatch[1]} ${yearMatch[1] === "1" ? "ano" : "anos"}`;
+  }
+
+  const invoicedDaysMatch = comparableValue.match(
+    /^(?:factura a )?(\d+)\s*(?:dias?|days?)\s*(?:despues de facturado|after invoiced|after invoice|after billing|net)?$/u,
+  );
+  if (invoicedDaysMatch) {
+    return `${invoicedDaysMatch[1]} dias despues de facturado`;
+  }
+
+  const netDaysMatch = comparableValue.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return `${netDaysMatch[1]} dias despues de facturado`;
+  }
+
+  if (
+    comparableValue === "inmediato" ||
+    comparableValue === "immediate" ||
+    comparableValue === "immediately"
+  ) {
+    return "Inmediato";
+  }
+
+  if (
+    comparableValue === "contado" ||
+    comparableValue === "cash" ||
+    comparableValue === "cash in advance" ||
+    comparableValue === "advance payment" ||
+    comparableValue === "100 adelantado" ||
+    comparableValue === "100% adelantado" ||
+    comparableValue === "100 advance" ||
+    comparableValue === "100% advance" ||
+    comparableValue === "100 upfront" ||
+    comparableValue === "100% upfront"
+  ) {
+    return "100% adelantado";
+  }
+
+  if (
+    comparableValue === "50 adelantado 50 entrega" ||
+    comparableValue === "50% adelantado 50% contra entrega" ||
+    comparableValue === "50% anticipo y saldo contra entrega" ||
+    comparableValue === "50 anticipo y saldo contra entrega" ||
+    comparableValue === "50 advance 50 on delivery" ||
+    comparableValue === "50% advance 50% on delivery"
+  ) {
+    return "50% adelantado - 50% contra entrega";
+  }
+
+  if (
+    comparableValue === "100 entrega" ||
+    comparableValue === "100% contra entrega" ||
+    comparableValue === "100 on delivery" ||
+    comparableValue === "100% on delivery"
+  ) {
+    return "100% contra entrega";
+  }
+
+  return rawValue;
+}
+
+function buildProviderDocumentImportFallbackNoteLine(label, value) {
+  const formattedValue = formatProviderDocumentImportFallbackNoteValue(value);
+  if (!formattedValue) {
+    return "";
+  }
+
+  return `${label}: ${formattedValue}`;
 }
 
 function normalizeProviderDocumentImportCost({
@@ -11666,17 +11773,14 @@ router.post(
       listActiveQuotationCommercialTermOptions("quotation_warranty_terms"),
       listActiveQuotationCommercialTermOptions("quotation_payment_terms"),
     ]);
-    const deliveryTimeIndex = buildProviderDocumentImportCommercialTermIndex(
-      deliveryTimeOptions,
-    );
+    const deliveryTimeIndex =
+      buildProviderDocumentImportCommercialTermIndex(deliveryTimeOptions);
     const quotationValidityIndex =
       buildProviderDocumentImportCommercialTermIndex(quotationValidityOptions);
-    const warrantyIndex = buildProviderDocumentImportCommercialTermIndex(
-      warrantyOptions,
-    );
-    const paymentTermsIndex = buildProviderDocumentImportCommercialTermIndex(
-      paymentTermsOptions,
-    );
+    const warrantyIndex =
+      buildProviderDocumentImportCommercialTermIndex(warrantyOptions);
+    const paymentTermsIndex =
+      buildProviderDocumentImportCommercialTermIndex(paymentTermsOptions);
 
     const suggestedCommercialTerms = {
       deliveryTime:
@@ -11718,13 +11822,12 @@ router.post(
         version.payment_terms ||
         "30_dias_facturado",
     };
-    const resolvedDeliveryTime = resolveProviderDocumentImportCommercialTermCode(
-      {
+    const resolvedDeliveryTime =
+      resolveProviderDocumentImportCommercialTermCode({
         field: "deliveryTime",
         value: requestedCommercialTerms.deliveryTime,
         index: deliveryTimeIndex,
-      },
-    );
+      });
     const resolvedQuotationValidity =
       resolveProviderDocumentImportCommercialTermCode({
         field: "quotationValidity",
@@ -11736,25 +11839,27 @@ router.post(
       value: requestedCommercialTerms.warranty,
       index: warrantyIndex,
     });
-    const resolvedPaymentTerms = resolveProviderDocumentImportCommercialTermCode(
-      {
+    const resolvedPaymentTerms =
+      resolveProviderDocumentImportCommercialTermCode({
         field: "paymentTerms",
         value: requestedCommercialTerms.paymentTerms,
         index: paymentTermsIndex,
-      },
-    );
+      });
 
     const commercialFallbackNotes = [];
     if (
       commercialTermsSelection.deliveryTime &&
       resolvedDeliveryTime.usedFallback &&
-      normalizeProviderDocumentImportText(suggestedCommercialTerms.deliveryTime, 180)
+      normalizeProviderDocumentImportText(
+        suggestedCommercialTerms.deliveryTime,
+        180,
+      )
     ) {
       commercialFallbackNotes.push(
-        `Tiempo de entrega sugerido por IA: ${normalizeProviderDocumentImportText(
+        buildProviderDocumentImportFallbackNoteLine(
+          "Tiempo de entrega",
           suggestedCommercialTerms.deliveryTime,
-          180,
-        )}`,
+        ),
       );
     }
     if (
@@ -11766,22 +11871,25 @@ router.post(
       )
     ) {
       commercialFallbackNotes.push(
-        `Validez sugerida por IA: ${normalizeProviderDocumentImportText(
+        buildProviderDocumentImportFallbackNoteLine(
+          "Validez",
           suggestedCommercialTerms.quotationValidity,
-          180,
-        )}`,
+        ),
       );
     }
     if (
       commercialTermsSelection.warranty &&
       resolvedWarranty.usedFallback &&
-      normalizeProviderDocumentImportText(suggestedCommercialTerms.warranty, 180)
+      normalizeProviderDocumentImportText(
+        suggestedCommercialTerms.warranty,
+        180,
+      )
     ) {
       commercialFallbackNotes.push(
-        `Garantia sugerida por IA: ${normalizeProviderDocumentImportText(
+        buildProviderDocumentImportFallbackNoteLine(
+          "Garantia",
           suggestedCommercialTerms.warranty,
-          180,
-        )}`,
+        ),
       );
     }
     if (
@@ -11793,10 +11901,10 @@ router.post(
       )
     ) {
       commercialFallbackNotes.push(
-        `Pago sugerido por IA: ${normalizeProviderDocumentImportText(
+        buildProviderDocumentImportFallbackNoteLine(
+          "Pago",
           suggestedCommercialTerms.paymentTerms,
-          180,
-        )}`,
+        ),
       );
     }
 

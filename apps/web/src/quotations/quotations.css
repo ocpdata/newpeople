@@ -413,6 +413,32 @@
   color: #53708e;
 }
 
+.quotation-product-picker-table tbody tr.is-selected {
+  background: linear-gradient(180deg, #eef5ff 0%, #e5f0ff 100%);
+}
+
+.quotation-product-picker-table tbody tr.is-selected td {
+  border-bottom-color: #c6dafb;
+  color: #123456;
+}
+
+.quotation-product-picker-table tbody tr.is-selected td:first-child {
+  box-shadow: inset 4px 0 0 #2563eb;
+}
+
+.quotation-product-picker-table .quotation-icon-button.is-selected {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.quotation-product-picker-table
+  .quotation-icon-button.is-selected:hover:not(:disabled) {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
 .opportunity-quotations-header {
   align-items: flex-start;
 }

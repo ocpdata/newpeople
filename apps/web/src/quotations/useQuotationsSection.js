@@ -489,6 +489,13 @@ function normalizeCreateBundleComponentAsManual(item, parentLocalId) {
   };
 }
 
+function isBlankBundleSelectionItem(item) {
+  return (
+    !String(item?.productCode || "").trim() &&
+    !String(item?.productDescription || "").trim()
+  );
+}
+
 function getCreateManualBundleSelection(items, selectedIds) {
   const selectedIdSet = new Set(selectedIds || []);
   const selectedItems = (items || []).filter((item) =>
@@ -499,6 +506,14 @@ function getCreateManualBundleSelection(items, selectedIds) {
     return {
       ok: false,
       message: "Selecciona al menos dos filas para crear un bundle manual.",
+      items: [],
+    };
+  }
+
+  if (selectedItems.some((item) => isBlankBundleSelectionItem(item))) {
+    return {
+      ok: false,
+      message: "No puedes crear un bundle con filas seleccionadas en blanco.",
       items: [],
     };
   }
@@ -1606,7 +1621,12 @@ export function useQuotationsSection({
     return () => {
       cancelled = true;
     };
-  }, [accountId, contactOptions, selectedQuotation?.accountId, selectedQuotation?.account_id]);
+  }, [
+    accountId,
+    contactOptions,
+    selectedQuotation?.accountId,
+    selectedQuotation?.account_id,
+  ]);
   const hasCreateCommercialContext =
     Boolean(createQuotationForm.accountId) &&
     Boolean(createQuotationForm.opportunityId) &&
@@ -4680,6 +4700,108 @@ export function useQuotationsSection({
     [applyLocalSectionItemsState, itemEdits, selectedVersion],
   );
 
+  const handleCreateEditManualBundleFromTemplate = useCallback(
+    async (sectionId, selectedIds, templateProduct) => {
+      const section = (selectedVersion?.sections || []).find(
+        (candidate) => Number(candidate.id) === Number(sectionId),
+      );
+      if (!section) return [];
+
+      const sectionItems = buildEditablePersistedSectionItems(
+        section,
+        itemEdits,
+      );
+      const selection = getCreateManualBundleSelection(
+        sectionItems,
+        selectedIds || [],
+      );
+      if (!selection.ok) {
+        setError(selection.message);
+        return [];
+      }
+
+      if (
+        !templateProduct ||
+        templateProduct.itemType === "grupo_productos" ||
+        !String(templateProduct.code || "").trim() ||
+        !String(templateProduct.description || "").trim() ||
+        !Number(templateProduct.providerId)
+      ) {
+        setError(
+          "Selecciona una plantilla valida para crear el padre del bundle.",
+        );
+        return [];
+      }
+
+      setError("");
+      setSuccess("");
+
+      const currentSelectedSet = new Set(selectedIds || []);
+      const firstSelectedIndex = sectionItems.findIndex((item) =>
+        currentSelectedSet.has(item.localId),
+      );
+      const parentLocalId = String(buildNextEditItemId());
+      const normalizedParentItem = {
+        id: Number(parentLocalId),
+        localId: parentLocalId,
+        providerId: String(templateProduct.providerId || ""),
+        productCode: String(templateProduct.code || "").trim(),
+        productDescription: String(templateProduct.description || "").trim(),
+        quantity: "1",
+        originalCurrencyCode: "USD",
+        originalListPriceUnit: "0",
+        listPriceUnit: "0",
+        manufacturerDiscountPct: "0",
+        importCostPct: "0",
+        profitMarginPct: "0",
+        finalDiscountPct: "0",
+        itemType: "grupo_productos",
+        isRenewal: false,
+        bundleParentItemId: null,
+        bundleParentLocalId: null,
+        bundleOriginType: "manual_bundle",
+        sourceProviderPriceListItemId: null,
+        sourceComponentPriceListItemId: null,
+        bundleComponentItemId: null,
+        isBundleComponent: false,
+        bundleSortOrder: null,
+      };
+      const normalizedComponentItems = selection.items.map((item) =>
+        normalizeCreateBundleComponentAsManual(item, parentLocalId),
+      );
+
+      const nextItems = [];
+      let insertedBundleBlock = false;
+
+      sectionItems.forEach((item, currentIndex) => {
+        if (!insertedBundleBlock && currentIndex === firstSelectedIndex) {
+          nextItems.push(normalizedParentItem, ...normalizedComponentItems);
+          insertedBundleBlock = true;
+        }
+
+        if (currentSelectedSet.has(item.localId)) {
+          return;
+        }
+
+        nextItems.push(item);
+      });
+
+      if (!insertedBundleBlock) {
+        nextItems.push(normalizedParentItem, ...normalizedComponentItems);
+      }
+
+      applyLocalSectionItemsState(sectionId, nextItems);
+      setSuccess("Bundle creado desde plantilla");
+      return [parentLocalId, ...selection.items.map((item) => item.localId)];
+    },
+    [
+      applyLocalSectionItemsState,
+      buildNextEditItemId,
+      itemEdits,
+      selectedVersion,
+    ],
+  );
+
   const handleAttachEditSectionItemsToManualBundle = useCallback(
     async (sectionId, selectedIds) => {
       const section = (selectedVersion?.sections || []).find(
@@ -5386,6 +5508,7 @@ export function useQuotationsSection({
         handleCreateItem,
         handleApplyEditSectionItemProduct,
         handleCreateEditManualBundle,
+        handleCreateEditManualBundleFromTemplate,
         handleAttachEditSectionItemsToManualBundle,
         handleDetachEditSectionItemsFromManualBundle,
         handleRemoveEditSectionItems,
@@ -5477,6 +5600,7 @@ export function useQuotationsSection({
       handleCreateItem,
       handleApplyEditSectionItemProduct,
       handleCreateEditManualBundle,
+      handleCreateEditManualBundleFromTemplate,
       handleAttachEditSectionItemsToManualBundle,
       handleDetachEditSectionItemsFromManualBundle,
       handleRemoveEditSectionItems,

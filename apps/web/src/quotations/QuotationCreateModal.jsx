@@ -256,6 +256,13 @@ function getBundleHintMessage({
   return "";
 }
 
+function isBlankBundleSelectionItem(item) {
+  return (
+    !String(item?.productCode || "").trim() &&
+    !String(item?.productDescription || "").trim()
+  );
+}
+
 function HighlightIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -743,6 +750,14 @@ function QuotationCreateModal({
       return {
         ok: false,
         message: "Selecciona al menos dos filas para crear un bundle manual.",
+        items: [],
+      };
+    }
+
+    if (selectedItems.some((item) => isBlankBundleSelectionItem(item))) {
+      return {
+        ok: false,
+        message: "No puedes crear un bundle con filas seleccionadas en blanco.",
         items: [],
       };
     }

@@ -87,6 +87,92 @@ function normalizeCommercialConditionCatalogValue(field, value) {
   return mappedValue || normalizedValue;
 }
 
+function formatLegacyCommercialNoteValue(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return "";
+
+  const normalizedValue = normalizeText(rawValue).replace(/[_-]+/g, " ");
+  const isoDateMatch = rawValue.match(/^(\d{4})-(\d{2})-(\d{2})$/u);
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${day}/${month}/${year}`;
+  }
+
+  if (
+    normalizedValue === "de acuerdo a lo indicado en notas" ||
+    normalizedValue === "segun notas" ||
+    normalizedValue === "according to notes" ||
+    normalizedValue === "as indicated in notes"
+  ) {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  const invoicedDaysMatch = normalizedValue.match(
+    /^(?:factura a )?(\d+)\s*(?:dias?|days?)\s*(?:despues de facturado|after invoiced|after invoice|after billing|net)?$/u,
+  );
+  if (invoicedDaysMatch) {
+    return `${invoicedDaysMatch[1]} dias despues de facturado`;
+  }
+
+  const netDaysMatch = normalizedValue.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return `${netDaysMatch[1]} dias despues de facturado`;
+  }
+
+  return rawValue;
+}
+
+function sanitizeLegacyProviderDocumentImportNotes(value) {
+  const normalizedNotes = String(value || "");
+  if (!normalizedNotes) {
+    return "";
+  }
+
+  return normalizedNotes
+    .split("\n")
+    .map((line) => {
+      const trimmedLine = line.trim();
+      if (
+        trimmedLine ===
+          "Sugerencias IA aplicadas como 'De acuerdo a lo indicado en notas':" ||
+        trimmedLine ===
+          "Condiciones comerciales aplicadas como 'De acuerdo a lo indicado en notas':"
+      ) {
+        return "";
+      }
+
+      const legacyPrefixes = [
+        ["- Tiempo de entrega sugerido por IA:", "- Tiempo de entrega:"],
+        ["- Validez sugerida por IA:", "- Validez:"],
+        ["- Garantia sugerida por IA:", "- Garantia:"],
+        ["- Pago sugerido por IA:", "- Pago:"],
+        ["Tiempo de entrega sugerido por IA:", "Tiempo de entrega:"],
+        ["Validez sugerida por IA:", "Validez:"],
+        ["Garantia sugerida por IA:", "Garantia:"],
+        ["Pago sugerido por IA:", "Pago:"],
+      ];
+
+      for (const [legacyPrefix, nextPrefix] of legacyPrefixes) {
+        if (trimmedLine.startsWith(legacyPrefix)) {
+          const rawLineValue = trimmedLine.slice(legacyPrefix.length).trim();
+          return `${nextPrefix} ${formatLegacyCommercialNoteValue(rawLineValue)}`.trim();
+        }
+      }
+
+      return line;
+    })
+    .filter((line, index, lines) => {
+      if (line !== "") {
+        return true;
+      }
+
+      const previousLine = lines[index - 1] || "";
+      const nextLine = lines[index + 1] || "";
+      return previousLine.trim() !== "" && nextLine.trim() !== "";
+    })
+    .join("\n");
+}
+
 export const DEFAULT_QUOTATION_COMMERCIAL_CONDITIONS = {
   deliveryTime: "30_dias",
   quotationValidity: "30_dias",
@@ -130,6 +216,9 @@ export function buildQuotationCommercialConditionsForm(values) {
       values?.exchangeRate == null || values?.exchangeRate === ""
         ? DEFAULT_QUOTATION_COMMERCIAL_CONDITIONS.exchangeRate
         : String(values.exchangeRate),
+    quotationNotes: sanitizeLegacyProviderDocumentImportNotes(
+      mergedValues.quotationNotes,
+    ),
   };
 }
 
@@ -545,8 +634,7 @@ export function resolveQuotationItemSaleTarget({
     if (!(finalDiscountFactor > 0)) {
       return {
         ok: false,
-        message:
-          "No es posible alcanzar ese total ajustando solo el margen.",
+        message: "No es posible alcanzar ese total ajustando solo el margen.",
       };
     }
 
@@ -554,8 +642,7 @@ export function resolveQuotationItemSaleTarget({
     if (!(targetSalePriceBase > 0)) {
       return {
         ok: false,
-        message:
-          "No es posible alcanzar ese total ajustando solo el margen.",
+        message: "No es posible alcanzar ese total ajustando solo el margen.",
       };
     }
 
@@ -563,8 +650,7 @@ export function resolveQuotationItemSaleTarget({
     if (!(nextValue >= 0 && nextValue < 100)) {
       return {
         ok: false,
-        message:
-          "El margen resultante queda fuera de rango permitido.",
+        message: "El margen resultante queda fuera de rango permitido.",
       };
     }
 
@@ -573,7 +659,11 @@ export function resolveQuotationItemSaleTarget({
       profitMarginPct: roundQuotationUnitPrice(nextValue),
     };
   } else if (recalculateField === "manufacturerDiscountPct") {
-    if (!(finalDiscountFactor > 0) || !(profitFactor > 0) || !(importFactor > 0)) {
+    if (
+      !(finalDiscountFactor > 0) ||
+      !(profitFactor > 0) ||
+      !(importFactor > 0)
+    ) {
       return {
         ok: false,
         message:
@@ -659,7 +749,9 @@ export function resolveQuotationItemSaleTarget({
     nextValue: roundQuotationUnitPrice(nextValue),
     currentTotals: {
       netTotal: roundQuotationMoney(currentNetTotal),
-      vatTotal: roundQuotationMoney(currentTotals.salePriceTotal - currentNetTotal),
+      vatTotal: roundQuotationMoney(
+        currentTotals.salePriceTotal - currentNetTotal,
+      ),
       salePriceTotal: roundQuotationMoney(currentTotals.salePriceTotal),
     },
     nextTotals: {

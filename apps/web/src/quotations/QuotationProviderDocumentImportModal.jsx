@@ -1,3 +1,5 @@
+import { normalizeText } from "./quotationsUtils";
+
 const COMMERCIAL_TERM_LABELS = {
   deliveryTime: "Entrega",
   quotationValidity: "Validez",
@@ -50,6 +52,107 @@ function getProviderImportItemStatusLabel(item) {
     return "Proveedor sin lista activa";
   }
   return "Confirma proveedor";
+}
+
+function formatCommercialTermValue(field, value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const normalizedValue = normalizeText(rawValue).replace(/[_-]+/g, " ");
+
+  if (field === "currencyCode") {
+    return rawValue.toUpperCase();
+  }
+
+  if (normalizedValue === "segun notas" || normalizedValue === "segun_notas") {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  if (
+    normalizedValue === "de acuerdo a lo indicado en notas" ||
+    normalizedValue === "according to notes" ||
+    normalizedValue === "as indicated in notes"
+  ) {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  const dayMatch = normalizedValue.match(/^(\d+)\s*(?:dias?|days?)$/u);
+  if (dayMatch) {
+    return `${dayMatch[1]} dias`;
+  }
+
+  const yearMatch = normalizedValue.match(/^(\d+)\s*(?:anos?|years?)$/u);
+  if (yearMatch) {
+    return `${yearMatch[1]} ${yearMatch[1] === "1" ? "ano" : "anos"}`;
+  }
+
+  if (
+    normalizedValue === "inmediato" ||
+    normalizedValue === "immediate" ||
+    normalizedValue === "immediately"
+  ) {
+    return "Inmediato";
+  }
+
+  if (
+    normalizedValue === "contado" ||
+    normalizedValue === "cash" ||
+    normalizedValue === "cash in advance" ||
+    normalizedValue === "advance payment" ||
+    normalizedValue === "100 adelantado" ||
+    normalizedValue === "100% adelantado" ||
+    normalizedValue === "100 advance" ||
+    normalizedValue === "100% advance" ||
+    normalizedValue === "100 upfront" ||
+    normalizedValue === "100% upfront" ||
+    normalizedValue === "100_adelantado"
+  ) {
+    return "100% adelantado";
+  }
+
+  if (
+    normalizedValue === "50 adelantado 50 entrega" ||
+    normalizedValue === "50% adelantado 50% contra entrega" ||
+    normalizedValue === "50 anticipo y saldo contra entrega" ||
+    normalizedValue === "50 advance 50 on delivery" ||
+    normalizedValue === "50% advance 50% on delivery" ||
+    normalizedValue === "50_adelantado_50_entrega"
+  ) {
+    return "50% adelantado - 50% contra entrega";
+  }
+
+  if (
+    normalizedValue === "100 entrega" ||
+    normalizedValue === "100% contra entrega" ||
+    normalizedValue === "100 on delivery" ||
+    normalizedValue === "100% on delivery" ||
+    normalizedValue === "100_entrega"
+  ) {
+    return "100% contra entrega";
+  }
+
+  const invoicedDaysMatch = normalizedValue.match(
+    /^(\d+)\s*(?:dias?|days?)\s*(?:despues de facturado|after invoiced|after invoice|after billing|net)$/u,
+  );
+  if (invoicedDaysMatch) {
+    return `${invoicedDaysMatch[1]} dias despues de facturado`;
+  }
+
+  const netDaysMatch = normalizedValue.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return `${netDaysMatch[1]} dias despues de facturado`;
+  }
+
+  if (["deliveryTime", "quotationValidity"].includes(field)) {
+    const deliveryDaysMatch = normalizedValue.match(/^(\d+)\s*dias$/u);
+    if (deliveryDaysMatch) {
+      return `${deliveryDaysMatch[1]} dias`;
+    }
+  }
+
+  return rawValue;
 }
 
 function QuotationProviderDocumentImportModal({
@@ -269,10 +372,10 @@ function QuotationProviderDocumentImportModal({
               <div className="quotation-provider-import-table-intro">
                 <strong>Items identificados</strong>
                 <p>
-                  Esta tabla contiene los items que la IA extrajo del
-                  documento. Las resoluciones ajustan el estado de cada fila;
-                  el contenido base del documento se conserva para revisar y
-                  confirmar antes de aplicar.
+                  Esta tabla contiene los items que la IA extrajo del documento.
+                  Las resoluciones ajustan el estado de cada fila; el contenido
+                  base del documento se conserva para revisar y confirmar antes
+                  de aplicar.
                 </p>
               </div>
 
@@ -309,7 +412,9 @@ function QuotationProviderDocumentImportModal({
                               <input
                                 type="checkbox"
                                 checked={Boolean(
-                                  missingItemsSelection?.[String(item.previewId)],
+                                  missingItemsSelection?.[
+                                    String(item.previewId)
+                                  ],
                                 )}
                                 onChange={(event) =>
                                   onToggleMissingItemSelection(
@@ -336,7 +441,9 @@ function QuotationProviderDocumentImportModal({
                         <td>{item.resolvedCostUnit}</td>
                         <td>
                           <div className="quotation-provider-import-status-cell">
-                            <strong>{getProviderImportItemStatusLabel(item)}</strong>
+                            <strong>
+                              {getProviderImportItemStatusLabel(item)}
+                            </strong>
                             {item.effectiveMatchStatus === "matched" &&
                             item.effectiveMatchedCandidate ? (
                               <span>
@@ -389,8 +496,8 @@ function QuotationProviderDocumentImportModal({
             <section className="quotation-provider-import-conditions-section">
               <strong>Condiciones encontradas</strong>
               <p>
-                Marca las condiciones comerciales encontradas por la IA que
-                deseas aplicar a la cotización.
+                Marca las condiciones comerciales encontradas que deseas aplicar
+                a la cotizacion.
               </p>
               <div className="quotation-provider-import-terms">
                 <div className="quotation-provider-import-terms-grid">
@@ -413,8 +520,11 @@ function QuotationProviderDocumentImportModal({
                         <strong>{COMMERCIAL_TERM_LABELS[field]}</strong>
                       </span>
                       <span>
-                        {preview.commercialTerms?.[field] ||
-                          (field === "currencyCode" ? "USD" : "30 dias")}
+                        {formatCommercialTermValue(
+                          field,
+                          preview.commercialTerms?.[field] ||
+                            (field === "currencyCode" ? "USD" : "30 dias"),
+                        )}
                       </span>
                     </label>
                   ))}
@@ -624,7 +734,6 @@ function QuotationProviderDocumentImportModal({
                 ) : null}
               </div>
             ) : null}
-
           </>
         ) : null}
       </div>
