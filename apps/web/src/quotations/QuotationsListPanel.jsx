@@ -351,6 +351,9 @@ function QuotationsListPanel({
                           "function" &&
                         selectedEditVersion?.statusCode === "aprobada" &&
                         !canOpenProposal;
+                      const proposalActionLabel = canOpenProposal
+                        ? "Abrir propuesta"
+                        : "Crear propuesta";
 
                       return (
                         <>
@@ -359,84 +362,101 @@ function QuotationsListPanel({
                             className="kebab-btn"
                             onClick={() => toggleQuotationMenu(quotation)}
                             aria-label="Abrir acciones"
+                            aria-haspopup="menu"
+                            aria-expanded={openQuotationMenuId === quotation.id}
                           >
                             ⋮
                           </button>
                           {openQuotationMenuId === quotation.id ? (
                             <div className="user-kebab-menu quotation-actions-menu">
-                              <label
-                                className="quotation-actions-menu-label"
-                                htmlFor={`quotation-edit-version-${quotation.id}`}
-                              >
-                                Version para editar
-                              </label>
-                              <select
-                                id={`quotation-edit-version-${quotation.id}`}
-                                className="quotation-actions-menu-select"
-                                value={String(selectedEditVersionId || "")}
-                                onChange={(event) =>
-                                  handleSelectQuotationEditVersion(
-                                    quotation.id,
-                                    event.target.value,
-                                  )
-                                }
-                              >
-                                {versionOptions.map((version) => (
-                                  <option
-                                    key={version.id}
-                                    value={String(version.id)}
-                                  >
-                                    {formatVersionOptionLabel(version)}
-                                  </option>
-                                ))}
-                              </select>
-                              {loadingVersions ? (
-                                <p className="quotation-actions-menu-hint">
-                                  Cargando versiones...
-                                </p>
-                              ) : null}
-                              <button
-                                type="button"
-                                disabled={
-                                  busyAction ===
-                                    `open-quotation-${quotation.id}` ||
-                                  !selectedEditVersionId
-                                }
-                                onClick={() =>
-                                  openEditQuotationModal(
-                                    quotation,
-                                    selectedEditVersionId,
-                                  )
-                                }
-                              >
-                                Editar cotizacion
-                              </button>
-                              <button
-                                type="button"
-                                disabled={
-                                  loadingVersions ||
-                                  (!canCreateProposal && !canOpenProposal)
-                                }
-                                onClick={() => {
-                                  onCreateProposalFromQuotationVersion?.(
-                                    quotation,
-                                    selectedEditVersion,
-                                  );
-                                  setOpenQuotationMenuId(null);
-                                }}
-                              >
-                                {canOpenProposal
-                                  ? "Editar propuesta"
-                                  : "Crear propuesta"}
-                              </button>
-                              {!loadingVersions &&
-                              !canCreateProposal &&
-                              !canOpenProposal ? (
-                                <p className="quotation-actions-menu-hint">
-                                  Solo las versiones aprobadas sin propuesta
-                                  pueden generar una nueva propuesta.
-                                </p>
-                              ) : null}
+                              <div className="quotation-actions-menu-section">
+                                <label
+                                  className="quotation-actions-menu-label"
+                                  htmlFor={`quotation-edit-version-${quotation.id}`}
+                                >
+                                  Version
+                                </label>
+                                <select
+                                  id={`quotation-edit-version-${quotation.id}`}
+                                  className="quotation-actions-menu-select"
+                                  value={String(selectedEditVersionId || "")}
+                                  onChange={(event) =>
+                                    handleSelectQuotationEditVersion(
+                                      quotation.id,
+                                      event.target.value,
+                                    )
+                                  }
+                                >
+                                  {versionOptions.map((version) => (
+                                    <option
+                                      key={version.id}
+                                      value={String(version.id)}
+                                    >
+                                      {formatVersionOptionLabel(version)}
+                                    </option>
+                                  ))}
+                                </select>
+                                {loadingVersions ? (
+                                  <p className="quotation-actions-menu-hint">
+                                    Cargando versiones...
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <div className="quotation-actions-menu-section quotation-actions-menu-section-actions">
+                                <button
+                                  type="button"
+                                  className="quotation-actions-menu-button is-primary"
+                                  disabled={
+                                    busyAction ===
+                                      `open-quotation-${quotation.id}` ||
+                                    !selectedEditVersionId
+                                  }
+                                  onClick={() =>
+                                    openEditQuotationModal(
+                                      quotation,
+                                      selectedEditVersionId,
+                                    )
+                                  }
+                                >
+                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 20 20" focusable="false">
+                                      <path d="M13.7 2.3a1 1 0 0 1 1.4 0l2.6 2.6a1 1 0 0 1 0 1.4l-8.6 8.6-3.8.9.9-3.8 8.6-8.6zM5.8 13.3l.9.9-.3-1.2-.6.3z" fill="currentColor" />
+                                    </svg>
+                                  </span>
+                                  <span className="quotation-actions-menu-button-body">
+                                    <span className="quotation-actions-menu-button-title">
+                                      Editar cotizacion
+                                    </span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="quotation-actions-menu-button is-secondary"
+                                  disabled={
+                                    loadingVersions ||
+                                    (!canCreateProposal && !canOpenProposal)
+                                  }
+                                  onClick={() => {
+                                    onCreateProposalFromQuotationVersion?.(
+                                      quotation,
+                                      selectedEditVersion,
+                                    );
+                                    setOpenQuotationMenuId(null);
+                                  }}
+                                >
+                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 20 20" focusable="false">
+                                      <path d="M4 3h8a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v7h7V5H5zm3 8v2h7V8h-1v6a1 1 0 0 1-1 1H8z" fill="currentColor" />
+                                    </svg>
+                                  </span>
+                                  <span className="quotation-actions-menu-button-body">
+                                    <span className="quotation-actions-menu-button-title">
+                                      {proposalActionLabel}
+                                    </span>
+                                  </span>
+                                </button>
+                              </div>
                             </div>
                           ) : null}
                         </>

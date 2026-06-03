@@ -22,7 +22,6 @@ import {
 } from "./QuotationCommercialFields";
 import { buildQuotationPrintModel } from "./quotationPrintModel";
 import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
-import QuotationProviderDocumentImportModal from "./QuotationProviderDocumentImportModal";
 import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
@@ -35,6 +34,13 @@ function updateDraftEntry(setter, entryId, currentValue, field, value) {
       [field]: value,
     },
   }));
+}
+
+function formatDescriptionEditorPreview(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")[0]
+    .trim();
 }
 
 function SaleAdjustmentIcon() {
@@ -827,20 +833,7 @@ function QuotationEditorContent({
   handleSaveAsNewVersion,
   handleUploadQuotationDocuments,
   handleSetQuotationDocumentAiEnabled,
-  providerDocumentImportState,
-  providerDocumentImportEffectiveItems,
-  providerDocumentImportWorkflowStage,
   openProviderDocumentImportModal,
-  closeProviderDocumentImportModal,
-  setProviderDocumentImportDocument,
-  setProviderDocumentImportProvider,
-  setProviderDocumentImportCommercialTermSelection,
-  setProviderDocumentImportSuggestedMatchCandidate,
-  setProviderDocumentImportSuggestedMatchResolution,
-  setProviderDocumentImportMissingItemSelection,
-  handlePreviewProviderDocumentImport,
-  handleCreateMissingProviderDocumentImportItems,
-  handleApplyProviderDocumentImport,
   handleDownloadQuotationDocument,
   handleAction,
   handleCreateSection,
@@ -1233,6 +1226,18 @@ function QuotationEditorContent({
       closePrintPreviewModal();
     }
   }
+
+  function handleOpenProviderImportWindow() {
+    if (typeof closeEditQuotationModal === "function") {
+      const closed = closeEditQuotationModal();
+      if (closed === false) {
+        return;
+      }
+    }
+
+    openProviderDocumentImportModal();
+  }
+
   const canCreateNewVersion = Array.isArray(allowedActions)
     ? allowedActions.some((action) => action.code === "crear_version")
     : false;
@@ -3694,35 +3699,21 @@ function QuotationEditorContent({
                                     onBlurCapture={handleDescriptionEditorBlur}
                                   >
                                     <input
-                                      value={itemDraftValue.productDescription}
-                                      onFocus={() =>
+                                      readOnly
+                                      value={formatDescriptionEditorPreview(
+                                        itemDraftValue.productDescription,
+                                      )}
+                                      onClick={() =>
                                         openDescriptionEditor(
                                           section.id,
                                           item.id,
                                         )
                                       }
-                                      onChange={(event) =>
-                                        updateDraftEntry(
-                                          setItemEdits,
+                                      onFocus={() =>
+                                        openDescriptionEditor(
+                                          section.id,
                                           item.id,
-                                          itemDraftValue,
-                                          "productDescription",
-                                          event.target.value,
                                         )
-                                      }
-                                      onKeyDown={(event) =>
-                                        handleDescriptionEditorEscape(
-                                          event,
-                                          item.id,
-                                          itemDraftValue,
-                                        )
-                                      }
-                                      onBlur={(event) =>
-                                        saveExistingItemDraft(item.id, {
-                                          ...itemDraftValue,
-                                          productDescription:
-                                            event.currentTarget.value,
-                                        })
                                       }
                                     />
                                     {activeDescriptionEditor.sectionId ===
@@ -4324,17 +4315,26 @@ function QuotationEditorContent({
             >
               <button
                 type="button"
-                className={`btn-secondary quotation-documents-view-button${documentViewMode === "current" ? " is-active" : ""}`}
+                className={`btn-secondary quotation-documents-view-button quotation-documents-icon-button${documentViewMode === "current" ? " is-active" : ""}`}
                 onClick={() => setDocumentViewMode("current")}
+                title="Mostrar solo documentos adjuntos de esta versión de la cotización"
+                aria-label="Mostrar solo documentos adjuntos de esta versión de la cotización"
               >
-                Esta version
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 4.75h8.8L19.25 9.2V19a1.25 1.25 0 0 1-1.25 1.25H6A1.25 1.25 0 0 1 4.75 19V6A1.25 1.25 0 0 1 6 4.75Zm8.5 1.9V9.5h2.85Z" />
+                </svg>
               </button>
               <button
                 type="button"
-                className={`btn-secondary quotation-documents-view-button${documentViewMode === "all" ? " is-active" : ""}`}
+                className={`btn-secondary quotation-documents-view-button quotation-documents-icon-button${documentViewMode === "all" ? " is-active" : ""}`}
                 onClick={() => setDocumentViewMode("all")}
+                title="Mostrar documentos de todas las versiones de esta cotización"
+                aria-label="Mostrar documentos de todas las versiones de esta cotización"
               >
-                Todas las versiones
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 4.75h8.8L21.25 9.2V19A1.25 1.25 0 0 1 20 20.25H8A1.25 1.25 0 0 1 6.75 19V6A1.25 1.25 0 0 1 8 4.75Zm8.5 1.9V9.5h2.85Z" />
+                  <path d="M4 7.25a1.25 1.25 0 0 1 1.25-1.25h.5V19A2.75 2.75 0 0 0 8.5 21.75h9.25v.5A1.25 1.25 0 0 1 16.5 23.5h-11A1.25 1.25 0 0 1 4.25 22.25Z" />
+                </svg>
               </button>
             </div>
             <input
@@ -4346,19 +4346,35 @@ function QuotationEditorContent({
             />
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary quotation-documents-icon-button"
               disabled={isUploadingDocuments}
               onClick={() => quotationDocumentsInputRef.current?.click()}
+              title={
+                isUploadingDocuments
+                  ? "Cargando archivos al servidor"
+                  : "Agregar uno o más documentos de soporte a esta cotización"
+              }
+              aria-label={
+                isUploadingDocuments
+                  ? "Cargando archivos al servidor"
+                  : "Agregar uno o más documentos de soporte a esta cotización"
+              }
             >
-              {isUploadingDocuments ? "Cargando..." : "Agregar documentos"}
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 4.5a.75.75 0 0 1 .75.75V12h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0V13.5H4.5a.75.75 0 0 1 0-1.5h6.75V5.25A.75.75 0 0 1 12 4.5Z" />
+              </svg>
             </button>
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-secondary quotation-documents-icon-button"
               disabled={!eligibleQuotationDocuments.length}
-              onClick={openProviderDocumentImportModal}
+              onClick={handleOpenProviderImportWindow}
+              title="Crear o completar items de cotización a partir de un documento analizado con IA"
+              aria-label="Crear o completar items de cotización a partir de un documento analizado con IA"
             >
-              Crear desde documento con IA
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2.5a.75.75 0 0 1 .75.75V6h2.75a3.5 3.5 0 0 1 3.5 3.5v2.75h2.75a.75.75 0 0 1 0 1.5H19v2.75a3.5 3.5 0 0 1-3.5 3.5h-2.75v2.75a.75.75 0 0 1-1.5 0V20H8.5A3.5 3.5 0 0 1 5 16.5v-2.75H2.25a.75.75 0 0 1 0-1.5H5V9.5A3.5 3.5 0 0 1 8.5 6h2.75V3.25a.75.75 0 0 1 .75-.75Zm-3.5 5A2 2 0 0 0 6.5 9.5v7a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z" />
+              </svg>
             </button>
           </div>
         </div>
@@ -4403,7 +4419,7 @@ function QuotationEditorContent({
                 <div className="quotation-document-actions">
                   <button
                     type="button"
-                    className="btn-secondary"
+                    className="btn-secondary quotation-documents-icon-button"
                     disabled={
                       busyAction ===
                       `toggle-quotation-document-ai-${document.id}`
@@ -4414,24 +4430,48 @@ function QuotationEditorContent({
                         document.aiEnabled === false,
                       )
                     }
+                    title={
+                      busyAction ===
+                      `toggle-quotation-document-ai-${document.id}`
+                        ? "Guardando configuración de IA para este documento"
+                        : document.aiEnabled === false
+                          ? "Permitir nuevamente este documento para análisis con IA"
+                          : "Excluir este documento del análisis con IA"
+                    }
+                    aria-label={
+                      busyAction ===
+                      `toggle-quotation-document-ai-${document.id}`
+                        ? "Guardando configuración de IA para este documento"
+                        : document.aiEnabled === false
+                          ? "Permitir nuevamente este documento para análisis con IA"
+                          : "Excluir este documento del análisis con IA"
+                    }
                   >
-                    {busyAction ===
-                    `toggle-quotation-document-ai-${document.id}`
-                      ? "Guardando..."
-                      : document.aiEnabled === false
-                        ? "Permitir IA"
-                        : "Excluir de IA"}
+                    {document.aiEnabled === false ? (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 4.75h10a2.25 2.25 0 0 1 2.25 2.25v10A2.25 2.25 0 0 1 17 19.25H7A2.25 2.25 0 0 1 4.75 17V7A2.25 2.25 0 0 1 7 4.75Zm3.55 3.6a.75.75 0 0 0-.35.63v2.28l-1.98 1.14a.75.75 0 1 0 .76 1.3l1.98-1.14 1.98 1.14a.75.75 0 1 0 .75-1.3l-1.98-1.14V8.98a.75.75 0 0 0-1.16-.63Z" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12.53 3.22a.75.75 0 0 1 .79.16l7.3 7.3a.75.75 0 0 1 0 1.06l-8.88 8.88a.75.75 0 0 1-1.06 0l-7.3-7.3a.75.75 0 0 1-.16-.79l2.47-7.03a.75.75 0 0 1 .47-.47Zm-.26 2.03-5.24 1.84L5.2 12.33l6.01 6.01 7.82-7.82Z" />
+                        <path d="M8.9 9.73a1.17 1.17 0 1 0 0-2.34 1.17 1.17 0 0 0 0 2.34Z" />
+                      </svg>
+                    )}
                   </button>
                   <button
                     type="button"
-                    className="btn-secondary"
+                    className="btn-secondary quotation-documents-icon-button"
                     disabled={
                       busyAction ===
                       `download-quotation-document-${document.id}`
                     }
                     onClick={() => handleDownloadQuotationDocument(document)}
+                    title="Descargar este documento al equipo"
+                    aria-label="Descargar este documento al equipo"
                   >
-                    Descargar
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 0 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 0 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -4445,46 +4485,6 @@ function QuotationEditorContent({
           </div>
         )}
 
-        <QuotationProviderDocumentImportModal
-          isOpen={providerDocumentImportState.isOpen}
-          documents={eligibleQuotationDocuments}
-          providerOptions={catalogs.providers}
-          selectedDocumentId={providerDocumentImportState.selectedDocumentId}
-          onDocumentChange={setProviderDocumentImportDocument}
-          confirmedProviderId={providerDocumentImportState.confirmedProviderId}
-          onProviderChange={setProviderDocumentImportProvider}
-          onClose={closeProviderDocumentImportModal}
-          onAnalyze={handlePreviewProviderDocumentImport}
-          preview={providerDocumentImportState.preview}
-          effectiveItems={providerDocumentImportEffectiveItems}
-          workflowStage={providerDocumentImportWorkflowStage}
-          previewJob={providerDocumentImportState.previewJob}
-          loadingPreview={providerDocumentImportState.loadingPreview}
-          creatingMissingItems={
-            providerDocumentImportState.creatingMissingItems
-          }
-          applying={providerDocumentImportState.applying}
-          commercialTermsSelection={
-            providerDocumentImportState.commercialTermsSelection
-          }
-          onToggleCommercialTermSelection={
-            setProviderDocumentImportCommercialTermSelection
-          }
-          onSelectSuggestedMatchCandidate={
-            setProviderDocumentImportSuggestedMatchCandidate
-          }
-          onResolveSuggestedMatch={
-            setProviderDocumentImportSuggestedMatchResolution
-          }
-          missingItemsSelection={
-            providerDocumentImportState.missingItemsSelection
-          }
-          onToggleMissingItemSelection={
-            setProviderDocumentImportMissingItemSelection
-          }
-          onApply={handleApplyProviderDocumentImport}
-          onCreateMissingItems={handleCreateMissingProviderDocumentImportItems}
-        />
       </section>
 
       <div className="quotation-edit-actions">

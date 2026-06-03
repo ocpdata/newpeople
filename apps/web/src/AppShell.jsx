@@ -14,6 +14,8 @@ const OpportunityQuestionAdminPage = lazy(
 );
 const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
 const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
+const ToolsPage = lazy(() => import("./ToolsPage"));
+const PriceListDuplicatesPage = lazy(() => import("./PriceListDuplicatesPage"));
 const UsersPage = lazy(() => import("./UsersPage"));
 const RolesPage = lazy(() => import("./RolesPage"));
 const AccountsPage = lazy(() => import("./AccountsPage"));
@@ -148,6 +150,22 @@ export default function AppShell({
           element={
             can("configuracion.read") ? (
               <ConfigurationPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/tools"
+          element={
+            can("herramientas.read") ? <ToolsPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
+          path="/tools/price-list-duplicates"
+          element={
+            can("herramientas.read") ? (
+              <PriceListDuplicatesPage />
             ) : (
               <Navigate to="/" />
             )
@@ -470,7 +488,8 @@ export default function AppShell({
           {(can("usuarios.read") ||
             can("roles.read") ||
             canAccessProcessCommercialConfig ||
-            can("configuracion.read")) && (
+            can("configuracion.read") ||
+            can("herramientas.read")) && (
             <SidebarNavGroup title="Administracion">
               {can("usuarios.read") && (
                 <GuardedNavLink
@@ -502,6 +521,14 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Configuracion
+                </GuardedNavLink>
+              )}
+              {can("herramientas.read") && (
+                <GuardedNavLink
+                  to="/tools"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Herramientas
                 </GuardedNavLink>
               )}
             </SidebarNavGroup>

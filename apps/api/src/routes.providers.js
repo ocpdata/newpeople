@@ -204,6 +204,39 @@ async function getPriceItemActivationStatusCodeById(statusId) {
   return rows.length ? String(rows[0].code) : null;
 }
 
+function normalizeProviderPriceListItemCode(code) {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+async function findProviderPriceListItemByNormalizedCode({
+  priceListId,
+  code,
+  excludeItemId = null,
+}) {
+  const normalizedCode = normalizeProviderPriceListItemCode(code);
+  if (!normalizedCode) {
+    return null;
+  }
+
+  const params = [Number(priceListId), normalizedCode];
+  let sql = `SELECT id, code, activation_status_id
+     FROM provider_price_list_items
+     WHERE price_list_id = ?
+       AND REPLACE(UPPER(TRIM(code)), ' ', '') = ?`;
+
+  if (excludeItemId != null) {
+    sql += " AND id <> ?";
+    params.push(Number(excludeItemId));
+  }
+
+  sql += " ORDER BY id ASC LIMIT 1";
+  const rows = await query(sql, params);
+  return rows.length ? rows[0] : null;
+}
+
 async function getProviderPriceItemCounts(providerId) {
   const rows = await query(
     `SELECT pils.code, COUNT(*) AS count
@@ -1570,6 +1603,16 @@ router.post(
         .json(groupComponents.response.body);
     }
 
+    const duplicateItem = await findProviderPriceListItemByNormalizedCode({
+      priceListId: listId,
+      code: body.code,
+    });
+    if (duplicateItem) {
+      return res.status(409).json({
+        message: "Ya existe un precio con ese codigo para la lista.",
+      });
+    }
+
     try {
       const insertResult = await withTransaction(async (conn) => {
         const [result] = await conn.query(
@@ -1763,6 +1806,17 @@ router.put(
       return res
         .status(groupComponents.response.status)
         .json(groupComponents.response.body);
+    }
+
+    const duplicateItem = await findProviderPriceListItemByNormalizedCode({
+      priceListId: listId,
+      code: parsed.data.code,
+      excludeItemId: itemId,
+    });
+    if (duplicateItem) {
+      return res.status(409).json({
+        message: "Ya existe un precio con ese codigo para la lista.",
+      });
     }
 
     let cascadedGroupItems = [];

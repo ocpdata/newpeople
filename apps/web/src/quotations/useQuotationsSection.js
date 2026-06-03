@@ -9,6 +9,7 @@ import {
 import { api, getApiErrorMessage } from "../api";
 import { quotationPrintTemplateData } from "./quotationPrintTemplateData";
 import {
+  buildQuotationCommercialConditionsForm,
   buildQuotationItemPricing,
   buildItemDraft,
   buildCreateQuotationForm,
@@ -33,7 +34,6 @@ import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
 const PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS = 3000;
 const PROVIDER_DOCUMENT_IMPORT_TOTAL_POLL_TIMEOUT_MS = 300000;
 const PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS = 30000;
-const PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS = 120000;
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
   "deliveryTime",
   "quotationValidity",
@@ -41,9 +41,37 @@ const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
   "paymentTerms",
   "currencyCode",
 ];
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_FIELD_CONFIG = {
+  deliveryTime: {
+    optionsKey: "deliveryTimes",
+    label: "Tiempo de entrega",
+  },
+  quotationValidity: {
+    optionsKey: "validityTerms",
+    label: "Validez",
+  },
+  warranty: {
+    optionsKey: "warrantyTerms",
+    label: "Garantia",
+  },
+  paymentTerms: {
+    optionsKey: "paymentTerms",
+    label: "Pago",
+  },
+};
 const PROVIDER_DOCUMENT_IMPORT_SUGGESTED_MATCH_STATUSES = [
   "suggested_match_pending_confirmation",
   "ambiguous_similar_match",
+];
+const PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS = [
+  /costo\s+unitario/i,
+  /moneda/i,
+  /proveedor/i,
+  /lista\s+activa|price\s+list/i,
+  /codigo\s+de\s+proveedor|supplier\s+code/i,
+  /descripcion\s+suficiente|enough\s+description/i,
+  /coincidencia\s+sugerida|match|ambigua|ambigu/i,
+  /bloquead|blocking|cannot\s+create/i,
 ];
 
 function buildProviderDocumentImportCommercialTermsSelection() {
@@ -53,6 +81,81 @@ function buildProviderDocumentImportCommercialTermsSelection() {
     warranty: true,
     paymentTerms: true,
     currencyCode: true,
+  };
+}
+
+function buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+  type,
+  message,
+  mode = null,
+) {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) {
+    return null;
+  }
+
+  return {
+    type: type === "success" ? "success" : "error",
+    message: normalizedMessage,
+    mode:
+      mode === "reused" ||
+      mode === "created" ||
+      mode === "reused_pending_confirmation"
+        ? mode
+        : null,
+  };
+}
+
+function patchProviderDocumentImportPreviewWithSelectedSuggestedCandidate(
+  preview,
+  {
+    previewId,
+    selectedSuggestedPriceListItemId,
+    providerCode,
+    productDescription,
+  } = {},
+) {
+  if (!preview || typeof preview !== "object") {
+    return preview;
+  }
+
+  const normalizedPreviewId = String(previewId || "").trim();
+  const normalizedCandidateId = Number(selectedSuggestedPriceListItemId || 0);
+  const previewItems = Array.isArray(preview.items) ? preview.items : [];
+  if (!normalizedPreviewId || !normalizedCandidateId || !previewItems.length) {
+    return preview;
+  }
+
+  return {
+    ...preview,
+    items: previewItems.map((item) => {
+      if (String(item?.previewId || "") !== normalizedPreviewId) {
+        return item;
+      }
+
+      const suggestedMatchCandidates = Array.isArray(item.suggestedMatchCandidates)
+        ? item.suggestedMatchCandidates
+        : [];
+      const hasCandidate = suggestedMatchCandidates.some(
+        (candidate) => Number(candidate?.id || 0) === normalizedCandidateId,
+      );
+
+      return {
+        ...item,
+        suggestedMatchCandidates: hasCandidate
+          ? suggestedMatchCandidates
+          : [
+              ...suggestedMatchCandidates,
+              {
+                id: normalizedCandidateId,
+                code: String(providerCode || item?.providerCode || "").trim(),
+                description: String(
+                  productDescription || item?.productDescription || "",
+                ).trim(),
+              },
+            ],
+      };
+    }),
   };
 }
 
@@ -75,7 +178,7 @@ function resolveProviderDocumentImportItem(item, itemMatchResolutions = {}) {
   if (item.matchStatus === "matched") {
     return {
       ...item,
-      originalMatchStatus: item.matchStatus,
+      originalMatchStatus: item.originalMatchStatus || item.matchStatus,
       effectiveMatchStatus: "matched",
       effectiveMatchedPriceListItemId: item.matchedPriceListItemId || null,
       effectiveMatchedCandidate: selectedCandidate || null,
@@ -232,6 +335,93 @@ function buildProviderDocumentImportMissingItemsSelection(
   }, {});
 }
 
+function buildProviderDocumentImportCreateMissingItemPayload(
+  item,
+  overrides = {},
+) {
+  if (!item?.previewId) {
+    return null;
+  }
+
+  return {
+    previewId: item.previewId,
+    providerCode: item.providerCode,
+    productDescription: item.productDescription,
+    quantity: Number(item.quantity || 1),
+    originalCurrencyCode: item.originalCurrencyCode || null,
+    resolvedCostUnit: Number(item.resolvedCostUnit || 0),
+    manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
+    resolutionAction: item.resolutionAction || null,
+    selectedSuggestedPriceListItemId:
+      item.selectedSuggestedPriceListItemId || null,
+    selectedForPriceListCreation: true,
+    ...overrides,
+  };
+}
+
+function patchProviderDocumentImportPreviewWithCreatedItems(
+  preview,
+  createdItems = [],
+  sourcePreview = preview,
+) {
+  if (!preview || typeof preview !== "object") {
+    return preview;
+  }
+
+  const previewItems = Array.isArray(preview.items) ? preview.items : [];
+  const sourcePreviewItems = Array.isArray(sourcePreview?.items)
+    ? sourcePreview.items
+    : [];
+  if (!previewItems.length || !Array.isArray(createdItems) || !createdItems.length) {
+    return preview;
+  }
+
+  const sourceItemsByPreviewId = new Map(
+    sourcePreviewItems
+      .map((item) => [String(item?.previewId || "").trim(), item])
+      .filter(([previewId]) => previewId),
+  );
+
+  const createdByPreviewId = new Map(
+    createdItems
+      .map((item) => ({
+        previewId: String(item?.previewId || "").trim(),
+        createdPriceListItemId: Number(item?.createdPriceListItemId || 0) || null,
+      }))
+      .filter((item) => item.previewId),
+  );
+
+  if (!createdByPreviewId.size) {
+    return preview;
+  }
+
+  const nextItems = previewItems.map((item) => {
+    const previewId = String(item?.previewId || "").trim();
+    const createdRecord = createdByPreviewId.get(previewId);
+    if (!createdRecord) {
+      return item;
+    }
+
+    const sourceItem = sourceItemsByPreviewId.get(previewId) || item;
+
+    return {
+      ...item,
+      originalMatchStatus:
+        sourceItem.originalMatchStatus || sourceItem.matchStatus || item.originalMatchStatus || item.matchStatus,
+      matchStatus: "matched",
+      matchedPriceListItemId:
+        createdRecord.createdPriceListItemId || item.matchedPriceListItemId || null,
+      canCreateInPriceList: false,
+      createBlockedReason: null,
+    };
+  });
+
+  return {
+    ...preview,
+    items: nextItems,
+  };
+}
+
 function buildProviderDocumentImportState(defaultDocumentId = "") {
   return {
     isOpen: false,
@@ -241,12 +431,172 @@ function buildProviderDocumentImportState(defaultDocumentId = "") {
     previewJob: null,
     loadingPreview: false,
     creatingMissingItems: false,
+    creatingSuggestedMatchPreviewId: "",
+    suggestedMatchFeedbackByPreviewId: {},
     applying: false,
     commercialTermsSelection:
       buildProviderDocumentImportCommercialTermsSelection(),
     itemMatchResolutions: {},
     missingItemsSelection: {},
+    transferableWarningsSelection: {},
   };
+}
+
+function buildProviderDocumentImportPreviewJobState(responseData, fallbackJob = null) {
+  const job = responseData?.job || fallbackJob || null;
+  if (!job) {
+    return null;
+  }
+
+  return {
+    ...job,
+    error: responseData?.error || job.error || null,
+  };
+}
+
+function normalizeProviderDocumentImportWarningToSpanish(warning) {
+  const normalizedWarning = String(warning || "").trim();
+  if (!normalizedWarning) {
+    return "";
+  }
+
+  const comparableWarning = normalizeText(normalizedWarning)
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  const serviceTermMatch = comparableWarning.match(
+    /^(subscription|maintenance)(?:\s+with\s+service)?\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (serviceTermMatch) {
+    const warningType = /maintenance/i.test(serviceTermMatch[1])
+      ? "Mantenimiento"
+      : "Suscripcion";
+    const monthCount = Number(serviceTermMatch[2]) || 0;
+    return `El item corresponde a ${
+      warningType === "Mantenimiento" ? "mantenimiento" : "una suscripcion"
+    } con termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  const bareServiceTermMatch = comparableWarning.match(
+    /^service\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (bareServiceTermMatch) {
+    const monthCount = Number(bareServiceTermMatch[1]) || 0;
+    return `El item indica un termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  if (/subscription/i.test(normalizedWarning)) {
+    return "El item corresponde a una suscripcion y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/maintenance/i.test(normalizedWarning)) {
+    return "El item corresponde a mantenimiento y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/warranty|garantia/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a garantia; revisa el plazo y el alcance indicados en el documento fuente";
+  }
+
+  if (/delivery|shipping|freight/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a entrega o flete; revisa el alcance logistico indicado en el documento fuente";
+  }
+
+  if (
+    /warning imported from ai analysis/i.test(normalizedWarning) ||
+    /review item detail in source document/i.test(normalizedWarning)
+  ) {
+    return "";
+  }
+
+  if (/warning imported from ai analysis/i.test(normalizedWarning)) {
+    return "";
+  }
+
+  if (
+    /\b(review item detail in source document|document source|source document)\b/i.test(
+      normalizedWarning,
+    )
+  ) {
+    return "";
+  }
+
+  return normalizedWarning;
+}
+
+function isProviderDocumentImportWarningTransferable(warning) {
+  const normalizedWarning = normalizeProviderDocumentImportWarningToSpanish(
+    warning,
+  );
+  if (!normalizedWarning) {
+    return false;
+  }
+
+  return !PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS.some(
+    (pattern) => pattern.test(normalizedWarning),
+  );
+}
+
+function buildProviderDocumentImportTransferableWarningKey(previewId, warning) {
+  return `${String(previewId || "").trim()}::${normalizeProviderDocumentImportWarningToSpanish(
+    warning,
+  )}`;
+}
+
+function appendProviderDocumentImportWarningsToDescription(
+  description,
+  selectedWarnings = [],
+) {
+  const baseDescription = normalizeProviderDocumentImportDescription(description);
+  const normalizedBase = normalizeText(baseDescription).replace(/[_-]+/g, " ");
+  const uniqueWarnings = Array.from(
+    new Set(
+      (Array.isArray(selectedWarnings) ? selectedWarnings : [])
+        .map((warning) =>
+          normalizeProviderDocumentImportWarningToSpanish(warning),
+        )
+        .filter(Boolean)
+        .filter((warning) => {
+          const normalizedWarning = normalizeText(warning).replace(
+            /[_-]+/g,
+            " ",
+          );
+          return normalizedWarning && !normalizedBase.includes(normalizedWarning);
+        }),
+    ),
+  );
+
+  if (!uniqueWarnings.length) {
+    return baseDescription;
+  }
+
+  const notesBlock = uniqueWarnings
+    .map((warning) => `Nota: ${warning}`)
+    .join("\n");
+  return baseDescription ? `${baseDescription}\n${notesBlock}` : notesBlock;
+}
+
+function normalizeProviderDocumentImportDescription(value) {
+  const normalizedValue = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const segments = normalizedValue
+    .split(/Nota:\s*/g)
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    return normalizedValue;
+  }
+
+  const [baseDescription, ...noteSegments] = segments;
+  const notesBlock = noteSegments.map((segment) => `Nota: ${segment}`).join("\n");
+  return [baseDescription, notesBlock].filter(Boolean).join("\n");
 }
 
 function mapQuotationContactOption(contact) {
@@ -732,6 +1082,193 @@ function getCreateBundleOriginType(item) {
   return null;
 }
 
+function buildProviderDocumentImportLocalItem(
+  item,
+  pricingContext = {},
+  providerContext = {},
+) {
+  const pricing = buildQuotationItemPricing(
+    {
+      originalCurrencyCode: item?.originalCurrencyCode || "USD",
+      originalListPriceUnit: Number(item?.resolvedCostUnit || 0),
+      listPriceUnit: Number(item?.resolvedCostUnit || 0),
+    },
+    pricingContext,
+  );
+
+  return {
+    providerId: String(
+      item?.providerId || providerContext?.providerId || "",
+    ),
+    productCode: String(item?.providerCode || "").trim(),
+    productDescription: normalizeProviderDocumentImportDescription(
+      item?.productDescription,
+    ),
+    quantity: String(Number(item?.quantity || 1) || 1),
+    originalCurrencyCode: pricing.originalCurrencyCode,
+    originalListPriceUnit: String(pricing.originalListPriceUnit),
+    listPriceUnit: String(pricing.listPriceUnit),
+    manufacturerDiscountPct: String(Number(item?.manufacturerDiscountPct || 0)),
+    importCostPct: "0",
+    profitMarginPct: "30",
+    finalDiscountPct: "0",
+    itemType: "producto",
+    isRenewal: false,
+    bundleParentItemId: null,
+    bundleParentLocalId: null,
+    bundleOriginType: null,
+    sourceProviderPriceListItemId: item?.effectiveMatchedPriceListItemId
+      ? Number(item.effectiveMatchedPriceListItemId)
+      : item?.matchedPriceListItemId
+        ? Number(item.matchedPriceListItemId)
+        : null,
+    sourceComponentPriceListItemId: null,
+    importWarnings: Array.isArray(item?.warnings) ? item.warnings : [],
+  };
+}
+
+function normalizeProviderDocumentImportCommercialTermValue(value) {
+  if (value == null || value === "") {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    const codeValue = String(value.code || "").trim();
+    if (codeValue) {
+      return codeValue;
+    }
+
+    const rawValue = String(value.value || value.name || value.label || "").trim();
+    return rawValue;
+  }
+
+  return String(value).trim();
+}
+
+function normalizeProviderDocumentImportComparableValue(value) {
+  return normalizeText(value).replace(/[_-]+/g, " ");
+}
+
+function formatProviderDocumentImportFallbackNoteValue(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const normalizedValue = normalizeProviderDocumentImportComparableValue(
+    rawValue,
+  );
+  const netDaysMatch = normalizedValue.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return `${netDaysMatch[1]} dias despues de facturado`;
+  }
+
+  if (
+    normalizedValue === "according to notes" ||
+    normalizedValue === "as indicated in notes" ||
+    normalizedValue === "segun notas" ||
+    normalizedValue === "de acuerdo a lo indicado en notas"
+  ) {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  return rawValue;
+}
+
+function buildProviderDocumentImportFallbackNoteLine(label, value) {
+  const formattedValue = formatProviderDocumentImportFallbackNoteValue(value);
+  return formattedValue ? `${label}: ${formattedValue}` : "";
+}
+
+function appendProviderDocumentImportNoteLines(baseNotes, noteLines = []) {
+  const currentNotes = String(baseNotes || "").trim();
+  const normalizedNotes = normalizeProviderDocumentImportComparableValue(
+    currentNotes,
+  );
+  const uniqueLines = noteLines
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const comparableLine = normalizeProviderDocumentImportComparableValue(
+        line,
+      );
+      return comparableLine && !normalizedNotes.includes(comparableLine);
+    });
+
+  if (!uniqueLines.length) {
+    return currentNotes;
+  }
+
+  const noteBlock = uniqueLines.map((line) => `- ${line}`).join("\n");
+  return currentNotes ? `${currentNotes}\n${noteBlock}` : noteBlock;
+}
+
+function resolveProviderDocumentImportCommercialTermForForm({
+  field,
+  value,
+  options = [],
+}) {
+  const rawValue = normalizeProviderDocumentImportCommercialTermValue(value);
+  if (!rawValue) {
+    return {
+      resolvedValue: "",
+      noteLine: "",
+    };
+  }
+
+  const normalizedCandidate = buildQuotationCommercialConditionsForm({
+    [field]: rawValue,
+  })[field];
+  const comparableRawValue = normalizeProviderDocumentImportComparableValue(
+    rawValue,
+  );
+  const comparableCandidate = normalizeProviderDocumentImportComparableValue(
+    normalizedCandidate,
+  );
+
+  const matchedOption = options.find((option) => {
+    const optionCode = String(option?.code || "").trim();
+    const comparableOptionCode =
+      normalizeProviderDocumentImportComparableValue(optionCode);
+    const comparableOptionName = normalizeProviderDocumentImportComparableValue(
+      option?.name || "",
+    );
+
+    return (
+      optionCode === normalizedCandidate ||
+      comparableOptionCode === comparableRawValue ||
+      comparableOptionCode === comparableCandidate ||
+      comparableOptionName === comparableRawValue
+    );
+  });
+
+  if (matchedOption?.code) {
+    return {
+      resolvedValue: String(matchedOption.code),
+      noteLine: "",
+    };
+  }
+
+  const fallbackOption = options.find(
+    (option) => String(option?.code || "").trim() === "segun_notas",
+  );
+  if (fallbackOption?.code) {
+    return {
+      resolvedValue: String(fallbackOption.code),
+      noteLine: buildProviderDocumentImportFallbackNoteLine(
+        PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_FIELD_CONFIG[field]?.label ||
+          field,
+        rawValue,
+      ),
+    };
+  }
+
+  return {
+    resolvedValue: normalizedCandidate,
+    noteLine: "",
+  };
+}
+
 function buildCreateQuotationSectionItemPayload(item, itemIndex) {
   const pricing = buildQuotationItemPricing(item, {
     currencyCode: item?.quotationCurrencyCode,
@@ -835,6 +1372,9 @@ function buildPersistedQuotationItemPayload(
     sourceComponentPriceListItemId: toPositiveIntegerOrNull(
       item?.sourceComponentPriceListItemId,
     ),
+    importWarnings: Array.isArray(item?.importWarnings)
+      ? item.importWarnings
+      : [],
     bundleSortOrder: toPositiveIntegerOrNull(item?.bundleSortOrder),
     displayOrder: resolvePositiveDisplayOrder(
       item?.displayOrder,
@@ -990,6 +1530,9 @@ function buildLocalEditableItemRecord(item, providers, displayOrder) {
     id: itemId,
     providerId,
     providerName,
+    importWarnings: Array.isArray(item?.importWarnings)
+      ? item.importWarnings
+      : [],
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     itemType: item?.itemType || "producto",
@@ -3714,11 +4257,14 @@ export function useQuotationsSection({
       previewJob: null,
       loadingPreview: false,
       creatingMissingItems: false,
+      creatingSuggestedMatchPreviewId: "",
+      suggestedMatchFeedbackByPreviewId: {},
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
       itemMatchResolutions: {},
       missingItemsSelection: {},
+      transferableWarningsSelection: {},
     }));
   }, []);
 
@@ -3731,11 +4277,14 @@ export function useQuotationsSection({
       previewJob: null,
       loadingPreview: false,
       creatingMissingItems: false,
+      creatingSuggestedMatchPreviewId: "",
+      suggestedMatchFeedbackByPreviewId: {},
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
       itemMatchResolutions: {},
       missingItemsSelection: {},
+      transferableWarningsSelection: {},
     }));
   }, []);
 
@@ -3766,6 +4315,27 @@ export function useQuotationsSection({
         missingItemsSelection: {
           ...current.missingItemsSelection,
           [normalizedPreviewId]: Boolean(value),
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportTransferableWarningSelection = useCallback(
+    (previewId, warning, value) => {
+      const warningKey = buildProviderDocumentImportTransferableWarningKey(
+        previewId,
+        warning,
+      );
+      if (!warningKey || !warningKey.includes("::")) {
+        return;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        transferableWarningsSelection: {
+          ...current.transferableWarningsSelection,
+          [warningKey]: Boolean(value),
         },
       }));
     },
@@ -3860,10 +4430,17 @@ export function useQuotationsSection({
           delete nextMissingItemsSelection[normalizedPreviewId];
         }
 
+        const nextSuggestedMatchFeedbackByPreviewId = {
+          ...current.suggestedMatchFeedbackByPreviewId,
+        };
+        delete nextSuggestedMatchFeedbackByPreviewId[normalizedPreviewId];
+
         return {
           ...current,
           itemMatchResolutions: nextItemMatchResolutions,
           missingItemsSelection: nextMissingItemsSelection,
+          suggestedMatchFeedbackByPreviewId:
+            nextSuggestedMatchFeedbackByPreviewId,
         };
       });
     },
@@ -3907,7 +4484,7 @@ export function useQuotationsSection({
       let resolvedData = data;
       setProviderDocumentImportState((current) => ({
         ...current,
-        previewJob: resolvedData?.job || null,
+        previewJob: buildProviderDocumentImportPreviewJobState(resolvedData),
       }));
 
       if (!resolvedData?.result) {
@@ -3960,7 +4537,10 @@ export function useQuotationsSection({
 
           setProviderDocumentImportState((current) => ({
             ...current,
-            previewJob: resolvedData?.job || current.previewJob,
+            previewJob: buildProviderDocumentImportPreviewJobState(
+              resolvedData,
+              current.previewJob,
+            ),
           }));
 
           if (resolvedData?.result) {
@@ -3998,8 +4578,13 @@ export function useQuotationsSection({
       setProviderDocumentImportState((current) => ({
         ...current,
         preview: resolvedData.result,
-        previewJob: resolvedData?.job || current.previewJob,
+        previewJob: buildProviderDocumentImportPreviewJobState(
+          resolvedData,
+          current.previewJob,
+        ),
         creatingMissingItems: false,
+        creatingSuggestedMatchPreviewId: "",
+        suggestedMatchFeedbackByPreviewId: {},
         confirmedProviderId: current.confirmedProviderId
           ? current.confirmedProviderId
           : resolvedData.result.confirmedProvider?.id
@@ -4012,6 +4597,7 @@ export function useQuotationsSection({
           resolvedData.result,
           {},
         ),
+        transferableWarningsSelection: {},
       }));
       return true;
     } catch (err) {
@@ -4038,6 +4624,208 @@ export function useQuotationsSection({
     selectedVersionId,
   ]);
 
+  const handleCreateSuggestedProviderDocumentImportItem = useCallback(
+    async (previewId) => {
+      const normalizedPreviewId = String(previewId || "").trim();
+      const setSuggestedMatchRowFeedback = (type, message) => {
+        if (!normalizedPreviewId) {
+          return;
+        }
+
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          creatingSuggestedMatchPreviewId: "",
+          suggestedMatchFeedbackByPreviewId: {
+            ...current.suggestedMatchFeedbackByPreviewId,
+            [normalizedPreviewId]:
+              buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                type,
+                message,
+              ),
+          },
+        }));
+      };
+      const resolvedDocumentLinkId = Number(
+        providerDocumentImportState.selectedDocumentId ||
+          providerDocumentImportState.previewJob?.request?.documentLinkId ||
+          0,
+      );
+      const resolvedConfirmedProviderId = Number(
+        providerDocumentImportState.confirmedProviderId ||
+          providerDocumentImportState.previewJob?.request?.providerId ||
+          providerDocumentImportState.preview?.confirmedProvider?.id ||
+          0,
+      );
+
+      if (
+        !selectedVersionId ||
+        !providerDocumentImportState.preview ||
+        !resolvedDocumentLinkId ||
+        !resolvedConfirmedProviderId ||
+        !normalizedPreviewId
+      ) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "Confirma documento, proveedor y analisis antes de crear el item.",
+        );
+        return false;
+      }
+
+      const targetItem = providerDocumentImportEffectiveItems.find(
+        (item) => String(item.previewId) === normalizedPreviewId,
+      );
+      if (!targetItem || !targetItem.canCreateInPriceList) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "Este item ya no se puede crear en la lista del proveedor. Actualiza el analisis e intentalo de nuevo.",
+        );
+        return false;
+      }
+
+      const requestItem = buildProviderDocumentImportCreateMissingItemPayload(
+        targetItem,
+        {
+          resolutionAction: "treat_as_missing",
+          selectedSuggestedPriceListItemId: null,
+        },
+      );
+      if (!requestItem) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "No fue posible preparar el item para su creacion.",
+        );
+        return false;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        creatingSuggestedMatchPreviewId: normalizedPreviewId,
+        suggestedMatchFeedbackByPreviewId: {
+          ...current.suggestedMatchFeedbackByPreviewId,
+          [normalizedPreviewId]: null,
+        },
+      }));
+      setError("");
+      setSuccess("");
+
+      try {
+        const { data } = await api.post(
+          `/api/quotation-versions/${selectedVersionId}/provider-document-import/create-missing-items`,
+          {
+            documentLinkId: resolvedDocumentLinkId,
+            confirmedProviderId: resolvedConfirmedProviderId,
+            items: [requestItem],
+          },
+          {
+            timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+          },
+        );
+
+        setProviderDocumentImportState((current) => {
+          const createdItemRecord = Array.isArray(data.createdItems)
+            ? data.createdItems.find(
+                (item) => String(item?.previewId || "") === normalizedPreviewId,
+              ) || null
+            : null;
+          const successMode = createdItemRecord?.reused
+            ? "reused_pending_confirmation"
+            : "created";
+          const nextPreview = createdItemRecord?.reused
+            ? patchProviderDocumentImportPreviewWithSelectedSuggestedCandidate(
+                current.preview,
+                {
+                  previewId: normalizedPreviewId,
+                  selectedSuggestedPriceListItemId:
+                    createdItemRecord.createdPriceListItemId,
+                  providerCode: createdItemRecord.providerCode,
+                  productDescription: targetItem.productDescription,
+                },
+              )
+            : patchProviderDocumentImportPreviewWithCreatedItems(
+                data.preview || current.preview,
+                data.createdItems,
+                current.preview,
+              );
+          const nextItemMatchResolutions = {
+            ...pruneProviderDocumentImportItemMatchResolutions(
+              nextPreview,
+              current.itemMatchResolutions,
+            ),
+          };
+          if (createdItemRecord?.reused) {
+            nextItemMatchResolutions[normalizedPreviewId] = {
+              ...nextItemMatchResolutions[normalizedPreviewId],
+              selectedSuggestedPriceListItemId:
+                createdItemRecord.createdPriceListItemId,
+            };
+          } else {
+            delete nextItemMatchResolutions[normalizedPreviewId];
+          }
+
+          const nextMissingItemsSelection = {
+            ...current.missingItemsSelection,
+          };
+          delete nextMissingItemsSelection[normalizedPreviewId];
+
+          return {
+            ...current,
+            preview: nextPreview,
+            creatingSuggestedMatchPreviewId: "",
+            itemMatchResolutions: nextItemMatchResolutions,
+            suggestedMatchFeedbackByPreviewId: {
+              ...current.suggestedMatchFeedbackByPreviewId,
+              [normalizedPreviewId]:
+                buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                  "success",
+                  createdItemRecord?.reused
+                    ? "Este item ya existe en la lista activa. Se preselecciono para que puedas confirmarlo con usar existente."
+                    : data.message || "Item creado en la lista del proveedor",
+                  successMode,
+                ),
+            },
+            missingItemsSelection: createdItemRecord?.reused
+              ? nextMissingItemsSelection
+              : buildProviderDocumentImportMissingItemsSelection(
+                  nextPreview,
+                  nextItemMatchResolutions,
+                  current.missingItemsSelection,
+                ),
+          };
+        });
+        return true;
+      } catch (err) {
+        const rowMessage = getApiErrorMessage(
+          err,
+          "No fue posible crear el item en la lista del proveedor",
+        );
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          suggestedMatchFeedbackByPreviewId: {
+            ...current.suggestedMatchFeedbackByPreviewId,
+            [normalizedPreviewId]:
+              buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                "error",
+                rowMessage,
+              ),
+          },
+        }));
+        return false;
+      } finally {
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          creatingSuggestedMatchPreviewId: "",
+        }));
+      }
+    },
+    [
+      providerDocumentImportEffectiveItems,
+      providerDocumentImportState.confirmedProviderId,
+      providerDocumentImportState.preview,
+      providerDocumentImportState.selectedDocumentId,
+      selectedVersionId,
+    ],
+  );
+
   const handleCreateMissingProviderDocumentImportItems =
     useCallback(async () => {
       if (
@@ -4061,19 +4849,10 @@ export function useQuotationsSection({
               String(item.previewId)
             ],
         )
-        .map((item) => ({
-          previewId: item.previewId,
-          providerCode: item.providerCode,
-          productDescription: item.productDescription,
-          quantity: Number(item.quantity || 1),
-          originalCurrencyCode: item.originalCurrencyCode || null,
-          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
-          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
-          resolutionAction: item.resolutionAction || null,
-          selectedSuggestedPriceListItemId:
-            item.selectedSuggestedPriceListItemId || null,
-          selectedForPriceListCreation: true,
-        }));
+        .map((item) =>
+          buildProviderDocumentImportCreateMissingItemPayload(item),
+        )
+        .filter(Boolean);
 
       if (!selectedMissingItems.length) {
         setError(
@@ -4101,22 +4880,30 @@ export function useQuotationsSection({
             ),
             items: selectedMissingItems,
           },
+          {
+            timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+          },
         );
 
         setProviderDocumentImportState((current) => {
+          const nextPreview = patchProviderDocumentImportPreviewWithCreatedItems(
+            data.preview || current.preview,
+            data.createdItems,
+            current.preview,
+          );
           const nextItemMatchResolutions =
             pruneProviderDocumentImportItemMatchResolutions(
-              data.preview,
+              nextPreview,
               current.itemMatchResolutions,
             );
           return {
             ...current,
-            preview: data.preview || current.preview,
+            preview: nextPreview,
             creatingMissingItems: false,
             itemMatchResolutions: nextItemMatchResolutions,
             missingItemsSelection:
               buildProviderDocumentImportMissingItemsSelection(
-                data.preview,
+                nextPreview,
                 nextItemMatchResolutions,
               ),
           };
@@ -4159,11 +4946,6 @@ export function useQuotationsSection({
       setError("Confirma documento, proveedor y analisis antes de aplicar.");
       return false;
     }
-
-    setProviderDocumentImportState((current) => ({
-      ...current,
-      applying: true,
-    }));
     setError("");
     setSuccess("");
     try {
@@ -4172,79 +4954,181 @@ export function useQuotationsSection({
       );
       if (!matchedItems.length) {
         setError(
-          "No hay items resueltos contra la lista del proveedor para aplicar.",
+          "No hay items resueltos contra la lista del proveedor para agregar a la edicion.",
         );
         return false;
       }
 
-      const payload = {
-        documentLinkId: Number(providerDocumentImportState.selectedDocumentId),
-        confirmedProviderId: Number(
-          providerDocumentImportState.confirmedProviderId,
-        ),
-        commercialTerms: providerDocumentImportState.preview.commercialTerms,
-        commercialTermsSelection:
-          providerDocumentImportState.commercialTermsSelection,
-        items: matchedItems.map((item) => ({
-          previewId: item.previewId,
-          providerCode: item.providerCode,
-          productDescription: item.productDescription,
-          quantity: Number(item.quantity || 1),
-          originalCurrencyCode: item.originalCurrencyCode || null,
-          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
-          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
-          matchedPriceListItemId: item.effectiveMatchedPriceListItemId || null,
-          matchStatus: item.effectiveMatchStatus || "matched",
-          resolutionAction: item.resolutionAction || null,
-          selectedSuggestedPriceListItemId:
-            item.selectedSuggestedPriceListItemId || null,
-          sourceSnippet: item.sourceSnippet || null,
-          warnings: Array.isArray(item.warnings) ? item.warnings : [],
+      const nextSectionNumber = (selectedVersion?.sections || []).length + 1;
+      const nextSectionId = buildNextEditSectionId();
+      const selectedCommercialTerms =
+        providerDocumentImportState.commercialTermsSelection ||
+        buildProviderDocumentImportCommercialTermsSelection();
+      const previewCommercialTerms =
+        providerDocumentImportState.preview?.commercialTerms || {};
+      const nextVersionCurrencyCode =
+        selectedCommercialTerms.currencyCode &&
+        String(previewCommercialTerms.currencyCode || "").trim()
+          ? String(previewCommercialTerms.currencyCode || "").trim().toUpperCase()
+          : versionForm.currencyCode;
+      const localImportedItems = buildLocalEditItemsFromSources(
+        matchedItems.map((item) => ({
+          ...buildProviderDocumentImportLocalItem(item, {
+            currencyCode: nextVersionCurrencyCode,
+            exchangeRate: versionForm.exchangeRate,
+          }, {
+            providerId:
+              providerDocumentImportState.confirmedProviderId ||
+              providerDocumentImportState.preview?.confirmedProvider?.id ||
+              "",
+          }),
+          productDescription: appendProviderDocumentImportWarningsToDescription(
+            item.productDescription,
+            (Array.isArray(item.warnings) ? item.warnings : []).filter(
+              (warning) =>
+                isProviderDocumentImportWarningTransferable(warning) &&
+                providerDocumentImportState.transferableWarningsSelection[
+                  buildProviderDocumentImportTransferableWarningKey(
+                    item.previewId,
+                    warning,
+                  )
+                ],
+            ),
+          ),
         })),
+        { startingDisplayOrder: 1 },
+      );
+      const nextSection = {
+        id: nextSectionId,
+        title:
+          String(
+            providerDocumentImportState.preview?.suggestedSectionName || "",
+          ).trim() || `Seccion ${nextSectionNumber}`,
+        inclusionTypeId: Number(
+          catalogs.inclusionTypes[0]?.id || selectedVersion?.sections?.[0]?.inclusionTypeId || 0,
+        ),
+        displayOrder: nextSectionNumber,
+        items: localImportedItems.map((item, index) =>
+          buildLocalEditableItemRecord(item, catalogs.providers, index + 1),
+        ),
       };
 
-      const { data } = await api.post(
-        `/api/quotation-versions/${selectedVersionId}/provider-document-import/apply`,
-        payload,
-        { timeout: PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS },
+      setSelectedVersion((prev) =>
+        prev
+          ? {
+              ...prev,
+              sections: [...(prev.sections || []), nextSection],
+            }
+          : prev,
       );
+      setSectionEdits((prev) => ({
+        ...prev,
+        [String(nextSectionId)]: {
+          title: nextSection.title,
+          inclusionTypeId: String(nextSection.inclusionTypeId),
+        },
+      }));
+      setItemEdits((prev) => ({
+        ...prev,
+        ...Object.fromEntries(
+          localImportedItems.map((item, index) => {
+            const displayOrder = index + 1;
+            const draft = buildLocalEditableItemDraft(item, displayOrder);
+            return [String(item.id), draft];
+          }),
+        ),
+      }));
+      setItemDraftsBySection((prev) => ({
+        ...prev,
+        [String(nextSectionId)]: buildItemDraft(catalogs.providers),
+      }));
+      setVersionForm((prev) =>
+        {
+          const deliveryResolution = selectedCommercialTerms.deliveryTime
+            ? resolveProviderDocumentImportCommercialTermForForm({
+                field: "deliveryTime",
+                value: previewCommercialTerms.deliveryTime,
+                options: catalogs.deliveryTimes,
+              })
+            : { resolvedValue: prev.deliveryTime, noteLine: "" };
+          const quotationValidityResolution =
+            selectedCommercialTerms.quotationValidity
+              ? resolveProviderDocumentImportCommercialTermForForm({
+                  field: "quotationValidity",
+                  value: previewCommercialTerms.quotationValidity,
+                  options: catalogs.validityTerms,
+                })
+              : { resolvedValue: prev.quotationValidity, noteLine: "" };
+          const warrantyResolution = selectedCommercialTerms.warranty
+            ? resolveProviderDocumentImportCommercialTermForForm({
+                field: "warranty",
+                value: previewCommercialTerms.warranty,
+                options: catalogs.warrantyTerms,
+              })
+            : { resolvedValue: prev.warranty, noteLine: "" };
+          const paymentTermsResolution = selectedCommercialTerms.paymentTerms
+            ? resolveProviderDocumentImportCommercialTermForForm({
+                field: "paymentTerms",
+                value: previewCommercialTerms.paymentTerms,
+                options: catalogs.paymentTerms,
+              })
+            : { resolvedValue: prev.paymentTerms, noteLine: "" };
+
+          return buildQuotationCommercialConditionsForm({
+            ...prev,
+            deliveryTime: deliveryResolution.resolvedValue || prev.deliveryTime,
+            quotationValidity:
+              quotationValidityResolution.resolvedValue ||
+              prev.quotationValidity,
+            warranty: warrantyResolution.resolvedValue || prev.warranty,
+            paymentTerms:
+              paymentTermsResolution.resolvedValue || prev.paymentTerms,
+            currencyCode: nextVersionCurrencyCode || prev.currencyCode,
+            quotationNotes: appendProviderDocumentImportNoteLines(
+              prev.quotationNotes,
+              [
+                deliveryResolution.noteLine,
+                quotationValidityResolution.noteLine,
+                warrantyResolution.noteLine,
+                paymentTermsResolution.noteLine,
+              ],
+            ),
+          });
+        },
+      );
+
       closeProviderDocumentImportModal();
-      try {
-        await loadVersion(selectedQuotationId, selectedVersionId, {
-          preserveMessage: true,
-        });
-        setSuccess(data.message || "Importacion aplicada");
-      } catch (reloadError) {
-        setSuccess(data.message || "Importacion aplicada");
-        setError(
-          getApiErrorMessage(
-            reloadError,
-            "La importacion se aplico, pero no fue posible recargar la cotizacion",
-          ),
-        );
-      }
+      setShowEditQuotationModal(true);
+      setSuccess(
+        "Items y seccion agregados en memoria. Usa Guardar como version actual para persistirlos.",
+      );
       return true;
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible aplicar la importacion"),
+        getApiErrorMessage(
+          err,
+          "No fue posible preparar la importacion en memoria",
+        ),
       );
       return false;
-    } finally {
-      setProviderDocumentImportState((current) => ({
-        ...current,
-        applying: false,
-      }));
     }
   }, [
+    buildLocalEditItemsFromSources,
+    buildNextEditSectionId,
+    catalogs.inclusionTypes,
+    catalogs.providers,
     closeProviderDocumentImportModal,
-    loadVersion,
+    providerDocumentImportEffectiveItems,
     providerDocumentImportState.commercialTermsSelection,
     providerDocumentImportState.confirmedProviderId,
-    providerDocumentImportEffectiveItems,
     providerDocumentImportState.preview,
     providerDocumentImportState.selectedDocumentId,
+    providerDocumentImportState.transferableWarningsSelection,
     selectedQuotationId,
+    selectedVersion?.sections,
     selectedVersionId,
+    versionForm.currencyCode,
+    versionForm.exchangeRate,
   ]);
 
   const handleDownloadQuotationDocument = useCallback(async (document) => {
@@ -5485,9 +6369,10 @@ export function useQuotationsSection({
         setProviderDocumentImportProvider,
         setProviderDocumentImportCommercialTermSelection,
         setProviderDocumentImportSuggestedMatchCandidate,
-        setProviderDocumentImportSuggestedMatchResolution,
         setProviderDocumentImportMissingItemSelection,
+        selectedQuotationId,
         handlePreviewProviderDocumentImport,
+        handleCreateSuggestedProviderDocumentImportItem,
         handleCreateMissingProviderDocumentImportItems,
         handleApplyProviderDocumentImport,
         handleDownloadQuotationDocument,
@@ -5518,6 +6403,54 @@ export function useQuotationsSection({
         hasEditCopiedItems: editCopiedItems.length > 0,
         canCreateProviderPrices,
       },
+    },
+    providerImportWindowProps: {
+      isOpen: providerDocumentImportState.isOpen,
+      onClose: closeProviderDocumentImportModal,
+      errorMessage: error,
+      successMessage: success,
+      documents: (
+        Array.isArray(selectedVersion?.allDocuments)
+          ? selectedVersion.allDocuments
+          : Array.isArray(selectedVersion?.documents)
+            ? selectedVersion.documents
+            : []
+      ).filter((document) => document?.aiEnabled !== false),
+      providerOptions: catalogs.providers,
+      selectedDocumentId: providerDocumentImportState.selectedDocumentId,
+      onDocumentChange: setProviderDocumentImportDocument,
+      confirmedProviderId: providerDocumentImportState.confirmedProviderId,
+      onProviderChange: setProviderDocumentImportProvider,
+      onAnalyze: handlePreviewProviderDocumentImport,
+      preview: providerDocumentImportState.preview,
+      effectiveItems: providerDocumentImportEffectiveItems,
+      workflowStage: providerDocumentImportWorkflowStage,
+      previewJob: providerDocumentImportState.previewJob,
+      loadingPreview: providerDocumentImportState.loadingPreview,
+      creatingMissingItems: providerDocumentImportState.creatingMissingItems,
+      creatingSuggestedMatchPreviewId:
+        providerDocumentImportState.creatingSuggestedMatchPreviewId,
+      suggestedMatchFeedbackByPreviewId:
+        providerDocumentImportState.suggestedMatchFeedbackByPreviewId,
+      applying: providerDocumentImportState.applying,
+      commercialTermsSelection:
+        providerDocumentImportState.commercialTermsSelection,
+      onToggleCommercialTermSelection:
+        setProviderDocumentImportCommercialTermSelection,
+      onSelectSuggestedMatchCandidate:
+        setProviderDocumentImportSuggestedMatchCandidate,
+      onResolveSuggestedMatch: setProviderDocumentImportSuggestedMatchResolution,
+      missingItemsSelection: providerDocumentImportState.missingItemsSelection,
+      onToggleMissingItemSelection: setProviderDocumentImportMissingItemSelection,
+      transferableWarningsSelection:
+        providerDocumentImportState.transferableWarningsSelection,
+      onToggleTransferableWarningSelection:
+        setProviderDocumentImportTransferableWarningSelection,
+      isWarningTransferable: isProviderDocumentImportWarningTransferable,
+      onApply: handleApplyProviderDocumentImport,
+      onCreateMissingItems: handleCreateMissingProviderDocumentImportItems,
+      onCreateSuggestedMatchItem:
+        handleCreateSuggestedProviderDocumentImportItem,
     },
     listPanelProps: {
       showDetails,

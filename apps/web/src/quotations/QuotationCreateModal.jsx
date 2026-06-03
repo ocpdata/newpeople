@@ -1265,6 +1265,13 @@ function QuotationCreateModal({
     setActiveDescriptionEditor({ sectionIndex, itemIndex });
   }
 
+  function formatDescriptionEditorPreview(value) {
+    return String(value || "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")[0]
+      .trim();
+  }
+
   function toggleBundleCollapsed(sectionLocalId, bundleLocalId, sectionItems) {
     const componentIds = (sectionItems || [])
       .filter((item) => item.bundleParentLocalId === bundleLocalId)
@@ -2685,21 +2692,20 @@ function QuotationCreateModal({
                                                 data-description-editor-key={`${index}-${itemIndex}`}
                                               >
                                                 <input
-                                                  value={
-                                                    item.productDescription
-                                                  }
-                                                  onFocus={() =>
+                                                  readOnly
+                                                  value={formatDescriptionEditorPreview(
+                                                    item.productDescription,
+                                                  )}
+                                                  onClick={() =>
                                                     openDescriptionEditor(
                                                       index,
                                                       itemIndex,
                                                     )
                                                   }
-                                                  onChange={(event) =>
-                                                    handleUpdateCreateSectionItem(
+                                                  onFocus={() =>
+                                                    openDescriptionEditor(
                                                       index,
                                                       itemIndex,
-                                                      "productDescription",
-                                                      event.target.value,
                                                     )
                                                   }
                                                 />

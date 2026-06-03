@@ -1882,6 +1882,7 @@ CREATE TABLE IF NOT EXISTS quotation_section_items (
   bundle_origin_type VARCHAR(40) NULL,
   source_provider_price_list_item_id BIGINT UNSIGNED NULL,
   source_component_price_list_item_id BIGINT UNSIGNED NULL,
+  import_warnings_json LONGTEXT NULL,
   quantity DECIMAL(15, 4) NOT NULL,
   original_currency_code CHAR(3) NULL,
   original_list_price_unit DECIMAL(15, 4) NULL,
@@ -2048,6 +2049,21 @@ SET @stmt := (
 PREPARE s_quotation_section_items_source_component_col FROM @stmt;
 EXECUTE s_quotation_section_items_source_component_col;
 DEALLOCATE PREPARE s_quotation_section_items_source_component_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN import_warnings_json LONGTEXT NULL AFTER source_component_price_list_item_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'import_warnings_json'
+);
+PREPARE s_quotation_section_items_import_warnings_col FROM @stmt;
+EXECUTE s_quotation_section_items_import_warnings_col;
+DEALLOCATE PREPARE s_quotation_section_items_import_warnings_col;
 
 SET @stmt := (
   SELECT IF(

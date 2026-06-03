@@ -54,6 +54,52 @@ function getProviderImportItemStatusLabel(item) {
   return "Confirma proveedor";
 }
 
+function formatResolvedCostUnit(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat("es-MX", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numericValue);
+}
+
+function formatProviderImportJobStatus(value) {
+  const normalizedValue = normalizeText(value).replace(/[_-]+/g, " ");
+
+  if (!normalizedValue) {
+    return "pendiente";
+  }
+
+  if (normalizedValue === "running") {
+    return "en ejecucion";
+  }
+
+  if (normalizedValue === "pending") {
+    return "pendiente";
+  }
+
+  if (normalizedValue === "completed") {
+    return "completado";
+  }
+
+  if (normalizedValue === "failed") {
+    return "fallido";
+  }
+
+  if (normalizedValue === "expired") {
+    return "expirado";
+  }
+
+  if (normalizedValue === "stale") {
+    return "desactualizado";
+  }
+
+  return String(value || "").trim() || "pendiente";
+}
+
 function formatCommercialTermValue(field, value) {
   const rawValue = String(value || "").trim();
   if (!rawValue) {
@@ -155,8 +201,83 @@ function formatCommercialTermValue(field, value) {
   return rawValue;
 }
 
+function formatProviderImportWarning(warning) {
+  const normalizedWarning = String(warning || "").trim();
+  if (!normalizedWarning) {
+    return "";
+  }
+
+  const comparableWarning = normalizeText(normalizedWarning)
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  const serviceTermMatch = comparableWarning.match(
+    /^(subscription|maintenance)(?:\s+with\s+service)?\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (serviceTermMatch) {
+    const warningType = /maintenance/i.test(serviceTermMatch[1])
+      ? "Mantenimiento"
+      : "Suscripcion";
+    const monthCount = Number(serviceTermMatch[2]) || 0;
+    return `El item corresponde a ${
+      warningType === "Mantenimiento" ? "mantenimiento" : "una suscripcion"
+    } con termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  const bareServiceTermMatch = comparableWarning.match(
+    /^service\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (bareServiceTermMatch) {
+    const monthCount = Number(bareServiceTermMatch[1]) || 0;
+    return `El item indica un termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  if (/subscription/i.test(normalizedWarning)) {
+    return "El item corresponde a una suscripcion y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/maintenance/i.test(normalizedWarning)) {
+    return "El item corresponde a mantenimiento y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/warranty|garantia/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a garantia; revisa el plazo y el alcance indicados en el documento fuente";
+  }
+
+  if (/delivery|shipping|freight/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a entrega o flete; revisa el alcance logistico indicado en el documento fuente";
+  }
+
+  if (
+    /warning imported from ai analysis/i.test(normalizedWarning) ||
+    /review item detail in source document/i.test(normalizedWarning)
+  ) {
+    return "";
+  }
+
+  if (/warning imported from ai analysis/i.test(normalizedWarning)) {
+    return "";
+  }
+
+  if (
+    /\b(review item detail in source document|document source|source document)\b/i.test(
+      normalizedWarning,
+    )
+  ) {
+    return "";
+  }
+
+  return normalizedWarning;
+}
+
 function QuotationProviderDocumentImportModal({
   isOpen,
+  errorMessage,
+  successMessage,
   documents,
   providerOptions,
   selectedDocumentId,
@@ -171,6 +292,8 @@ function QuotationProviderDocumentImportModal({
   previewJob,
   loadingPreview,
   creatingMissingItems,
+  creatingSuggestedMatchPreviewId,
+  suggestedMatchFeedbackByPreviewId,
   applying,
   commercialTermsSelection,
   onToggleCommercialTermSelection,
@@ -178,7 +301,11 @@ function QuotationProviderDocumentImportModal({
   onResolveSuggestedMatch,
   missingItemsSelection,
   onToggleMissingItemSelection,
+  transferableWarningsSelection,
+  onToggleTransferableWarningSelection,
+  isWarningTransferable,
   onCreateMissingItems,
+  onCreateSuggestedMatchItem,
   onApply,
 }) {
   if (!isOpen) {
@@ -199,8 +326,11 @@ function QuotationProviderDocumentImportModal({
     ? preview.priorImports
     : [];
   const previewJobStatus = String(previewJob?.status || "").trim();
+  const previewJobStatusLabel = formatProviderImportJobStatus(previewJobStatus);
   const previewJobLabel = String(previewJob?.progress?.label || "").trim();
   const previewJobPercent = Number(previewJob?.progress?.percent || 0) || 0;
+  const previewJobErrorMessage = String(previewJob?.error?.message || "").trim();
+  const suggestedMatchFeedback = suggestedMatchFeedbackByPreviewId || {};
   const suggestedMatchItems = previewItems.filter(
     (item) => item.resolutionRequired,
   );
@@ -228,14 +358,48 @@ function QuotationProviderDocumentImportModal({
     Boolean(preview) &&
     Boolean(confirmedProviderId) &&
     previewItems.some((item) => item.effectiveMatchStatus === "matched");
+  const isCreatingMissingItems = Boolean(creatingMissingItems);
+  const isCreatingSuggestedMatchItem = Boolean(
+    String(creatingSuggestedMatchPreviewId || "").trim(),
+  );
+  const isBlockingImport = Boolean(loadingPreview || creatingMissingItems);
+  const hasConfirmedProviderContext = Boolean(
+    confirmedProviderId ||
+      preview?.confirmedProvider?.id ||
+      previewJob?.request?.providerId,
+  );
+  const hasDocumentContext = Boolean(
+    selectedDocumentId || previewJob?.request?.documentLinkId,
+  );
   const termSelection = commercialTermsSelection || {};
 
   return (
     <div
-      className="quotation-provider-import-modal quotation-provider-import-modal-inline"
+      className={`quotation-provider-import-modal quotation-provider-import-modal-inline${
+        isBlockingImport ? " is-blocked" : ""
+      }`}
       role="region"
       aria-labelledby="quotation-provider-import-title"
+      aria-busy={isBlockingImport}
     >
+      {isBlockingImport ? (
+        <div className="quotation-provider-import-blocking-overlay" role="status" aria-live="polite">
+          <div className="quotation-provider-import-blocking-dialog">
+            <span className="quotation-provider-import-blocking-spinner" aria-hidden="true" />
+            <strong>
+              {loadingPreview
+                ? "Analizando documento con IA..."
+                : "Creando items faltantes en lista..."}
+            </strong>
+            <p>
+              {loadingPreview
+                ? previewJobLabel ||
+                  "Espera la respuesta del analisis para continuar."
+                : "Espera la respuesta para continuar con la aplicación."}
+            </p>
+          </div>
+        </div>
+      ) : null}
       <div className="modal-header">
         <div>
           <h3 id="quotation-provider-import-title">
@@ -246,51 +410,116 @@ function QuotationProviderDocumentImportModal({
             antes de aplicar.
           </p>
         </div>
-        <button type="button" className="btn-secondary" onClick={onClose}>
-          Cerrar
-        </button>
       </div>
 
       <div className="quotation-provider-import-body">
-        <div className="quotation-provider-import-grid">
-          <label className="field-group">
-            <span>Documento</span>
-            <select
-              value={selectedDocumentId}
-              onChange={(event) => onDocumentChange(event.target.value)}
-            >
-              <option value="">
-                {documents.length
-                  ? "Selecciona un documento"
-                  : "No hay documentos habilitados para IA"}
-              </option>
-              {documents.map((document) => {
-                const optionValue = String(document.id || "");
-                return (
-                  <option key={optionValue} value={optionValue}>
-                    {document.originalFileName || "Documento"}
-                  </option>
-                );
-              })}
-            </select>
-          </label>
+        <section className="quotation-provider-import-setup-panel">
+          <div className="quotation-provider-import-setup-copy">
+            <strong>Configuracion inicial</strong>
+            <p>
+              Selecciona el documento, confirma el proveedor y luego inicia el
+              analisis asistido por IA.
+            </p>
+          </div>
 
-          <label className="field-group">
-            <span>Proveedor confirmado</span>
-            <select
-              value={confirmedProviderId}
-              onChange={(event) => onProviderChange(event.target.value)}
-              disabled={!activeProviders.length && !preview}
-            >
-              <option value="">Selecciona un proveedor</option>
-              {activeProviders.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+          <div className="quotation-provider-import-setup-layout">
+            <div className="quotation-provider-import-grid">
+              <label className="field-group">
+                <span>Documento</span>
+                <select
+                  value={selectedDocumentId}
+                  onChange={(event) => onDocumentChange(event.target.value)}
+                  disabled={isBlockingImport}
+                >
+                  <option value="">
+                    {documents.length
+                      ? "Selecciona un documento"
+                      : "No hay documentos habilitados para IA"}
+                  </option>
+                  {documents.map((document) => {
+                    const optionValue = String(document.id || "");
+                    return (
+                      <option key={optionValue} value={optionValue}>
+                        {document.originalFileName || "Documento"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label className="field-group">
+                <span>Proveedor confirmado</span>
+                <select
+                  value={confirmedProviderId}
+                  onChange={(event) => onProviderChange(event.target.value)}
+                  disabled={
+                    isBlockingImport || (!activeProviders.length && !preview)
+                  }
+                >
+                  <option value="">Selecciona un proveedor</option>
+                  {activeProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="quotation-provider-import-actions">
+              <button
+                type="button"
+                className="btn-secondary quotation-provider-import-icon-button quotation-provider-import-icon-button-emphasis"
+                onClick={onAnalyze}
+                disabled={
+                  isBlockingImport || !selectedDocumentId || loadingPreview
+                }
+                title={
+                  loadingPreview
+                    ? "Analizando el documento seleccionado con IA"
+                    : "Analizar el documento seleccionado con IA para detectar proveedor, condiciones e items"
+                }
+                aria-label={
+                  loadingPreview
+                    ? "Analizando el documento seleccionado con IA"
+                    : "Analizar el documento seleccionado con IA para detectar proveedor, condiciones e items"
+                }
+              >
+                {loadingPreview ? (
+                  <span
+                    className="quotation-provider-import-inline-spinner"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10.2 4.75a7.45 7.45 0 0 1 5.74 12.2l3.08 3.07a.75.75 0 0 1-1.06 1.06l-3.08-3.08A7.45 7.45 0 1 1 10.2 4.75Zm0 1.5a5.95 5.95 0 1 0 0 11.9 5.95 5.95 0 0 0 0-11.9Zm.05 2.3a.75.75 0 0 1 .75.75v1.95h1.95a.75.75 0 0 1 0 1.5h-2.7a.75.75 0 0 1-.75-.75V9.3a.75.75 0 0 1 .75-.75Z" />
+                  </svg>
+                )}
+              </button>
+              <span className="quotation-provider-import-action-hint">
+                {loadingPreview
+                  ? "Analizando documento..."
+                  : "Iniciar analisis"}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {errorMessage ? (
+          <div className="quotation-provider-import-warning" role="alert">
+            <strong>No se pudo completar la accion</strong>
+            <ul>
+              <li>{errorMessage}</li>
+            </ul>
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="quotation-provider-import-success" role="status">
+            <strong>Accion completada</strong>
+            <p>{successMessage}</p>
+          </div>
+        ) : null}
 
         {!documents.length ? (
           <div className="quotation-provider-import-warning">
@@ -301,24 +530,11 @@ function QuotationProviderDocumentImportModal({
           </div>
         ) : null}
 
-        <div className="quotation-provider-import-actions">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={onAnalyze}
-            disabled={!selectedDocumentId || loadingPreview}
-          >
-            {loadingPreview
-              ? "Analizando en background..."
-              : "Analizar documento"}
-          </button>
-        </div>
-
         {previewJob ? (
           <div className="quotation-provider-import-job-status">
             <div className="quotation-provider-import-job-status-row">
               <strong>
-                Estado del analisis: {previewJobStatus || "pending"}
+                Estado del analisis: {previewJobStatusLabel}
               </strong>
               <span>{Math.max(0, Math.min(100, previewJobPercent))}%</span>
             </div>
@@ -328,6 +544,9 @@ function QuotationProviderDocumentImportModal({
                   ? "Analizando documento del proveedor"
                   : "Analisis preparado")}
             </p>
+            {previewJobStatus === "failed" && previewJobErrorMessage ? (
+              <p>{previewJobErrorMessage}</p>
+            ) : null}
           </div>
         ) : null}
 
@@ -390,7 +609,7 @@ function QuotationProviderDocumentImportModal({
                       <th>Moneda</th>
                       <th>Costo resuelto</th>
                       <th>Estado</th>
-                      <th>Warnings</th>
+                      <th>Advertencias</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -422,6 +641,7 @@ function QuotationProviderDocumentImportModal({
                                     event.target.checked,
                                   )
                                 }
+                                disabled={isCreatingMissingItems}
                               />
                             ) : (
                               <span className="quotation-provider-import-muted">
@@ -438,7 +658,7 @@ function QuotationProviderDocumentImportModal({
                         <td>{item.productDescription}</td>
                         <td>{item.quantity}</td>
                         <td>{item.originalCurrencyCode || "USD"}</td>
-                        <td>{item.resolvedCostUnit}</td>
+                        <td>{formatResolvedCostUnit(item.resolvedCostUnit)}</td>
                         <td>
                           <div className="quotation-provider-import-status-cell">
                             <strong>
@@ -469,14 +689,49 @@ function QuotationProviderDocumentImportModal({
                               {item.createBlockedReason ? (
                                 <li>{item.createBlockedReason}</li>
                               ) : null}
-                              {item.warnings.map((warning, index) => (
+                              {item.warnings.map((warning, index) => {
+                                const formattedWarning =
+                                  formatProviderImportWarning(warning);
+                                if (!formattedWarning) {
+                                  return null;
+                                }
+
+                                return (
                                 <li key={`${item.previewId}-${index}`}>
-                                  {warning}
+                                  <div className="quotation-provider-import-warning-line">
+                                    <span className="quotation-provider-import-warning-text">
+                                      {formattedWarning}
+                                    </span>
+                                    {isWarningTransferable?.(warning) ? (
+                                      <label className="quotation-provider-import-warning-transfer-toggle">
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(
+                                            transferableWarningsSelection?.[
+                                              `${String(item.previewId || "").trim()}::${String(
+                                                warning || "",
+                                              ).trim()}`
+                                            ],
+                                          )}
+                                          onChange={(event) =>
+                                            onToggleTransferableWarningSelection?.(
+                                              item.previewId,
+                                              warning,
+                                              event.target.checked,
+                                            )
+                                          }
+                                          disabled={isCreatingMissingItems}
+                                        />
+                                        <span>Agregar a descripcion</span>
+                                      </label>
+                                    ) : null}
+                                  </div>
                                 </li>
-                              ))}
+                                );
+                              })}
                             </ul>
                           ) : (
-                            <span>Sin warnings</span>
+                            <span>Sin advertencias</span>
                           )}
                         </td>
                       </tr>
@@ -516,6 +771,7 @@ function QuotationProviderDocumentImportModal({
                               event.target.checked,
                             )
                           }
+                          disabled={isCreatingMissingItems}
                         />
                         <strong>{COMMERCIAL_TERM_LABELS[field]}</strong>
                       </span>
@@ -579,6 +835,12 @@ function QuotationProviderDocumentImportModal({
                       {resolvedSuggestedMatchItems.length === 1 ? "" : "s"}.
                     </li>
                   ) : null}
+                  {!hasConfirmedProviderContext ? (
+                    <li>
+                      Confirma el proveedor para habilitar la accion Crear nuevo
+                      item.
+                    </li>
+                  ) : null}
                 </ul>
               </div>
             ) : null}
@@ -597,12 +859,26 @@ function QuotationProviderDocumentImportModal({
                         <p>{item.productDescription}</p>
                       </div>
                       <span className="quotation-provider-import-resolved-match-badge">
-                        Confirmado como existente
+                        {suggestedMatchFeedback?.[String(item.previewId)]?.type ===
+                        "success"
+                          ? suggestedMatchFeedback?.[String(item.previewId)]
+                              ?.mode === "reused"
+                            ? "Ya existe en lista activa"
+                            : "Creado en lista activa"
+                          : "Confirmado como existente"}
                       </span>
                       {getSuggestedMatchCandidateLabel(item) ? (
                         <span className="quotation-provider-import-resolved-match-link">
                           {getSuggestedMatchCandidateLabel(item)}
                         </span>
+                      ) : null}
+                      {suggestedMatchFeedback?.[String(item.previewId)]?.message ? (
+                        <p className="quotation-provider-import-row-feedback is-success">
+                          {
+                            suggestedMatchFeedback[String(item.previewId)]
+                              .message
+                          }
+                        </p>
                       ) : null}
                     </div>
                   ))}
@@ -620,6 +896,13 @@ function QuotationProviderDocumentImportModal({
                     )
                       ? item.suggestedMatchCandidates
                       : [];
+                    const isCreatingThisSuggestedItem =
+                      String(creatingSuggestedMatchPreviewId || "") ===
+                      String(item.previewId);
+                    const rowFeedback =
+                      suggestedMatchFeedback[String(item.previewId)] || null;
+                    const canCreateSuggestedItem =
+                      hasConfirmedProviderContext && hasDocumentContext;
                     return (
                       <div
                         key={`suggested-${item.previewId}`}
@@ -638,75 +921,119 @@ function QuotationProviderDocumentImportModal({
                               "Coincidencia sugerida por codigo"}
                           </span>
                         </div>
-                        {candidates.length > 1 ? (
-                          <label className="field-group quotation-provider-import-suggestion-select">
-                            <span>Item existente sugerido</span>
-                            <select
-                              value={
-                                item.selectedSuggestedPriceListItemId || ""
-                              }
-                              onChange={(event) =>
-                                onSelectSuggestedMatchCandidate(
+                        <div className="quotation-provider-import-suggestion-resolution-row">
+                          {candidates.length > 1 ? (
+                            <label className="field-group quotation-provider-import-suggestion-select">
+                              <span>Item existente sugerido</span>
+                              <select
+                                value={
+                                  item.selectedSuggestedPriceListItemId || ""
+                                }
+                                onChange={(event) =>
+                                  onSelectSuggestedMatchCandidate(
+                                    item.previewId,
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={
+                                  isCreatingMissingItems ||
+                                  isCreatingSuggestedMatchItem
+                                }
+                              >
+                                <option value="">
+                                  Selecciona un item existente
+                                </option>
+                                {candidates.map((candidate) => (
+                                  <option key={candidate.id} value={candidate.id}>
+                                    {candidate.code} · {candidate.description}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : candidates[0] ? (
+                            <div className="quotation-provider-import-suggestion-candidate">
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
+                              </svg>
+                              <strong>{candidates[0].code}</strong>
+                              <span>{candidates[0].description}</span>
+                            </div>
+                          ) : (
+                            <div />
+                          )}
+                          <div className="quotation-provider-import-suggestion-actions">
+                            <button
+                              type="button"
+                              className="btn-secondary quotation-provider-import-suggestion-btn quotation-provider-import-suggestion-btn-icon quotation-provider-import-suggestion-btn-use"
+                              onClick={() =>
+                                onResolveSuggestedMatch(
                                   item.previewId,
-                                  event.target.value,
+                                  "use_existing",
                                 )
                               }
+                              disabled={
+                                isCreatingMissingItems ||
+                                isCreatingSuggestedMatchItem ||
+                                candidates.length > 1 &&
+                                !item.selectedSuggestedPriceListItemId
+                              }
+                              title="Usar existente"
+                              aria-label="Usar existente"
                             >
-                              <option value="">
-                                Selecciona un item existente
-                              </option>
-                              {candidates.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.code} · {candidate.description}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ) : candidates[0] ? (
-                          <div className="quotation-provider-import-suggestion-candidate">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                              <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
-                            </svg>
-                            <strong>{candidates[0].code}</strong>
-                            <span>{candidates[0].description}</span>
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary quotation-provider-import-suggestion-btn quotation-provider-import-suggestion-btn-icon quotation-provider-import-suggestion-btn-create"
+                              onClick={() =>
+                                onCreateSuggestedMatchItem?.(item.previewId)
+                              }
+                              disabled={
+                                isCreatingMissingItems ||
+                                isCreatingSuggestedMatchItem ||
+                                !canCreateSuggestedItem
+                              }
+                              title={
+                                !hasConfirmedProviderContext
+                                  ? "Confirma el proveedor para crear un nuevo item"
+                                  : !hasDocumentContext
+                                    ? "Confirma el documento analizado para crear un nuevo item"
+                                    : "Crear nuevo item"
+                              }
+                              aria-label={
+                                !hasConfirmedProviderContext
+                                  ? "Confirma el proveedor para crear un nuevo item"
+                                  : !hasDocumentContext
+                                    ? "Confirma el documento analizado para crear un nuevo item"
+                                    : "Crear nuevo item"
+                              }
+                            >
+                              {isCreatingThisSuggestedItem ? (
+                                <span
+                                  className="quotation-provider-import-inline-spinner"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm3.75 9.75h-3v3h-1.5v-3h-3v-1.5h3v-3h1.5v3h3Z" />
+                                </svg>
+                              )}
+                            </button>
                           </div>
-                        ) : null}
-                        <div className="quotation-provider-import-suggestion-actions">
-                          <button
-                            type="button"
-                            className="btn-secondary quotation-provider-import-suggestion-btn"
-                            onClick={() =>
-                              onResolveSuggestedMatch(
-                                item.previewId,
-                                "use_existing",
-                              )
-                            }
-                            disabled={
-                              candidates.length > 1 &&
-                              !item.selectedSuggestedPriceListItemId
-                            }
-                          >
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                              <path d="m9.55 16.2-3.8-3.8 1.06-1.06 2.74 2.74 7.64-7.64 1.06 1.06Z" />
-                            </svg>
-                            Usar existente
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary quotation-provider-import-suggestion-btn"
-                            onClick={() =>
-                              onResolveSuggestedMatch(
-                                item.previewId,
-                                "treat_as_missing",
-                              )
-                            }
-                          >
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                              <path d="M6 6h12v1.5H6Zm2 3h8l-.54 9.2A1.8 1.8 0 0 1 13.66 20h-3.32a1.8 1.8 0 0 1-1.8-1.8Zm2.25-4.5h3.5V6h-3.5Z" />
-                            </svg>
-                            Tratar como faltante
-                          </button>
                         </div>
+                        {rowFeedback?.message ? (
+                          <p
+                            className={`quotation-provider-import-row-feedback ${
+                              rowFeedback.type === "success"
+                                ? "is-success"
+                                : "is-error"
+                            }`}
+                          >
+                            {rowFeedback.message}
+                          </p>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -738,13 +1065,41 @@ function QuotationProviderDocumentImportModal({
         ) : null}
       </div>
 
-      <div className="modal-footer">
-        <button type="button" className="btn-secondary" onClick={onClose}>
-          Cancelar
+      <div className="modal-footer quotation-provider-import-footer">
+        <div className="quotation-provider-import-footer-copy">
+          <strong>
+            {workflowStage === "ready_to_create_missing_items"
+              ? "Paso siguiente: crear faltantes"
+              : workflowStage === "ready_to_apply"
+                ? "Paso final: agregar a la edicion actual"
+                : "Sigue el flujo para continuar"}
+          </strong>
+          <span>
+            {workflowStage === "resolve_suggested_matches"
+              ? "Primero resuelve las coincidencias sugeridas pendientes."
+              : workflowStage === "ready_to_create_missing_items"
+                ? "Crea los items faltantes seleccionados antes de aplicar."
+                : workflowStage === "ready_to_apply"
+                  ? "Los items confirmados se agregaran en memoria y se guardaran al pulsar Guardar como version actual."
+                  : "Confirma proveedor, documento y condiciones antes de continuar."}
+          </span>
+        </div>
+        <div className="quotation-provider-import-footer-actions">
+        <button
+          type="button"
+          className="btn-secondary quotation-provider-import-icon-button"
+          onClick={onClose}
+          disabled={isBlockingImport}
+          title="Cancelar y cerrar esta ventana de importación asistida por IA"
+          aria-label="Cancelar y cerrar esta ventana de importación asistida por IA"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6.53 5.47a.75.75 0 0 1 1.06 0L12 9.88l4.41-4.41a.75.75 0 1 1 1.06 1.06L13.06 10.94l4.41 4.41a.75.75 0 1 1-1.06 1.06L12 12l-4.41 4.41a.75.75 0 0 1-1.06-1.06l4.41-4.41-4.41-4.41a.75.75 0 0 1 0-1.06Z" />
+          </svg>
         </button>
         <button
           type="button"
-          className="btn-primary"
+          className="btn-primary quotation-provider-import-icon-button quotation-provider-import-icon-button-primary"
           onClick={
             workflowStage === "ready_to_create_missing_items"
               ? onCreateMissingItems
@@ -764,19 +1119,46 @@ function QuotationProviderDocumentImportModal({
               !selectedCreatableMissingItems.length) ||
             (workflowStage !== "ready_to_create_missing_items" && !canApply)
           }
+          title={
+            workflowStage === "provider_mismatch_confirmation_required"
+              ? "Revisa el proveedor confirmado antes de continuar"
+              : workflowStage === "resolve_suggested_matches"
+                ? "Primero resuelve las coincidencias sugeridas pendientes"
+                : workflowStage === "ready_to_create_missing_items"
+                  ? creatingMissingItems
+                    ? "Creando los items faltantes en la lista activa del proveedor"
+                    : "Crear los items faltantes seleccionados en la lista activa del proveedor"
+                  : applying
+                    ? "Agregando los items confirmados a la edicion actual"
+                    : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
+          }
+          aria-label={
+            workflowStage === "provider_mismatch_confirmation_required"
+              ? "Revisa el proveedor confirmado antes de continuar"
+              : workflowStage === "resolve_suggested_matches"
+                ? "Primero resuelve las coincidencias sugeridas pendientes"
+                : workflowStage === "ready_to_create_missing_items"
+                  ? creatingMissingItems
+                    ? "Creando los items faltantes en la lista activa del proveedor"
+                    : "Crear los items faltantes seleccionados en la lista activa del proveedor"
+                  : applying
+                    ? "Agregando los items confirmados a la edicion actual"
+                    : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
+          }
         >
-          {workflowStage === "provider_mismatch_confirmation_required"
-            ? "Revisar proveedor confirmado"
-            : workflowStage === "resolve_suggested_matches"
-              ? "Resolver coincidencias pendientes"
-              : workflowStage === "ready_to_create_missing_items"
-                ? creatingMissingItems
-                  ? "Creando faltantes..."
-                  : "Crear items faltantes en lista"
-                : applying
-                  ? "Aplicando..."
-                  : "Aplicar a cotizacion"}
+          {creatingMissingItems || applying ? (
+            <span className="quotation-provider-import-inline-spinner is-on-primary" aria-hidden="true" />
+          ) : workflowStage === "ready_to_create_missing_items" ? (
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm3.75 9.75h-3v3h-1.5v-3h-3v-1.5h3v-3h1.5v3h3Z" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8.78 6.47a.75.75 0 0 1 1.06 0l4.72 4.72a1.13 1.13 0 0 1 0 1.6l-4.72 4.72a.75.75 0 1 1-1.06-1.06l4.34-4.46-4.34-4.46a.75.75 0 0 1 0-1.06Z" />
+            </svg>
+          )}
         </button>
+        </div>
       </div>
     </div>
   );

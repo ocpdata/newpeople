@@ -31,6 +31,24 @@ const CORE_PERMISSIONS = [
     action: "request",
     description: "Solicitar creacion de oportunidades",
   },
+  {
+    code: "herramientas.read",
+    module: "herramientas",
+    action: "read",
+    description: "Ver modulo de herramientas administrativas",
+  },
+  {
+    code: "herramientas.update",
+    module: "herramientas",
+    action: "update",
+    description: "Ejecutar acciones correctivas en herramientas administrativas",
+  },
+  {
+    code: "herramientas.admin",
+    module: "herramientas",
+    action: "admin",
+    description: "Administrar herramientas operativas de alto impacto",
+  },
 ];
 
 export async function ensureCorePermissions() {
