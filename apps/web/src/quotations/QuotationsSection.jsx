@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle } from "react";
 import QuotationCreateModal from "./QuotationCreateModal";
 import QuotationEditModal from "./QuotationEditModal";
 import QuotationEditorContent from "./QuotationEditorContent";
+import QuotationProviderImportWindow from "./QuotationProviderImportWindow";
 import QuotationsSectionFeedback from "./QuotationsSectionFeedback";
 import QuotationsSectionHeader from "./QuotationsSectionHeader";
 import QuotationsListPanel from "./QuotationsListPanel";
@@ -40,6 +41,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     success,
     createModalProps,
     editModalProps,
+    providerImportWindowProps,
     listPanelProps,
     editorContentProps,
   } = useQuotationsSection({
@@ -103,6 +105,8 @@ const QuotationsSection = forwardRef(function QuotationsSection(
       </div>
 
       <QuotationEditModal {...editModalProps} />
+
+      <QuotationProviderImportWindow {...providerImportWindowProps} />
 
       <QuotationsSectionFeedback
         isOpportunityActive={isOpportunityActive}

@@ -332,7 +332,7 @@ export default function QuotationsPage({ currentUser }) {
 
   useEffect(() => {
     if (!error) return undefined;
-    const timeoutId = window.setTimeout(() => setError(""), 4000);
+    const timeoutId = window.setTimeout(() => setError(""), 10000);
     return () => window.clearTimeout(timeoutId);
   }, [error]);
 

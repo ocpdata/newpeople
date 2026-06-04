@@ -50,9 +50,14 @@ const quotationPermissionCodes = [
   "cotizaciones.operacion",
   "cotizaciones.revision",
   "cotizaciones.ingreso",
+  "cotizaciones.aprobacion_humana",
+  "cotizaciones.aprobacion_ia",
   "cotizaciones.administracion",
   "cotizaciones.externo",
 ];
+
+const quotationHumanApprovalPermissionCode = "cotizaciones.aprobacion_humana";
+const quotationAiApprovalPermissionCode = "cotizaciones.aprobacion_ia";
 
 const quotationItemTypes = ["producto", "servicio_propio", "grupo_productos"];
 
@@ -119,6 +124,29 @@ const transitionSchema = z.object({
     "ponerla_borrador",
     "aceptar",
   ]),
+  approvalContext: z
+    .object({
+      approvalMode: z.enum(["with_ai", "without_ai"]).optional(),
+      confirmMissingRequiredServices: z.boolean().optional().default(false),
+      missingRequiredServicesReason: z
+        .string()
+        .trim()
+        .max(2000)
+        .optional()
+        .nullable(),
+      confirmProviderBackingException: z.boolean().optional().default(false),
+      providerBackingExceptionReason: z
+        .string()
+        .trim()
+        .max(2000)
+        .optional()
+        .nullable(),
+      acknowledgedUnbackedItemIds: z
+        .array(z.number().int().positive())
+        .optional()
+        .default([]),
+    })
+    .optional(),
 });
 
 const quotationPdfRowSchema = z.object({
@@ -821,6 +849,10 @@ const quotationCreateSchema = z.object({
   sections: z.array(sectionSchema).optional().default([]),
 });
 
+const quotationDuplicateSchema = z.object({
+  targetOpportunityId: z.number().int().positive(),
+});
+
 const itemSchema = z.object({
   clientItemId: z.string().trim().min(1).max(120).optional(),
   providerId: z.number().int().positive(),
@@ -866,6 +898,7 @@ const fullSaveItemSchema = itemSchema.extend({
   localId: z.string().trim().min(1).max(120),
   bundleParentLocalId: z.string().trim().min(1).max(120).optional().nullable(),
   bundleParentItemId: z.number().int().positive().optional().nullable(),
+  importWarnings: z.array(z.string().trim().max(500)).optional().default([]),
 });
 
 const fullSaveSectionSchema = z.object({
@@ -952,6 +985,11 @@ const providerDocumentImportApplyItemSchema = z.object({
 
 const providerDocumentImportCreateMissingItemsSchema = z.object({
   documentLinkId: z.number().int().positive(),
+  confirmedProviderId: z.number().int().positive(),
+  items: z.array(providerDocumentImportCreateMissingItemSchema).min(1),
+});
+
+const providerDocumentImportDraftCreateMissingItemsSchema = z.object({
   confirmedProviderId: z.number().int().positive(),
   items: z.array(providerDocumentImportCreateMissingItemSchema).min(1),
 });
@@ -1918,6 +1956,548 @@ function normalizeProviderDocumentImportText(value, maxLength = 5000) {
     .slice(0, maxLength);
 }
 
+const PROVIDER_DOCUMENT_IMPORT_ITEM_WARNING_SEVERITIES = [
+  "info",
+  "warning",
+  "blocking",
+];
+
+function buildProviderDocumentImportItemWarning({
+  code,
+  severity = "info",
+  action,
+  descriptionNote,
+}) {
+  const normalizedCode = String(code || "").trim();
+  const normalizedAction = normalizeProviderDocumentImportText(action, 240);
+  const normalizedDescriptionNote = normalizeProviderDocumentImportText(
+    descriptionNote,
+    500,
+  );
+  if (!normalizedCode || !normalizedAction || !normalizedDescriptionNote) {
+    return null;
+  }
+
+  return {
+    code: normalizedCode,
+    severity: PROVIDER_DOCUMENT_IMPORT_ITEM_WARNING_SEVERITIES.includes(
+      String(severity || "").trim(),
+    )
+      ? String(severity).trim()
+      : "info",
+    action: normalizedAction,
+    descriptionNote: normalizedDescriptionNote,
+  };
+}
+
+function dedupeProviderDocumentImportItemWarnings(itemWarnings = []) {
+  const warnings = Array.isArray(itemWarnings) ? itemWarnings : [itemWarnings];
+  const seen = new Set();
+  return warnings.filter((warning) => {
+    if (!warning || typeof warning !== "object") {
+      return false;
+    }
+
+    const key = `${String(warning.code || "").trim()}::${String(
+      warning.descriptionNote || "",
+    ).trim()}`;
+    if (!String(warning.code || "").trim() || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildProviderDocumentImportWarningStrings(itemWarnings = []) {
+  return Array.from(
+    new Set(
+      dedupeProviderDocumentImportItemWarnings(itemWarnings)
+        .map((warning) =>
+          normalizeProviderDocumentImportText(
+            warning.descriptionNote || warning.action,
+            500,
+          ),
+        )
+        .filter(Boolean),
+    ),
+  );
+}
+
+function buildProviderDocumentImportItemSignalText(item) {
+  return [
+    item?.providerCode,
+    item?.productDescription,
+    item?.notes,
+    item?.sourceSnippet,
+    item?.warranty,
+    ...(Array.isArray(item?.detectedFields) ? item.detectedFields : []),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function extractProviderDocumentImportServiceTermMonths(text) {
+  const rawText = String(text || "");
+  const match = rawText.match(
+    /(?:service\s+term|subscription|maintenance|support|renewal|contract)?\s*:?\s*(\d{1,3})\s*(?:months?|meses?|month|mes)\b/i,
+  );
+  const monthCount = Number(match?.[1] || 0);
+  return Number.isInteger(monthCount) && monthCount > 0 ? monthCount : null;
+}
+
+function detectProviderDocumentImportServiceType(text) {
+  const rawText = String(text || "");
+  if (/maintenance|soporte|support\s+contract|hardware\s+only\s+maintenance/i.test(rawText)) {
+    return "maintenance";
+  }
+  if (/subscription|subscripcion|saas|license\s+subscription/i.test(rawText)) {
+    return "subscription";
+  }
+  return null;
+}
+
+function buildProviderDocumentImportSpecificWarnings({
+  item,
+  activePriceList,
+  selectedProvider,
+  suggestedProviderCandidate,
+  hasProviderMismatch,
+  suggestedMatchCandidates = [],
+  createBlockedReason = null,
+}) {
+  const signalText = buildProviderDocumentImportItemSignalText(item);
+  const serviceType = detectProviderDocumentImportServiceType(signalText);
+  const serviceTermMonths = extractProviderDocumentImportServiceTermMonths(
+    signalText,
+  );
+  const warnings = [];
+
+  if (serviceTermMonths) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "service_term_detected",
+        severity: "warning",
+        action:
+          "Confirmar que la vigencia detectada corresponde al periodo cotizado y que el precio aplica al plazo completo.",
+        descriptionNote:
+          serviceType === "maintenance"
+            ? `Se detectó mantenimiento con vigencia de ${serviceTermMonths} meses; confirma cobertura y periodo exacto.`
+            : serviceType === "subscription"
+              ? `Se detectó una suscripción por ${serviceTermMonths} meses; confirma vigencia y si el precio corresponde al plazo completo.`
+              : `Se detectó un término de servicio de ${serviceTermMonths} meses; confirma vigencia y alcance del periodo cotizado.`,
+      }),
+    );
+  }
+
+  if (serviceType === "subscription") {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "subscription_scope_review",
+        severity: "warning",
+        action:
+          "Validar si el item corresponde a suscripción nueva, renovación o ampliación, y confirmar alcance funcional y vigencia.",
+        descriptionNote:
+          "El item parece corresponder a una suscripción; valida vigencia, alcance funcional y tipo de contratación.",
+      }),
+    );
+  }
+
+  if (serviceType === "maintenance") {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "maintenance_scope_review",
+        severity: "warning",
+        action:
+          "Verificar activo o licencia base asociada y confirmar cobertura, vigencia y nivel de soporte.",
+        descriptionNote:
+          "El item parece corresponder a mantenimiento; valida cobertura, vigencia y activo o licencia base asociada.",
+      }),
+    );
+  }
+
+  if (/renewal|renovacion|renew|co-?term|coterm|extension/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "renewal_indicator_detected",
+        severity: "warning",
+        action:
+          "Confirmar si el item debe cotizarse como renovación y revisar fechas de inicio, vencimiento o co-terminación.",
+        descriptionNote:
+          "El item parece una renovación; confirma fechas de vigencia y si requiere co-terminación.",
+      }),
+    );
+  }
+
+  if (/bundle|package|suite|includes|incluye|edition/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "included_components_unclear",
+        severity: "warning",
+        action:
+          "Confirmar qué componentes, módulos o servicios están incluidos y cuáles deben cotizarse por separado.",
+        descriptionNote:
+          "El item parece incluir componentes o módulos; confirma el alcance exacto de lo incluido.",
+      }),
+    );
+  }
+
+  if (/warranty|garantia|24x7|nbd|rma|advance replacement/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "warranty_reference_detected",
+        severity: "info",
+        action:
+          "Verificar plazo, cobertura y condiciones de garantía indicadas para el item.",
+        descriptionNote:
+          "El item incluye una referencia de garantía; valida plazo, cobertura y condiciones aplicables.",
+      }),
+    );
+  }
+
+  if (/shipping|freight|delivery|logistics|transport|flete|envio/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "shipping_or_freight_detected",
+        severity: "warning",
+        action:
+          "Confirmar destino, alcance logístico y si el cargo debe cotizarse como línea separada.",
+        descriptionNote:
+          "El item parece corresponder a logística o flete; valida destino y alcance del cargo.",
+      }),
+    );
+  }
+
+  if (/payment terms|lead time|delivery time|validity|condiciones comerciales/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "commercial_conditions_reference_detected",
+        severity: "info",
+        action:
+          "Revisar si el item depende de condiciones comerciales específicas y confirmar su aplicación.",
+        descriptionNote:
+          "El item hace referencia a condiciones comerciales específicas; valida su aplicación en esta cotización.",
+      }),
+    );
+  }
+
+  if (Number(item?.resolvedCostUnit || 0) <= 0) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "price_not_reliable",
+        severity: "blocking",
+        action:
+          "Revisar el costo unitario antes de aplicar el item en la cotización.",
+        descriptionNote:
+          "No se pudo validar un costo unitario confiable para este item; revisa el precio antes de aplicarlo.",
+      }),
+    );
+  }
+
+  if (
+    item?.originalCurrencyCode &&
+    activePriceList?.currency_code &&
+    normalizeProviderDocumentImportCurrencyCode(item.originalCurrencyCode) !==
+      normalizeProviderDocumentImportCurrencyCode(activePriceList.currency_code)
+  ) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "currency_mismatch",
+        severity: "blocking",
+        action:
+          "Validar la moneda del item contra la lista activa del proveedor y corregir antes de importar.",
+        descriptionNote:
+          "La moneda detectada no coincide con la lista activa del proveedor; valida la moneda antes de aplicar.",
+      }),
+    );
+  }
+
+  if (hasProviderMismatch && selectedProvider && suggestedProviderCandidate) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "provider_mismatch",
+        severity: "blocking",
+        action:
+          "Confirmar si el proveedor detectado es correcto antes de importar el item.",
+        descriptionNote: `El proveedor detectado (${suggestedProviderCandidate.name}) no coincide con el confirmado (${selectedProvider.name}); valida el proveedor antes de continuar.`,
+      }),
+    );
+  }
+
+  if (Array.isArray(suggestedMatchCandidates) && suggestedMatchCandidates.length > 1) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "provider_code_ambiguous",
+        severity: "warning",
+        action:
+          "Revisar coincidencias similares en la lista del proveedor y seleccionar manualmente el código correcto.",
+        descriptionNote:
+          "El código del item tiene varias coincidencias posibles; valida manualmente la referencia correcta.",
+      }),
+    );
+  }
+
+  if (
+    item?.confidence === "low" ||
+    (!String(item?.sourceSnippet || "").trim() &&
+      String(item?.notes || "").trim())
+  ) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "source_evidence_weak",
+        severity: "warning",
+        action:
+          "Confirmar manualmente el detalle del item porque la evidencia detectada en el documento es incompleta o ambigua.",
+        descriptionNote:
+          "La evidencia del documento para este item es limitada; valida manualmente el detalle antes de aplicarlo.",
+      }),
+    );
+  }
+
+  if (/user|seat|node|device|appliance|instance|site license/i.test(signalText)) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "license_metric_unclear",
+        severity: "warning",
+        action:
+          "Validar la métrica de licenciamiento aplicable y cómo se relaciona con la cantidad cotizada.",
+        descriptionNote:
+          "El licenciamiento del item requiere validación; confirma la métrica aplicable y su relación con la cantidad.",
+      }),
+    );
+  }
+
+  if (
+    createBlockedReason &&
+    /lista activa|price list/i.test(String(createBlockedReason))
+  ) {
+    warnings.push(
+      buildProviderDocumentImportItemWarning({
+        code: "provider_price_list_missing",
+        severity: "blocking",
+        action:
+          "Confirmar la lista activa del proveedor antes de crear o importar este item.",
+        descriptionNote:
+          "El proveedor confirmado no tiene una lista activa compatible para este item; valida la lista antes de continuar.",
+      }),
+    );
+  }
+
+  return dedupeProviderDocumentImportItemWarnings(warnings);
+}
+
+function normalizeProviderDocumentImportWarningToSpanish(warning) {
+  const normalizedWarning = normalizeProviderDocumentImportText(warning, 500);
+  if (!normalizedWarning) {
+    return "";
+  }
+
+  const comparableWarning = normalizeProviderDocumentImportComparableText(
+    normalizedWarning,
+  );
+  const knownWarningsByComparable = {
+    "no se pudo resolver un costo unitario confiable":
+      "No se pudo resolver un costo unitario confiable",
+    "el proveedor confirmado no tiene una lista activa de productos para importar":
+      "El proveedor confirmado no tiene una lista activa de productos para importar",
+    "el item no tiene codigo de proveedor":
+      "El item no tiene codigo de proveedor",
+    "el item no tiene descripcion suficiente":
+      "El item no tiene descripcion suficiente",
+    "el item no tiene un costo confiable para crear en lista":
+      "No se pudo resolver un costo unitario confiable",
+    "la moneda del item no coincide con la lista activa del proveedor":
+      "La moneda del item no coincide con la lista activa del proveedor",
+    "unable to resolve a reliable unit cost":
+      "No se pudo resolver un costo unitario confiable",
+    "could not resolve a reliable unit cost":
+      "No se pudo resolver un costo unitario confiable",
+    "the confirmed provider does not have an active product price list for import":
+      "El proveedor confirmado no tiene una lista activa de productos para importar",
+    "the item does not have supplier code":
+      "El item no tiene codigo de proveedor",
+    "the item does not have enough description":
+      "El item no tiene descripcion suficiente",
+    "the item does not have enough description to create":
+      "El item no tiene descripcion suficiente",
+    "the item does not have a reliable cost to create in price list":
+      "No se pudo resolver un costo unitario confiable",
+    "item currency does not match provider active list":
+      "La moneda del item no coincide con la lista activa del proveedor",
+  };
+
+  if (knownWarningsByComparable[comparableWarning]) {
+    return knownWarningsByComparable[comparableWarning];
+  }
+
+  const serviceTermMatch = comparableWarning.match(
+    /^(subscription|maintenance)(?: with service)? term:? (\d+) months?$/,
+  );
+  if (serviceTermMatch) {
+    const warningType = serviceTermMatch[1] === "maintenance"
+      ? "Mantenimiento"
+      : "Suscripcion";
+    const monthCount = Number(serviceTermMatch[2]) || 0;
+    return `El item corresponde a ${
+      warningType === "Mantenimiento" ? "mantenimiento" : "una suscripcion"
+    } con termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  const bareServiceTermMatch = comparableWarning.match(
+    /^service term:? (\d+) months?$/,
+  );
+  if (bareServiceTermMatch) {
+    const monthCount = Number(bareServiceTermMatch[1]) || 0;
+    return `El item indica un termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  if (/subscription/i.test(normalizedWarning)) {
+    return "El item corresponde a una suscripcion y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/maintenance/i.test(normalizedWarning)) {
+    return "El item corresponde a mantenimiento y conviene validar su vigencia y alcance en el documento fuente";
+  }
+
+  if (/warranty|garantia/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a garantia; revisa el plazo y el alcance indicados en el documento fuente";
+  }
+
+  if (/delivery|shipping|freight/i.test(normalizedWarning)) {
+    return "Este item incluye una referencia a entrega o flete; revisa el alcance logistico indicado en el documento fuente";
+  }
+
+  if (
+    comparableWarning ===
+    "warning imported from ai analysis review item detail in source document"
+  ) {
+    return "Este item requiere revisar el detalle, el alcance y las condiciones comerciales indicadas en el documento fuente";
+  }
+
+  if (
+    /\b(unable|could not|missing|invalid|provider|price list|currency|cost|item|with|service|term|month|months|subscription|maintenance|review|source|document)\b/i.test(
+      normalizedWarning,
+    )
+  ) {
+    return "Este item tiene una observacion relevante; revisa el detalle, el alcance y las condiciones comerciales antes de aplicarlo";
+  }
+
+  return comparableWarning ===
+    normalizeProviderDocumentImportComparableText(normalizedWarning)
+    ? normalizedWarning
+    : "Este item tiene una observacion; revisa el documento fuente antes de aplicarlo";
+}
+
+function normalizeProviderDocumentImportWarningsToSpanish(warnings = []) {
+  const sourceWarnings = Array.isArray(warnings) ? warnings : [warnings];
+  return Array.from(
+    new Set(
+      sourceWarnings
+        .map((warning) => normalizeProviderDocumentImportWarningToSpanish(warning))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function appendProviderDocumentImportWarningsToDescription(
+  description,
+  selectedWarnings = [],
+) {
+  const baseDescription = normalizeProviderDocumentImportDescription(description);
+  const normalizedBase = normalizeText(baseDescription).replace(/[_-]+/g, " ");
+  const uniqueWarnings = Array.from(
+    new Set(
+      normalizeProviderDocumentImportWarningsToSpanish(selectedWarnings).filter(
+        (warning) => {
+          const normalizedWarning = normalizeText(warning).replace(
+            /[_-]+/g,
+            " ",
+          );
+          return (
+            normalizedWarning && !normalizedBase.includes(normalizedWarning)
+          );
+        },
+      ),
+    ),
+  );
+
+  if (!uniqueWarnings.length) {
+    return baseDescription;
+  }
+
+  const notesBlock = uniqueWarnings
+    .map((warning) => `Nota: ${warning}`)
+    .join("\n");
+
+  return baseDescription ? `${baseDescription}\n${notesBlock}` : notesBlock;
+}
+
+function normalizeProviderDocumentImportDescription(value) {
+  const normalizedValue = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const segments = normalizedValue
+    .split(/Nota:\s*/g)
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    return normalizedValue;
+  }
+
+  const [baseDescription, ...noteSegments] = segments;
+  const notesBlock = noteSegments.map((segment) => `Nota: ${segment}`).join("\n");
+  return [baseDescription, notesBlock].filter(Boolean).join("\n");
+}
+
+function resolveProviderDocumentImportPreviewErrorMessage(
+  error,
+  fallbackMessage = "No fue posible analizar el documento del proveedor",
+) {
+  const directMessage = String(error?.message || "").trim();
+  if (directMessage) {
+    return directMessage;
+  }
+
+  if (typeof error === "string") {
+    const rawMessage = error.trim();
+    if (rawMessage) {
+      return rawMessage;
+    }
+  }
+
+  const causeMessage = String(error?.cause?.message || "").trim();
+  if (causeMessage) {
+    return causeMessage;
+  }
+
+  const errorName = String(error?.name || "").trim();
+  const errorCode = String(error?.code || "").trim();
+  if (errorName || errorCode) {
+    return [errorName, errorCode].filter(Boolean).join(" ");
+  }
+
+  if (error && typeof error === "object") {
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") {
+        return serialized;
+      }
+    } catch {
+      // Ignore serialization failures and fall back to the default message.
+    }
+  }
+
+  return fallbackMessage;
+}
+
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH = 50000;
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE = "segun_notas";
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_ALIASES_BY_FIELD = {
@@ -2404,6 +2984,33 @@ async function getProviderPriceListItemByCode({ priceListId, code }) {
   return rows.length ? rows[0] : null;
 }
 
+async function findProviderPriceListItemByNormalizedCode({
+  priceListId,
+  code,
+  excludeItemId = null,
+}) {
+  const normalizedCode = normalizeProviderDocumentImportCode(code);
+  if (!normalizedCode) {
+    return null;
+  }
+
+  const params = [Number(priceListId), normalizedCode];
+  let sql = `SELECT ppli.id, ppli.code, ppli.description, ppli.price, ppli.currency_id,
+                    ppli.activation_status_id
+     FROM provider_price_list_items ppli
+     WHERE ppli.price_list_id = ?
+       AND REPLACE(UPPER(TRIM(ppli.code)), ' ', '') = ?`;
+
+  if (excludeItemId != null) {
+    sql += " AND ppli.id <> ?";
+    params.push(Number(excludeItemId));
+  }
+
+  sql += " ORDER BY ppli.id ASC LIMIT 1";
+  const rows = await query(sql, params);
+  return rows.length ? rows[0] : null;
+}
+
 function normalizeProviderDocumentImportCode(code) {
   return String(code || "")
     .trim()
@@ -2721,14 +3328,17 @@ function resolveProviderDocumentImportPreviewItemForAction({
   };
 }
 
+function buildProviderDocumentImportInstructions() {
+  return "Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Si agregas notes por item, deben ser concretas, específicas para ese item y basadas en evidencia textual; evita frases genéricas como revisar el documento fuente sin indicar el dato detectado. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }";
+}
+
 function buildProviderDocumentImportPrompt({ documentRow, extractedContent }) {
   return {
     model: config.openai.model,
     input: [
       {
         role: "system",
-        content:
-          "Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }",
+        content: buildProviderDocumentImportInstructions(),
       },
       {
         role: "user",
@@ -2757,18 +3367,59 @@ function buildProviderDocumentImportPrompt({ documentRow, extractedContent }) {
   };
 }
 
-async function analyzeProviderDocumentImport({
+function buildProviderDocumentImportPdfPrompt({
   documentRow,
   extractedContent,
+  buffer,
 }) {
-  if (!config.openai.apiKey) {
-    const error = new Error(
-      "La importacion asistida requiere configuracion de OpenAI en el backend",
-    );
-    error.status = 503;
-    throw error;
-  }
+  const content = [
+    {
+      type: "input_text",
+      text: JSON.stringify({
+        instructions:
+          "Analiza el PDF adjunto y responde exclusivamente con JSON valido siguiendo el expectedShape indicado por el sistema.",
+        document: {
+          fileName: documentRow.original_file_name,
+          mimeType: documentRow.mime_type,
+          fileExtension: documentRow.file_extension,
+        },
+        extractedContent: {
+          summary: normalizeProviderDocumentImportText(
+            extractedContent?.contentSummary || extractedContent?.normalizedText,
+            4000,
+          ),
+          normalizedText: normalizeProviderDocumentImportText(
+            extractedContent?.normalizedText,
+            12000,
+          ),
+          structuredContent:
+            extractedContent?.structuredContentJson || undefined,
+        },
+      }),
+    },
+    {
+      type: "input_file",
+      filename: documentRow.original_file_name || "documento.pdf",
+      file_data: buffer.toString("base64"),
+    },
+  ];
 
+  return {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content: buildProviderDocumentImportInstructions(),
+      },
+      {
+        role: "user",
+        content,
+      },
+    ],
+  };
+}
+
+async function requestProviderDocumentImportAnalysis(payload) {
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -2777,9 +3428,7 @@ async function analyzeProviderDocumentImport({
         Authorization: `Bearer ${config.openai.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(
-        buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
-      ),
+      body: JSON.stringify(payload),
     },
   );
 
@@ -2792,6 +3441,74 @@ async function analyzeProviderDocumentImport({
   const parsed = extractJsonObject(getOpenAiOutputText(responseData));
   if (!parsed || typeof parsed !== "object") {
     throw new Error("OpenAI request failed: invalid JSON response");
+  }
+
+  return parsed;
+}
+
+async function analyzeProviderDocumentImport({
+  documentRow,
+  extractedContent,
+  buffer,
+  extractionError = null,
+}) {
+  if (!config.openai.apiKey) {
+    const error = new Error(
+      "La importacion asistida requiere configuracion de OpenAI en el backend",
+    );
+    error.status = 503;
+    throw error;
+  }
+
+  const normalizedText = String(extractedContent?.normalizedText || "").trim();
+  const isPdfDocument =
+    String(documentRow?.file_extension || "")
+      .trim()
+      .toLowerCase() === ".pdf" ||
+    String(documentRow?.mime_type || "").trim().toLowerCase() ===
+      "application/pdf";
+  const canUsePdfFallback = isPdfDocument && Buffer.isBuffer(buffer) && buffer.length > 0;
+
+  let parsed = null;
+  let primaryError = extractionError || null;
+
+  if (normalizedText) {
+    try {
+      parsed = await requestProviderDocumentImportAnalysis(
+        buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
+      );
+    } catch (error) {
+      primaryError = error;
+      if (!canUsePdfFallback) {
+        throw error;
+      }
+    }
+  }
+
+  if (!parsed) {
+    if (!canUsePdfFallback) {
+      throw (
+        primaryError ||
+        new Error(
+          "No fue posible extraer contenido util del documento para el analisis",
+        )
+      );
+    }
+
+    try {
+      parsed = await requestProviderDocumentImportAnalysis(
+        buildProviderDocumentImportPdfPrompt({
+          documentRow,
+          extractedContent,
+          buffer,
+        }),
+      );
+    } catch (fallbackError) {
+      if (primaryError) {
+        fallbackError.message = `${fallbackError.message}. Fallback PDF: ${primaryError.message}`;
+      }
+      throw fallbackError;
+    }
   }
 
   const items = Array.isArray(parsed.items) ? parsed.items : [];
@@ -2892,28 +3609,76 @@ async function buildProviderDocumentImportPreview({
   documentRow,
   providerId = null,
 }) {
-  const [activeProviders, history] = await Promise.all([
-    listActiveProvidersForImport(),
-    getQuotationDocumentImportHistory({
-      quotationId: version.quotation_id,
-      documentId: documentRow.document_id,
-    }),
-  ]);
+  const history = await getQuotationDocumentImportHistory({
+    quotationId: version.quotation_id,
+    documentId: documentRow.document_id,
+  });
 
   const { stream } = await getDocumentContentStream({
     documentPublicId: documentRow.document_public_id,
   });
   const buffer = await streamToBuffer(stream);
-  const extractedContent = await extractContentFromBuffer({
-    buffer,
-    mimeType: documentRow.mime_type,
-    fileName: documentRow.original_file_name,
-    extension: documentRow.file_extension,
-  });
+  let extractedContent = null;
+  let extractionError = null;
+  try {
+    extractedContent = await extractContentFromBuffer({
+      buffer,
+      mimeType: documentRow.mime_type,
+      fileName: documentRow.original_file_name,
+      extension: documentRow.file_extension,
+    });
+  } catch (error) {
+    const isPdfDocument =
+      String(documentRow?.file_extension || "")
+        .trim()
+        .toLowerCase() === ".pdf" ||
+      String(documentRow?.mime_type || "").trim().toLowerCase() ===
+        "application/pdf";
+    if (!isPdfDocument) {
+      throw error;
+    }
+    extractionError = error;
+    extractedContent = {
+      extractionStatus: "failed",
+      transcriptionStatus: "pending",
+      detectedFormat: "pdf",
+      rawText: "",
+      normalizedText: "",
+      structuredContentJson: null,
+      transcriptText: null,
+      transcriptionLanguage: null,
+      transcriptionConfidence: null,
+      durationSeconds: null,
+      pageCount: null,
+      contentSummary: "",
+    };
+  }
   const analysis = await analyzeProviderDocumentImport({
     documentRow,
     extractedContent,
+    buffer,
+    extractionError,
   });
+
+  return buildProviderDocumentImportPreviewFromAnalysis({
+    documentRow,
+    analysis,
+    providerId,
+    history,
+    fallbackVersionNumber: version?.version_number,
+    extractedContentSummary: extractedContent?.contentSummary || "",
+  });
+}
+
+async function buildProviderDocumentImportPreviewFromAnalysis({
+  documentRow,
+  analysis,
+  providerId = null,
+  history = [],
+  fallbackVersionNumber = 0,
+  extractedContentSummary = "",
+}) {
+  const activeProviders = await listActiveProvidersForImport();
 
   const selectedProviderId = providerId ? Number(providerId) : null;
   const selectedProvider = selectedProviderId
@@ -2940,13 +3705,6 @@ async function buildProviderDocumentImportPreview({
 
   const items = [];
   for (const item of analysis.items) {
-    const warnings = [
-      ...(analysis.warnings || []),
-      ...(item.notes ? [item.notes] : []),
-      ...(item.resolvedCostUnit > 0
-        ? []
-        : ["No se pudo resolver un costo unitario confiable"]),
-    ];
     let matchedPriceListItemId = null;
     let matchStatus = "provider_required";
     let canCreateInPriceList = false;
@@ -2956,9 +3714,6 @@ async function buildProviderDocumentImportPreview({
 
     if (hasProviderMismatch) {
       matchStatus = "provider_required";
-      warnings.push(
-        `El proveedor confirmado (${selectedProvider.name}) no coincide con el proveedor sugerido (${suggestedProviderCandidate.name})`,
-      );
     } else if (selectedProvider && activePriceList) {
       const matchedItem = activePriceListItems.find(
         (candidate) =>
@@ -3027,9 +3782,6 @@ async function buildProviderDocumentImportPreview({
           createBlockedReason = "El item no tiene codigo de proveedor";
         } else if (!item.productDescription) {
           createBlockedReason = "El item no tiene descripcion suficiente";
-        } else if (!(Number(item.resolvedCostUnit || 0) > 0)) {
-          createBlockedReason =
-            "El item no tiene un costo confiable para crear en lista";
         } else if (!currencyMatches) {
           createBlockedReason =
             "La moneda del item no coincide con la lista activa del proveedor";
@@ -3039,12 +3791,20 @@ async function buildProviderDocumentImportPreview({
       }
     } else if (selectedProvider && !activePriceList) {
       matchStatus = "missing_price_list";
-      warnings.push(
-        "El proveedor confirmado no tiene una lista activa de productos para importar",
-      );
       createBlockedReason =
         "El proveedor confirmado no tiene una lista activa de productos";
     }
+
+    const itemWarnings = buildProviderDocumentImportSpecificWarnings({
+      item,
+      activePriceList,
+      selectedProvider,
+      suggestedProviderCandidate,
+      hasProviderMismatch,
+      suggestedMatchCandidates,
+      createBlockedReason,
+    });
+    const warnings = buildProviderDocumentImportWarningStrings(itemWarnings);
 
     items.push({
       ...item,
@@ -3055,8 +3815,9 @@ async function buildProviderDocumentImportPreview({
       createBlockedReason,
       suggestedMatchReason,
       suggestedMatchCandidates,
+      itemWarnings,
       listCurrencyCode: activePriceList?.currency_code || null,
-      warnings: Array.from(new Set(warnings.filter(Boolean))),
+      warnings,
     });
   }
 
@@ -3085,14 +3846,12 @@ async function buildProviderDocumentImportPreview({
 
   return {
     document: {
-      id: Number(documentRow.document_id),
+      id: Number(documentRow.document_id || 0),
       publicId: String(documentRow.document_public_id || ""),
       originalFileName: documentRow.original_file_name || "Documento",
       mimeType: documentRow.mime_type || "application/octet-stream",
       fileExtension: documentRow.file_extension || null,
-      versionNumber: Number(
-        documentRow.version_number || version.version_number,
-      ),
+      versionNumber: Number(documentRow.version_number || fallbackVersionNumber || 0),
     },
     activeProviders,
     suggestedProviderName: analysis.providerName || "",
@@ -3116,7 +3875,150 @@ async function buildProviderDocumentImportPreview({
     workflowStage,
     items,
     priorImports: history,
-    extractedContentSummary: extractedContent.contentSummary || "",
+    extractedContentSummary,
+  };
+}
+
+async function buildDraftProviderDocumentImportPreview({
+  uploadedFile,
+  providerId = null,
+}) {
+  const fileName =
+    uploadedFile?.originalFilename || uploadedFile?.newFilename || "Documento";
+  const mimeType = String(uploadedFile?.mimetype || "application/octet-stream");
+  const extension = path.extname(fileName || "") || null;
+  const buffer = await readFile(uploadedFile.filepath);
+  let extractedContent = null;
+  let extractionError = null;
+
+  try {
+    extractedContent = await extractContentFromBuffer({
+      buffer,
+      mimeType,
+      fileName,
+      extension,
+    });
+  } catch (error) {
+    const isPdfDocument =
+      String(extension || "")
+        .trim()
+        .toLowerCase() === ".pdf" ||
+      mimeType.trim().toLowerCase() === "application/pdf";
+    if (!isPdfDocument) {
+      throw error;
+    }
+    extractionError = error;
+    extractedContent = {
+      extractionStatus: "failed",
+      transcriptionStatus: "pending",
+      detectedFormat: "pdf",
+      rawText: "",
+      normalizedText: "",
+      structuredContentJson: null,
+      transcriptText: null,
+      transcriptionLanguage: null,
+      transcriptionConfidence: null,
+      durationSeconds: null,
+      pageCount: null,
+      contentSummary: "",
+    };
+  }
+
+  const documentRow = {
+    document_id: 0,
+    document_public_id: "",
+    original_file_name: fileName,
+    mime_type: mimeType,
+    file_extension: extension,
+    version_number: 0,
+  };
+  const analysis = await analyzeProviderDocumentImport({
+    documentRow,
+    extractedContent,
+    buffer,
+    extractionError,
+  });
+
+  return buildProviderDocumentImportPreviewFromAnalysis({
+    documentRow,
+    analysis,
+    providerId,
+    history: [],
+    fallbackVersionNumber: 0,
+    extractedContentSummary: extractedContent?.contentSummary || "",
+  });
+}
+
+function patchProviderDocumentImportPreviewWithCreatedItems(
+  preview,
+  createdItems = [],
+) {
+  if (!preview || typeof preview !== "object") {
+    return preview;
+  }
+
+  const previewItems = Array.isArray(preview.items) ? preview.items : [];
+  if (!previewItems.length || !Array.isArray(createdItems) || !createdItems.length) {
+    return preview;
+  }
+
+  const createdByPreviewId = new Map(
+    createdItems
+      .map((item) => ({
+        previewId: String(item?.previewId || "").trim(),
+        createdPriceListItemId: Number(item?.createdPriceListItemId || 0) || null,
+      }))
+      .filter((item) => item.previewId),
+  );
+
+  if (!createdByPreviewId.size) {
+    return preview;
+  }
+
+  const items = previewItems.map((item) => {
+    const previewId = String(item?.previewId || "").trim();
+    const createdRecord = createdByPreviewId.get(previewId);
+    if (!createdRecord) {
+      return item;
+    }
+
+    return {
+      ...item,
+      matchedPriceListItemId:
+        createdRecord.createdPriceListItemId || item.matchedPriceListItemId || null,
+      requiresPriceListCreation: false,
+      matchStatus: "matched",
+      canCreateInPriceList: false,
+      createBlockedReason: null,
+      suggestedMatchReason: null,
+      suggestedMatchCandidates: [],
+    };
+  });
+
+  const hasPendingSuggestedMatches = items.some((item) =>
+    [
+      "suggested_match_pending_confirmation",
+      "ambiguous_similar_match",
+    ].includes(item.matchStatus),
+  );
+  const hasPendingCreatableItems = items.some(
+    (item) =>
+      item.matchStatus === "missing_in_price_list" && item.canCreateInPriceList,
+  );
+  const hasBlockingMissingPriceList = items.some(
+    (item) => item.matchStatus === "missing_price_list",
+  );
+
+  return {
+    ...preview,
+    workflowStage: hasBlockingMissingPriceList
+      ? "blocked_missing_price_list"
+      : hasPendingSuggestedMatches
+        ? "resolve_suggested_matches"
+        : hasPendingCreatableItems
+          ? "ready_to_create_missing_items"
+          : "ready_to_apply",
+    items,
   };
 }
 
@@ -3308,6 +4210,36 @@ async function createOrReuseQuotationProviderDocumentImportPreviewJob({
     wasReused: false,
     response: buildQuotationProviderDocumentImportPreviewJobResponse(rows[0]),
   };
+}
+
+async function getReusableQuotationProviderDocumentImportPreviewResult({
+  version,
+  documentRow,
+  providerId,
+}) {
+  await ensureQuotationProviderDocumentImportPreviewJobSchema();
+
+  const snapshot = buildQuotationProviderDocumentImportPreviewJobSnapshot({
+    version,
+    documentRow,
+    providerId,
+  });
+  const fingerprint =
+    hashQuotationProviderDocumentImportPreviewJobSnapshot(snapshot);
+  const rows = await query(
+    `SELECT result_json
+     FROM quotation_provider_document_import_preview_jobs
+     WHERE quotation_version_id = ?
+       AND request_fingerprint = ?
+       AND status = 'completed'
+       AND result_json IS NOT NULL
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY finished_at DESC, id DESC
+     LIMIT 1`,
+    [Number(version.id), fingerprint],
+  );
+
+  return rows.length ? safeParseJsonObject(rows[0].result_json) || null : null;
 }
 
 async function getQuotationProviderDocumentImportPreviewJob({
@@ -3582,9 +4514,7 @@ async function processQuotationProviderDocumentImportPreviewJob(row) {
       leaseToken: row.lease_token,
       status: "failed",
       errorCode: error?.code || "provider_document_import_preview_failed",
-      errorMessage:
-        String(error?.message || "").trim() ||
-        "No fue posible analizar el documento del proveedor",
+      errorMessage: resolveProviderDocumentImportPreviewErrorMessage(error),
     });
   }
 }
@@ -3839,6 +4769,12 @@ async function ensureQuotationSectionItemsSchema() {
         `ALTER TABLE quotation_section_items
          ADD COLUMN source_component_price_list_item_id BIGINT UNSIGNED NULL
          AFTER source_provider_price_list_item_id`,
+      );
+      await ensureQuotationSectionItemsColumn(
+        "import_warnings_json",
+        `ALTER TABLE quotation_section_items
+         ADD COLUMN import_warnings_json LONGTEXT NULL
+         AFTER source_component_price_list_item_id`,
       );
       await ensureQuotationSectionItemsColumn(
         "bundle_sort_order",
@@ -4179,7 +5115,12 @@ function validateAndNormalizeFullSaveSections(sections = []) {
       id: section.id ? Number(section.id) : null,
       localId,
       displayOrder: Number(section.displayOrder || index + 1),
-      items: normalizedItems.items,
+      items: normalizedItems.items.map((item) => ({
+        ...item,
+        importWarnings: normalizeProviderDocumentImportWarningsToSpanish(
+          item.importWarnings || [],
+        ),
+      })),
     };
 
     normalizedSections.push(normalizedSection);
@@ -4218,6 +5159,7 @@ async function upsertQuotationSectionItemsForFullSave(
          SET provider_id = ?, product_code = ?, product_description = ?, item_type = ?, is_renewal = ?,
              bundle_parent_item_id = NULL, bundle_origin_type = ?,
              source_provider_price_list_item_id = ?, source_component_price_list_item_id = ?,
+             import_warnings_json = ?,
            quantity = ?, original_currency_code = ?, original_list_price_unit = ?, list_price_unit = ?,
            manufacturer_discount_pct = ?, import_cost_pct = ?,
              profit_margin_pct = ?, final_discount_pct = ?, display_order = ?, bundle_sort_order = ?,
@@ -4232,6 +5174,7 @@ async function upsertQuotationSectionItemsForFullSave(
           item.bundleOriginType || null,
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
+          JSON.stringify(item.importWarnings || []),
           Number(item.quantity),
           normalizedPrices.originalCurrencyCode,
           normalizedPrices.originalListPriceUnit,
@@ -4254,11 +5197,11 @@ async function upsertQuotationSectionItemsForFullSave(
       const [result] = await conn.query(
         `INSERT INTO quotation_section_items
           (quotation_section_id, provider_id, product_code, product_description, item_type, is_renewal, bundle_parent_item_id,
-           bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
+           bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id, import_warnings_json,
            quantity, original_currency_code, original_list_price_unit, list_price_unit,
            manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
            final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           Number(sectionId),
           Number(item.providerId),
@@ -4269,6 +5212,7 @@ async function upsertQuotationSectionItemsForFullSave(
           item.bundleOriginType || null,
           item.sourceProviderPriceListItemId || null,
           item.sourceComponentPriceListItemId || null,
+          JSON.stringify(item.importWarnings || []),
           Number(item.quantity),
           normalizedPrices.originalCurrencyCode,
           normalizedPrices.originalListPriceUnit,
@@ -4488,6 +5432,27 @@ async function insertQuotationSectionItems(
 
 function hasQuotationAdministration(user) {
   return user?.permissionSet?.has("cotizaciones.administracion");
+}
+
+function hasQuotationAiApprovalPermission(user) {
+  return (
+    hasQuotationAdministration(user) ||
+    user?.permissionSet?.has(quotationAiApprovalPermissionCode)
+  );
+}
+
+function hasQuotationHumanApprovalPermission(user) {
+  return (
+    hasQuotationAdministration(user) ||
+    user?.permissionSet?.has(quotationHumanApprovalPermissionCode)
+  );
+}
+
+function hasQuotationAnyApprovalPermission(user) {
+  return (
+    hasQuotationHumanApprovalPermission(user) ||
+    hasQuotationAiApprovalPermission(user)
+  );
 }
 
 function hasAnyQuotationPermission(user) {
@@ -4925,6 +5890,7 @@ async function getQuotationVersionSections(versionId) {
               qsi.bundle_parent_item_id, qsi.bundle_origin_type,
               qsi.source_provider_price_list_item_id,
               qsi.source_component_price_list_item_id,
+              qsi.import_warnings_json,
               qsi.quantity, qsi.original_currency_code, qsi.original_list_price_unit, qsi.list_price_unit,
               qsi.manufacturer_discount_pct, qsi.import_cost_pct,
               qsi.profit_margin_pct, qsi.final_discount_pct,
@@ -4943,6 +5909,9 @@ async function getQuotationVersionSections(versionId) {
         quotationSectionId: key,
         providerId: Number(item.provider_id),
         providerName: item.provider_name,
+        importWarnings: normalizeProviderDocumentImportWarningsToSpanish(
+          safeParseJsonArray(item.import_warnings_json) || [],
+        ),
         productCode: item.product_code,
         productDescription: item.product_description,
         itemType: item.item_type || "producto",
@@ -8108,6 +9077,21 @@ async function getAllowedQuotationActionCodes({ user, versionRow }) {
   );
 
   const allowed = new Set(allowedRows.map((row) => String(row.code)));
+  const statusCode = String(versionRow?.status_code || "").trim();
+  const statusSupportsDirectApproval = [
+    "borrador",
+    "en_aprobacion",
+    "rechazada",
+  ].includes(statusCode);
+  const canApproveAny = hasQuotationAnyApprovalPermission(user);
+
+  if (statusSupportsDirectApproval && canApproveAny) {
+    allowed.add("aprobar");
+  }
+
+  if (canApproveAny) {
+    allowed.delete("solicitar_aprobacion");
+  }
 
   if (permissionCodes.includes("cotizaciones.operacion")) {
     allowed.add("crear_cotizacion");
@@ -8145,6 +9129,27 @@ async function getAllowedQuotationActionsPayload({ user, versionRow }) {
     name: String(action.name),
     allowed: allowedCodes.has(String(action.code)),
   }));
+}
+
+async function getQuotationApprovalCapabilities({ user, versionRow }) {
+  const allowedCodes = new Set(
+    await getAllowedQuotationActionCodes({ user, versionRow }),
+  );
+  const canApproveAction = allowedCodes.has("aprobar");
+  const canApproveWithAi =
+    canApproveAction && hasQuotationAiApprovalPermission(user);
+  const canApproveWithoutAi =
+    canApproveAction && hasQuotationHumanApprovalPermission(user);
+  const canApprove = canApproveWithAi || canApproveWithoutAi;
+  const canRequestApproval =
+    allowedCodes.has("solicitar_aprobacion") && !canApprove;
+
+  return {
+    canRequestApproval,
+    canApprove,
+    canApproveWithoutAi,
+    canApproveWithAi,
+  };
 }
 
 async function canExecuteQuotationAction({ user, versionRow, actionCode }) {
@@ -8513,6 +9518,16 @@ router.post(
     ) {
       return res.status(400).json({
         message: "No fue posible resolver la configuracion de la lista",
+      });
+    }
+
+    const duplicateItem = await findProviderPriceListItemByNormalizedCode({
+      priceListId: parsed.data.priceListId,
+      code: parsed.data.code,
+    });
+    if (duplicateItem) {
+      return res.status(409).json({
+        message: "Ya existe un producto con ese codigo en la lista",
       });
     }
 
@@ -10527,6 +11542,10 @@ router.get(
       user: req.user,
       versionRow: version,
     });
+    const approvalCapabilities = await getQuotationApprovalCapabilities({
+      user: req.user,
+      versionRow: version,
+    });
 
     return res.json({
       id: Number(version.id),
@@ -10576,7 +11595,233 @@ router.get(
       documents,
       allDocuments,
       actions,
+      approvalCapabilities,
       isLatestVersion: Number(version.id) === Number(version.latest_version_id),
+    });
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/duplicate",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (
+      !hasQuotationAdministration(req.user) &&
+      !req.user?.permissionSet?.has("cotizaciones.operacion")
+    ) {
+      return res
+        .status(403)
+        .json({ message: "No autorizado para duplicar cotizaciones" });
+    }
+
+    const sourceVersionId = Number(req.params.versionId);
+    if (!Number.isInteger(sourceVersionId) || sourceVersionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const parsed = quotationDuplicateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const sourceVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: sourceVersionId,
+    });
+    if (!sourceVersion) {
+      return res.status(404).json({ message: "Version origen no encontrada" });
+    }
+
+    const targetOpportunityId = Number(parsed.data.targetOpportunityId);
+    const targetOpportunity = await getAccessibleOpportunity({
+      user: req.user,
+      opportunityId: targetOpportunityId,
+    });
+    if (!targetOpportunity) {
+      return res.status(404).json({ message: "Oportunidad destino no encontrada" });
+    }
+    if (targetOpportunity.activation_status_code !== "activada") {
+      return res.status(400).json({
+        message:
+          "Solo se puede duplicar una cotizacion hacia una oportunidad activa",
+      });
+    }
+
+    const targetSellerUserId = Number(targetOpportunity.seller_user_id || 0);
+    if (!targetSellerUserId) {
+      return res.status(400).json({
+        message:
+          "La oportunidad destino no tiene vendedor asignado y no puede recibir cotizaciones",
+      });
+    }
+
+    const targetContactId = Number(targetOpportunity.contact_id || 0);
+    if (!targetContactId) {
+      return res.status(400).json({
+        message:
+          "La oportunidad destino no tiene contacto principal y no puede recibir cotizaciones",
+      });
+    }
+
+    const targetContactValidation = await validateQuotationContact({
+      accountId: Number(targetOpportunity.account_id),
+      contactId: targetContactId,
+    });
+    if (!targetContactValidation.ok) {
+      return res.status(400).json({ message: targetContactValidation.message });
+    }
+
+    const sourceSections = await getQuotationVersionSections(sourceVersion.id);
+    const sourceQuotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId: Number(sourceVersion.quotation_id),
+    });
+
+    const defaultQuotationActivation = await getCatalogRowByCode(
+      "quotation_activation_statuses",
+      "activada",
+    );
+    if (!defaultQuotationActivation) {
+      return res
+        .status(500)
+        .json({ message: "Catalogos de cotizacion incompletos" });
+    }
+
+    const now = new Date();
+
+    const result = await withTransaction(async (conn) => {
+      const [quotationResult] = await conn.query(
+        `INSERT INTO quotations
+          (opportunity_id, latest_version_id, activation_status_id, created_at, updated_at, created_by_user_id, updated_by_user_id)
+         VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+        [
+          targetOpportunityId,
+          Number(
+            sourceQuotation?.activation_status_id || defaultQuotationActivation.id,
+          ),
+          now,
+          now,
+          Number(req.user.id),
+          Number(req.user.id),
+        ],
+      );
+      const duplicatedQuotationId = Number(quotationResult.insertId);
+
+      const [versionResult] = await conn.query(
+        `INSERT INTO quotation_versions
+          (quotation_id, version_number, contact_id, proposal_name, quotation_date, introduction,
+           status_id, activation_status_id, summary_discount_mode, summary_discount_value,
+           summary_distribution_mode, summary_vat_mode, summary_vat_pct, internal_notes,
+           delivery_time, quotation_validity, warranty_term, payment_terms,
+           currency_code, exchange_rate, quotation_notes,
+           created_at, updated_at, created_by_user_id, updated_by_user_id)
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          duplicatedQuotationId,
+          targetContactId,
+          sourceVersion.proposal_name,
+          sourceVersion.quotation_date,
+          sourceVersion.introduction || "",
+          Number(sourceVersion.status_id),
+          Number(sourceVersion.activation_status_id),
+          sourceVersion.summary_discount_mode ?? null,
+          sourceVersion.summary_discount_value == null
+            ? null
+            : Number(sourceVersion.summary_discount_value),
+          sourceVersion.summary_distribution_mode ?? null,
+          sourceVersion.summary_vat_mode ?? null,
+          sourceVersion.summary_vat_pct == null
+            ? null
+            : Number(sourceVersion.summary_vat_pct),
+          sourceVersion.internal_notes || "",
+          sourceVersion.delivery_time ?? null,
+          sourceVersion.quotation_validity ?? null,
+          sourceVersion.warranty_term ?? null,
+          sourceVersion.payment_terms ?? null,
+          sourceVersion.currency_code ?? null,
+          sourceVersion.exchange_rate == null
+            ? null
+            : Number(sourceVersion.exchange_rate),
+          sourceVersion.quotation_notes || "",
+          now,
+          now,
+          Number(req.user.id),
+          Number(req.user.id),
+        ],
+      );
+      const duplicatedVersionId = Number(versionResult.insertId);
+
+      for (const section of sourceSections) {
+        const [sectionResult] = await conn.query(
+          `INSERT INTO quotation_sections
+            (quotation_version_id, title, inclusion_type_id, activation_status_id, display_order,
+             created_at, updated_at, created_by_user_id, updated_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            duplicatedVersionId,
+            section.title,
+            Number(section.inclusionTypeId),
+            Number(section.activationStatusId),
+            Number(section.displayOrder),
+            now,
+            now,
+            Number(req.user.id),
+            Number(req.user.id),
+          ],
+        );
+        const newSectionId = Number(sectionResult.insertId);
+
+        await insertQuotationSectionItems(conn, {
+          sectionId: newSectionId,
+          items: section.items,
+          now,
+          userId: req.user.id,
+          refField: "id",
+          parentRefField: "bundleParentItemId",
+          quotationCurrencyCode: sourceVersion.currency_code,
+        });
+      }
+
+      await conn.query(
+        `UPDATE quotations
+         SET latest_version_id = ?, updated_at = ?, updated_by_user_id = ?
+         WHERE id = ?`,
+        [
+          duplicatedVersionId,
+          now,
+          Number(req.user.id),
+          duplicatedQuotationId,
+        ],
+      );
+
+      return {
+        quotationId: duplicatedQuotationId,
+        versionId: duplicatedVersionId,
+      };
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "duplicated",
+      entityType: "quotation",
+      entityId: result.quotationId,
+      detail: "Cotizacion duplicada hacia otra oportunidad",
+      after: {
+        source_quotation_version_id: sourceVersionId,
+        target_opportunity_id: targetOpportunityId,
+        latest_version_id: result.versionId,
+      },
+    });
+
+    return res.status(201).json({
+      quotationId: result.quotationId,
+      latestVersionId: result.versionId,
+      message: "Cotizacion duplicada",
     });
   },
 );
@@ -11036,6 +12281,10 @@ router.put(
       user: req.user,
       versionRow: refreshedVersion,
     });
+    const approvalCapabilities = await getQuotationApprovalCapabilities({
+      user: req.user,
+      versionRow: refreshedVersion,
+    });
 
     return res.json({
       id: Number(refreshedVersion.id),
@@ -11087,6 +12336,7 @@ router.put(
       isLatestVersion:
         Number(refreshedVersion.id) ===
         Number(refreshedVersion.latest_version_id),
+      approvalCapabilities,
       message: "Version actualizada",
     });
   },
@@ -11356,6 +12606,41 @@ router.post(
   },
 );
 
+router.post(
+  "/quotation-create/provider-document-import/preview",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const { files, fields } = await parseMultipartFiles(req);
+    if (!files.length) {
+      return res.status(400).json({ message: "Selecciona un documento para analizar" });
+    }
+
+    const [uploadedFile] = files;
+    const providerId = Number(fields?.providerId || 0) || null;
+
+    try {
+      const result = await buildDraftProviderDocumentImportPreview({
+        uploadedFile,
+        providerId,
+      });
+      return res.json({
+        message: "Documento analizado",
+        result,
+        workflowStage: result.workflowStage,
+      });
+    } catch (error) {
+      return res.status(Number(error?.status) || 500).json({
+        message:
+          error.message || "No fue posible analizar el documento del proveedor",
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+  },
+);
+
 router.get(
   "/quotation-versions/:versionId/provider-document-import/preview/jobs/:jobId",
   requireAnyPermission(quotationPermissionCodes),
@@ -11453,11 +12738,17 @@ router.post(
       });
     }
 
-    const latestPreview = await buildProviderDocumentImportPreview({
-      version,
-      documentRow,
-      providerId: parsed.data.confirmedProviderId,
-    });
+    const latestPreview =
+      (await getReusableQuotationProviderDocumentImportPreviewResult({
+        version,
+        documentRow,
+        providerId: parsed.data.confirmedProviderId,
+      })) ||
+      (await buildProviderDocumentImportPreview({
+        version,
+        documentRow,
+        providerId: parsed.data.confirmedProviderId,
+      }));
 
     const requestedItems = (parsed.data.items || []).filter(
       (item) => item.selectedForPriceListCreation,
@@ -11468,6 +12759,8 @@ router.post(
           "Selecciona al menos un item faltante para crear en la lista del proveedor",
       });
     }
+
+    const requestedNormalizedCodes = new Set();
 
     const latestPreviewItemsById = new Map(
       (latestPreview.items || []).map((item) => [String(item.previewId), item]),
@@ -11492,6 +12785,26 @@ router.post(
       });
     }
 
+    for (const requestedItem of requestedItems) {
+      const latestItem = latestPreviewItemsById.get(String(requestedItem.previewId));
+      const normalizedCode = normalizeProviderDocumentImportCode(
+        latestItem?.providerCode,
+      );
+      if (!normalizedCode) {
+        return res.status(409).json({
+          message:
+            "Uno de los items seleccionados no tiene un codigo valido para crear en la lista del proveedor.",
+        });
+      }
+      if (requestedNormalizedCodes.has(normalizedCode)) {
+        return res.status(409).json({
+          message:
+            "Hay items seleccionados con codigos duplicados. Deja solo un item por codigo antes de crear en la lista del proveedor.",
+        });
+      }
+      requestedNormalizedCodes.add(normalizedCode);
+    }
+
     const activePriceItemStatusId = await getProviderPriceItemActiveStatusId();
     const productTypeId = await getProductTypeIdByCode("producto");
     if (!activePriceItemStatusId || !productTypeId) {
@@ -11501,6 +12814,21 @@ router.post(
       });
     }
 
+      const equivalentItemsByNormalizedCode = new Map();
+      for (const requestedItem of requestedItems) {
+        const latestItem = latestPreviewItemsById.get(String(requestedItem.previewId));
+        const normalizedCode = normalizeProviderDocumentImportCode(
+          latestItem?.providerCode,
+        );
+        const equivalentItem = await findProviderPriceListItemByNormalizedCode({
+          priceListId: activePriceList.id,
+          code: latestItem?.providerCode,
+        });
+        if (equivalentItem) {
+          equivalentItemsByNormalizedCode.set(normalizedCode, equivalentItem);
+        }
+      }
+
     const now = new Date();
     const createdItems = await withTransaction(async (conn) => {
       const created = [];
@@ -11509,10 +12837,20 @@ router.post(
         const latestItem = latestPreviewItemsById.get(
           String(requestedItem.previewId),
         );
-        const resolvedItem = resolveProviderDocumentImportPreviewItemForAction({
-          previewItem: latestItem,
-          payloadItem: requestedItem,
-        });
+        const normalizedCode = normalizeProviderDocumentImportCode(
+          latestItem.providerCode,
+        );
+        const equivalentItem =
+          equivalentItemsByNormalizedCode.get(normalizedCode) || null;
+        if (equivalentItem) {
+          created.push({
+            previewId: latestItem.previewId,
+            providerCode: latestItem.providerCode,
+            createdPriceListItemId: Number(equivalentItem.id),
+            reused: true,
+          });
+          continue;
+        }
         const existingItem = await getProviderPriceListItemByCode({
           priceListId: activePriceList.id,
           code: latestItem.providerCode,
@@ -11558,11 +12896,10 @@ router.post(
       return created;
     });
 
-    const refreshedPreview = await buildProviderDocumentImportPreview({
-      version,
-      documentRow,
-      providerId: parsed.data.confirmedProviderId,
-    });
+    const refreshedPreview = patchProviderDocumentImportPreviewWithCreatedItems(
+      latestPreview,
+      createdItems,
+    );
 
     await logAuditEvent({
       req,
@@ -11585,6 +12922,172 @@ router.post(
       createdItems,
       preview: refreshedPreview,
       workflowStage: refreshedPreview.workflowStage,
+    });
+  },
+);
+
+router.post(
+  "/quotation-create/provider-document-import/create-missing-items",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const parsed = providerDocumentImportDraftCreateMissingItemsSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const activePriceList = await getActiveProviderImportPriceList(
+      parsed.data.confirmedProviderId,
+    );
+    if (!activePriceList) {
+      return res.status(409).json({
+        message:
+          "El proveedor confirmado no tiene una lista activa de productos",
+      });
+    }
+
+    const requestedItems = (parsed.data.items || []).filter(
+      (item) => item.selectedForPriceListCreation,
+    );
+    if (!requestedItems.length) {
+      return res.status(409).json({
+        message:
+          "Selecciona al menos un item faltante para crear en la lista del proveedor",
+      });
+    }
+
+    const requestedNormalizedCodes = new Set();
+    for (const requestedItem of requestedItems) {
+      const normalizedCode = normalizeProviderDocumentImportCode(
+        requestedItem?.providerCode,
+      );
+      if (!normalizedCode) {
+        return res.status(409).json({
+          message:
+            "Uno de los items seleccionados no tiene un codigo valido para crear en la lista del proveedor.",
+        });
+      }
+      if (requestedNormalizedCodes.has(normalizedCode)) {
+        return res.status(409).json({
+          message:
+            "Hay items seleccionados con codigos duplicados. Deja solo un item por codigo antes de crear en la lista del proveedor.",
+        });
+      }
+      requestedNormalizedCodes.add(normalizedCode);
+    }
+
+    const activePriceItemStatusId = await getProviderPriceItemActiveStatusId();
+    const productTypeId = await getProductTypeIdByCode("producto");
+    if (!activePriceItemStatusId || !productTypeId) {
+      return res.status(500).json({
+        message:
+          "No fue posible resolver la configuracion base para crear items faltantes",
+      });
+    }
+
+    const equivalentItemsByNormalizedCode = new Map();
+    for (const requestedItem of requestedItems) {
+      const normalizedCode = normalizeProviderDocumentImportCode(
+        requestedItem?.providerCode,
+      );
+      const equivalentItem = await findProviderPriceListItemByNormalizedCode({
+        priceListId: activePriceList.id,
+        code: requestedItem?.providerCode,
+      });
+      if (equivalentItem) {
+        equivalentItemsByNormalizedCode.set(normalizedCode, equivalentItem);
+      }
+    }
+
+    const now = new Date();
+    const createdItems = await withTransaction(async (conn) => {
+      const created = [];
+
+      for (const requestedItem of requestedItems) {
+        const normalizedCode = normalizeProviderDocumentImportCode(
+          requestedItem.providerCode,
+        );
+        const equivalentItem =
+          equivalentItemsByNormalizedCode.get(normalizedCode) || null;
+        if (equivalentItem) {
+          created.push({
+            previewId: requestedItem.previewId,
+            providerCode: requestedItem.providerCode,
+            createdPriceListItemId: Number(equivalentItem.id),
+            reused: true,
+          });
+          continue;
+        }
+
+        const existingItem = await getProviderPriceListItemByCode({
+          priceListId: activePriceList.id,
+          code: requestedItem.providerCode,
+        });
+        if (existingItem) {
+          created.push({
+            previewId: requestedItem.previewId,
+            providerCode: requestedItem.providerCode,
+            createdPriceListItemId: Number(existingItem.id),
+            reused: true,
+          });
+          continue;
+        }
+
+        const [providerItemInsertResult] = await conn.query(
+          `INSERT INTO provider_price_list_items
+            (provider_id, price_list_id, code, description, product_type_id, item_type, price, currency_id, activation_status_id,
+             created_by, created_at, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'producto', ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            Number(parsed.data.confirmedProviderId),
+            Number(activePriceList.id),
+            requestedItem.providerCode,
+            requestedItem.productDescription,
+            Number(productTypeId),
+            Number(requestedItem.resolvedCostUnit),
+            Number(activePriceList.currency_id),
+            Number(activePriceItemStatusId),
+            Number(req.user.id),
+            now,
+            Number(req.user.id),
+            now,
+          ],
+        );
+        created.push({
+          previewId: requestedItem.previewId,
+          providerCode: requestedItem.providerCode,
+          createdPriceListItemId: Number(providerItemInsertResult.insertId),
+          reused: false,
+        });
+      }
+
+      return created;
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "provider_document_import_missing_items_created",
+      entityType: "provider_price_list",
+      entityId: Number(activePriceList.id),
+      detail:
+        "Items faltantes creados en la lista del proveedor desde el modal de crear cotizacion",
+      after: {
+        provider_id: Number(parsed.data.confirmedProviderId),
+        created_count: createdItems.length,
+      },
+    });
+
+    return res.status(201).json({
+      message: `Se ${createdItems.length === 1 ? "creo" : "crearon"} ${createdItems.length} item${createdItems.length === 1 ? "" : "s"} en la lista del proveedor`,
+      createdCount: createdItems.length,
+      createdItems,
     });
   },
 );
@@ -11718,16 +13221,26 @@ router.post(
       });
     }
 
-    const itemWarnings = parsed.data.items.flatMap(
-      (item) => item.warnings || [],
+    const normalizedWarningsByPreviewId = new Map(
+      (parsed.data.items || []).map((item) => [
+        String(item.previewId),
+        normalizeProviderDocumentImportWarningsToSpanish(item.warnings || []),
+      ]),
+    );
+    const itemWarnings = Array.from(
+      new Set(
+        Array.from(normalizedWarningsByPreviewId.values()).flatMap(
+          (warnings) => warnings,
+        ),
+      ),
     );
 
     if (
-      parsed.data.items.some((item) => Number(item.resolvedCostUnit || 0) <= 0)
+      parsed.data.items.some((item) => Number(item.resolvedCostUnit || 0) < 0)
     ) {
       return res.status(409).json({
         message:
-          "Todos los items importados deben tener un costo unitario resuelto mayor a cero",
+          "Todos los items importados deben tener un costo unitario resuelto mayor o igual a cero",
       });
     }
 
@@ -12011,17 +13524,23 @@ router.post(
         const [quotationItemInsertResult] = await conn.query(
           `INSERT INTO quotation_section_items
             (quotation_section_id, provider_id, product_code, product_description, item_type, is_renewal, bundle_parent_item_id,
-             bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id,
+             bundle_origin_type, source_provider_price_list_item_id, source_component_price_list_item_id, import_warnings_json,
              quantity, original_currency_code, original_list_price_unit, list_price_unit,
              manufacturer_discount_pct, import_cost_pct, profit_margin_pct,
              final_discount_pct, display_order, bundle_sort_order, created_at, updated_at, created_by_user_id, updated_by_user_id)
-           VALUES (?, ?, ?, ?, 'producto', 0, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, 0, 30, 0, ?, NULL, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, 'producto', 0, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, 0, 30, 0, ?, NULL, ?, ?, ?, ?)`,
           [
             createdSectionId,
             Number(parsed.data.confirmedProviderId),
             item.providerCode,
-            item.productDescription,
+            appendProviderDocumentImportWarningsToDescription(
+              item.productDescription,
+              normalizedWarningsByPreviewId.get(String(item.previewId)) || [],
+            ),
             sourceProviderPriceListItemId,
+            JSON.stringify(
+              normalizedWarningsByPreviewId.get(String(item.previewId)) || [],
+            ),
             Number(item.quantity),
             originalCurrencyCode,
             originalListPriceUnit,
@@ -12341,6 +13860,800 @@ router.post(
   },
 );
 
+const QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT = 30;
+const QUOTATION_APPROVAL_PRODUCT_MARGIN_MIN_PCT = 10;
+const QUOTATION_APPROVAL_SERVICE_MARGIN_MIN_PCT = 40;
+const QUOTATION_APPROVAL_COST_TOLERANCE_ABS = 0.01;
+const QUOTATION_APPROVAL_COST_TOLERANCE_REL = 0.001;
+const QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES = {
+  implementation: /implementacion|implementation|impl\b/i,
+  support: /soporte|support/i,
+};
+
+function buildQuotationApprovalBlockingRule(code, message, details = {}) {
+  return {
+    code,
+    message,
+    ...details,
+  };
+}
+
+function buildQuotationApprovalWarning(code, message, details = {}) {
+  return {
+    code,
+    message,
+    ...details,
+  };
+}
+
+function normalizeQuotationApprovalComparableText(value) {
+  return normalizeProviderDocumentImportComparableText(value)
+    .replace(/[_-]+/g, " ")
+    .trim();
+}
+
+function normalizeQuotationApprovalTermValue(field, value) {
+  const comparable = normalizeQuotationApprovalComparableText(value);
+  if (!comparable) {
+    return null;
+  }
+
+  if (
+    comparable === "segun notas" ||
+    comparable === "de acuerdo a lo indicado en notas" ||
+    comparable === "according to notes" ||
+    comparable === "as indicated in notes"
+  ) {
+    return null;
+  }
+
+  if (field === "warranty") {
+    const yearMatch = comparable.match(/^(\d+)\s*(?:ano|anos|year|years)$/u);
+    if (yearMatch) {
+      return Number(yearMatch[1]) * 12;
+    }
+    const monthMatch = comparable.match(
+      /^(\d+)\s*(?:mes|meses|month|months)$/u,
+    );
+    if (monthMatch) {
+      return Number(monthMatch[1]);
+    }
+    return null;
+  }
+
+  if (
+    comparable === "inmediato" ||
+    comparable === "immediate" ||
+    comparable === "immediately"
+  ) {
+    return 0;
+  }
+
+  if (
+    comparable === "contado" ||
+    comparable === "100 adelantado" ||
+    comparable === "100% adelantado" ||
+    comparable === "100 advance" ||
+    comparable === "100% advance" ||
+    comparable === "100 upfront" ||
+    comparable === "100% upfront" ||
+    comparable === "100 entrega" ||
+    comparable === "100% contra entrega" ||
+    comparable === "100 on delivery" ||
+    comparable === "100% on delivery" ||
+    comparable === "50 adelantado 50 entrega" ||
+    comparable === "50% adelantado 50% contra entrega" ||
+    comparable === "50% anticipo y saldo contra entrega" ||
+    comparable === "50 anticipo y saldo contra entrega" ||
+    comparable === "50 advance 50 on delivery" ||
+    comparable === "50% advance 50% on delivery"
+  ) {
+    return 0;
+  }
+
+  const daysMatch = comparable.match(/^(\d+)\s*(?:dia|dias|day|days)$/u);
+  if (daysMatch) {
+    return Number(daysMatch[1]);
+  }
+
+  const invoicedDaysMatch = comparable.match(
+    /^(?:factura a )?(\d+)\s*(?:dia|dias|day|days)\s*(?:despues de facturado|after invoiced|after invoice|after billing|net)?$/u,
+  );
+  if (invoicedDaysMatch) {
+    return Number(invoicedDaysMatch[1]);
+  }
+
+  const netDaysMatch = comparable.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return Number(netDaysMatch[1]);
+  }
+
+  return null;
+}
+
+function evaluateQuotationApprovalCommercialTerms({
+  version,
+  providerCommercialTerms,
+  warnings,
+  blockingRules,
+}) {
+  const fieldConfig = [
+    {
+      field: "deliveryTime",
+      quotationRaw: version.delivery_time,
+      providerRaw: providerCommercialTerms?.deliveryTime,
+      label: "tiempo de entrega",
+      relation: "greater_or_equal",
+    },
+    {
+      field: "quotationValidity",
+      quotationRaw: version.quotation_validity,
+      providerRaw: providerCommercialTerms?.quotationValidity,
+      label: "validez",
+      relation: "less_or_equal",
+    },
+    {
+      field: "warranty",
+      quotationRaw: version.warranty_term,
+      providerRaw: providerCommercialTerms?.warranty,
+      label: "garantia",
+      relation: "less_or_equal",
+    },
+    {
+      field: "paymentTerms",
+      quotationRaw: version.payment_terms,
+      providerRaw: providerCommercialTerms?.paymentTerms,
+      label: "condiciones de pago",
+      relation: "less_or_equal",
+    },
+  ];
+
+  for (const config of fieldConfig) {
+    const providerComparable = normalizeQuotationApprovalTermValue(
+      config.field,
+      config.providerRaw,
+    );
+
+    if (providerComparable == null) {
+      warnings.push(
+        buildQuotationApprovalWarning(
+          `approval_provider_data_missing_${config.field}`,
+          `No se pudo validar ${config.label} contra documento del proveedor; se permite aprobar por falta de dato proveedor.`,
+        ),
+      );
+      continue;
+    }
+
+    const quotationComparable = normalizeQuotationApprovalTermValue(
+      config.field,
+      config.quotationRaw,
+    );
+    if (quotationComparable == null) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          `approval_commercial_term_not_comparable_${config.field}`,
+          `No se pudo normalizar ${config.label} de la cotizacion para comparar con proveedor.`,
+        ),
+      );
+      continue;
+    }
+
+    const failsRule =
+      config.relation === "greater_or_equal"
+        ? quotationComparable < providerComparable
+        : quotationComparable > providerComparable;
+
+    if (failsRule) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          `approval_commercial_term_not_compliant_${config.field}`,
+          `La cotizacion no cumple la regla de ${config.label} frente al proveedor.`,
+          {
+            quotationValue: config.quotationRaw || null,
+            providerValue: config.providerRaw || null,
+          },
+        ),
+      );
+    }
+  }
+}
+
+function buildQuotationApprovalLeafItems(items) {
+  const parentIds = new Set(
+    items
+      .map((item) =>
+        item?.bundleParentItemId ? Number(item.bundleParentItemId) : null,
+      )
+      .filter((id) => Number.isInteger(id) && id > 0),
+  );
+
+  return items.filter((item) => !parentIds.has(Number(item.id)));
+}
+
+function calculateQuotationApprovalGlobalDiscountPct({ version, totalSale }) {
+  if (totalSale <= 0) {
+    return 0;
+  }
+  if (String(version.summary_distribution_mode || "") === "per_item") {
+    return 0;
+  }
+
+  if (String(version.summary_discount_mode || "") === "amount") {
+    const discountAmount = Math.max(
+      0,
+      Math.min(Number(version.summary_discount_value || 0), totalSale),
+    );
+    return (discountAmount / totalSale) * 100;
+  }
+
+  if (String(version.summary_discount_mode || "") === "percentage") {
+    return Math.max(0, Math.min(Number(version.summary_discount_value || 0), 100));
+  }
+
+  return 0;
+}
+
+function evaluateQuotationApprovalMargins({ version, items, blockingRules }) {
+  const lineMetrics = items
+    .filter((item) => item.itemType !== "grupo_productos")
+    .map((item) => {
+      const pricing = calculateProposalSalePrice(item);
+      return {
+        item,
+        saleTotal: Number(pricing.salePriceTotal || 0),
+        costTotal: Number(pricing.costUnit || 0) * Number(item.quantity || 0),
+      };
+    })
+    .filter((line) => line.saleTotal > 0);
+
+  const totalSale = lineMetrics.reduce((sum, line) => sum + line.saleTotal, 0);
+  const totalCost = lineMetrics.reduce((sum, line) => sum + line.costTotal, 0);
+  const globalDiscountPct = calculateQuotationApprovalGlobalDiscountPct({
+    version,
+    totalSale,
+  });
+  const globalFactor = 1 - globalDiscountPct / 100;
+  const adjustedTotalSale = totalSale * globalFactor;
+
+  if (adjustedTotalSale <= 0) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_total_margin_not_computable",
+        "No se pudo calcular margen total posterior al descuento global.",
+      ),
+    );
+    return;
+  }
+
+  const totalMarginPct = ((adjustedTotalSale - totalCost) / adjustedTotalSale) * 100;
+  if (totalMarginPct < QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_total_margin_below_threshold",
+        `El margen total posterior al descuento global debe ser al menos ${QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT}%.`,
+        {
+          expectedMinPct: QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT,
+          actualPct: Number(totalMarginPct.toFixed(4)),
+        },
+      ),
+    );
+  }
+
+  for (const line of lineMetrics) {
+    const adjustedSale = line.saleTotal * globalFactor;
+    if (adjustedSale <= 0) {
+      continue;
+    }
+    const marginPct = ((adjustedSale - line.costTotal) / adjustedSale) * 100;
+
+    if (
+      line.item.itemType === "producto" &&
+      marginPct < QUOTATION_APPROVAL_PRODUCT_MARGIN_MIN_PCT
+    ) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          "approval_product_line_margin_below_threshold",
+          `El margen por linea de producto debe ser al menos ${QUOTATION_APPROVAL_PRODUCT_MARGIN_MIN_PCT}%.`,
+          {
+            itemId: Number(line.item.id),
+            productCode: String(line.item.productCode || "").trim(),
+            actualPct: Number(marginPct.toFixed(4)),
+          },
+        ),
+      );
+    }
+
+    if (
+      line.item.itemType === "servicio_propio" &&
+      marginPct < QUOTATION_APPROVAL_SERVICE_MARGIN_MIN_PCT
+    ) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          "approval_service_line_margin_below_threshold",
+          `El margen por linea de servicio debe ser al menos ${QUOTATION_APPROVAL_SERVICE_MARGIN_MIN_PCT}%.`,
+          {
+            itemId: Number(line.item.id),
+            productCode: String(line.item.productCode || "").trim(),
+            actualPct: Number(marginPct.toFixed(4)),
+          },
+        ),
+      );
+    }
+  }
+}
+
+function evaluateQuotationApprovalMandatoryServices({
+  items,
+  approvalContext,
+  blockingRules,
+}) {
+  const serviceLines = items.filter((item) => item.itemType === "servicio_propio");
+
+  const hasMandatoryImplementation = serviceLines.some((item) => {
+    const signal = normalizeQuotationApprovalComparableText(
+      `${item.productCode || ""} ${item.productDescription || ""}`,
+    );
+    return QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES.implementation.test(signal);
+  });
+  const hasMandatorySupport = serviceLines.some((item) => {
+    const signal = normalizeQuotationApprovalComparableText(
+      `${item.productCode || ""} ${item.productDescription || ""}`,
+    );
+    return QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES.support.test(signal);
+  });
+
+  const missingMandatoryServices = [];
+  if (!hasMandatoryImplementation) {
+    missingMandatoryServices.push("implementacion");
+  }
+  if (!hasMandatorySupport) {
+    missingMandatoryServices.push("soporte");
+  }
+
+  const requiresConfirmation = missingMandatoryServices.length > 0;
+  if (!requiresConfirmation) {
+    return {
+      missingMandatoryServices,
+      mandatoryServicesExceptionApplied: false,
+      mandatoryServicesExceptionReason: "",
+    };
+  }
+
+  const acceptedException = Boolean(
+    approvalContext?.confirmMissingRequiredServices,
+  );
+  if (!acceptedException) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_missing_required_services_confirmation",
+        "Faltan servicios obligatorios de implementacion/soporte. Debes confirmar exclusion para continuar.",
+        {
+          missingMandatoryServices,
+          requiresConfirmation: true,
+        },
+      ),
+    );
+    return {
+      missingMandatoryServices,
+      mandatoryServicesExceptionApplied: false,
+      mandatoryServicesExceptionReason: "",
+    };
+  }
+
+  const mandatoryServicesExceptionReason = String(
+    approvalContext?.missingRequiredServicesReason || "",
+  ).trim();
+  if (mandatoryServicesExceptionReason.length < 5) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_missing_required_services_reason_required",
+        "Debes registrar un motivo para excluir servicios obligatorios.",
+        {
+          missingMandatoryServices,
+          requiresConfirmation: true,
+        },
+      ),
+    );
+  }
+
+  return {
+    missingMandatoryServices,
+    mandatoryServicesExceptionApplied: true,
+    mandatoryServicesExceptionReason,
+  };
+}
+
+async function evaluateQuotationApprovalProviderCostAlignment({
+  items,
+  blockingRules,
+  warnings,
+  shouldBlockOnMismatch = true,
+}) {
+  const productLines = items.filter((item) => item.itemType === "producto");
+  if (!productLines.length) {
+    return;
+  }
+
+  const sourceIds = new Set();
+  for (const item of productLines) {
+    const sourceId = Number(
+      item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId,
+    );
+    if (!Number.isInteger(sourceId) || sourceId <= 0) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          "approval_product_cost_source_missing",
+          "Todas las lineas de producto deben tener referencia de costo proveedor para aprobar.",
+          {
+            itemId: Number(item.id),
+            productCode: String(item.productCode || "").trim(),
+          },
+        ),
+      );
+      continue;
+    }
+    sourceIds.add(sourceId);
+  }
+
+  if (!sourceIds.size) {
+    return;
+  }
+
+  const placeholders = Array.from(sourceIds)
+    .map(() => "?")
+    .join(", ");
+  const providerCostRows = await query(
+    `SELECT id, price
+     FROM provider_price_list_items
+     WHERE id IN (${placeholders})`,
+    Array.from(sourceIds),
+  );
+  const providerCostByItemId = providerCostRows.reduce((map, row) => {
+    map.set(Number(row.id), Number(row.price || 0));
+    return map;
+  }, new Map());
+
+  for (const item of productLines) {
+    const sourceId = Number(
+      item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId,
+    );
+    if (!Number.isInteger(sourceId) || sourceId <= 0) {
+      continue;
+    }
+
+    if (!providerCostByItemId.has(sourceId)) {
+      warnings.push(
+        buildQuotationApprovalWarning(
+          "approval_provider_cost_reference_not_found",
+          "No se encontro el costo de referencia del proveedor para una linea de producto.",
+          {
+            itemId: Number(item.id),
+            sourcePriceListItemId: sourceId,
+          },
+        ),
+      );
+      continue;
+    }
+
+    const providerCost = Number(providerCostByItemId.get(sourceId) || 0);
+    const quotationCost = Number(
+      item.originalListPriceUnit == null
+        ? item.listPriceUnit || 0
+        : item.originalListPriceUnit,
+    );
+    const absDiff = Math.abs(quotationCost - providerCost);
+    const tolerance = Math.max(
+      QUOTATION_APPROVAL_COST_TOLERANCE_ABS,
+      Math.abs(providerCost) * QUOTATION_APPROVAL_COST_TOLERANCE_REL,
+    );
+
+    if (absDiff > tolerance) {
+      const mismatchDetails = {
+        itemId: Number(item.id),
+        productCode: String(item.productCode || "").trim(),
+        providerCost: Number(providerCost.toFixed(6)),
+        quotationCost: Number(quotationCost.toFixed(6)),
+        absDiff: Number(absDiff.toFixed(6)),
+        allowedDiff: Number(tolerance.toFixed(6)),
+      };
+
+      if (shouldBlockOnMismatch) {
+        blockingRules.push(
+          buildQuotationApprovalBlockingRule(
+            "approval_product_cost_mismatch",
+            "El costo del producto debe coincidir con el costo proveedor (tolerancia tecnica aplicada).",
+            mismatchDetails,
+          ),
+        );
+      } else {
+        warnings.push(
+          buildQuotationApprovalWarning(
+            "approval_product_cost_mismatch_waived",
+            "Se detecto descuadre de costo proveedor, pero se permite continuar por excepcion confirmada de respaldo de proveedor.",
+            mismatchDetails,
+          ),
+        );
+      }
+    }
+  }
+}
+
+function evaluateQuotationApprovalProviderBacking({
+  items,
+  approvalContext,
+  latestProviderDocumentImport,
+  blockingRules,
+}) {
+  const providerDocumentMissing = !latestProviderDocumentImport;
+  const backedSourceIds = new Set(
+    latestProviderDocumentImport?.supportedProviderPriceListItemIds || [],
+  );
+
+  const unbackedItems = [];
+  if (!providerDocumentMissing) {
+    for (const item of items) {
+      if (item.itemType === "grupo_productos") {
+        continue;
+      }
+
+      const itemId = Number(item.id || 0);
+      if (!Number.isInteger(itemId) || itemId <= 0) {
+        continue;
+      }
+
+      const itemProviderId = Number(item.providerId || 0);
+      const importedProviderId = Number(latestProviderDocumentImport.providerId || 0);
+      let reasonCode = "";
+
+      if (
+        Number.isInteger(itemProviderId) &&
+        itemProviderId > 0 &&
+        Number.isInteger(importedProviderId) &&
+        importedProviderId > 0 &&
+        itemProviderId !== importedProviderId
+      ) {
+        reasonCode = "provider_mismatch";
+      }
+
+      const sourceId = Number(
+        item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId || 0,
+      );
+      if (!reasonCode) {
+        if (!Number.isInteger(sourceId) || sourceId <= 0) {
+          reasonCode = "missing_source_reference";
+        } else if (!backedSourceIds.has(sourceId)) {
+          reasonCode = "not_found_in_provider_document";
+        }
+      }
+
+      if (!reasonCode) {
+        continue;
+      }
+
+      unbackedItems.push({
+        itemId,
+        productCode: String(item.productCode || "").trim(),
+        productDescription: String(item.productDescription || "").trim(),
+        sourcePriceListItemId:
+          Number.isInteger(sourceId) && sourceId > 0 ? sourceId : null,
+        reasonCode,
+      });
+    }
+  }
+
+  const requiresConfirmation = providerDocumentMissing || unbackedItems.length > 0;
+  if (!requiresConfirmation) {
+    return {
+      providerDocumentMissing,
+      unbackedItems,
+      providerBackingExceptionApplied: false,
+      providerBackingExceptionReason: "",
+      acknowledgedUnbackedItemIds: [],
+    };
+  }
+
+  const acceptedException = Boolean(
+    approvalContext?.confirmProviderBackingException,
+  );
+  if (!acceptedException) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_provider_backing_confirmation_required",
+        providerDocumentMissing
+          ? "No existe documento de proveedor de respaldo. Debes confirmar excepcion de responsabilidad para continuar."
+          : "Hay items cotizados sin respaldo en el documento del proveedor. Debes confirmar excepcion de responsabilidad para continuar.",
+        {
+          requiresConfirmation: true,
+          providerDocumentMissing,
+          unbackedItems,
+          acknowledgedUnbackedItemIds: unbackedItems.map((item) => item.itemId),
+        },
+      ),
+    );
+    return {
+      providerDocumentMissing,
+      unbackedItems,
+      providerBackingExceptionApplied: false,
+      providerBackingExceptionReason: "",
+      acknowledgedUnbackedItemIds: [],
+    };
+  }
+
+  const acknowledgedUnbackedItemIds = Array.from(
+    new Set(
+      (Array.isArray(approvalContext?.acknowledgedUnbackedItemIds)
+        ? approvalContext.acknowledgedUnbackedItemIds
+        : []
+      )
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ).sort((left, right) => left - right);
+
+  const expectedUnbackedItemIds = unbackedItems
+    .map((item) => Number(item.itemId))
+    .filter((id) => Number.isInteger(id) && id > 0)
+    .sort((left, right) => left - right);
+
+  if (expectedUnbackedItemIds.length) {
+    const hasMismatch =
+      acknowledgedUnbackedItemIds.length !== expectedUnbackedItemIds.length ||
+      acknowledgedUnbackedItemIds.some(
+        (id, index) => id !== expectedUnbackedItemIds[index],
+      );
+    if (hasMismatch) {
+      blockingRules.push(
+        buildQuotationApprovalBlockingRule(
+          "approval_provider_backing_ack_mismatch",
+          "La confirmacion de items sin respaldo esta desactualizada. Vuelve a confirmar la excepcion con la lista vigente.",
+          {
+            requiresConfirmation: true,
+            providerDocumentMissing,
+            unbackedItems,
+            expectedAcknowledgedUnbackedItemIds: expectedUnbackedItemIds,
+          },
+        ),
+      );
+    }
+  }
+
+  const providerBackingExceptionReason = String(
+    approvalContext?.providerBackingExceptionReason || "",
+  ).trim();
+  if (providerBackingExceptionReason.length < 15) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_provider_backing_reason_required",
+        "Debes registrar un motivo de al menos 15 caracteres para aprobar sin respaldo completo de proveedor.",
+        {
+          requiresConfirmation: true,
+          providerDocumentMissing,
+          unbackedItems,
+          minLength: 15,
+        },
+      ),
+    );
+  }
+
+  return {
+    providerDocumentMissing,
+    unbackedItems,
+    providerBackingExceptionApplied: true,
+    providerBackingExceptionReason,
+    acknowledgedUnbackedItemIds,
+  };
+}
+
+async function getLatestQuotationProviderDocumentImport(quotationId) {
+  const rows = await query(
+    `SELECT id, quotation_id, quotation_version_id, document_id, provider_id,
+            preview_snapshot_json, apply_snapshot_json, created_at
+     FROM quotation_version_document_imports
+     WHERE quotation_id = ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [Number(quotationId)],
+  );
+
+  if (!rows.length) {
+    return null;
+  }
+
+  const row = rows[0];
+  const previewSnapshot = safeParseJsonObject(row.preview_snapshot_json) || {};
+  const applySnapshot = safeParseJsonObject(row.apply_snapshot_json) || {};
+  const commercialTerms =
+    previewSnapshot && typeof previewSnapshot === "object"
+      ? previewSnapshot.commercialTerms || null
+      : null;
+  const supportedProviderPriceListItemIds = Array.from(
+    new Set(
+      (Array.isArray(applySnapshot?.items) ? applySnapshot.items : [])
+        .map((item) =>
+          Number(
+            item?.matchedPriceListItemId ||
+              item?.selectedSuggestedPriceListItemId ||
+              0,
+          ),
+        )
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  );
+
+  return {
+    id: Number(row.id),
+    quotationId: Number(row.quotation_id),
+    quotationVersionId: Number(row.quotation_version_id),
+    documentId: Number(row.document_id),
+    providerId: Number(row.provider_id),
+    commercialTerms,
+    supportedProviderPriceListItemIds,
+  };
+}
+
+async function evaluateQuotationApprovalPolicies({
+  version,
+  approvalContext,
+}) {
+  const blockingRules = [];
+  const warnings = [];
+
+  const sections = await getQuotationVersionSections(Number(version.id));
+  const flatItems = sections.flatMap((section) => section.items || []);
+  const leafItems = buildQuotationApprovalLeafItems(flatItems);
+
+  evaluateQuotationApprovalMargins({
+    version,
+    items: leafItems,
+    blockingRules,
+  });
+
+  const mandatoryServicesResult = evaluateQuotationApprovalMandatoryServices({
+    items: leafItems,
+    approvalContext,
+    blockingRules,
+  });
+
+  const latestProviderDocumentImport =
+    await getLatestQuotationProviderDocumentImport(Number(version.quotation_id));
+
+  const providerBackingResult = evaluateQuotationApprovalProviderBacking({
+    items: leafItems,
+    approvalContext,
+    latestProviderDocumentImport,
+    blockingRules,
+  });
+
+  const shouldBlockOnProviderCostMismatch = !Boolean(
+    providerBackingResult?.providerBackingExceptionApplied,
+  );
+
+  await evaluateQuotationApprovalProviderCostAlignment({
+    items: leafItems,
+    blockingRules,
+    warnings,
+    shouldBlockOnMismatch: shouldBlockOnProviderCostMismatch,
+  });
+
+  if (latestProviderDocumentImport) {
+    evaluateQuotationApprovalCommercialTerms({
+      version,
+      providerCommercialTerms: latestProviderDocumentImport.commercialTerms,
+      warnings,
+      blockingRules,
+    });
+  }
+
+  return {
+    isValid: blockingRules.length === 0,
+    blockingRules,
+    warnings,
+    mandatoryServicesResult,
+    providerBackingResult,
+    providerDocumentImport: latestProviderDocumentImport,
+  };
+}
+
 router.post(
   "/quotation-versions/:versionId/transition",
   requireAnyPermission(quotationPermissionCodes),
@@ -12373,6 +14686,8 @@ router.post(
     }
 
     const actionCode = parsed.data.actionCode;
+    const approvalContext = parsed.data.approvalContext || {};
+    const approvalMode = String(approvalContext?.approvalMode || "").trim();
     const canExecute = await canExecuteQuotationAction({
       user: req.user,
       versionRow: version,
@@ -12384,6 +14699,46 @@ router.post(
         .json({ message: "No autorizado para esta accion" });
     }
 
+    if (actionCode === "aprobar") {
+      if (!["with_ai", "without_ai"].includes(approvalMode)) {
+        return res.status(400).json({
+          message:
+            "Debes indicar si la aprobacion se realizara con IA o sin IA.",
+        });
+      }
+
+      if (
+        approvalMode === "with_ai" &&
+        !hasQuotationAiApprovalPermission(req.user)
+      ) {
+        return res.status(403).json({
+          code: "quotation_approval_ai_forbidden",
+          message: "No autorizado para aprobar con IA.",
+        });
+      }
+
+      if (
+        approvalMode === "without_ai" &&
+        !hasQuotationHumanApprovalPermission(req.user)
+      ) {
+        return res.status(403).json({
+          code: "quotation_approval_human_forbidden",
+          message: "No autorizado para aprobar sin IA.",
+        });
+      }
+    }
+
+    if (
+      actionCode === "solicitar_aprobacion" &&
+      hasQuotationAnyApprovalPermission(req.user)
+    ) {
+      return res.status(403).json({
+        code: "quotation_request_approval_forbidden_for_approver",
+        message:
+          "No autorizado para solicitar aprobacion cuando ya tienes capacidad de aprobar.",
+      });
+    }
+
     const targetStatusCode = quotationActionTransitionMap[actionCode];
     const targetStatus = await getCatalogRowByCode(
       "quotation_statuses",
@@ -12391,6 +14746,93 @@ router.post(
     );
     if (!targetStatus) {
       return res.status(400).json({ message: "Transicion invalida" });
+    }
+
+    let approvalValidationResult = null;
+    const shouldSkipApprovalValidation =
+      actionCode === "aprobar" && approvalContext?.approvalMode === "without_ai";
+
+    if (actionCode === "aprobar" && !shouldSkipApprovalValidation) {
+      approvalValidationResult = await evaluateQuotationApprovalPolicies({
+        version,
+        approvalContext,
+      });
+
+      const confirmationBlockingRule =
+        approvalValidationResult.blockingRules.find(
+          (rule) => rule.code === "approval_missing_required_services_confirmation",
+        ) || null;
+
+      const providerBackingConfirmationRule =
+        approvalValidationResult.blockingRules.find(
+          (rule) =>
+            rule.code === "approval_provider_backing_confirmation_required",
+        ) || null;
+
+      const providerBackingReasonRule =
+        approvalValidationResult.blockingRules.find(
+          (rule) => rule.code === "approval_provider_backing_reason_required",
+        ) || null;
+
+      const providerBackingAckMismatchRule =
+        approvalValidationResult.blockingRules.find(
+          (rule) => rule.code === "approval_provider_backing_ack_mismatch",
+        ) || null;
+
+      if (confirmationBlockingRule) {
+        return res.status(409).json({
+          code: "quotation_approval_missing_required_services_confirmation",
+          message: confirmationBlockingRule.message,
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
+
+      if (providerBackingConfirmationRule) {
+        return res.status(409).json({
+          code: "quotation_approval_provider_backing_confirmation_required",
+          message: providerBackingConfirmationRule.message,
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
+
+      if (providerBackingReasonRule) {
+        return res.status(409).json({
+          code: "quotation_approval_provider_backing_reason_required",
+          message: providerBackingReasonRule.message,
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
+
+      if (providerBackingAckMismatchRule) {
+        return res.status(409).json({
+          code: "quotation_approval_provider_backing_ack_mismatch",
+          message: providerBackingAckMismatchRule.message,
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
+
+      if (!approvalValidationResult.isValid) {
+        return res.status(409).json({
+          code: "quotation_approval_policy_failed",
+          message: "La cotizacion no cumple reglas para aprobar.",
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
     }
 
     const now = new Date();
@@ -12415,13 +14857,65 @@ router.post(
       entityId: versionId,
       detail: `Accion ${actionCode} ejecutada`,
       before: { status_id: version.status_id },
-      after: { status_id: Number(targetStatus.id) },
+      after: {
+        status_id: Number(targetStatus.id),
+        approval_validation:
+          actionCode === "aprobar"
+            ? {
+                approval_mode: String(approvalContext?.approvalMode || ""),
+                validation_skipped: shouldSkipApprovalValidation,
+                warnings:
+                  approvalValidationResult?.warnings?.map((warning) => warning.code) ||
+                  [],
+                missing_mandatory_services:
+                  approvalValidationResult?.mandatoryServicesResult
+                    ?.missingMandatoryServices || [],
+                mandatory_services_exception_applied: Boolean(
+                  approvalValidationResult?.mandatoryServicesResult
+                    ?.mandatoryServicesExceptionApplied,
+                ),
+                mandatory_services_exception_reason:
+                  approvalValidationResult?.mandatoryServicesResult
+                    ?.mandatoryServicesExceptionReason || "",
+                provider_backing_exception_applied: Boolean(
+                  approvalValidationResult?.providerBackingResult
+                    ?.providerBackingExceptionApplied,
+                ),
+                provider_backing_exception_reason:
+                  approvalValidationResult?.providerBackingResult
+                    ?.providerBackingExceptionReason || "",
+                provider_document_missing: Boolean(
+                  approvalValidationResult?.providerBackingResult
+                    ?.providerDocumentMissing,
+                ),
+                unbacked_items:
+                  approvalValidationResult?.providerBackingResult
+                    ?.unbackedItems || [],
+                acknowledged_unbacked_item_ids:
+                  approvalValidationResult?.providerBackingResult
+                    ?.acknowledgedUnbackedItemIds || [],
+                provider_document_import_id:
+                  approvalValidationResult?.providerDocumentImport?.id || null,
+              }
+            : null,
+      },
     });
 
     return res.json({
-      message: "Estado actualizado",
+      message:
+        actionCode === "aprobar" &&
+        (approvalValidationResult?.warnings?.length || 0) > 0
+          ? "Estado actualizado con advertencias de validacion"
+          : "Estado actualizado",
       statusCode: targetStatus.code,
       statusName: targetStatus.name,
+      validation:
+        actionCode === "aprobar"
+          ? {
+              blockingRules: approvalValidationResult?.blockingRules || [],
+              warnings: approvalValidationResult?.warnings || [],
+            }
+          : undefined,
     });
   },
 );
@@ -12448,12 +14942,17 @@ router.get(
       user: req.user,
       versionRow: version,
     });
+    const approvalCapabilities = await getQuotationApprovalCapabilities({
+      user: req.user,
+      versionRow: version,
+    });
     return res.json({
       versionId,
       latestVersionId: version.latest_version_id
         ? Number(version.latest_version_id)
         : null,
       actions,
+      approvalCapabilities,
     });
   },
 );

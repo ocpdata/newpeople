@@ -5,6 +5,9 @@ import { query } from "./db.js";
 const ADMIN_FALLBACK_PERMISSIONS = [
   "configuracion.read",
   "configuracion.update",
+  "herramientas.read",
+  "herramientas.update",
+  "herramientas.admin",
   "roles.read",
   "permissions.read",
 ];

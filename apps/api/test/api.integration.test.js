@@ -8113,6 +8113,23 @@ describe("API integration baseline", () => {
     expect(listResponse.body[0].item_type).toBe("producto");
     expect(listResponse.body[0].activation_status_code).toBe("activo");
 
+    const normalizedDuplicateCreateResponse = await request(app)
+      .post(`/api/providers/${providerId}/price-lists/${firstListId}/items`)
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        code: ` price - ${TEST_PREFIX} `,
+        description: "Duplicado normalizado",
+        itemType: "producto",
+        price: 3500,
+        currencyId: ctx.catalogIds.currencyUsdId,
+        activationStatusId: ctx.catalogIds.providerPriceItemActiveStatusId,
+      });
+
+    expect(normalizedDuplicateCreateResponse.status).toBe(409);
+    expect(normalizedDuplicateCreateResponse.body.message).toBe(
+      "Ya existe un precio con ese codigo para la lista.",
+    );
+
     const updatePriceResponse = await request(app)
       .put(
         `/api/providers/${providerId}/price-lists/${firstListId}/items/${createPriceResponse.body.id}`,
@@ -14628,6 +14645,22 @@ describe("API integration baseline", () => {
 
     expect(duplicateResponse.status).toBe(409);
     expect(duplicateResponse.body.message).toBe(
+      "Ya existe un producto con ese codigo en la lista",
+    );
+
+    const normalizedDuplicateResponse = await request(app)
+      .post("/api/quotation-products")
+      .set("Authorization", `Bearer ${loginResponse.body.token}`)
+      .send({
+        providerId,
+        priceListId,
+        code: ` price - ${suffix} - new `,
+        description: "Duplicado normalizado",
+        price: 100,
+      });
+
+    expect(normalizedDuplicateResponse.status).toBe(409);
+    expect(normalizedDuplicateResponse.body.message).toBe(
       "Ya existe un producto con ese codigo en la lista",
     );
 

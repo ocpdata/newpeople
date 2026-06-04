@@ -9,6 +9,7 @@ import {
 import { api, getApiErrorMessage } from "../api";
 import { quotationPrintTemplateData } from "./quotationPrintTemplateData";
 import {
+  buildQuotationCommercialConditionsForm,
   buildQuotationItemPricing,
   buildItemDraft,
   buildCreateQuotationForm,
@@ -33,7 +34,6 @@ import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
 const PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS = 3000;
 const PROVIDER_DOCUMENT_IMPORT_TOTAL_POLL_TIMEOUT_MS = 300000;
 const PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS = 30000;
-const PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS = 120000;
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
   "deliveryTime",
   "quotationValidity",
@@ -41,9 +41,37 @@ const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
   "paymentTerms",
   "currencyCode",
 ];
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_FIELD_CONFIG = {
+  deliveryTime: {
+    optionsKey: "deliveryTimes",
+    label: "Tiempo de entrega",
+  },
+  quotationValidity: {
+    optionsKey: "validityTerms",
+    label: "Validez",
+  },
+  warranty: {
+    optionsKey: "warrantyTerms",
+    label: "Garantia",
+  },
+  paymentTerms: {
+    optionsKey: "paymentTerms",
+    label: "Pago",
+  },
+};
 const PROVIDER_DOCUMENT_IMPORT_SUGGESTED_MATCH_STATUSES = [
   "suggested_match_pending_confirmation",
   "ambiguous_similar_match",
+];
+const PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS = [
+  /costo\s+unitario/i,
+  /moneda/i,
+  /proveedor/i,
+  /lista\s+activa|price\s+list/i,
+  /codigo\s+de\s+proveedor|supplier\s+code/i,
+  /descripcion\s+suficiente|enough\s+description/i,
+  /coincidencia\s+sugerida|match|ambigua|ambigu/i,
+  /bloquead|blocking|cannot\s+create/i,
 ];
 
 function buildProviderDocumentImportCommercialTermsSelection() {
@@ -53,6 +81,81 @@ function buildProviderDocumentImportCommercialTermsSelection() {
     warranty: true,
     paymentTerms: true,
     currencyCode: true,
+  };
+}
+
+function buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+  type,
+  message,
+  mode = null,
+) {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) {
+    return null;
+  }
+
+  return {
+    type: type === "success" ? "success" : "error",
+    message: normalizedMessage,
+    mode:
+      mode === "reused" ||
+      mode === "created" ||
+      mode === "reused_pending_confirmation"
+        ? mode
+        : null,
+  };
+}
+
+function patchProviderDocumentImportPreviewWithSelectedSuggestedCandidate(
+  preview,
+  {
+    previewId,
+    selectedSuggestedPriceListItemId,
+    providerCode,
+    productDescription,
+  } = {},
+) {
+  if (!preview || typeof preview !== "object") {
+    return preview;
+  }
+
+  const normalizedPreviewId = String(previewId || "").trim();
+  const normalizedCandidateId = Number(selectedSuggestedPriceListItemId || 0);
+  const previewItems = Array.isArray(preview.items) ? preview.items : [];
+  if (!normalizedPreviewId || !normalizedCandidateId || !previewItems.length) {
+    return preview;
+  }
+
+  return {
+    ...preview,
+    items: previewItems.map((item) => {
+      if (String(item?.previewId || "") !== normalizedPreviewId) {
+        return item;
+      }
+
+      const suggestedMatchCandidates = Array.isArray(item.suggestedMatchCandidates)
+        ? item.suggestedMatchCandidates
+        : [];
+      const hasCandidate = suggestedMatchCandidates.some(
+        (candidate) => Number(candidate?.id || 0) === normalizedCandidateId,
+      );
+
+      return {
+        ...item,
+        suggestedMatchCandidates: hasCandidate
+          ? suggestedMatchCandidates
+          : [
+              ...suggestedMatchCandidates,
+              {
+                id: normalizedCandidateId,
+                code: String(providerCode || item?.providerCode || "").trim(),
+                description: String(
+                  productDescription || item?.productDescription || "",
+                ).trim(),
+              },
+            ],
+      };
+    }),
   };
 }
 
@@ -75,7 +178,7 @@ function resolveProviderDocumentImportItem(item, itemMatchResolutions = {}) {
   if (item.matchStatus === "matched") {
     return {
       ...item,
-      originalMatchStatus: item.matchStatus,
+      originalMatchStatus: item.originalMatchStatus || item.matchStatus,
       effectiveMatchStatus: "matched",
       effectiveMatchedPriceListItemId: item.matchedPriceListItemId || null,
       effectiveMatchedCandidate: selectedCandidate || null,
@@ -232,21 +335,241 @@ function buildProviderDocumentImportMissingItemsSelection(
   }, {});
 }
 
-function buildProviderDocumentImportState(defaultDocumentId = "") {
+function buildProviderDocumentImportCreateMissingItemPayload(
+  item,
+  overrides = {},
+) {
+  if (!item?.previewId) {
+    return null;
+  }
+
+  return {
+    previewId: item.previewId,
+    providerCode: item.providerCode,
+    productDescription: item.productDescription,
+    quantity: Number(item.quantity || 1),
+    originalCurrencyCode: item.originalCurrencyCode || null,
+    resolvedCostUnit: Number(item.resolvedCostUnit || 0),
+    manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
+    resolutionAction: item.resolutionAction || null,
+    selectedSuggestedPriceListItemId:
+      item.selectedSuggestedPriceListItemId || null,
+    selectedForPriceListCreation: true,
+    ...overrides,
+  };
+}
+
+function patchProviderDocumentImportPreviewWithCreatedItems(
+  preview,
+  createdItems = [],
+  sourcePreview = preview,
+) {
+  if (!preview || typeof preview !== "object") {
+    return preview;
+  }
+
+  const previewItems = Array.isArray(preview.items) ? preview.items : [];
+  const sourcePreviewItems = Array.isArray(sourcePreview?.items)
+    ? sourcePreview.items
+    : [];
+  if (!previewItems.length || !Array.isArray(createdItems) || !createdItems.length) {
+    return preview;
+  }
+
+  const sourceItemsByPreviewId = new Map(
+    sourcePreviewItems
+      .map((item) => [String(item?.previewId || "").trim(), item])
+      .filter(([previewId]) => previewId),
+  );
+
+  const createdByPreviewId = new Map(
+    createdItems
+      .map((item) => ({
+        previewId: String(item?.previewId || "").trim(),
+        createdPriceListItemId: Number(item?.createdPriceListItemId || 0) || null,
+      }))
+      .filter((item) => item.previewId),
+  );
+
+  if (!createdByPreviewId.size) {
+    return preview;
+  }
+
+  const nextItems = previewItems.map((item) => {
+    const previewId = String(item?.previewId || "").trim();
+    const createdRecord = createdByPreviewId.get(previewId);
+    if (!createdRecord) {
+      return item;
+    }
+
+    const sourceItem = sourceItemsByPreviewId.get(previewId) || item;
+
+    return {
+      ...item,
+      originalMatchStatus:
+        sourceItem.originalMatchStatus || sourceItem.matchStatus || item.originalMatchStatus || item.matchStatus,
+      matchStatus: "matched",
+      matchedPriceListItemId:
+        createdRecord.createdPriceListItemId || item.matchedPriceListItemId || null,
+      canCreateInPriceList: false,
+      createBlockedReason: null,
+    };
+  });
+
+  return {
+    ...preview,
+    items: nextItems,
+  };
+}
+
+function buildProviderDocumentImportState(defaultDocumentId = "", options = {}) {
   return {
     isOpen: false,
+    sourceMode: options.sourceMode === "create_draft" ? "create_draft" : "version",
+    sourceDocuments: Array.isArray(options.sourceDocuments)
+      ? options.sourceDocuments
+      : [],
+    draftPricingContext:
+      options.draftPricingContext && typeof options.draftPricingContext === "object"
+        ? options.draftPricingContext
+        : null,
     selectedDocumentId: defaultDocumentId ? String(defaultDocumentId) : "",
     confirmedProviderId: "",
     preview: null,
     previewJob: null,
     loadingPreview: false,
     creatingMissingItems: false,
+    creatingSuggestedMatchPreviewId: "",
+    suggestedMatchFeedbackByPreviewId: {},
     applying: false,
     commercialTermsSelection:
       buildProviderDocumentImportCommercialTermsSelection(),
     itemMatchResolutions: {},
     missingItemsSelection: {},
+    transferableWarningsSelection: {},
   };
+}
+
+function buildProviderDocumentImportPreviewJobState(responseData, fallbackJob = null) {
+  const job = responseData?.job || fallbackJob || null;
+  if (!job) {
+    return null;
+  }
+
+  return {
+    ...job,
+    error: responseData?.error || job.error || null,
+  };
+}
+
+function normalizeProviderDocumentImportWarningToSpanish(warning) {
+  const normalizedWarning = String(warning || "").trim();
+  if (!normalizedWarning) {
+    return "";
+  }
+
+  const comparableWarning = normalizeText(normalizedWarning)
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  const serviceTermMatch = comparableWarning.match(
+    /^(subscription|maintenance)(?:\s+with\s+service)?\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (serviceTermMatch) {
+    const warningType = /maintenance/i.test(serviceTermMatch[1])
+      ? "Mantenimiento"
+      : "Suscripcion";
+    const monthCount = Number(serviceTermMatch[2]) || 0;
+    return `El item corresponde a ${
+      warningType === "Mantenimiento" ? "mantenimiento" : "una suscripcion"
+    } con termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  const bareServiceTermMatch = comparableWarning.match(
+    /^service\s+term:?\s+(\d+)\s+months?$/i,
+  );
+  if (bareServiceTermMatch) {
+    const monthCount = Number(bareServiceTermMatch[1]) || 0;
+    return `El item indica un termino de servicio de ${monthCount} ${
+      monthCount === 1 ? "mes" : "meses"
+    }`;
+  }
+
+  return normalizedWarning;
+}
+
+function isProviderDocumentImportWarningTransferable(warning) {
+  const normalizedWarning = normalizeProviderDocumentImportWarningToSpanish(
+    warning,
+  );
+  if (!normalizedWarning) {
+    return false;
+  }
+
+  return !PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS.some(
+    (pattern) => pattern.test(normalizedWarning),
+  );
+}
+
+function buildProviderDocumentImportTransferableWarningKey(previewId, warning) {
+  return `${String(previewId || "").trim()}::${normalizeProviderDocumentImportWarningToSpanish(
+    warning,
+  )}`;
+}
+
+function appendProviderDocumentImportWarningsToDescription(
+  description,
+  selectedWarnings = [],
+) {
+  const baseDescription = normalizeProviderDocumentImportDescription(description);
+  const normalizedBase = normalizeText(baseDescription).replace(/[_-]+/g, " ");
+  const uniqueWarnings = Array.from(
+    new Set(
+      (Array.isArray(selectedWarnings) ? selectedWarnings : [])
+        .map((warning) =>
+          normalizeProviderDocumentImportWarningToSpanish(warning),
+        )
+        .filter(Boolean)
+        .filter((warning) => {
+          const normalizedWarning = normalizeText(warning).replace(
+            /[_-]+/g,
+            " ",
+          );
+          return normalizedWarning && !normalizedBase.includes(normalizedWarning);
+        }),
+    ),
+  );
+
+  if (!uniqueWarnings.length) {
+    return baseDescription;
+  }
+
+  const notesBlock = uniqueWarnings
+    .map((warning) => `Nota: ${warning}`)
+    .join("\n");
+  return baseDescription ? `${baseDescription}\n${notesBlock}` : notesBlock;
+}
+
+function normalizeProviderDocumentImportDescription(value) {
+  const normalizedValue = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const segments = normalizedValue
+    .split(/Nota:\s*/g)
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    return normalizedValue;
+  }
+
+  const [baseDescription, ...noteSegments] = segments;
+  const notesBlock = noteSegments.map((segment) => `Nota: ${segment}`).join("\n");
+  return [baseDescription, notesBlock].filter(Boolean).join("\n");
 }
 
 function mapQuotationContactOption(contact) {
@@ -732,6 +1055,193 @@ function getCreateBundleOriginType(item) {
   return null;
 }
 
+function buildProviderDocumentImportLocalItem(
+  item,
+  pricingContext = {},
+  providerContext = {},
+) {
+  const pricing = buildQuotationItemPricing(
+    {
+      originalCurrencyCode: item?.originalCurrencyCode || "USD",
+      originalListPriceUnit: Number(item?.resolvedCostUnit || 0),
+      listPriceUnit: Number(item?.resolvedCostUnit || 0),
+    },
+    pricingContext,
+  );
+
+  return {
+    providerId: String(
+      item?.providerId || providerContext?.providerId || "",
+    ),
+    productCode: String(item?.providerCode || "").trim(),
+    productDescription: normalizeProviderDocumentImportDescription(
+      item?.productDescription,
+    ),
+    quantity: String(Number(item?.quantity || 1) || 1),
+    originalCurrencyCode: pricing.originalCurrencyCode,
+    originalListPriceUnit: String(pricing.originalListPriceUnit),
+    listPriceUnit: String(pricing.listPriceUnit),
+    manufacturerDiscountPct: String(Number(item?.manufacturerDiscountPct || 0)),
+    importCostPct: "0",
+    profitMarginPct: "30",
+    finalDiscountPct: "0",
+    itemType: "producto",
+    isRenewal: false,
+    bundleParentItemId: null,
+    bundleParentLocalId: null,
+    bundleOriginType: null,
+    sourceProviderPriceListItemId: item?.effectiveMatchedPriceListItemId
+      ? Number(item.effectiveMatchedPriceListItemId)
+      : item?.matchedPriceListItemId
+        ? Number(item.matchedPriceListItemId)
+        : null,
+    sourceComponentPriceListItemId: null,
+    importWarnings: Array.isArray(item?.warnings) ? item.warnings : [],
+  };
+}
+
+function normalizeProviderDocumentImportCommercialTermValue(value) {
+  if (value == null || value === "") {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    const codeValue = String(value.code || "").trim();
+    if (codeValue) {
+      return codeValue;
+    }
+
+    const rawValue = String(value.value || value.name || value.label || "").trim();
+    return rawValue;
+  }
+
+  return String(value).trim();
+}
+
+function normalizeProviderDocumentImportComparableValue(value) {
+  return normalizeText(value).replace(/[_-]+/g, " ");
+}
+
+function formatProviderDocumentImportFallbackNoteValue(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  const normalizedValue = normalizeProviderDocumentImportComparableValue(
+    rawValue,
+  );
+  const netDaysMatch = normalizedValue.match(/^net\s*(\d+)$/u);
+  if (netDaysMatch) {
+    return `${netDaysMatch[1]} dias despues de facturado`;
+  }
+
+  if (
+    normalizedValue === "according to notes" ||
+    normalizedValue === "as indicated in notes" ||
+    normalizedValue === "segun notas" ||
+    normalizedValue === "de acuerdo a lo indicado en notas"
+  ) {
+    return "De acuerdo a lo indicado en notas";
+  }
+
+  return rawValue;
+}
+
+function buildProviderDocumentImportFallbackNoteLine(label, value) {
+  const formattedValue = formatProviderDocumentImportFallbackNoteValue(value);
+  return formattedValue ? `${label}: ${formattedValue}` : "";
+}
+
+function appendProviderDocumentImportNoteLines(baseNotes, noteLines = []) {
+  const currentNotes = String(baseNotes || "").trim();
+  const normalizedNotes = normalizeProviderDocumentImportComparableValue(
+    currentNotes,
+  );
+  const uniqueLines = noteLines
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const comparableLine = normalizeProviderDocumentImportComparableValue(
+        line,
+      );
+      return comparableLine && !normalizedNotes.includes(comparableLine);
+    });
+
+  if (!uniqueLines.length) {
+    return currentNotes;
+  }
+
+  const noteBlock = uniqueLines.map((line) => `- ${line}`).join("\n");
+  return currentNotes ? `${currentNotes}\n${noteBlock}` : noteBlock;
+}
+
+function resolveProviderDocumentImportCommercialTermForForm({
+  field,
+  value,
+  options = [],
+}) {
+  const rawValue = normalizeProviderDocumentImportCommercialTermValue(value);
+  if (!rawValue) {
+    return {
+      resolvedValue: "",
+      noteLine: "",
+    };
+  }
+
+  const normalizedCandidate = buildQuotationCommercialConditionsForm({
+    [field]: rawValue,
+  })[field];
+  const comparableRawValue = normalizeProviderDocumentImportComparableValue(
+    rawValue,
+  );
+  const comparableCandidate = normalizeProviderDocumentImportComparableValue(
+    normalizedCandidate,
+  );
+
+  const matchedOption = options.find((option) => {
+    const optionCode = String(option?.code || "").trim();
+    const comparableOptionCode =
+      normalizeProviderDocumentImportComparableValue(optionCode);
+    const comparableOptionName = normalizeProviderDocumentImportComparableValue(
+      option?.name || "",
+    );
+
+    return (
+      optionCode === normalizedCandidate ||
+      comparableOptionCode === comparableRawValue ||
+      comparableOptionCode === comparableCandidate ||
+      comparableOptionName === comparableRawValue
+    );
+  });
+
+  if (matchedOption?.code) {
+    return {
+      resolvedValue: String(matchedOption.code),
+      noteLine: "",
+    };
+  }
+
+  const fallbackOption = options.find(
+    (option) => String(option?.code || "").trim() === "segun_notas",
+  );
+  if (fallbackOption?.code) {
+    return {
+      resolvedValue: String(fallbackOption.code),
+      noteLine: buildProviderDocumentImportFallbackNoteLine(
+        PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_FIELD_CONFIG[field]?.label ||
+          field,
+        rawValue,
+      ),
+    };
+  }
+
+  return {
+    resolvedValue: normalizedCandidate,
+    noteLine: "",
+  };
+}
+
 function buildCreateQuotationSectionItemPayload(item, itemIndex) {
   const pricing = buildQuotationItemPricing(item, {
     currencyCode: item?.quotationCurrencyCode,
@@ -835,6 +1345,9 @@ function buildPersistedQuotationItemPayload(
     sourceComponentPriceListItemId: toPositiveIntegerOrNull(
       item?.sourceComponentPriceListItemId,
     ),
+    importWarnings: Array.isArray(item?.importWarnings)
+      ? item.importWarnings
+      : [],
     bundleSortOrder: toPositiveIntegerOrNull(item?.bundleSortOrder),
     displayOrder: resolvePositiveDisplayOrder(
       item?.displayOrder,
@@ -990,6 +1503,9 @@ function buildLocalEditableItemRecord(item, providers, displayOrder) {
     id: itemId,
     providerId,
     providerName,
+    importWarnings: Array.isArray(item?.importWarnings)
+      ? item.importWarnings
+      : [],
     productCode: item?.productCode || "",
     productDescription: item?.productDescription || "",
     itemType: item?.itemType || "producto",
@@ -1185,8 +1701,16 @@ export function useQuotationsSection({
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [approvalRecommendations, setApprovalRecommendations] = useState([]);
+  const [shouldOpenProviderImportAfterCreate, setShouldOpenProviderImportAfterCreate] =
+    useState(false);
   const [providerDocumentImportState, setProviderDocumentImportState] =
     useState(() => buildProviderDocumentImportState());
+  const [createProviderDocumentImportResult, setCreateProviderDocumentImportResult] =
+    useState({
+      token: 0,
+      commercialConditions: null,
+    });
   const providerDocumentImportEffectiveItems = useMemo(
     () =>
       buildProviderDocumentImportEffectiveItems(
@@ -1198,6 +1722,32 @@ export function useQuotationsSection({
       providerDocumentImportState.preview,
     ],
   );
+  const providerImportDocuments = useMemo(() => {
+    if (providerDocumentImportState.sourceMode === "create_draft") {
+      return (providerDocumentImportState.sourceDocuments || [])
+        .filter((document) => document?.aiEnabled !== false)
+        .map((document) => ({
+          id: String(document.localId || document.id || ""),
+          originalFileName:
+            document.originalFileName || document.file?.name || "Documento",
+          aiEnabled: document.aiEnabled !== false,
+        }))
+        .filter((document) => document.id);
+    }
+
+    return (
+      Array.isArray(selectedVersion?.allDocuments)
+        ? selectedVersion.allDocuments
+        : Array.isArray(selectedVersion?.documents)
+          ? selectedVersion.documents
+          : []
+    ).filter((document) => document?.aiEnabled !== false);
+  }, [
+    providerDocumentImportState.sourceDocuments,
+    providerDocumentImportState.sourceMode,
+    selectedVersion?.allDocuments,
+    selectedVersion?.documents,
+  ]);
   const providerDocumentImportWorkflowStage = useMemo(
     () =>
       buildProviderDocumentImportWorkflowStage(
@@ -1220,6 +1770,21 @@ export function useQuotationsSection({
     setLoadingQuotationVersionsByQuotationId,
   ] = useState({});
   const [openQuotationMenuId, setOpenQuotationMenuId] = useState(null);
+  const [duplicateQuotationModalState, setDuplicateQuotationModalState] =
+    useState({
+      isOpen: false,
+      quotationId: null,
+      sourceVersionId: null,
+      sourceVersionLabel: "",
+      sourceOpportunityId: null,
+      targetAccountId: "",
+      targetOpportunityId: "",
+      error: "",
+    });
+  const [duplicateTargetOpportunities, setDuplicateTargetOpportunities] =
+    useState([]);
+  const [loadingDuplicateTargetOpportunities, setLoadingDuplicateTargetOpportunities] =
+    useState(false);
   const [showEditQuotationModal, setShowEditQuotationModal] = useState(false);
   const [quotationStatusFilter, setQuotationStatusFilter] = useState("all");
   const [quotationQuery, setQuotationQuery] = useState("");
@@ -1582,6 +2147,119 @@ export function useQuotationsSection({
         (quotation) => Number(quotation.id) === Number(selectedQuotationId),
       ) || null,
     [quotations, selectedQuotationId],
+  );
+  const duplicateTargetAccounts = useMemo(
+    () =>
+      (Array.isArray(accounts) ? accounts : [])
+        .map((account) => ({
+          id: Number(account?.id || 0),
+          name: String(account?.name || "").trim(),
+        }))
+        .filter((account) => Number(account.id) > 0),
+    [accounts],
+  );
+
+  const loadDuplicateTargetOpportunitiesForAccount = useCallback(
+    async (
+      targetAccountId,
+      { sourceOpportunityId = null, preserveCurrentSelection = false } = {},
+    ) => {
+      const normalizedAccountId = Number(targetAccountId || 0);
+      if (!normalizedAccountId) {
+        setDuplicateTargetOpportunities([]);
+        setLoadingDuplicateTargetOpportunities(false);
+        return;
+      }
+
+      setLoadingDuplicateTargetOpportunities(true);
+      try {
+        const { data } = await api.get(
+          `/api/quotation-accounts/${normalizedAccountId}/opportunities`,
+        );
+
+        const nextOpportunities = Array.isArray(data)
+          ? data
+              .map((opportunity) => ({
+                ...opportunity,
+                id: Number(opportunity?.id || 0),
+                accountId: Number(opportunity?.accountId || normalizedAccountId),
+                sellerUserId: opportunity?.sellerUserId
+                  ? Number(opportunity.sellerUserId)
+                  : null,
+                activationStatusName: String(
+                  opportunity?.activationStatusName || "",
+                ),
+              }))
+              .filter(
+                (opportunity) =>
+                  Number(opportunity.id) > 0 &&
+                  normalizeText(opportunity.activationStatusName) ===
+                    "activada" &&
+                  Number(opportunity.sellerUserId || 0) > 0,
+              )
+          : [];
+
+        setDuplicateTargetOpportunities(nextOpportunities);
+        setDuplicateQuotationModalState((prev) => {
+          if (
+            !prev.isOpen ||
+            Number(prev.targetAccountId || 0) !== normalizedAccountId
+          ) {
+            return prev;
+          }
+
+          const selectedOpportunityId = Number(prev.targetOpportunityId || 0);
+          const resolvedSourceOpportunityId = Number(
+            sourceOpportunityId || prev.sourceOpportunityId || 0,
+          );
+          const preserveSelectedOpportunity =
+            preserveCurrentSelection &&
+            nextOpportunities.some(
+              (opportunity) =>
+                Number(opportunity.id) === Number(selectedOpportunityId),
+            );
+          const preferredOpportunity = preserveSelectedOpportunity
+            ? nextOpportunities.find(
+                (opportunity) =>
+                  Number(opportunity.id) === Number(selectedOpportunityId),
+              )
+            : nextOpportunities.find(
+                (opportunity) =>
+                  Number(opportunity.id) !== resolvedSourceOpportunityId,
+              ) || nextOpportunities[0] || null;
+
+          return {
+            ...prev,
+            targetOpportunityId: preferredOpportunity
+              ? String(preferredOpportunity.id)
+              : "",
+            error: "",
+          };
+        });
+      } catch (err) {
+        setDuplicateTargetOpportunities([]);
+        setDuplicateQuotationModalState((prev) => {
+          if (
+            !prev.isOpen ||
+            Number(prev.targetAccountId || 0) !== normalizedAccountId
+          ) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            targetOpportunityId: "",
+            error: getApiErrorMessage(
+              err,
+              "No fue posible cargar oportunidades para la cuenta seleccionada",
+            ),
+          };
+        });
+      } finally {
+        setLoadingDuplicateTargetOpportunities(false);
+      }
+    },
+    [],
   );
 
   useEffect(() => {
@@ -2242,6 +2920,109 @@ export function useQuotationsSection({
     [ensureEditorCatalogs, getSelectedQuotationEditVersionId, loadVersion],
   );
 
+  const openDuplicateQuotationModal = useCallback(
+    async (quotation, selectedVersion) => {
+      const sourceVersionId = Number(selectedVersion?.id || 0);
+      const sourceOpportunityId = Number(quotation?.opportunityId || 0);
+      const sourceAccountId = Number(
+        quotation?.accountId || quotation?.account_id || 0,
+      );
+      const fallbackAccountId = Number(accountId || 0);
+      const preferredTargetAccountId =
+        sourceAccountId ||
+        fallbackAccountId ||
+        Number(duplicateTargetAccounts[0]?.id || 0);
+
+      if (!sourceVersionId) {
+        setError("Selecciona una version valida para duplicar la cotizacion");
+        return;
+      }
+
+      setDuplicateTargetOpportunities([]);
+
+      setDuplicateQuotationModalState({
+        isOpen: true,
+        quotationId: Number(quotation?.id || 0) || null,
+        sourceVersionId,
+        sourceVersionLabel: `Version ${selectedVersion?.versionNumber || "-"}`,
+        sourceOpportunityId: sourceOpportunityId || null,
+        targetAccountId: preferredTargetAccountId
+          ? String(preferredTargetAccountId)
+          : "",
+        targetOpportunityId: "",
+        error: "",
+      });
+      setOpenQuotationMenuId(null);
+
+      if (preferredTargetAccountId) {
+        await loadDuplicateTargetOpportunitiesForAccount(
+          preferredTargetAccountId,
+          {
+            sourceOpportunityId,
+          },
+        );
+      }
+    },
+    [
+      accountId,
+      duplicateTargetAccounts,
+      loadDuplicateTargetOpportunitiesForAccount,
+    ],
+  );
+
+  const closeDuplicateQuotationModal = useCallback(() => {
+    setDuplicateQuotationModalState({
+      isOpen: false,
+      quotationId: null,
+      sourceVersionId: null,
+      sourceVersionLabel: "",
+      sourceOpportunityId: null,
+      targetAccountId: "",
+      targetOpportunityId: "",
+      error: "",
+    });
+    setDuplicateTargetOpportunities([]);
+    setLoadingDuplicateTargetOpportunities(false);
+  }, []);
+
+  const handleDuplicateQuotationTargetAccountChange = useCallback(
+    (targetAccountId) => {
+      const nextTargetAccountId = String(targetAccountId || "");
+      setDuplicateQuotationModalState((prev) => ({
+        ...prev,
+        targetAccountId: nextTargetAccountId,
+        targetOpportunityId: "",
+        error: "",
+      }));
+
+      if (!nextTargetAccountId) {
+        setDuplicateTargetOpportunities([]);
+        return;
+      }
+
+      void loadDuplicateTargetOpportunitiesForAccount(nextTargetAccountId, {
+        sourceOpportunityId: Number(
+          duplicateQuotationModalState.sourceOpportunityId || 0,
+        ),
+      });
+    },
+    [
+      duplicateQuotationModalState.sourceOpportunityId,
+      loadDuplicateTargetOpportunitiesForAccount,
+    ],
+  );
+
+  const handleDuplicateQuotationTargetOpportunityChange = useCallback(
+    (targetOpportunityId) => {
+      setDuplicateQuotationModalState((prev) => ({
+        ...prev,
+        targetOpportunityId: String(targetOpportunityId || ""),
+        error: "",
+      }));
+    },
+    [],
+  );
+
   const handleSelectQuotationVersion = useCallback(
     async (quotationId, versionId) => {
       const isSameVersion =
@@ -2445,6 +3226,176 @@ export function useQuotationsSection({
     ],
   );
 
+  const handleDuplicateQuotation = useCallback(async () => {
+    const sourceVersionId = Number(
+      duplicateQuotationModalState.sourceVersionId || 0,
+    );
+    const targetAccountId = Number(
+      duplicateQuotationModalState.targetAccountId || 0,
+    );
+    const targetOpportunityId = Number(
+      duplicateQuotationModalState.targetOpportunityId || 0,
+    );
+
+    if (!sourceVersionId || !targetAccountId || !targetOpportunityId) {
+      setDuplicateQuotationModalState((prev) => ({
+        ...prev,
+        error: "Selecciona una cuenta y una oportunidad destino validas",
+      }));
+      return;
+    }
+
+    setBusyAction("duplicate-quotation");
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.post(
+        `/api/quotation-versions/${sourceVersionId}/duplicate`,
+        { targetOpportunityId },
+      );
+
+      if (Number(opportunityId) !== targetOpportunityId) {
+        onOpportunityFocusChange?.(targetOpportunityId);
+      }
+
+      await refreshQuotations({
+        preferredQuotationId: data?.quotationId,
+        preferredVersionId: data?.latestVersionId,
+        targetOpportunityId,
+      });
+
+      setSuccess(data?.message || "Cotizacion duplicada");
+      closeDuplicateQuotationModal();
+    } catch (err) {
+      const message = getApiErrorMessage(
+        err,
+        "No fue posible duplicar la cotizacion",
+      );
+      setDuplicateQuotationModalState((prev) => ({
+        ...prev,
+        error: message,
+      }));
+    } finally {
+      setBusyAction("");
+    }
+  }, [
+    closeDuplicateQuotationModal,
+    duplicateQuotationModalState.targetAccountId,
+    duplicateQuotationModalState.sourceVersionId,
+    duplicateQuotationModalState.targetOpportunityId,
+    onOpportunityFocusChange,
+    opportunityId,
+    refreshQuotations,
+  ]);
+
+  const uploadQuotationDocumentsToVersion = useCallback(
+    async (
+      versionId,
+      files,
+      { syncSelectedVersion = true, clearMessages = true } = {},
+    ) => {
+      const normalizedFiles = Array.isArray(files)
+        ? files
+            .map((entry) => (entry?.file instanceof Blob ? entry.file : entry))
+            .filter(Boolean)
+        : [];
+
+      if (!versionId || !normalizedFiles.length) {
+        return { ok: false, message: "No hay documentos para cargar" };
+      }
+
+      if (clearMessages) {
+        setError("");
+        setSuccess("");
+      }
+
+      try {
+        setBusyAction("upload-quotation-documents");
+        const formData = new FormData();
+        normalizedFiles.forEach((file) => {
+          formData.append("files", file);
+        });
+
+        const { data } = await api.post(
+          `/api/quotation-versions/${versionId}/documents`,
+          formData,
+          {
+            headers: { "Content-Type": "multipart/form-data" },
+          },
+        );
+
+        if (syncSelectedVersion) {
+          setSelectedVersion((prev) =>
+            Number(prev?.id) === Number(versionId)
+              ? mergeVersionDocuments(prev, data.documents, data.allDocuments)
+              : prev,
+          );
+        }
+
+        return {
+          ok: true,
+          message: data.message || "Documentos cargados",
+          data,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          message: getApiErrorMessage(err, "No fue posible cargar documentos"),
+        };
+      } finally {
+        setBusyAction("");
+      }
+    },
+    [],
+  );
+
+  const syncUploadedQuotationDocumentAiEligibility = useCallback(
+    async (uploadedDocuments, pendingDocuments) => {
+      const excludedPendingDocuments = Array.isArray(pendingDocuments)
+        ? pendingDocuments.filter((document) => document?.aiEnabled === false)
+        : [];
+
+      if (!excludedPendingDocuments.length || !Array.isArray(uploadedDocuments)) {
+        return { ok: true };
+      }
+
+      const uploadedDocumentsByKey = new Map();
+      uploadedDocuments.forEach((document) => {
+        const documentKey = `${String(document?.originalFileName || "").trim()}::${Number(document?.byteSize || 0)}`;
+        const queuedDocuments = uploadedDocumentsByKey.get(documentKey) || [];
+        queuedDocuments.push(document);
+        uploadedDocumentsByKey.set(documentKey, queuedDocuments);
+      });
+
+      try {
+        for (const pendingDocument of excludedPendingDocuments) {
+          const pendingDocumentKey = `${String(pendingDocument?.originalFileName || pendingDocument?.file?.name || "").trim()}::${Number(pendingDocument?.byteSize || pendingDocument?.file?.size || 0)}`;
+          const matchingDocuments = uploadedDocumentsByKey.get(pendingDocumentKey) || [];
+          const matchedDocument = matchingDocuments.shift();
+          if (!matchedDocument?.id) {
+            continue;
+          }
+
+          await api.patch(
+            `/api/quotation-version-documents/${matchedDocument.id}/ai-eligibility`,
+            { aiEnabled: false },
+          );
+        }
+
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          message: getApiErrorMessage(
+            err,
+            "No fue posible conservar la configuracion de IA de los documentos",
+          ),
+        };
+      }
+    },
+    [],
+  );
+
   const handleCreateQuotation = useCallback(
     async (createQuotationOptions = {}) => {
       setBusyAction("create-quotation");
@@ -2452,6 +3403,9 @@ export function useQuotationsSection({
       setSuccess("");
       try {
         const createdOpportunityId = Number(createQuotationForm.opportunityId);
+        const openProviderImportAfterCreate = Boolean(
+          createQuotationOptions.openProviderImportAfterCreate,
+        );
         const normalizedSummaryDiscountInput =
           createQuotationOptions.summaryDiscountInput || null;
         const normalizedSummaryMeta =
@@ -2460,6 +3414,11 @@ export function useQuotationsSection({
           createQuotationOptions.internalNotes ?? "";
         const normalizedCommercialConditions =
           createQuotationOptions.commercialConditions || null;
+        const pendingDocuments = Array.isArray(
+          createQuotationOptions.pendingDocuments,
+        )
+          ? createQuotationOptions.pendingDocuments
+          : [];
         const sectionDrafts =
           createQuotationOptions.sectionDrafts || createSectionDrafts;
         const { data } = await api.post(
@@ -2506,6 +3465,20 @@ export function useQuotationsSection({
             })),
           },
         );
+        const documentUploadResult =
+          pendingDocuments.length && data.latestVersionId
+            ? await uploadQuotationDocumentsToVersion(
+                data.latestVersionId,
+                pendingDocuments,
+                { syncSelectedVersion: false, clearMessages: false },
+              )
+            : null;
+        const documentAiSyncResult = documentUploadResult?.ok
+          ? await syncUploadedQuotationDocumentAiEligibility(
+              documentUploadResult.data?.documents,
+              pendingDocuments,
+            )
+          : null;
         if (
           createdOpportunityId &&
           Number(opportunityId) !== createdOpportunityId
@@ -2517,6 +3490,11 @@ export function useQuotationsSection({
           preferredVersionId: data.latestVersionId,
           targetOpportunityId: createdOpportunityId,
         });
+        if (openProviderImportAfterCreate && data.quotationId && data.latestVersionId) {
+          await loadVersion(data.quotationId, data.latestVersionId, {
+            preserveMessage: true,
+          });
+        }
         setCreateQuotationForm(
           buildCreateQuotationForm({
             accountId: createQuotationForm.accountId,
@@ -2534,8 +3512,36 @@ export function useQuotationsSection({
         setCreateHighlightedItemIdsBySection({});
         setCreateCopiedItems([]);
         setCreateCommercialContextConfirmed(false);
+        if (openProviderImportAfterCreate) {
+          setShouldOpenProviderImportAfterCreate(true);
+        }
         closeCreateQuotationModal();
-        setSuccess(data.message || "Cotizacion creada");
+        if (documentUploadResult && !documentUploadResult.ok) {
+          setError(
+            `Cotizacion creada, pero ${String(
+              documentUploadResult.message ||
+                "no fue posible cargar los documentos adjuntos",
+            )}`,
+          );
+          return;
+        }
+        if (documentAiSyncResult && !documentAiSyncResult.ok) {
+          setError(
+            `Cotizacion creada, pero ${String(
+              documentAiSyncResult.message ||
+                "no fue posible conservar la configuracion de IA de los documentos",
+            )}`,
+          );
+          return;
+        }
+
+        if (!openProviderImportAfterCreate) {
+          setSuccess(
+            documentUploadResult?.ok
+              ? "Cotizacion creada y documentos cargados"
+              : data.message || "Cotizacion creada",
+          );
+        }
       } catch (err) {
         setError(getApiErrorMessage(err, "No fue posible crear la cotizacion"));
       } finally {
@@ -2548,9 +3554,12 @@ export function useQuotationsSection({
       createContactOptions,
       createQuotationForm,
       createSectionDrafts,
+      loadVersion,
       refreshQuotations,
+      syncUploadedQuotationDocumentAiEligibility,
       onOpportunityFocusChange,
       opportunityId,
+      uploadQuotationDocumentsToVersion,
     ],
   );
 
@@ -3264,6 +4273,167 @@ export function useQuotationsSection({
     [createSectionDrafts, createSelectedItemIdsBySection],
   );
 
+  const handleCreateManualBundleFromTemplate = useCallback(
+    (sectionIndex, templateProduct) => {
+      const section = createSectionDrafts[sectionIndex];
+      if (!section?.localId) return [];
+
+      const selectedIds = createSelectedItemIdsBySection[section.localId] || [];
+      const selection = getCreateManualBundleSelection(
+        section.items || [],
+        selectedIds,
+      );
+
+      if (!selection.ok) {
+        setError(selection.message);
+        return [];
+      }
+
+      if (
+        !templateProduct ||
+        templateProduct.itemType === "grupo_productos" ||
+        !String(templateProduct.code || "").trim() ||
+        !String(templateProduct.description || "").trim() ||
+        !Number(templateProduct.providerId)
+      ) {
+        setError(
+          "Selecciona una plantilla valida para crear el padre del bundle.",
+        );
+        return [];
+      }
+
+      const createdIds = [];
+      setCreateSectionDrafts((prev) =>
+        prev.map((currentSection, currentSectionIndex) => {
+          if (currentSectionIndex !== sectionIndex) {
+            return currentSection;
+          }
+
+          const currentItems = currentSection.items || [];
+          const currentSelectedSet = new Set(selectedIds);
+          const firstSelectedIndex = currentItems.findIndex((item) =>
+            currentSelectedSet.has(item.localId),
+          );
+          if (firstSelectedIndex < 0) {
+            return currentSection;
+          }
+
+          const parentLocalId =
+            `draft-item-${createItemDraftSequenceRef.current++}`;
+          const normalizedParentItem = {
+            id: null,
+            localId: parentLocalId,
+            providerId: String(templateProduct.providerId || ""),
+            productCode: String(templateProduct.code || "").trim(),
+            productDescription: String(
+              templateProduct.description || "",
+            ).trim(),
+            quantity: "1",
+            originalCurrencyCode: "USD",
+            originalListPriceUnit: "0",
+            listPriceUnit: "0",
+            manufacturerDiscountPct: "0",
+            importCostPct: "0",
+            profitMarginPct: "0",
+            finalDiscountPct: "0",
+            itemType: "grupo_productos",
+            isRenewal: false,
+            bundleParentLocalId: null,
+            bundleOriginType: "manual_bundle",
+            sourceProviderPriceListItemId: null,
+            sourceComponentPriceListItemId: null,
+            bundleComponentItemId: null,
+            isBundleComponent: false,
+          };
+          const normalizedComponentItems = selection.items.map((item) => ({
+            ...normalizeCreateBundleComponentAsManual(item, parentLocalId),
+          }));
+
+          const nextItems = [];
+          let insertedBundleBlock = false;
+
+          currentItems.forEach((item, currentIndex) => {
+            if (!insertedBundleBlock && currentIndex === firstSelectedIndex) {
+              nextItems.push(normalizedParentItem, ...normalizedComponentItems);
+              insertedBundleBlock = true;
+            }
+
+            if (currentSelectedSet.has(item.localId)) {
+              return;
+            }
+
+            nextItems.push(item);
+          });
+
+          if (!insertedBundleBlock) {
+            nextItems.push(normalizedParentItem, ...normalizedComponentItems);
+          }
+
+          createdIds.push(
+            parentLocalId,
+            ...normalizedComponentItems.map((item) => item.localId),
+          );
+
+          return {
+            ...currentSection,
+            items: nextItems,
+          };
+        }),
+      );
+
+      if (createdIds.length) {
+        setCreateSelectedItemIdsBySection((prev) => ({
+          ...prev,
+          [section.localId]: createdIds,
+        }));
+        setError("");
+        setSuccess("Bundle creado desde plantilla");
+      }
+
+      return createdIds;
+    },
+    [createSectionDrafts, createSelectedItemIdsBySection],
+  );
+
+  const handleApplyCreateSectionItemSaleAdjustment = useCallback(
+    (sectionIndex, itemLocalId, nextItem) => {
+      const section = createSectionDrafts[sectionIndex];
+      if (!section?.localId || !itemLocalId || !nextItem) return false;
+
+      let wasUpdated = false;
+      setCreateSectionDrafts((prev) =>
+        prev.map((currentSection, currentSectionIndex) => {
+          if (currentSectionIndex !== sectionIndex) {
+            return currentSection;
+          }
+
+          return {
+            ...currentSection,
+            items: (currentSection.items || []).map((item) => {
+              if (String(item.localId) !== String(itemLocalId)) {
+                return item;
+              }
+
+              wasUpdated = true;
+              return syncQuotationItemDraftPricing(nextItem, {
+                currencyCode: createQuotationForm.currencyCode,
+                exchangeRate: createQuotationForm.exchangeRate,
+              });
+            }),
+          };
+        }),
+      );
+
+      if (wasUpdated) {
+        setError("");
+        setSuccess("Precio de venta ajustado");
+      }
+
+      return wasUpdated;
+    },
+    [createQuotationForm.currencyCode, createQuotationForm.exchangeRate, createSectionDrafts],
+  );
+
   const handleAttachCreateSectionItemsToManualBundle = useCallback(
     (sectionIndex) => {
       const section = createSectionDrafts[sectionIndex];
@@ -3611,36 +4781,19 @@ export function useQuotationsSection({
         return false;
       }
 
-      setError("");
-      setSuccess("");
-      try {
-        setBusyAction("upload-quotation-documents");
-        const formData = new FormData();
-        files.forEach((file) => {
-          formData.append("files", file);
-        });
-
-        const { data } = await api.post(
-          `/api/quotation-versions/${selectedVersionId}/documents`,
-          formData,
-          {
-            headers: { "Content-Type": "multipart/form-data" },
-          },
-        );
-
-        setSelectedVersion((prev) =>
-          mergeVersionDocuments(prev, data.documents, data.allDocuments),
-        );
-        setSuccess(data.message || "Documentos cargados");
+      const result = await uploadQuotationDocumentsToVersion(
+        selectedVersionId,
+        files,
+      );
+      if (result.ok) {
+        setSuccess(result.message || "Documentos cargados");
         return true;
-      } catch (err) {
-        setError(getApiErrorMessage(err, "No fue posible cargar documentos"));
-        return false;
-      } finally {
-        setBusyAction("");
       }
+
+      setError(result.message || "No fue posible cargar documentos");
+      return false;
     },
-    [selectedVersionId],
+    [selectedVersionId, uploadQuotationDocumentsToVersion],
   );
 
   const handleSetQuotationDocumentAiEnabled = useCallback(
@@ -3700,6 +4853,57 @@ export function useQuotationsSection({
     });
   }, [selectedVersion]);
 
+  const openCreateProviderDocumentImportModal = useCallback(
+    ({ documents = [], commercialConditions = null } = {}) => {
+      providerDocumentImportPollingTokenRef.current += 1;
+
+      const eligibleDocuments = (Array.isArray(documents) ? documents : [])
+        .filter((document) => document?.aiEnabled !== false && document?.file)
+        .map((document) => ({
+          ...document,
+          localId: String(document.localId || "").trim(),
+        }))
+        .filter((document) => document.localId);
+
+      if (!eligibleDocuments.length) {
+        setError("Adjunta al menos un documento habilitado para IA antes de importar.");
+        return false;
+      }
+
+      const defaultDocumentId = eligibleDocuments[0]?.localId || "";
+      setError("");
+      setSuccess("");
+      setProviderDocumentImportState({
+        ...buildProviderDocumentImportState(defaultDocumentId, {
+          sourceMode: "create_draft",
+          sourceDocuments: eligibleDocuments,
+          draftPricingContext: commercialConditions,
+        }),
+        isOpen: true,
+      });
+      return true;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (
+      !shouldOpenProviderImportAfterCreate ||
+      !selectedVersion?.id ||
+      !Array.isArray(selectedVersion?.allDocuments) ||
+      !selectedVersion.allDocuments.length
+    ) {
+      return;
+    }
+
+    openProviderDocumentImportModal();
+    setShouldOpenProviderImportAfterCreate(false);
+  }, [
+    openProviderDocumentImportModal,
+    selectedVersion,
+    shouldOpenProviderImportAfterCreate,
+  ]);
+
   const closeProviderDocumentImportModal = useCallback(() => {
     providerDocumentImportPollingTokenRef.current += 1;
     setProviderDocumentImportState(buildProviderDocumentImportState());
@@ -3714,11 +4918,14 @@ export function useQuotationsSection({
       previewJob: null,
       loadingPreview: false,
       creatingMissingItems: false,
+      creatingSuggestedMatchPreviewId: "",
+      suggestedMatchFeedbackByPreviewId: {},
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
       itemMatchResolutions: {},
       missingItemsSelection: {},
+      transferableWarningsSelection: {},
     }));
   }, []);
 
@@ -3731,11 +4938,14 @@ export function useQuotationsSection({
       previewJob: null,
       loadingPreview: false,
       creatingMissingItems: false,
+      creatingSuggestedMatchPreviewId: "",
+      suggestedMatchFeedbackByPreviewId: {},
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
       itemMatchResolutions: {},
       missingItemsSelection: {},
+      transferableWarningsSelection: {},
     }));
   }, []);
 
@@ -3766,6 +4976,27 @@ export function useQuotationsSection({
         missingItemsSelection: {
           ...current.missingItemsSelection,
           [normalizedPreviewId]: Boolean(value),
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportTransferableWarningSelection = useCallback(
+    (previewId, warning, value) => {
+      const warningKey = buildProviderDocumentImportTransferableWarningKey(
+        previewId,
+        warning,
+      );
+      if (!warningKey || !warningKey.includes("::")) {
+        return;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        transferableWarningsSelection: {
+          ...current.transferableWarningsSelection,
+          [warningKey]: Boolean(value),
         },
       }));
     },
@@ -3860,10 +5091,17 @@ export function useQuotationsSection({
           delete nextMissingItemsSelection[normalizedPreviewId];
         }
 
+        const nextSuggestedMatchFeedbackByPreviewId = {
+          ...current.suggestedMatchFeedbackByPreviewId,
+        };
+        delete nextSuggestedMatchFeedbackByPreviewId[normalizedPreviewId];
+
         return {
           ...current,
           itemMatchResolutions: nextItemMatchResolutions,
           missingItemsSelection: nextMissingItemsSelection,
+          suggestedMatchFeedbackByPreviewId:
+            nextSuggestedMatchFeedbackByPreviewId,
         };
       });
     },
@@ -3871,8 +5109,16 @@ export function useQuotationsSection({
   );
 
   const handlePreviewProviderDocumentImport = useCallback(async () => {
-    if (!selectedVersionId || !providerDocumentImportState.selectedDocumentId) {
+    const isCreateDraftImport =
+      providerDocumentImportState.sourceMode === "create_draft";
+
+    if (!providerDocumentImportState.selectedDocumentId) {
       setError("Selecciona un documento para analizar.");
+      return false;
+    }
+
+    if (!isCreateDraftImport && !selectedVersionId) {
+      setError("Selecciona una version valida para analizar el documento.");
       return false;
     }
 
@@ -3889,25 +5135,58 @@ export function useQuotationsSection({
     setSuccess("");
 
     try {
-      const { data } = await api.post(
-        `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview`,
-        {
-          documentLinkId: Number(
-            providerDocumentImportState.selectedDocumentId,
-          ),
-          providerId: providerDocumentImportState.confirmedProviderId
-            ? Number(providerDocumentImportState.confirmedProviderId)
-            : null,
-        },
-        {
-          timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
-        },
-      );
+      let data = null;
+      if (isCreateDraftImport) {
+        const selectedDocument = (
+          providerDocumentImportState.sourceDocuments || []
+        ).find(
+          (document) =>
+            String(document.localId || document.id || "") ===
+            String(providerDocumentImportState.selectedDocumentId),
+        );
+        if (!selectedDocument?.file) {
+          throw new Error(
+            "No fue posible resolver el archivo seleccionado para analizar.",
+          );
+        }
+
+        const formData = new FormData();
+        formData.append("file", selectedDocument.file);
+        if (providerDocumentImportState.confirmedProviderId) {
+          formData.append(
+            "providerId",
+            String(providerDocumentImportState.confirmedProviderId),
+          );
+        }
+
+        ({ data } = await api.post(
+          "/api/quotation-create/provider-document-import/preview",
+          formData,
+          {
+            timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+          },
+        ));
+      } else {
+        ({ data } = await api.post(
+          `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview`,
+          {
+            documentLinkId: Number(
+              providerDocumentImportState.selectedDocumentId,
+            ),
+            providerId: providerDocumentImportState.confirmedProviderId
+              ? Number(providerDocumentImportState.confirmedProviderId)
+              : null,
+          },
+          {
+            timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+          },
+        ));
+      }
 
       let resolvedData = data;
       setProviderDocumentImportState((current) => ({
         ...current,
-        previewJob: resolvedData?.job || null,
+        previewJob: buildProviderDocumentImportPreviewJobState(resolvedData),
       }));
 
       if (!resolvedData?.result) {
@@ -3960,7 +5239,10 @@ export function useQuotationsSection({
 
           setProviderDocumentImportState((current) => ({
             ...current,
-            previewJob: resolvedData?.job || current.previewJob,
+            previewJob: buildProviderDocumentImportPreviewJobState(
+              resolvedData,
+              current.previewJob,
+            ),
           }));
 
           if (resolvedData?.result) {
@@ -3998,8 +5280,13 @@ export function useQuotationsSection({
       setProviderDocumentImportState((current) => ({
         ...current,
         preview: resolvedData.result,
-        previewJob: resolvedData?.job || current.previewJob,
+        previewJob: buildProviderDocumentImportPreviewJobState(
+          resolvedData,
+          current.previewJob,
+        ),
         creatingMissingItems: false,
+        creatingSuggestedMatchPreviewId: "",
+        suggestedMatchFeedbackByPreviewId: {},
         confirmedProviderId: current.confirmedProviderId
           ? current.confirmedProviderId
           : resolvedData.result.confirmedProvider?.id
@@ -4012,6 +5299,7 @@ export function useQuotationsSection({
           resolvedData.result,
           {},
         ),
+        transferableWarningsSelection: {},
       }));
       return true;
     } catch (err) {
@@ -4034,16 +5322,232 @@ export function useQuotationsSection({
     }
   }, [
     providerDocumentImportState.confirmedProviderId,
+    providerDocumentImportState.sourceDocuments,
+    providerDocumentImportState.sourceMode,
     providerDocumentImportState.selectedDocumentId,
     selectedVersionId,
   ]);
 
+  const handleCreateSuggestedProviderDocumentImportItem = useCallback(
+    async (previewId) => {
+      const normalizedPreviewId = String(previewId || "").trim();
+      const setSuggestedMatchRowFeedback = (type, message) => {
+        if (!normalizedPreviewId) {
+          return;
+        }
+
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          creatingSuggestedMatchPreviewId: "",
+          suggestedMatchFeedbackByPreviewId: {
+            ...current.suggestedMatchFeedbackByPreviewId,
+            [normalizedPreviewId]:
+              buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                type,
+                message,
+              ),
+          },
+        }));
+      };
+      const resolvedDocumentLinkId = Number(
+        providerDocumentImportState.selectedDocumentId ||
+          providerDocumentImportState.previewJob?.request?.documentLinkId ||
+          0,
+      );
+      const isCreateDraftImport =
+        providerDocumentImportState.sourceMode === "create_draft";
+      const resolvedConfirmedProviderId = Number(
+        providerDocumentImportState.confirmedProviderId ||
+          providerDocumentImportState.previewJob?.request?.providerId ||
+          providerDocumentImportState.preview?.confirmedProvider?.id ||
+          0,
+      );
+
+      if (
+        !providerDocumentImportState.preview ||
+        (!isCreateDraftImport && !resolvedDocumentLinkId) ||
+        (!isCreateDraftImport && !selectedVersionId) ||
+        !resolvedConfirmedProviderId ||
+        !normalizedPreviewId
+      ) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "Confirma documento, proveedor y analisis antes de crear el item.",
+        );
+        return false;
+      }
+
+      const targetItem = providerDocumentImportEffectiveItems.find(
+        (item) => String(item.previewId) === normalizedPreviewId,
+      );
+      if (!targetItem || !targetItem.canCreateInPriceList) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "Este item ya no se puede crear en la lista del proveedor. Actualiza el analisis e intentalo de nuevo.",
+        );
+        return false;
+      }
+
+      const requestItem = buildProviderDocumentImportCreateMissingItemPayload(
+        targetItem,
+        {
+          resolutionAction: "treat_as_missing",
+          selectedSuggestedPriceListItemId: null,
+        },
+      );
+      if (!requestItem) {
+        setSuggestedMatchRowFeedback(
+          "error",
+          "No fue posible preparar el item para su creacion.",
+        );
+        return false;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        creatingSuggestedMatchPreviewId: normalizedPreviewId,
+        suggestedMatchFeedbackByPreviewId: {
+          ...current.suggestedMatchFeedbackByPreviewId,
+          [normalizedPreviewId]: null,
+        },
+      }));
+      setError("");
+      setSuccess("");
+
+      try {
+        const endpoint = isCreateDraftImport
+          ? "/api/quotation-create/provider-document-import/create-missing-items"
+          : `/api/quotation-versions/${selectedVersionId}/provider-document-import/create-missing-items`;
+        const payload = isCreateDraftImport
+          ? {
+              confirmedProviderId: resolvedConfirmedProviderId,
+              items: [requestItem],
+            }
+          : {
+              documentLinkId: resolvedDocumentLinkId,
+              confirmedProviderId: resolvedConfirmedProviderId,
+              items: [requestItem],
+            };
+
+        const { data } = await api.post(endpoint, payload, {
+          timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+        });
+
+        setProviderDocumentImportState((current) => {
+          const createdItemRecord = Array.isArray(data.createdItems)
+            ? data.createdItems.find(
+                (item) => String(item?.previewId || "") === normalizedPreviewId,
+              ) || null
+            : null;
+          const successMode = createdItemRecord?.reused
+            ? "reused_pending_confirmation"
+            : "created";
+          const nextPreview = createdItemRecord?.reused
+            ? patchProviderDocumentImportPreviewWithSelectedSuggestedCandidate(
+                current.preview,
+                {
+                  previewId: normalizedPreviewId,
+                  selectedSuggestedPriceListItemId:
+                    createdItemRecord.createdPriceListItemId,
+                  providerCode: createdItemRecord.providerCode,
+                  productDescription: targetItem.productDescription,
+                },
+              )
+            : patchProviderDocumentImportPreviewWithCreatedItems(
+                data.preview || current.preview,
+                data.createdItems,
+                current.preview,
+              );
+          const nextItemMatchResolutions = {
+            ...pruneProviderDocumentImportItemMatchResolutions(
+              nextPreview,
+              current.itemMatchResolutions,
+            ),
+          };
+          if (createdItemRecord?.reused) {
+            nextItemMatchResolutions[normalizedPreviewId] = {
+              ...nextItemMatchResolutions[normalizedPreviewId],
+              selectedSuggestedPriceListItemId:
+                createdItemRecord.createdPriceListItemId,
+            };
+          } else {
+            delete nextItemMatchResolutions[normalizedPreviewId];
+          }
+
+          const nextMissingItemsSelection = {
+            ...current.missingItemsSelection,
+          };
+          delete nextMissingItemsSelection[normalizedPreviewId];
+
+          return {
+            ...current,
+            preview: nextPreview,
+            creatingSuggestedMatchPreviewId: "",
+            itemMatchResolutions: nextItemMatchResolutions,
+            suggestedMatchFeedbackByPreviewId: {
+              ...current.suggestedMatchFeedbackByPreviewId,
+              [normalizedPreviewId]:
+                buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                  "success",
+                  createdItemRecord?.reused
+                    ? "Este item ya existe en la lista activa. Se preselecciono para que puedas confirmarlo con usar existente."
+                    : data.message || "Item creado en la lista del proveedor",
+                  successMode,
+                ),
+            },
+            missingItemsSelection: createdItemRecord?.reused
+              ? nextMissingItemsSelection
+              : buildProviderDocumentImportMissingItemsSelection(
+                  nextPreview,
+                  nextItemMatchResolutions,
+                  current.missingItemsSelection,
+                ),
+          };
+        });
+        return true;
+      } catch (err) {
+        const rowMessage = getApiErrorMessage(
+          err,
+          "No fue posible crear el item en la lista del proveedor",
+        );
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          suggestedMatchFeedbackByPreviewId: {
+            ...current.suggestedMatchFeedbackByPreviewId,
+            [normalizedPreviewId]:
+              buildProviderDocumentImportSuggestedMatchFeedbackEntry(
+                "error",
+                rowMessage,
+              ),
+          },
+        }));
+        return false;
+      } finally {
+        setProviderDocumentImportState((current) => ({
+          ...current,
+          creatingSuggestedMatchPreviewId: "",
+        }));
+      }
+    },
+    [
+      providerDocumentImportEffectiveItems,
+      providerDocumentImportState.confirmedProviderId,
+      providerDocumentImportState.preview,
+      providerDocumentImportState.selectedDocumentId,
+      providerDocumentImportState.sourceMode,
+      selectedVersionId,
+    ],
+  );
+
   const handleCreateMissingProviderDocumentImportItems =
     useCallback(async () => {
+      const isCreateDraftImport =
+        providerDocumentImportState.sourceMode === "create_draft";
       if (
-        !selectedVersionId ||
         !providerDocumentImportState.preview ||
-        !providerDocumentImportState.selectedDocumentId ||
+        (!isCreateDraftImport &&
+          !providerDocumentImportState.selectedDocumentId) ||
+        (!isCreateDraftImport && !selectedVersionId) ||
         !providerDocumentImportState.confirmedProviderId
       ) {
         setError(
@@ -4061,19 +5565,10 @@ export function useQuotationsSection({
               String(item.previewId)
             ],
         )
-        .map((item) => ({
-          previewId: item.previewId,
-          providerCode: item.providerCode,
-          productDescription: item.productDescription,
-          quantity: Number(item.quantity || 1),
-          originalCurrencyCode: item.originalCurrencyCode || null,
-          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
-          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
-          resolutionAction: item.resolutionAction || null,
-          selectedSuggestedPriceListItemId:
-            item.selectedSuggestedPriceListItemId || null,
-          selectedForPriceListCreation: true,
-        }));
+        .map((item) =>
+          buildProviderDocumentImportCreateMissingItemPayload(item),
+        )
+        .filter(Boolean);
 
       if (!selectedMissingItems.length) {
         setError(
@@ -4090,33 +5585,49 @@ export function useQuotationsSection({
       setSuccess("");
 
       try {
-        const { data } = await api.post(
-          `/api/quotation-versions/${selectedVersionId}/provider-document-import/create-missing-items`,
-          {
-            documentLinkId: Number(
-              providerDocumentImportState.selectedDocumentId,
-            ),
-            confirmedProviderId: Number(
-              providerDocumentImportState.confirmedProviderId,
-            ),
-            items: selectedMissingItems,
-          },
-        );
+        const endpoint = isCreateDraftImport
+          ? "/api/quotation-create/provider-document-import/create-missing-items"
+          : `/api/quotation-versions/${selectedVersionId}/provider-document-import/create-missing-items`;
+        const payload = isCreateDraftImport
+          ? {
+              confirmedProviderId: Number(
+                providerDocumentImportState.confirmedProviderId,
+              ),
+              items: selectedMissingItems,
+            }
+          : {
+              documentLinkId: Number(
+                providerDocumentImportState.selectedDocumentId,
+              ),
+              confirmedProviderId: Number(
+                providerDocumentImportState.confirmedProviderId,
+              ),
+              items: selectedMissingItems,
+            };
+
+        const { data } = await api.post(endpoint, payload, {
+          timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+        });
 
         setProviderDocumentImportState((current) => {
+          const nextPreview = patchProviderDocumentImportPreviewWithCreatedItems(
+            data.preview || current.preview,
+            data.createdItems,
+            current.preview,
+          );
           const nextItemMatchResolutions =
             pruneProviderDocumentImportItemMatchResolutions(
-              data.preview,
+              nextPreview,
               current.itemMatchResolutions,
             );
           return {
             ...current,
-            preview: data.preview || current.preview,
+            preview: nextPreview,
             creatingMissingItems: false,
             itemMatchResolutions: nextItemMatchResolutions,
             missingItemsSelection:
               buildProviderDocumentImportMissingItemsSelection(
-                data.preview,
+                nextPreview,
                 nextItemMatchResolutions,
               ),
           };
@@ -4145,88 +5656,280 @@ export function useQuotationsSection({
       providerDocumentImportState.missingItemsSelection,
       providerDocumentImportState.preview,
       providerDocumentImportState.selectedDocumentId,
+      providerDocumentImportState.sourceMode,
       selectedVersionId,
     ]);
 
   const handleApplyProviderDocumentImport = useCallback(async () => {
+    const isCreateDraftImport =
+      providerDocumentImportState.sourceMode === "create_draft";
     if (
-      !selectedVersionId ||
-      !selectedQuotationId ||
       !providerDocumentImportState.preview ||
-      !providerDocumentImportState.selectedDocumentId ||
-      !providerDocumentImportState.confirmedProviderId
+      !providerDocumentImportState.confirmedProviderId ||
+      (!isCreateDraftImport &&
+        (!selectedVersionId ||
+          !selectedQuotationId ||
+          !providerDocumentImportState.selectedDocumentId))
     ) {
       setError("Confirma documento, proveedor y analisis antes de aplicar.");
       return false;
     }
 
+    setError("");
+    setSuccess("");
     setProviderDocumentImportState((current) => ({
       ...current,
       applying: true,
     }));
-    setError("");
-    setSuccess("");
+
     try {
       const matchedItems = providerDocumentImportEffectiveItems.filter(
         (item) => item.effectiveMatchStatus === "matched",
       );
       if (!matchedItems.length) {
         setError(
-          "No hay items resueltos contra la lista del proveedor para aplicar.",
+          "No hay items resueltos contra la lista del proveedor para agregar.",
         );
         return false;
       }
 
-      const payload = {
-        documentLinkId: Number(providerDocumentImportState.selectedDocumentId),
-        confirmedProviderId: Number(
-          providerDocumentImportState.confirmedProviderId,
+      const selectedCommercialTerms =
+        providerDocumentImportState.commercialTermsSelection ||
+        buildProviderDocumentImportCommercialTermsSelection();
+      const previewCommercialTerms =
+        providerDocumentImportState.preview?.commercialTerms || {};
+      const fallbackCurrencyCode = isCreateDraftImport
+        ? String(
+            providerDocumentImportState.draftPricingContext?.currencyCode ||
+              "USD",
+          )
+        : versionForm.currencyCode;
+      const fallbackExchangeRate = isCreateDraftImport
+        ? String(
+            providerDocumentImportState.draftPricingContext?.exchangeRate ||
+              "1.0000",
+          )
+        : versionForm.exchangeRate;
+      const nextVersionCurrencyCode =
+        selectedCommercialTerms.currencyCode &&
+        String(previewCommercialTerms.currencyCode || "").trim()
+          ? String(previewCommercialTerms.currencyCode || "")
+              .trim()
+              .toUpperCase()
+          : fallbackCurrencyCode;
+
+      const importedDraftItems = matchedItems.map((item) => ({
+        ...buildProviderDocumentImportLocalItem(
+          item,
+          {
+            currencyCode: nextVersionCurrencyCode,
+            exchangeRate: fallbackExchangeRate,
+          },
+          {
+            providerId:
+              providerDocumentImportState.confirmedProviderId ||
+              providerDocumentImportState.preview?.confirmedProvider?.id ||
+              "",
+          },
         ),
-        commercialTerms: providerDocumentImportState.preview.commercialTerms,
-        commercialTermsSelection:
-          providerDocumentImportState.commercialTermsSelection,
-        items: matchedItems.map((item) => ({
-          previewId: item.previewId,
-          providerCode: item.providerCode,
-          productDescription: item.productDescription,
-          quantity: Number(item.quantity || 1),
-          originalCurrencyCode: item.originalCurrencyCode || null,
-          resolvedCostUnit: Number(item.resolvedCostUnit || 0),
-          manufacturerDiscountPct: Number(item.manufacturerDiscountPct || 0),
-          matchedPriceListItemId: item.effectiveMatchedPriceListItemId || null,
-          matchStatus: item.effectiveMatchStatus || "matched",
-          resolutionAction: item.resolutionAction || null,
-          selectedSuggestedPriceListItemId:
-            item.selectedSuggestedPriceListItemId || null,
-          sourceSnippet: item.sourceSnippet || null,
-          warnings: Array.isArray(item.warnings) ? item.warnings : [],
-        })),
+        productDescription: appendProviderDocumentImportWarningsToDescription(
+          item.productDescription,
+          (Array.isArray(item.warnings) ? item.warnings : []).filter(
+            (warning) =>
+              isProviderDocumentImportWarningTransferable(warning) &&
+              providerDocumentImportState.transferableWarningsSelection[
+                buildProviderDocumentImportTransferableWarningKey(
+                  item.previewId,
+                  warning,
+                )
+              ],
+          ),
+        ),
+      }));
+
+      const deliveryResolution = selectedCommercialTerms.deliveryTime
+        ? resolveProviderDocumentImportCommercialTermForForm({
+            field: "deliveryTime",
+            value: previewCommercialTerms.deliveryTime,
+            options: catalogs.deliveryTimes,
+          })
+        : { resolvedValue: "", noteLine: "" };
+      const quotationValidityResolution =
+        selectedCommercialTerms.quotationValidity
+          ? resolveProviderDocumentImportCommercialTermForForm({
+              field: "quotationValidity",
+              value: previewCommercialTerms.quotationValidity,
+              options: catalogs.validityTerms,
+            })
+          : { resolvedValue: "", noteLine: "" };
+      const warrantyResolution = selectedCommercialTerms.warranty
+        ? resolveProviderDocumentImportCommercialTermForForm({
+            field: "warranty",
+            value: previewCommercialTerms.warranty,
+            options: catalogs.warrantyTerms,
+          })
+        : { resolvedValue: "", noteLine: "" };
+      const paymentTermsResolution = selectedCommercialTerms.paymentTerms
+        ? resolveProviderDocumentImportCommercialTermForForm({
+            field: "paymentTerms",
+            value: previewCommercialTerms.paymentTerms,
+            options: catalogs.paymentTerms,
+          })
+        : { resolvedValue: "", noteLine: "" };
+
+      if (isCreateDraftImport) {
+        const nextSectionLocalId =
+          `draft-section-${createSectionDraftSequenceRef.current}`;
+        createSectionDraftSequenceRef.current += 1;
+        const nextSectionNumber = createSectionDrafts.length + 1;
+        const localImportedItems = importedDraftItems.map((item) => ({
+          ...item,
+          localId: `draft-item-${createItemDraftSequenceRef.current++}`,
+        }));
+
+        setCreateSectionDrafts((prev) => [
+          ...prev,
+          {
+            localId: nextSectionLocalId,
+            title:
+              String(
+                providerDocumentImportState.preview?.suggestedSectionName || "",
+              ).trim() || `Seccion ${nextSectionNumber}`,
+            inclusionTypeId: String(catalogs.inclusionTypes[0]?.id || ""),
+            items: localImportedItems,
+          },
+        ]);
+        setCreateItemDraftsBySection((prev) => ({
+          ...prev,
+          [nextSectionLocalId]: buildItemDraft(catalogs.providers),
+        }));
+        setCreateProviderDocumentImportResult((current) => ({
+          token: current.token + 1,
+          commercialConditions: {
+            ...(selectedCommercialTerms.deliveryTime &&
+            deliveryResolution.resolvedValue
+              ? { deliveryTime: deliveryResolution.resolvedValue }
+              : {}),
+            ...(selectedCommercialTerms.quotationValidity &&
+            quotationValidityResolution.resolvedValue
+              ? {
+                  quotationValidity:
+                    quotationValidityResolution.resolvedValue,
+                }
+              : {}),
+            ...(selectedCommercialTerms.warranty &&
+            warrantyResolution.resolvedValue
+              ? { warranty: warrantyResolution.resolvedValue }
+              : {}),
+            ...(selectedCommercialTerms.paymentTerms &&
+            paymentTermsResolution.resolvedValue
+              ? { paymentTerms: paymentTermsResolution.resolvedValue }
+              : {}),
+            ...(selectedCommercialTerms.currencyCode && nextVersionCurrencyCode
+              ? { currencyCode: nextVersionCurrencyCode }
+              : {}),
+            quotationNotes: appendProviderDocumentImportNoteLines("", [
+              deliveryResolution.noteLine,
+              quotationValidityResolution.noteLine,
+              warrantyResolution.noteLine,
+              paymentTermsResolution.noteLine,
+            ]),
+          },
+        }));
+
+        closeProviderDocumentImportModal();
+        setSuccess(
+          "Items agregados al borrador de cotizacion. La cotizacion aun no se ha creado.",
+        );
+        return true;
+      }
+
+      const nextSectionNumber = (selectedVersion?.sections || []).length + 1;
+      const nextSectionId = buildNextEditSectionId();
+      const localImportedItems = buildLocalEditItemsFromSources(
+        importedDraftItems,
+        { startingDisplayOrder: 1 },
+      );
+      const nextSection = {
+        id: nextSectionId,
+        title:
+          String(
+            providerDocumentImportState.preview?.suggestedSectionName || "",
+          ).trim() || `Seccion ${nextSectionNumber}`,
+        inclusionTypeId: Number(
+          catalogs.inclusionTypes[0]?.id ||
+            selectedVersion?.sections?.[0]?.inclusionTypeId ||
+            0,
+        ),
+        displayOrder: nextSectionNumber,
+        items: localImportedItems.map((item, index) =>
+          buildLocalEditableItemRecord(item, catalogs.providers, index + 1),
+        ),
       };
 
-      const { data } = await api.post(
-        `/api/quotation-versions/${selectedVersionId}/provider-document-import/apply`,
-        payload,
-        { timeout: PROVIDER_DOCUMENT_IMPORT_APPLY_TIMEOUT_MS },
+      setSelectedVersion((prev) =>
+        prev
+          ? {
+              ...prev,
+              sections: [...(prev.sections || []), nextSection],
+            }
+          : prev,
       );
-      closeProviderDocumentImportModal();
-      try {
-        await loadVersion(selectedQuotationId, selectedVersionId, {
-          preserveMessage: true,
-        });
-        setSuccess(data.message || "Importacion aplicada");
-      } catch (reloadError) {
-        setSuccess(data.message || "Importacion aplicada");
-        setError(
-          getApiErrorMessage(
-            reloadError,
-            "La importacion se aplico, pero no fue posible recargar la cotizacion",
+      setSectionEdits((prev) => ({
+        ...prev,
+        [String(nextSectionId)]: {
+          title: nextSection.title,
+          inclusionTypeId: String(nextSection.inclusionTypeId),
+        },
+      }));
+      setItemEdits((prev) => ({
+        ...prev,
+        ...Object.fromEntries(
+          localImportedItems.map((item, index) => {
+            const displayOrder = index + 1;
+            const draft = buildLocalEditableItemDraft(item, displayOrder);
+            return [String(item.id), draft];
+          }),
+        ),
+      }));
+      setItemDraftsBySection((prev) => ({
+        ...prev,
+        [String(nextSectionId)]: buildItemDraft(catalogs.providers),
+      }));
+      setVersionForm((prev) =>
+        buildQuotationCommercialConditionsForm({
+          ...prev,
+          deliveryTime: deliveryResolution.resolvedValue || prev.deliveryTime,
+          quotationValidity:
+            quotationValidityResolution.resolvedValue || prev.quotationValidity,
+          warranty: warrantyResolution.resolvedValue || prev.warranty,
+          paymentTerms:
+            paymentTermsResolution.resolvedValue || prev.paymentTerms,
+          currencyCode: nextVersionCurrencyCode || prev.currencyCode,
+          quotationNotes: appendProviderDocumentImportNoteLines(
+            prev.quotationNotes,
+            [
+              deliveryResolution.noteLine,
+              quotationValidityResolution.noteLine,
+              warrantyResolution.noteLine,
+              paymentTermsResolution.noteLine,
+            ],
           ),
-        );
-      }
+        }),
+      );
+
+      closeProviderDocumentImportModal();
+      setShowEditQuotationModal(true);
+      setSuccess(
+        "Items y seccion agregados en memoria. Usa Guardar como version actual para persistirlos.",
+      );
       return true;
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible aplicar la importacion"),
+        getApiErrorMessage(
+          err,
+          "No fue posible preparar la importacion en memoria",
+        ),
       );
       return false;
     } finally {
@@ -4236,15 +5939,29 @@ export function useQuotationsSection({
       }));
     }
   }, [
+    buildLocalEditItemsFromSources,
+    buildNextEditSectionId,
+    catalogs.deliveryTimes,
+    catalogs.inclusionTypes,
+    catalogs.paymentTerms,
+    catalogs.providers,
+    catalogs.validityTerms,
+    catalogs.warrantyTerms,
     closeProviderDocumentImportModal,
-    loadVersion,
+    createSectionDrafts.length,
+    providerDocumentImportEffectiveItems,
     providerDocumentImportState.commercialTermsSelection,
     providerDocumentImportState.confirmedProviderId,
-    providerDocumentImportEffectiveItems,
+    providerDocumentImportState.draftPricingContext,
     providerDocumentImportState.preview,
     providerDocumentImportState.selectedDocumentId,
+    providerDocumentImportState.sourceMode,
+    providerDocumentImportState.transferableWarningsSelection,
     selectedQuotationId,
+    selectedVersion?.sections,
     selectedVersionId,
+    versionForm.currencyCode,
+    versionForm.exchangeRate,
   ]);
 
   const handleDownloadQuotationDocument = useCallback(async (document) => {
@@ -4278,28 +5995,320 @@ export function useQuotationsSection({
   }, []);
 
   const handleAction = useCallback(
-    async (actionCode) => {
-      if (!selectedVersionId) return;
+    async (actionCode, actionOptions = {}) => {
+      if (!selectedVersionId) {
+        setError("Selecciona una version antes de ejecutar una accion.");
+        return;
+      }
       if (actionCode === "crear_version") {
         await handleCreateVersion();
         return;
       }
 
-      setBusyAction(`action-${actionCode}`);
+      const normalizedApprovalMode = String(
+        actionOptions?.approvalMode || "",
+      ).trim();
+      const busyActionCode =
+        actionCode === "aprobar" && normalizedApprovalMode
+          ? `action-${actionCode}-${normalizedApprovalMode}`
+          : `action-${actionCode}`;
+
+      const buildApprovalPolicyErrorMessage = (err) => {
+        if (actionCode !== "aprobar") {
+          return "";
+        }
+
+        const responseCode = err?.response?.data?.code;
+        if (
+          responseCode ===
+          "quotation_approval_provider_backing_reason_required"
+        ) {
+          return (
+            String(err?.response?.data?.message || "").trim() ||
+            "Debes registrar un motivo para aprobar con excepcion de respaldo de proveedor."
+          );
+        }
+
+        if (
+          responseCode === "quotation_approval_provider_backing_ack_mismatch"
+        ) {
+          return (
+            String(err?.response?.data?.message || "").trim() ||
+            "La lista de items sin respaldo cambio. Debes volver a confirmar la excepcion."
+          );
+        }
+
+        if (responseCode === "quotation_approval_ai_forbidden") {
+          return (
+            String(err?.response?.data?.message || "").trim() ||
+            "No autorizado para aprobar con IA."
+          );
+        }
+
+        if (responseCode === "quotation_approval_human_forbidden") {
+          return (
+            String(err?.response?.data?.message || "").trim() ||
+            "No autorizado para aprobar sin IA."
+          );
+        }
+
+        if (responseCode !== "quotation_approval_policy_failed") {
+          return "";
+        }
+
+        const blockingRules = err?.response?.data?.validation?.blockingRules;
+        if (!Array.isArray(blockingRules) || !blockingRules.length) {
+          return "";
+        }
+
+        const reasons = blockingRules
+          .map((rule) => String(rule?.message || "").trim())
+          .filter(Boolean);
+        if (!reasons.length) {
+          return "";
+        }
+
+        return `No se pudo aprobar la cotizacion: ${reasons.join(" | ")}`;
+      };
+
+      const buildApprovalRecommendationsMessage = (warnings) => {
+        if (actionCode !== "aprobar") {
+          return [];
+        }
+
+        if (!Array.isArray(warnings) || !warnings.length) {
+          return [];
+        }
+
+        const recommendationByCode = {
+          approval_provider_cost_reference_not_found:
+            "Verifica el costo proveedor de referencia en la lista de precios.",
+          approval_product_cost_mismatch_waived:
+            "Revisa y corrige los costos de proveedor que no coinciden.",
+          approval_provider_data_missing_deliveryTime:
+            "Confirma el tiempo de entrega con el proveedor.",
+          approval_provider_data_missing_quotationValidity:
+            "Confirma la vigencia con el proveedor.",
+          approval_provider_data_missing_warranty:
+            "Confirma la garantia con el proveedor.",
+          approval_provider_data_missing_paymentTerms:
+            "Confirma las condiciones de pago con el proveedor.",
+        };
+
+        const recommendations = Array.from(
+          new Set(
+            warnings
+              .map((warning) =>
+                recommendationByCode[String(warning?.code || "").trim()] ||
+                String(warning?.message || "").trim(),
+              )
+              .filter(Boolean),
+          ),
+        );
+
+        return recommendations;
+      };
+
+      setBusyAction(busyActionCode);
       setError("");
       setSuccess("");
       try {
-        const { data } = await api.post(
-          `/api/quotation-versions/${selectedVersionId}/transition`,
-          { actionCode },
-        );
+        const buildApprovalContext = (approvalContextOverrides = {}) => {
+          if (actionCode !== "aprobar") {
+            return null;
+          }
+
+          const approvalMode = String(actionOptions?.approvalMode || "").trim();
+          const mergedContext = {
+            ...(approvalMode ? { approvalMode } : {}),
+            ...(approvalContextOverrides || {}),
+          };
+
+          return Object.keys(mergedContext).length ? mergedContext : null;
+        };
+
+        const executeTransition = async (approvalContextOverrides) => {
+          const approvalContext = buildApprovalContext(approvalContextOverrides);
+
+          return api.post(`/api/quotation-versions/${selectedVersionId}/transition`, {
+            actionCode,
+            ...(approvalContext ? { approvalContext } : {}),
+          });
+        };
+
+        let response;
+        let approvalContextOverrides = {};
+        while (!response) {
+          try {
+            response = await executeTransition(approvalContextOverrides);
+          } catch (err) {
+            const responseCode = err?.response?.data?.code;
+            if (actionCode !== "aprobar") {
+              throw err;
+            }
+
+            if (
+              responseCode ===
+              "quotation_approval_missing_required_services_confirmation"
+            ) {
+              const missingServices =
+                err?.response?.data?.validation?.blockingRules
+                  ?.find(
+                    (rule) =>
+                      rule?.code ===
+                      "approval_missing_required_services_confirmation",
+                  )
+                  ?.missingMandatoryServices || [];
+
+              const humanizedMissing = Array.isArray(missingServices)
+                ? missingServices.join(", ")
+                : "implementacion, soporte";
+              const shouldContinue = window.confirm(
+                `Faltan servicios obligatorios (${humanizedMissing}). ¿Deseas aprobar excluyendolos? Esta excepcion quedara auditada.`,
+              );
+              if (!shouldContinue) {
+                setError(
+                  `No se aprobo la cotizacion porque faltan servicios obligatorios (${humanizedMissing}). Agrega esos servicios o confirma la excepcion para continuar.`,
+                );
+                return;
+              }
+
+              const reason = String(
+                window.prompt(
+                  "Indica el motivo para excluir servicios obligatorios:",
+                  "",
+                ) || "",
+              ).trim();
+              if (!reason) {
+                setError(
+                  "Debes indicar un motivo para registrar la excepcion de servicios obligatorios.",
+                );
+                return;
+              }
+              if (reason.length < 5) {
+                setError(
+                  "El motivo debe tener al menos 5 caracteres para registrar la excepcion de servicios obligatorios.",
+                );
+                return;
+              }
+
+              approvalContextOverrides = {
+                ...approvalContextOverrides,
+                confirmMissingRequiredServices: true,
+                missingRequiredServicesReason: reason,
+              };
+              continue;
+            }
+
+            if (
+              responseCode ===
+              "quotation_approval_provider_backing_confirmation_required"
+            ) {
+              const providerBackingRule =
+                err?.response?.data?.validation?.blockingRules?.find(
+                  (rule) =>
+                    rule?.code ===
+                    "approval_provider_backing_confirmation_required",
+                ) || null;
+              const providerDocumentMissing = Boolean(
+                providerBackingRule?.providerDocumentMissing,
+              );
+              const unbackedItems = Array.isArray(
+                providerBackingRule?.unbackedItems,
+              )
+                ? providerBackingRule.unbackedItems
+                : [];
+              const acknowledgedUnbackedItemIds = unbackedItems
+                .map((item) => Number(item?.itemId || 0))
+                .filter((itemId) => Number.isInteger(itemId) && itemId > 0);
+
+              const unbackedSummary = unbackedItems
+                .slice(0, 5)
+                .map((item) => {
+                  const code = String(item?.productCode || "").trim();
+                  const description = String(
+                    item?.productDescription || "",
+                  ).trim();
+                  return code || description
+                    ? `${code || "SIN-CODIGO"} ${description}`.trim()
+                    : `Item ${item?.itemId || "sin id"}`;
+                })
+                .filter(Boolean)
+                .join(" | ");
+
+              const messageLines = [
+                providerDocumentMissing
+                  ? "No existe documento de proveedor de respaldo para esta cotizacion."
+                  : "Hay items cotizados sin respaldo en el documento del proveedor.",
+              ];
+              if (unbackedItems.length) {
+                messageLines.push(
+                  `Items sin respaldo: ${unbackedSummary}${unbackedItems.length > 5 ? " | ..." : ""}`,
+                );
+              }
+              messageLines.push(
+                "¿Deseas continuar bajo tu responsabilidad? Esta excepcion quedara auditada.",
+              );
+
+              const shouldContinue = window.confirm(messageLines.join("\n"));
+              if (!shouldContinue) {
+                setError(
+                  providerDocumentMissing
+                    ? "No se aprobo la cotizacion porque no existe documento de proveedor de respaldo."
+                    : "No se aprobo la cotizacion porque existen items sin respaldo en el documento del proveedor.",
+                );
+                return;
+              }
+
+              const reason = String(
+                window.prompt(
+                  "Indica el motivo para aprobar sin respaldo completo de proveedor:",
+                  "",
+                ) || "",
+              ).trim();
+              if (!reason) {
+                setError(
+                  "Debes indicar un motivo para registrar la excepcion de respaldo de proveedor.",
+                );
+                return;
+              }
+              if (reason.length < 15) {
+                setError(
+                  "El motivo debe tener al menos 15 caracteres para aprobar sin respaldo completo de proveedor.",
+                );
+                return;
+              }
+
+              approvalContextOverrides = {
+                ...approvalContextOverrides,
+                confirmProviderBackingException: true,
+                providerBackingExceptionReason: reason,
+                acknowledgedUnbackedItemIds,
+              };
+              continue;
+            }
+
+            throw err;
+          }
+        }
+
+        const { data } = response;
         await refreshQuotations({
           preferredQuotationId: selectedQuotationId,
           preferredVersionId: selectedVersionId,
         });
+        if (actionCode === "aprobar") {
+          setApprovalRecommendations(
+            buildApprovalRecommendationsMessage(data?.validation?.warnings),
+          );
+        }
         setSuccess(data.message || "Accion ejecutada");
       } catch (err) {
-        setError(getApiErrorMessage(err, "No fue posible ejecutar la accion"));
+        const approvalPolicyMessage = buildApprovalPolicyErrorMessage(err);
+        setError(
+          approvalPolicyMessage ||
+            getApiErrorMessage(err, "No fue posible ejecutar la accion"),
+        );
       } finally {
         setBusyAction("");
       }
@@ -5349,6 +7358,10 @@ export function useQuotationsSection({
     });
   }, []);
 
+  const dismissApprovalRecommendations = useCallback(() => {
+    setApprovalRecommendations([]);
+  }, []);
+
   const getQuotationSortArrow = useCallback(
     (field) => {
       if (quotationSort.field !== field) return "↕";
@@ -5443,16 +7456,25 @@ export function useQuotationsSection({
       handlePasteCreateSectionItems,
       handleRemoveCreateSectionItems,
       handleCreateManualBundle,
+      handleCreateManualBundleFromTemplate,
+      handleApplyCreateSectionItemSaleAdjustment,
       handleAttachCreateSectionItemsToManualBundle,
       handleDetachCreateSectionItemsFromManualBundle,
       hasCreateCopiedItems: createCopiedItems.length > 0,
+      currentUserName:
+        currentUser?.full_name || currentUser?.email || "Usuario actual",
       setCreateItemDraftsBySection,
       closeCreateQuotationModal,
       handleCreateQuotation,
+      openCreateProviderDocumentImportModal,
       busyAction,
       canSubmitCreateQuotation,
       hasCreateCommercialContext,
       canCreateProviderPrices,
+      createProviderDocumentImportAppliedToken:
+        createProviderDocumentImportResult.token,
+      createProviderDocumentImportAppliedCommercialConditions:
+        createProviderDocumentImportResult.commercialConditions,
     },
     editModalProps: {
       isOpen: showEditQuotationModal,
@@ -5471,6 +7493,8 @@ export function useQuotationsSection({
         contactOptions: editContactOptions,
         catalogs,
         busyAction,
+        approvalRecommendations,
+        dismissApprovalRecommendations,
         allowedActions,
         handleSaveVersion,
         handleSaveAsNewVersion,
@@ -5485,9 +7509,10 @@ export function useQuotationsSection({
         setProviderDocumentImportProvider,
         setProviderDocumentImportCommercialTermSelection,
         setProviderDocumentImportSuggestedMatchCandidate,
-        setProviderDocumentImportSuggestedMatchResolution,
         setProviderDocumentImportMissingItemSelection,
+        selectedQuotationId,
         handlePreviewProviderDocumentImport,
+        handleCreateSuggestedProviderDocumentImportItem,
         handleCreateMissingProviderDocumentImportItems,
         handleApplyProviderDocumentImport,
         handleDownloadQuotationDocument,
@@ -5519,10 +7544,55 @@ export function useQuotationsSection({
         canCreateProviderPrices,
       },
     },
+    providerImportWindowProps: {
+      isOpen: providerDocumentImportState.isOpen,
+      onClose: closeProviderDocumentImportModal,
+      errorMessage: error,
+      successMessage: success,
+      documents: providerImportDocuments,
+      providerOptions: catalogs.providers,
+      selectedDocumentId: providerDocumentImportState.selectedDocumentId,
+      onDocumentChange: setProviderDocumentImportDocument,
+      confirmedProviderId: providerDocumentImportState.confirmedProviderId,
+      onProviderChange: setProviderDocumentImportProvider,
+      onAnalyze: handlePreviewProviderDocumentImport,
+      preview: providerDocumentImportState.preview,
+      effectiveItems: providerDocumentImportEffectiveItems,
+      workflowStage: providerDocumentImportWorkflowStage,
+      previewJob: providerDocumentImportState.previewJob,
+      loadingPreview: providerDocumentImportState.loadingPreview,
+      creatingMissingItems: providerDocumentImportState.creatingMissingItems,
+      creatingSuggestedMatchPreviewId:
+        providerDocumentImportState.creatingSuggestedMatchPreviewId,
+      suggestedMatchFeedbackByPreviewId:
+        providerDocumentImportState.suggestedMatchFeedbackByPreviewId,
+      applying: providerDocumentImportState.applying,
+      commercialTermsSelection:
+        providerDocumentImportState.commercialTermsSelection,
+      onToggleCommercialTermSelection:
+        setProviderDocumentImportCommercialTermSelection,
+      onSelectSuggestedMatchCandidate:
+        setProviderDocumentImportSuggestedMatchCandidate,
+      onResolveSuggestedMatch: setProviderDocumentImportSuggestedMatchResolution,
+      missingItemsSelection: providerDocumentImportState.missingItemsSelection,
+      onToggleMissingItemSelection: setProviderDocumentImportMissingItemSelection,
+      transferableWarningsSelection:
+        providerDocumentImportState.transferableWarningsSelection,
+      onToggleTransferableWarningSelection:
+        setProviderDocumentImportTransferableWarningSelection,
+      isWarningTransferable: isProviderDocumentImportWarningTransferable,
+      onApply: handleApplyProviderDocumentImport,
+      onCreateMissingItems: handleCreateMissingProviderDocumentImportItems,
+      onCreateSuggestedMatchItem:
+        handleCreateSuggestedProviderDocumentImportItem,
+    },
     listPanelProps: {
       showDetails,
       loading,
       quotations,
+      duplicateTargetAccounts,
+      duplicateTargetOpportunities,
+      loadingDuplicateTargetOpportunities,
       selectedQuotationId,
       loadVersion: handleSelectQuotationVersion,
       quotationStatusFilter,
@@ -5546,6 +7616,12 @@ export function useQuotationsSection({
       toggleQuotationMenu,
       busyAction,
       openEditQuotationModal,
+      duplicateQuotationModalState,
+      openDuplicateQuotationModal,
+      closeDuplicateQuotationModal,
+      handleDuplicateQuotationTargetAccountChange,
+      handleDuplicateQuotationTargetOpportunityChange,
+      handleDuplicateQuotation,
       quotationsPage: currentQuotationsPage,
       quotationsPerPage,
       totalQuotationPages,

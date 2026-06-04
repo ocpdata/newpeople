@@ -939,10 +939,72 @@ export function applyCreateQuotationPerItemVat(
   }));
 }
 
+export function getQuotationSectionInclusionCode(
+  section,
+  inclusionTypes = [],
+) {
+  const inclusionTypeId = String(section?.inclusionTypeId || "");
+
+  if (!inclusionTypeId) {
+    return "";
+  }
+
+  return (
+    inclusionTypes.find(
+      (type) => String(type?.id || "") === inclusionTypeId,
+    )?.code || ""
+  );
+}
+
+export function isQuotationSectionCountedInSummary(
+  section,
+  inclusionTypes = [],
+) {
+  const inclusionCode = getQuotationSectionInclusionCode(
+    section,
+    inclusionTypes,
+  );
+
+  return (
+    inclusionCode !== "no_incluida" && inclusionCode !== "opcional"
+  );
+}
+
+export function isQuotationSectionVisibleInPrint(
+  section,
+  inclusionTypes = [],
+) {
+  return (
+    getQuotationSectionInclusionCode(section, inclusionTypes) !==
+    "no_incluida"
+  );
+}
+
+export function formatQuotationOptionalSectionTitle(
+  title,
+  section,
+  inclusionTypes = [],
+) {
+  const resolvedTitle = String(title || "").trim();
+  const inclusionCode = getQuotationSectionInclusionCode(
+    section,
+    inclusionTypes,
+  );
+
+  if (inclusionCode !== "opcional") {
+    return resolvedTitle;
+  }
+
+  return resolvedTitle.endsWith(" -OPCIONAL-")
+    ? resolvedTitle
+    : `${resolvedTitle} -OPCIONAL-`;
+}
+
 export function calculateCreateQuotationSummary(
   sections = [],
   summaryDiscountInput = {},
   summaryVatInput = {},
+  options = {},
 ) {
   const buckets = {
     products: buildQuotationSummaryBucket(),
@@ -950,10 +1012,17 @@ export function calculateCreateQuotationSummary(
     total: buildQuotationSummaryBucket(),
   };
 
-  const allItems = Array.isArray(sections)
-    ? sections.flatMap((section) => section?.items || [])
+  const includedSections = Array.isArray(sections)
+    ? sections.filter((section) =>
+        isQuotationSectionCountedInSummary(
+          section,
+          options?.inclusionTypes || [],
+        ),
+      )
     : [];
-  const childParentIdSet = getQuotationSummaryChildParentIdSet(sections);
+
+  const allItems = includedSections.flatMap((section) => section?.items || []);
+  const childParentIdSet = getQuotationSummaryChildParentIdSet(includedSections);
 
   allItems.forEach((item) => {
     if (!isQuotationSummaryLeafItem(item, childParentIdSet)) {

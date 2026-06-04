@@ -11,6 +11,9 @@ function QuotationEditModal({
     return null;
   }
 
+  const selectedQuotation = editorContentProps?.selectedQuotation;
+  const selectedVersion = editorContentProps?.selectedVersion;
+
   return (
     <div className="modal-overlay" onClick={closeEditQuotationModal}>
       <div
@@ -25,6 +28,24 @@ function QuotationEditModal({
               ventana.
             </p>
           </div>
+          {selectedVersion ? (
+            <div className="quotation-edit-modal-meta" aria-label="Resumen de cotizacion">
+              <span className="record-id-badge">
+                Cotizacion {selectedQuotation?.id || "-"}
+              </span>
+              <span className="record-id-badge">
+                Version {selectedVersion.versionNumber}
+              </span>
+              <span className="record-id-badge">
+                Estado: {selectedVersion.statusName}
+              </span>
+              <span className="record-id-badge">
+                {selectedVersion.isLatestVersion
+                  ? "Version mayor"
+                  : "Version historica"}
+              </span>
+            </div>
+          ) : null}
         </div>
         <div className="quotation-content quotation-edit-modal-content">
           <QuotationEditorContent

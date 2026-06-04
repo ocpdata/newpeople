@@ -1882,6 +1882,7 @@ CREATE TABLE IF NOT EXISTS quotation_section_items (
   bundle_origin_type VARCHAR(40) NULL,
   source_provider_price_list_item_id BIGINT UNSIGNED NULL,
   source_component_price_list_item_id BIGINT UNSIGNED NULL,
+  import_warnings_json LONGTEXT NULL,
   quantity DECIMAL(15, 4) NOT NULL,
   original_currency_code CHAR(3) NULL,
   original_list_price_unit DECIMAL(15, 4) NULL,
@@ -2048,6 +2049,21 @@ SET @stmt := (
 PREPARE s_quotation_section_items_source_component_col FROM @stmt;
 EXECUTE s_quotation_section_items_source_component_col;
 DEALLOCATE PREPARE s_quotation_section_items_source_component_col;
+
+SET @stmt := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE quotation_section_items ADD COLUMN import_warnings_json LONGTEXT NULL AFTER source_component_price_list_item_id',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'quotation_section_items'
+    AND COLUMN_NAME = 'import_warnings_json'
+);
+PREPARE s_quotation_section_items_import_warnings_col FROM @stmt;
+EXECUTE s_quotation_section_items_import_warnings_col;
+DEALLOCATE PREPARE s_quotation_section_items_import_warnings_col;
 
 SET @stmt := (
   SELECT IF(
@@ -2616,11 +2632,13 @@ VALUES
   ('desarrollo_comercial.update', 'desarrollo_comercial', 'update', 'Operar el modulo de desarrollo comercial', NOW(3), NOW(3)),
   ('proceso_comercial_config.read', 'proceso_comercial_config', 'read', 'Ver la configuracion del proceso comercial', NOW(3), NOW(3)),
   ('proceso_comercial_config.update', 'proceso_comercial_config', 'update', 'Actualizar la configuracion del proceso comercial', NOW(3), NOW(3)),
-  ('cotizaciones.operacion', 'cotizaciones', 'operacion', 'Operacion de cotizaciones', NOW(3), NOW(3)),
-  ('cotizaciones.revision', 'cotizaciones', 'revision', 'Revision de cotizaciones', NOW(3), NOW(3)),
-  ('cotizaciones.ingreso', 'cotizaciones', 'ingreso', 'Ingreso de cotizaciones', NOW(3), NOW(3)),
-  ('cotizaciones.administracion', 'cotizaciones', 'administracion', 'Administracion de cotizaciones', NOW(3), NOW(3)),
-  ('cotizaciones.externo', 'cotizaciones', 'externo', 'Acceso externo a cotizaciones', NOW(3), NOW(3)),
+  ('cotizaciones.operacion', 'cotizaciones', 'operacion', 'Operar cotizaciones (crear, editar y gestionar en trabajo)', NOW(3), NOW(3)),
+  ('cotizaciones.revision', 'cotizaciones', 'revision', 'Revisar cotizaciones (validar informacion sin aprobar)', NOW(3), NOW(3)),
+  ('cotizaciones.ingreso', 'cotizaciones', 'ingreso', 'Solicitar aprobacion de cotizaciones (sin aprobar)', NOW(3), NOW(3)),
+  ('cotizaciones.aprobacion_humana', 'cotizaciones', 'aprobacion_humana', 'Aprobar cotizaciones sin IA', NOW(3), NOW(3)),
+  ('cotizaciones.aprobacion_ia', 'cotizaciones', 'aprobacion_ia', 'Aprobar cotizaciones con IA', NOW(3), NOW(3)),
+  ('cotizaciones.administracion', 'cotizaciones', 'administracion', 'Administrar cotizaciones (control total y excepciones)', NOW(3), NOW(3)),
+  ('cotizaciones.externo', 'cotizaciones', 'externo', 'Acceso externo a cotizaciones (consulta o colaboracion limitada)', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 
@@ -2941,7 +2959,7 @@ WHERE s.code = 'en_aprobacion'
 UNION ALL
 SELECT s.id, a.id, p.id, 1, NOW(3), NOW(3)
 FROM quotation_statuses s
-INNER JOIN quotation_actions a ON a.code IN ('ver', 'aprobar')
+INNER JOIN quotation_actions a ON a.code IN ('ver')
 INNER JOIN permissions p ON p.code = 'cotizaciones.ingreso'
 WHERE s.code = 'en_aprobacion'
 UNION ALL
