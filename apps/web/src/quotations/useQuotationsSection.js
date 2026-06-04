@@ -74,6 +74,48 @@ const PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS = [
   /bloquead|blocking|cannot\s+create/i,
 ];
 
+function buildMailtoDraftUrl({ to = "", subject = "", body = "" } = {}) {
+  const recipient = String(to || "").trim();
+  const query = new URLSearchParams();
+
+  if (subject) {
+    query.set("subject", subject);
+  }
+  if (body) {
+    query.set("body", body);
+  }
+
+  const encodedRecipient = encodeURIComponent(recipient);
+  const queryString = query.toString();
+  if (!queryString) {
+    return `mailto:${encodedRecipient}`;
+  }
+
+  return `mailto:${encodedRecipient}?${queryString}`;
+}
+
+function openMailtoDraft(url) {
+  if (typeof window === "undefined" || !url) {
+    return false;
+  }
+
+  try {
+    const popup = window.open(url, "_blank", "noopener,noreferrer");
+    if (popup) {
+      return true;
+    }
+  } catch {
+    // Continue with location fallback.
+  }
+
+  try {
+    window.location.href = url;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function buildProviderDocumentImportCommercialTermsSelection() {
   return {
     deliveryTime: true,
@@ -6109,6 +6151,74 @@ export function useQuotationsSection({
         return recommendations;
       };
 
+      const prepareSendConfirmation = () => {
+        if (actionCode !== "enviar") {
+          return true;
+        }
+
+        const contactId = Number(versionForm?.contactId || 0);
+        const selectedContact = Array.isArray(editContactOptions)
+          ? editContactOptions.find(
+              (contact) => Number(contact?.id || 0) === contactId,
+            )
+          : null;
+        const recipientEmail = String(selectedContact?.email || "").trim();
+
+        const proposalName = String(versionForm?.proposalName || "").trim();
+        const quotationId = Number(selectedQuotation?.id || 0);
+        const versionNumber = Number(selectedVersion?.versionNumber || 0);
+        const reference = [
+          quotationId > 0 ? `#${quotationId}` : "",
+          versionNumber > 0 ? `V${versionNumber}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        const subject = proposalName
+          ? `Cotizacion ${proposalName}`
+          : reference
+            ? `Cotizacion ${reference}`
+            : "Cotizacion";
+        const bodyLines = [
+          "Hola,",
+          "",
+          "Comparto la cotizacion para tu revision.",
+          "",
+          "Quedo atento a tus comentarios.",
+        ];
+        if (reference) {
+          bodyLines.push("", `Referencia: ${reference}`);
+        }
+
+        const mailtoUrl = buildMailtoDraftUrl({
+          to: recipientEmail,
+          subject,
+          body: bodyLines.join("\n"),
+        });
+        const opened = openMailtoDraft(mailtoUrl);
+
+        if (!opened) {
+          setError(
+            "No fue posible abrir el cliente de correo. La cotizacion no se marco como enviada.",
+          );
+          return false;
+        }
+
+        const confirmationMessage = recipientEmail
+          ? `Se intento abrir el correo para ${recipientEmail}. ¿Confirmas que el correo quedo abierto/preparado para envio?`
+          : "Se intento abrir el correo. ¿Confirmas que el correo quedo abierto/preparado para envio?";
+        const confirmedPrepared = window.confirm(confirmationMessage);
+
+        if (!confirmedPrepared) {
+          setSuccess(
+            "No se marco como enviada porque no se confirmo la preparacion del correo.",
+          );
+          return false;
+        }
+
+        return true;
+      };
+
       setBusyAction(busyActionCode);
       setError("");
       setSuccess("");
@@ -6138,6 +6248,11 @@ export function useQuotationsSection({
 
         let response;
         let approvalContextOverrides = {};
+
+        if (!prepareSendConfirmation()) {
+          return;
+        }
+
         while (!response) {
           try {
             response = await executeTransition(approvalContextOverrides);
@@ -6314,10 +6429,15 @@ export function useQuotationsSection({
       }
     },
     [
+      editContactOptions,
       handleCreateVersion,
       refreshQuotations,
+      selectedQuotation?.id,
       selectedQuotationId,
+      selectedVersion?.versionNumber,
       selectedVersionId,
+      versionForm?.contactId,
+      versionForm?.proposalName,
     ],
   );
 
