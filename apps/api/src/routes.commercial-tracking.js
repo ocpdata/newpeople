@@ -64,6 +64,75 @@ function getWeekRange(rawWeekStart) {
   return { start, end };
 }
 
+function parseMonthStart(rawMonth, fallback = new Date()) {
+  const candidate = String(rawMonth || "").trim();
+  const match = /^(\d{4})-(\d{2})$/.exec(candidate);
+  if (!match) {
+    return new Date(fallback.getFullYear(), fallback.getMonth(), 1);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12
+  ) {
+    return new Date(fallback.getFullYear(), fallback.getMonth(), 1);
+  }
+
+  return new Date(year, month - 1, 1);
+}
+
+function formatIsoMonth(value) {
+  const date = startOfDay(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthRange(rawMonth) {
+  const start = startOfDay(parseMonthStart(rawMonth));
+  start.setDate(1);
+  const end = endOfDay(new Date(start.getFullYear(), start.getMonth() + 1, 0));
+  return {
+    start,
+    end,
+    month: formatIsoMonth(start),
+  };
+}
+
+function buildWeeksForRange(start, end) {
+  const weeks = [];
+  let cursor = getWeekStart(start);
+
+  while (cursor <= end) {
+    const periodStart = new Date(cursor);
+    const naturalEnd = endOfDay(addDays(periodStart, 6));
+    weeks.push({
+      key: formatIsoDate(periodStart),
+      label: formatPeriodLabel(periodStart, "week"),
+      start: periodStart,
+      end: naturalEnd > end ? endOfDay(end) : naturalEnd,
+    });
+    cursor = addDays(cursor, 7);
+  }
+
+  return weeks;
+}
+
+function normalizeWeekRangeForValidWeeks(
+  rawWeekStart,
+  validWeeks,
+  fallbackWeek,
+) {
+  const candidateRange = rawWeekStart
+    ? getWeekRange(rawWeekStart)
+    : fallbackWeek;
+  const candidateKey = formatIsoDate(candidateRange.start);
+  const hasCandidate = validWeeks.some((week) => week.key === candidateKey);
+  return hasCandidate ? candidateRange : fallbackWeek;
+}
+
 function parseDateOrFallback(rawValue, fallback) {
   const candidate = rawValue ? new Date(rawValue) : null;
   if (!candidate || Number.isNaN(candidate.getTime())) {
@@ -131,6 +200,16 @@ async function listScopedOpportunities(user, filters = {}) {
   if (filters.businessLineId) {
     params.push(Number(filters.businessLineId));
     where.push("o.business_line_id = ?");
+  }
+
+  if (filters.closeDateFrom) {
+    params.push(filters.closeDateFrom);
+    where.push("o.close_date >= ?");
+  }
+
+  if (filters.closeDateTo) {
+    params.push(filters.closeDateTo);
+    where.push("o.close_date <= ?");
   }
 
   if (filters.createdAtLte) {
@@ -448,7 +527,9 @@ function buildPriorityScore(item) {
 }
 
 async function buildOpenOpportunityItems(user, filters = {}) {
-  const scopedOpportunities = await listScopedOpportunities(user, filters);
+  const scopedOpportunities =
+    filters.scopedOpportunities ||
+    (await listScopedOpportunities(user, filters));
   const openRows = scopedOpportunities.filter(
     (item) =>
       String(item.activation_status_code) === "activada" &&
@@ -540,6 +621,244 @@ async function buildOpenOpportunityItems(user, filters = {}) {
       }
       return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
     });
+}
+
+function buildVariationWithBase(current, previous, hasPrevious = true) {
+  if (!hasPrevious) {
+    return {
+      current,
+      previous: null,
+      deltaAbsolute: null,
+      deltaPercent: null,
+      hasPrevious: false,
+    };
+  }
+
+  return {
+    ...buildVariation(current, previous),
+    hasPrevious: true,
+  };
+}
+
+async function buildForecastMonthlyPayload(user, params = {}) {
+  const sellerUserId = toPositiveInt(params.sellerUserId);
+  const businessLineId = toPositiveInt(params.businessLineId);
+  const viewMode =
+    String(params.viewMode || "count").trim() === "amount" ? "amount" : "count";
+  const monthRange = getMonthRange(params.month);
+  const validWeeks = buildWeeksForRange(monthRange.start, monthRange.end);
+  const fallbackWeek = validWeeks[0] || getWeekRange(monthRange.start);
+  const activeWeekRange = normalizeWeekRangeForValidWeeks(
+    params.weekStart,
+    validWeeks,
+    fallbackWeek,
+  );
+  const activeWeekKey = formatIsoDate(activeWeekRange.start);
+  const activeWeekIndex = validWeeks.findIndex(
+    (week) => week.key === activeWeekKey,
+  );
+  const previousWeek =
+    activeWeekIndex > 0 ? validWeeks[activeWeekIndex - 1] : null;
+
+  const scopedOpportunities = await listScopedOpportunities(user, {
+    sellerUserId,
+    businessLineId,
+    closeDateFrom: formatIsoDate(monthRange.start),
+    closeDateTo: formatIsoDate(monthRange.end),
+  });
+  const visibleOpportunities = await listScopedOpportunities(user, {
+    sellerUserId,
+    businessLineId,
+  });
+
+  const openItems = await buildOpenOpportunityItems(user, {
+    sellerUserId,
+    businessLineId,
+    weekRange: activeWeekRange,
+    scopedOpportunities,
+  });
+  const currentWeekCreated = visibleOpportunities.filter((item) =>
+    isBetween(item.created_at, activeWeekRange.start, activeWeekRange.end),
+  );
+  const previousWeekCreated = previousWeek
+    ? visibleOpportunities.filter((item) =>
+        isBetween(item.created_at, previousWeek.start, previousWeek.end),
+      )
+    : [];
+  const currentWeekWon = scopedOpportunities.filter(
+    (item) =>
+      item.commercial_status_code === "ganada" &&
+      isBetween(
+        item.commercial_closed_at,
+        activeWeekRange.start,
+        activeWeekRange.end,
+      ),
+  );
+  const previousWeekWon = previousWeek
+    ? scopedOpportunities.filter(
+        (item) =>
+          item.commercial_status_code === "ganada" &&
+          isBetween(
+            item.commercial_closed_at,
+            previousWeek.start,
+            previousWeek.end,
+          ),
+      )
+    : [];
+  const currentWeekLost = scopedOpportunities.filter(
+    (item) =>
+      ["perdida", "anulada"].includes(String(item.commercial_status_code)) &&
+      isBetween(
+        item.commercial_closed_at,
+        activeWeekRange.start,
+        activeWeekRange.end,
+      ),
+  );
+  const previousWeekLost = previousWeek
+    ? scopedOpportunities.filter(
+        (item) =>
+          ["perdida", "anulada"].includes(
+            String(item.commercial_status_code),
+          ) &&
+          isBetween(
+            item.commercial_closed_at,
+            previousWeek.start,
+            previousWeek.end,
+          ),
+      )
+    : [];
+  const openAtPreviousWeekEnd = previousWeek
+    ? scopedOpportunities.filter((item) => isOpenAtDate(item, previousWeek.end))
+    : [];
+  const previousAdvancedRows = previousWeek
+    ? await listAuditEvents(
+        openAtPreviousWeekEnd
+          .map((item) => Number(item.id || 0))
+          .filter(Boolean),
+        ["stage_advanced"],
+        previousWeek.start,
+        previousWeek.end,
+      )
+    : [];
+  const previousAdvanced = new Set(
+    previousAdvancedRows
+      .map((row) => Number(row.entity_id || 0))
+      .filter(Boolean),
+  ).size;
+  const currentAdvanced = openItems.filter(
+    (item) => item.advancedThisWeek,
+  ).length;
+
+  const noNextStep = openItems.filter((item) => !item.nextStep).slice(0, 5);
+  const blocked = openItems
+    .filter((item) => item.executionStateCode === "bloqueada")
+    .slice(0, 5);
+  const stale = openItems.filter((item) => item.isStale).slice(0, 5);
+  const highAmountHighRisk = openItems
+    .filter(
+      (item) =>
+        item.amountUsd >= 100000 &&
+        ["bloqueada", "sin_conduccion", "esperando_interno"].includes(
+          item.executionStateCode,
+        ),
+    )
+    .slice(0, 5);
+
+  const generationTrend = validWeeks.map((week) => {
+    const created = scopedOpportunities.filter((item) =>
+      isBetween(item.created_at, week.start, week.end),
+    );
+    return {
+      periodKey: week.key,
+      periodLabel: week.label,
+      createdCount: created.length,
+      createdAmountUsd: sumAmounts(created),
+    };
+  });
+
+  const pipelineMovementMap = openItems.reduce((accumulator, item) => {
+    const key = String(item.stageCode || "sin_etapa");
+    const current = accumulator.get(key) || {
+      stageCode: item.stageCode,
+      stageName: item.stageName,
+      openCount: 0,
+      advancedInWeek: 0,
+      blockedCount: 0,
+      staleCount: 0,
+      totalAmountUsd: 0,
+    };
+    current.openCount += 1;
+    if (item.advancedThisWeek) current.advancedInWeek += 1;
+    if (item.executionStateCode === "bloqueada") current.blockedCount += 1;
+    if (item.isStale) current.staleCount += 1;
+    current.totalAmountUsd = toAmount(
+      current.totalAmountUsd + Number(item.amountUsd || 0),
+    );
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  return {
+    meta: {
+      month: monthRange.month,
+      monthStart: formatIsoDate(monthRange.start),
+      monthEnd: formatIsoDate(monthRange.end),
+      activeWeekStart: formatIsoDate(activeWeekRange.start),
+      activeWeekEnd: formatIsoDate(activeWeekRange.end),
+      previousWeekStart: previousWeek
+        ? formatIsoDate(previousWeek.start)
+        : null,
+      previousWeekEnd: previousWeek ? formatIsoDate(previousWeek.end) : null,
+      validWeeks,
+      sellerUserId,
+      businessLineId,
+      viewMode,
+    },
+    summary: {
+      openOpportunities: openItems.length,
+      openAmountUsd: sumAmounts(
+        openItems.map((item) => ({ amount_usd: item.amountUsd })),
+      ),
+      newThisWeek: currentWeekCreated.length,
+      newAmountUsd: sumAmounts(currentWeekCreated),
+      advancedThisWeek: currentAdvanced,
+      blockedOpenOpportunities: openItems.filter(
+        (item) => item.executionStateCode === "bloqueada",
+      ).length,
+    },
+    weekChange: {
+      newThisWeek: buildVariationWithBase(
+        currentWeekCreated.length,
+        previousWeekCreated.length,
+        Boolean(previousWeek),
+      ),
+      advancedThisWeek: buildVariationWithBase(
+        currentAdvanced,
+        previousAdvanced,
+        Boolean(previousWeek),
+      ),
+      wonThisWeek: buildVariationWithBase(
+        currentWeekWon.length,
+        previousWeekWon.length,
+        Boolean(previousWeek),
+      ),
+      lostThisWeek: buildVariationWithBase(
+        currentWeekLost.length,
+        previousWeekLost.length,
+        Boolean(previousWeek),
+      ),
+    },
+    immediateAttention: {
+      noNextStep,
+      blocked,
+      stale,
+      highAmountHighRisk,
+    },
+    generationTrend,
+    pipelineMovement: Array.from(pipelineMovementMap.values()).sort(
+      (left, right) => right.openCount - left.openCount,
+    ),
+  };
 }
 
 router.get(
@@ -724,6 +1043,23 @@ router.get(
         (left, right) => right.openCount - left.openCount,
       ),
     });
+  },
+);
+
+router.get(
+  "/forecast-monthly",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const payload = await buildForecastMonthlyPayload(req.user, {
+      month: req.query?.month,
+      weekStart: req.query?.weekStart,
+      sellerUserId: req.query?.sellerUserId,
+      businessLineId: req.query?.businessLineId,
+      viewMode: req.query?.viewMode,
+    });
+
+    res.json(payload);
   },
 );
 

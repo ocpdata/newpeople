@@ -6,6 +6,7 @@ const TAB_OPTIONS = [
   { id: "overview", label: "Resumen" },
   { id: "open", label: "Abiertas" },
   { id: "period", label: "Oportunidades por periodo" },
+  { id: "forecast", label: "Forecast mensual" },
 ];
 
 const QUICK_FILTER_OPTIONS = [
@@ -26,6 +27,10 @@ function getCurrentWeekStart() {
   }
   now.setHours(0, 0, 0, 0);
   return now.toISOString().slice(0, 10);
+}
+
+function getCurrentMonth() {
+  return new Date().toISOString().slice(0, 7);
 }
 
 function getDefaultPeriodStart() {
@@ -61,7 +66,8 @@ function formatDate(value) {
   });
 }
 
-function formatDelta(current, previous) {
+function formatDelta(current, previous, hasBase = true) {
+  if (!hasBase) return "Sin base";
   const delta = Number(current || 0) - Number(previous || 0);
   if (delta === 0) return "Sin cambio";
   return `${delta > 0 ? "+" : ""}${formatNumber(delta)} vs semana previa`;
@@ -166,6 +172,8 @@ function AttentionList({ title, items }) {
 export default function CommercialTrackingPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [weekStart, setWeekStart] = useState(getCurrentWeekStart);
+  const [forecastMonth, setForecastMonth] = useState(getCurrentMonth);
+  const [forecastWeekStart, setForecastWeekStart] = useState("");
   const [sellerUserId, setSellerUserId] = useState("");
   const [businessLineId, setBusinessLineId] = useState("");
   const [viewMode, setViewMode] = useState("count");
@@ -178,6 +186,7 @@ export default function CommercialTrackingPage() {
   const [overview, setOverview] = useState(null);
   const [openData, setOpenData] = useState(null);
   const [periodData, setPeriodData] = useState(null);
+  const [forecastData, setForecastData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingTab, setLoadingTab] = useState(false);
   const [error, setError] = useState("");
@@ -240,6 +249,34 @@ export default function CommercialTrackingPage() {
     setPeriodData(response.data);
   }
 
+  async function loadForecastData() {
+    const response = await api.get(
+      "/api/commercial-tracking/forecast-monthly",
+      {
+        params: {
+          month: forecastMonth || undefined,
+          weekStart: forecastWeekStart || undefined,
+          sellerUserId: sellerUserId || undefined,
+          businessLineId: businessLineId || undefined,
+          viewMode,
+        },
+      },
+    );
+    setForecastData(response.data);
+    if (
+      response.data?.meta?.month &&
+      response.data.meta.month !== forecastMonth
+    ) {
+      setForecastMonth(response.data.meta.month);
+    }
+    if (
+      response.data?.meta?.activeWeekStart &&
+      response.data.meta.activeWeekStart !== forecastWeekStart
+    ) {
+      setForecastWeekStart(response.data.meta.activeWeekStart);
+    }
+  }
+
   async function reloadAll() {
     setError("");
     setLoading(true);
@@ -250,6 +287,9 @@ export default function CommercialTrackingPage() {
       }
       if (activeTab === "period") {
         await loadPeriodData();
+      }
+      if (activeTab === "forecast") {
+        await loadForecastData();
       }
     } catch (requestError) {
       setError(
@@ -281,6 +321,9 @@ export default function CommercialTrackingPage() {
         if (activeTab === "period") {
           await loadPeriodData();
         }
+        if (activeTab === "forecast") {
+          await loadForecastData();
+        }
       } catch (requestError) {
         if (!ignore) {
           setError(
@@ -302,7 +345,15 @@ export default function CommercialTrackingPage() {
       ignore = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, quickFilter, periodGranularity, periodFrom, periodTo]);
+  }, [
+    activeTab,
+    quickFilter,
+    periodGranularity,
+    periodFrom,
+    periodTo,
+    forecastMonth,
+    forecastWeekStart,
+  ]);
 
   useEffect(() => {
     let ignore = false;
@@ -316,6 +367,9 @@ export default function CommercialTrackingPage() {
         }
         if (activeTab === "period") {
           await loadPeriodData();
+        }
+        if (activeTab === "forecast") {
+          await loadForecastData();
         }
       } catch (requestError) {
         if (!ignore) {
@@ -334,19 +388,34 @@ export default function CommercialTrackingPage() {
       ignore = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, sellerUserId, businessLineId, viewMode]);
+  }, [
+    weekStart,
+    sellerUserId,
+    businessLineId,
+    viewMode,
+    forecastMonth,
+    forecastWeekStart,
+  ]);
 
   const overviewSummary = overview?.summary || {};
   const weekChange = overview?.weekChange || {};
   const immediateAttention = overview?.immediateAttention || {};
   const openItems = openData?.items || [];
   const periodSeries = periodData?.series || [];
+  const forecastSummary = forecastData?.summary || {};
+  const forecastWeekChange = forecastData?.weekChange || {};
+  const forecastAttention = forecastData?.immediateAttention || {};
+  const forecastSeries = forecastData?.generationTrend || [];
+  const forecastPipeline = forecastData?.pipelineMovement || [];
+  const forecastWeeks = forecastData?.meta?.validWeeks || [];
+  const forecastActiveWeekStart =
+    forecastData?.meta?.activeWeekStart || forecastWeekStart;
 
   return (
     <section className="panel tracking-page">
       <header className="tracking-hero">
         <div className="tracking-hero-copy">
-          <span className="tracking-kicker">Cockpit semanal</span>
+          <span className="tracking-kicker">Cockpit comercial</span>
           <div className="module-title-with-icon">
             <span
               className="module-title-icon tracking-title-icon"
@@ -367,8 +436,8 @@ export default function CommercialTrackingPage() {
             <h2>Seguimiento comercial</h2>
           </div>
           <p className="section-helper-text tracking-hero-text">
-            Da visibilidad semanal al pipeline, muestra qué cambió y ayuda a
-            definir acciones para mover oportunidades abiertas y generar nuevas.
+            Da visibilidad al pipeline, al forecast y a los movimientos
+            semanales que empujan oportunidades abiertas y nuevas.
           </p>
         </div>
 
@@ -604,6 +673,194 @@ export default function CommercialTrackingPage() {
                 </thead>
                 <tbody>
                   {(overview?.pipelineMovement || []).map((item) => (
+                    <tr key={item.stageCode}>
+                      <td>{item.stageName}</td>
+                      <td>{formatNumber(item.openCount)}</td>
+                      <td>{formatNumber(item.advancedInWeek)}</td>
+                      <td>{formatNumber(item.blockedCount)}</td>
+                      <td>{formatNumber(item.staleCount)}</td>
+                      <td>{formatCurrency(item.totalAmountUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {!loading && activeTab === "forecast" ? (
+        <div className="tracking-layout">
+          <section className="tracking-panel">
+            <div className="tracking-panel-header tracking-panel-header-wide">
+              <div>
+                <h3>Forecast mensual</h3>
+                <span>
+                  {forecastData?.meta?.monthStart &&
+                  forecastData?.meta?.monthEnd
+                    ? `${formatDate(forecastData.meta.monthStart)} - ${formatDate(forecastData.meta.monthEnd)}`
+                    : forecastMonth}
+                </span>
+              </div>
+              <div className="tracking-inline-filters">
+                <label>
+                  Mes
+                  <input
+                    type="month"
+                    value={forecastMonth}
+                    onChange={(event) => {
+                      setForecastMonth(event.target.value);
+                      setForecastWeekStart("");
+                    }}
+                  />
+                </label>
+                <label>
+                  Semana
+                  <select
+                    value={forecastActiveWeekStart}
+                    onChange={(event) =>
+                      setForecastWeekStart(event.target.value)
+                    }
+                    disabled={!forecastWeeks.length}
+                  >
+                    {forecastWeeks.map((week) => (
+                      <option key={week.key} value={week.key}>
+                        {week.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+            <p className="tracking-inline-note">
+              El forecast mensual filtra por fecha objetivo de cierre y mantiene
+              la lectura semanal dentro del mes seleccionado.
+            </p>
+          </section>
+
+          <div className="tracking-summary-grid">
+            <SummaryCard
+              label="Oportunidades abiertas"
+              value={formatNumber(forecastSummary.openOpportunities)}
+              helper="Universo del mes objetivo"
+            />
+            <SummaryCard
+              label="Monto abierto"
+              value={formatCurrency(forecastSummary.openAmountUsd)}
+              helper="Impacto económico del forecast"
+              tone="soft"
+            />
+            <SummaryCard
+              label="Avanzadas en la semana"
+              value={formatNumber(forecastSummary.advancedThisWeek)}
+              helper={formatDelta(
+                forecastWeekChange?.advancedThisWeek?.current,
+                forecastWeekChange?.advancedThisWeek?.previous,
+                forecastWeekChange?.advancedThisWeek?.hasPrevious,
+              )}
+            />
+            <SummaryCard
+              label="Bloqueadas"
+              value={formatNumber(forecastSummary.blockedOpenOpportunities)}
+              helper="Requieren intervención inmediata"
+              tone="alert"
+            />
+          </div>
+
+          <div className="tracking-grid-two">
+            <section className="tracking-panel">
+              <div className="tracking-panel-header">
+                <h3>Qué cambió en la semana</h3>
+                <span>{forecastActiveWeekStart || forecastMonth}</span>
+              </div>
+              <div className="tracking-week-change-grid">
+                <article>
+                  <strong>
+                    {formatNumber(forecastWeekChange?.newThisWeek?.current)}
+                  </strong>
+                  <span>Nuevas</span>
+                </article>
+                <article>
+                  <strong>
+                    {formatNumber(
+                      forecastWeekChange?.advancedThisWeek?.current,
+                    )}
+                  </strong>
+                  <span>Avanzadas</span>
+                </article>
+                <article>
+                  <strong>
+                    {formatNumber(forecastWeekChange?.wonThisWeek?.current)}
+                  </strong>
+                  <span>Ganadas</span>
+                </article>
+                <article>
+                  <strong>
+                    {formatNumber(forecastWeekChange?.lostThisWeek?.current)}
+                  </strong>
+                  <span>Perdidas</span>
+                </article>
+              </div>
+            </section>
+
+            <section className="tracking-panel">
+              <div className="tracking-panel-header">
+                <h3>Generación semanal del forecast</h3>
+                <span>{viewMode === "amount" ? "Monto" : "Cantidad"}</span>
+              </div>
+              <SparkBars
+                items={forecastSeries}
+                valueKey={
+                  viewMode === "amount" ? "createdAmountUsd" : "createdCount"
+                }
+                formatter={
+                  viewMode === "amount" ? formatCurrency : formatNumber
+                }
+              />
+            </section>
+          </div>
+
+          <div className="tracking-grid-two">
+            <AttentionList
+              title="Sin siguiente paso"
+              items={forecastAttention.noNextStep || []}
+            />
+            <AttentionList
+              title="Bloqueadas"
+              items={forecastAttention.blocked || []}
+            />
+          </div>
+
+          <div className="tracking-grid-two">
+            <AttentionList
+              title="Sin actividad reciente"
+              items={forecastAttention.stale || []}
+            />
+            <AttentionList
+              title="Alto monto y alto riesgo"
+              items={forecastAttention.highAmountHighRisk || []}
+            />
+          </div>
+
+          <section className="tracking-panel">
+            <div className="tracking-panel-header">
+              <h3>Movimiento del pipeline por etapa</h3>
+              <span>{forecastPipeline.length || 0} etapas</span>
+            </div>
+            <div className="tracking-table-wrap">
+              <table className="tracking-table">
+                <thead>
+                  <tr>
+                    <th>Etapa</th>
+                    <th>Abiertas</th>
+                    <th>Avanzadas semana</th>
+                    <th>Bloqueadas</th>
+                    <th>Sin actividad</th>
+                    <th>Monto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {forecastPipeline.map((item) => (
                     <tr key={item.stageCode}>
                       <td>{item.stageName}</td>
                       <td>{formatNumber(item.openCount)}</td>
