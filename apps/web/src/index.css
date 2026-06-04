@@ -10593,6 +10593,26 @@ button:disabled {
   background: #d39a22;
 }
 
+.status-filter-pill-process .status-filter-pill-dot {
+  background: #d39a22;
+}
+
+.status-filter-pill-process.is-selected {
+  border-color: #f3d49a;
+  background: #fff6e5;
+  color: #7a4b00;
+}
+
+.status-filter-pill-won .status-filter-pill-dot {
+  background: #2da85e;
+}
+
+.status-filter-pill-won.is-selected {
+  border-color: #b8e6c7;
+  background: #eaf8ef;
+  color: #0b5e2a;
+}
+
 .status-filter-pill-inactive .status-filter-pill-dot {
   background: #cc5f5f;
 }

@@ -162,6 +162,38 @@ function OpportunitiesListSection({
           <button
             type="button"
             className={
+              opportunityStatusFilter === "in_process"
+                ? "status-filter-pill status-filter-pill-process is-selected"
+                : "status-filter-pill status-filter-pill-process"
+            }
+            aria-pressed={opportunityStatusFilter === "in_process"}
+            onClick={() => setOpportunityStatusFilter("in_process")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">En proceso</span>
+            <span className="status-filter-pill-count">
+              {opportunityStatusCounts.inProcess}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
+              opportunityStatusFilter === "won"
+                ? "status-filter-pill status-filter-pill-won is-selected"
+                : "status-filter-pill status-filter-pill-won"
+            }
+            aria-pressed={opportunityStatusFilter === "won"}
+            onClick={() => setOpportunityStatusFilter("won")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Ganadas</span>
+            <span className="status-filter-pill-count">
+              {opportunityStatusCounts.won}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
               opportunityStatusFilter === "inactive"
                 ? "status-filter-pill status-filter-pill-inactive is-selected"
                 : "status-filter-pill status-filter-pill-inactive"

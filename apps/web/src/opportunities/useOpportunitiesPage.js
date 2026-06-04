@@ -887,6 +887,21 @@ export function useOpportunitiesPage({
     return normalizeText(opportunity.activation_status) === "desactivada";
   }
 
+  function isOpportunityCommercialInProcess(opportunity) {
+    const normalized = normalizeText(
+      opportunity.commercial_status_code || opportunity.commercial_status,
+    );
+    return normalized === "en_proceso" || normalized === "en proceso";
+  }
+
+  function isOpportunityCommercialWon(opportunity) {
+    return (
+      normalizeText(
+        opportunity.commercial_status_code || opportunity.commercial_status,
+      ) === "ganada"
+    );
+  }
+
   function getOpportunityStatusBadgeClass(opportunity) {
     if (isOpportunityActive(opportunity)) {
       return "user-status-badge active";
@@ -1721,6 +1736,12 @@ export function useOpportunitiesPage({
     () =>
       opportunities.filter((opportunity) => {
         if (opportunityStatusFilter === "all") return true;
+        if (opportunityStatusFilter === "in_process") {
+          return isOpportunityCommercialInProcess(opportunity);
+        }
+        if (opportunityStatusFilter === "won") {
+          return isOpportunityCommercialWon(opportunity);
+        }
         if (opportunityStatusFilter === "pending") {
           return (
             opportunitiesPendingEnabled && isOpportunityPending(opportunity)
@@ -1741,6 +1762,12 @@ export function useOpportunitiesPage({
     () =>
       opportunities.reduce(
         (totals, opportunity) => {
+          if (isOpportunityCommercialInProcess(opportunity)) {
+            totals.inProcess += 1;
+          }
+          if (isOpportunityCommercialWon(opportunity)) {
+            totals.won += 1;
+          }
           if (isOpportunityPending(opportunity)) {
             if (opportunitiesPendingEnabled) {
               totals.pending += 1;
@@ -1756,7 +1783,7 @@ export function useOpportunitiesPage({
           totals.active += 1;
           return totals;
         },
-        { active: 0, pending: 0, inactive: 0 },
+        { active: 0, pending: 0, inactive: 0, inProcess: 0, won: 0 },
       ),
     [opportunities, opportunitiesPendingEnabled],
   );
