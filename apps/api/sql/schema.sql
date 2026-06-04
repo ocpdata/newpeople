@@ -1586,6 +1586,25 @@ CREATE TABLE IF NOT EXISTS quotation_versions (
   INDEX idx_quotation_versions_status (status_id)
 );
 
+CREATE TABLE IF NOT EXISTS quotation_public_share_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quotation_version_id BIGINT UNSIGNED NOT NULL,
+  created_by_user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  pdf_payload_json LONGTEXT NOT NULL,
+  expires_at DATETIME(3) NOT NULL,
+  last_accessed_at DATETIME(3) NULL,
+  access_count INT UNSIGNED NOT NULL DEFAULT 0,
+  revoked_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+  CONSTRAINT uq_quotation_public_share_links_token_hash UNIQUE (token_hash),
+  CONSTRAINT fk_quotation_public_share_links_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_quotation_public_share_links_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  INDEX idx_quotation_public_share_links_version (quotation_version_id, expires_at),
+  INDEX idx_quotation_public_share_links_expiry (expires_at)
+);
+
 SET @stmt := (
   SELECT IF(
     COUNT(*) = 0,

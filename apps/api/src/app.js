@@ -10,6 +10,7 @@ import contactRoutes from "./routes.contacts.js";
 import providerRoutes from "./routes.providers.js";
 import opportunityRoutes from "./routes.opportunities.js";
 import quotationRoutes from "./routes.quotations.js";
+import quotationPublicRoutes from "./routes.quotations-public.js";
 import interactionRoutes from "./routes.interactions.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
@@ -56,6 +57,7 @@ export function createApp() {
     res.json({ ok: true, dbNow: nowRows[0].now });
   });
 
+  app.use("/api/public", quotationPublicRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/users", authRequired, loadUser, userRoutes);
   app.use("/api/roles", authRequired, loadUser, roleRoutes);

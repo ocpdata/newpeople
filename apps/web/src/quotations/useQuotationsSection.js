@@ -6151,9 +6151,45 @@ export function useQuotationsSection({
         return recommendations;
       };
 
-      const prepareSendConfirmation = () => {
+      const prepareSendConfirmation = async () => {
         if (actionCode !== "enviar") {
           return true;
+        }
+
+        const normalizedPayload = normalizeQuotationPdfPayload(
+          actionOptions?.quotationPrintModel,
+        );
+        if (!normalizedPayload) {
+          setError(
+            "No fue posible preparar el documento para compartir en el correo.",
+          );
+          return false;
+        }
+
+        let publicQuotationUrl = "";
+        try {
+          const response = await api.post(
+            `/api/quotation-versions/${selectedVersionId}/public-share-link`,
+            {
+              pdfPayload: normalizedPayload,
+            },
+          );
+          publicQuotationUrl = String(response?.data?.url || "").trim();
+        } catch (err) {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible generar el enlace publico de la cotizacion.",
+            ),
+          );
+          return false;
+        }
+
+        if (!publicQuotationUrl) {
+          setError(
+            "No fue posible generar el enlace publico de la cotizacion.",
+          );
+          return false;
         }
 
         const contactId = Number(versionForm?.contactId || 0);
@@ -6182,7 +6218,8 @@ export function useQuotationsSection({
         const bodyLines = [
           "Hola,",
           "",
-          "Comparto la cotizacion para tu revision.",
+          "Comparto la cotizacion para tu revision:",
+          publicQuotationUrl,
           "",
           "Quedo atento a tus comentarios.",
         ];
@@ -6249,7 +6286,7 @@ export function useQuotationsSection({
         let response;
         let approvalContextOverrides = {};
 
-        if (!prepareSendConfirmation()) {
+        if (!(await prepareSendConfirmation())) {
           return;
         }
 
@@ -6436,6 +6473,7 @@ export function useQuotationsSection({
       selectedQuotationId,
       selectedVersion?.versionNumber,
       selectedVersionId,
+      versionForm,
       versionForm?.contactId,
       versionForm?.proposalName,
     ],

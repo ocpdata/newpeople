@@ -2340,6 +2340,21 @@ function QuotationEditorContent({
     handleSaveItem(itemId, explicitDraft);
   }
 
+  const handleWorkflowAction = useCallback(
+    (actionCode, actionOptions = {}) => {
+      const nextActionOptions =
+        actionCode === "enviar"
+          ? {
+              ...actionOptions,
+              quotationPrintModel: printModel,
+            }
+          : actionOptions;
+
+      return handleAction(actionCode, nextActionOptions);
+    },
+    [handleAction, printModel],
+  );
+
   if (!selectedVersion) {
     return (
       <p className="field-hint">
@@ -2354,7 +2369,7 @@ function QuotationEditorContent({
         selectedVersion={selectedVersion}
         allowedActions={allowedActions}
         busyAction={busyAction}
-        handleAction={handleAction}
+        handleAction={handleWorkflowAction}
         error={error}
         success={success}
         recommendations={approvalRecommendations}

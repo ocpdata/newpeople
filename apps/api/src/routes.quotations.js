@@ -1,5 +1,5 @@
 import express from "express";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { buffer as streamToBuffer } from "node:stream/consumers";
@@ -206,6 +206,57 @@ const quotationPdfRenderSchema = z.object({
     .default({}),
   notes: z.string().trim().max(50000).optional().default(""),
 });
+
+const quotationPublicShareCreateSchema = z.object({
+  pdfPayload: quotationPdfRenderSchema,
+  ttlDays: z.number().int().min(1).max(365).optional().default(30),
+});
+
+const quotationShareEligibleStatusCodes = new Set([
+  "aprobada",
+  "enviada",
+  "ganada",
+  "aceptada",
+]);
+
+let quotationPublicShareTableEnsured = false;
+
+async function ensureQuotationPublicShareTable() {
+  if (quotationPublicShareTableEnsured) {
+    return;
+  }
+
+  await query(
+    `CREATE TABLE IF NOT EXISTS quotation_public_share_links (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      quotation_version_id BIGINT UNSIGNED NOT NULL,
+      created_by_user_id BIGINT UNSIGNED NOT NULL,
+      token_hash CHAR(64) NOT NULL,
+      pdf_payload_json LONGTEXT NOT NULL,
+      expires_at DATETIME(3) NOT NULL,
+      last_accessed_at DATETIME(3) NULL,
+      access_count INT UNSIGNED NOT NULL DEFAULT 0,
+      revoked_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+      CONSTRAINT uq_quotation_public_share_links_token_hash UNIQUE (token_hash),
+      CONSTRAINT fk_quotation_public_share_links_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+      CONSTRAINT fk_quotation_public_share_links_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+      INDEX idx_quotation_public_share_links_version (quotation_version_id, expires_at),
+      INDEX idx_quotation_public_share_links_expiry (expires_at)
+    )`,
+  );
+
+  quotationPublicShareTableEnsured = true;
+}
+
+function buildQuotationPublicShareToken() {
+  return randomBytes(24).toString("hex");
+}
+
+function buildQuotationPublicShareTokenHash(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
+}
 
 const quotationExchangeRateQuerySchema = z.object({
   currency: z
@@ -13716,6 +13767,91 @@ router.get(
       res.destroy(error);
     });
     stream.pipe(res);
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/public-share-link",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const parsed = quotationPublicShareCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+    if (Number(version.id) !== Number(version.latest_version_id)) {
+      return res.status(409).json({
+        message:
+          "Solo la version mayor puede compartirse mediante enlace publico.",
+      });
+    }
+    if (!quotationShareEligibleStatusCodes.has(String(version.status_code))) {
+      return res.status(409).json({
+        message:
+          "La version debe estar aprobada o en estado posterior para generar un enlace publico.",
+      });
+    }
+
+    await ensureQuotationPublicShareTable();
+
+    const now = new Date();
+    const ttlDays = Number(parsed.data.ttlDays || 30);
+    const expiresAt = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
+    const token = buildQuotationPublicShareToken();
+    const tokenHash = buildQuotationPublicShareTokenHash(token);
+
+    await query(
+      `INSERT INTO quotation_public_share_links
+        (quotation_version_id, created_by_user_id, token_hash, pdf_payload_json, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        Number(version.id),
+        Number(req.user.id),
+        tokenHash,
+        JSON.stringify(parsed.data.pdfPayload),
+        expiresAt,
+        now,
+        now,
+      ],
+    );
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const shareUrl = `${baseUrl}/api/public/quotation-shares/${encodeURIComponent(token)}/pdf`;
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "generar_enlace_publico",
+      entityType: "quotation_version",
+      entityId: Number(version.id),
+      detail: "Enlace publico de cotizacion generado",
+      after: {
+        expires_at: expiresAt.toISOString(),
+      },
+    });
+
+    return res.json({
+      url: shareUrl,
+      expiresAt: expiresAt.toISOString(),
+      versionId: Number(version.id),
+    });
   },
 );
 
