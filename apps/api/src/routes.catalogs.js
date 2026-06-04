@@ -911,10 +911,21 @@ router.get(
     const rows = await query(
       `SELECT DISTINCT u.id, u.full_name, u.email
        FROM users u
-       INNER JOIN user_roles ur ON ur.user_id = u.id
-       INNER JOIN roles r ON r.id = ur.role_id
        WHERE u.status = 'active'
-         AND LOWER(TRIM(r.name)) = 'vendedor'
+         AND (
+           EXISTS (
+             SELECT 1
+             FROM user_roles ur
+             INNER JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id = u.id
+               AND LOWER(TRIM(r.name)) = 'vendedor'
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM opportunities o
+             WHERE o.seller_user_id = u.id
+           )
+         )
        ORDER BY u.full_name`,
     );
     res.json(rows);

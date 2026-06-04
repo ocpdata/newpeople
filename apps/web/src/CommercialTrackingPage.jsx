@@ -19,6 +19,21 @@ const QUICK_FILTER_OPTIONS = [
   { id: "waiting_customer", label: "Esperando cliente" },
 ];
 
+const COMMERCIAL_STAGE_ORDER = {
+  contacto_inicial: 1,
+  identificacion_oportunidad: 2,
+  desarrollo: 3,
+  cotizacion: 4,
+  demostracion: 5,
+  negociacion: 6,
+  waiting: 7,
+};
+
+const FORECAST_SORT_DEFAULT = {
+  field: "amountUsd",
+  direction: "desc",
+};
+
 function getCurrentWeekStart() {
   const now = new Date();
   const day = now.getDay() || 7;
@@ -29,8 +44,119 @@ function getCurrentWeekStart() {
   return now.toISOString().slice(0, 10);
 }
 
+function getWeekStartDate(value = new Date()) {
+  const candidate = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(candidate.getTime())) {
+    return getWeekStartDate(new Date());
+  }
+
+  const normalized = new Date(
+    candidate.getFullYear(),
+    candidate.getMonth(),
+    candidate.getDate(),
+    12,
+  );
+  const day = normalized.getDay() || 7;
+  if (day !== 1) {
+    normalized.setDate(normalized.getDate() - (day - 1));
+  }
+  return normalized;
+}
+
+function formatIsoWeekStart(value = new Date()) {
+  const weekStart = getWeekStartDate(value);
+  return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`;
+}
+
+function formatWeekOptionLabel(weekStartValue) {
+  const weekStart = getWeekStartDate(`${weekStartValue}T12:00:00`);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  const formatPart = (date, includeYear = false) =>
+    date.toLocaleDateString("es-MX", {
+      day: "2-digit",
+      month: "short",
+      ...(includeYear ? { year: "numeric" } : {}),
+    });
+
+  if (weekStart.getFullYear() !== weekEnd.getFullYear()) {
+    return `${formatPart(weekStart, true)} - ${formatPart(weekEnd, true)}`;
+  }
+
+  return `${formatPart(weekStart)} - ${formatPart(weekEnd, true)}`;
+}
+
+function buildCockpitWeekOptions(selectedWeekStart) {
+  const currentWeek = getCurrentWeekStart();
+  const selectedWeek = selectedWeekStart || currentWeek;
+  const optionMap = new Map();
+  const currentWeekDate = getWeekStartDate(`${currentWeek}T12:00:00`);
+
+  Array.from({ length: 16 }, (_, index) => {
+    const offset = 3 - index;
+    const optionDate = new Date(currentWeekDate);
+    optionDate.setDate(optionDate.getDate() + offset * 7);
+    const value = formatIsoWeekStart(optionDate);
+    optionMap.set(value, {
+      value,
+      label: formatWeekOptionLabel(value),
+    });
+    return null;
+  });
+
+  if (!optionMap.has(selectedWeek)) {
+    optionMap.set(selectedWeek, {
+      value: selectedWeek,
+      label: formatWeekOptionLabel(selectedWeek),
+    });
+  }
+
+  return Array.from(optionMap.values()).sort((left, right) =>
+    String(right.value).localeCompare(String(left.value)),
+  );
+}
+
 function getCurrentMonth() {
   return new Date().toISOString().slice(0, 7);
+}
+
+function formatMonthLabel(value) {
+  if (!value) return "Sin mes";
+  const parsed = new Date(`${value}-01T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const label = parsed.toLocaleDateString("es-MX", {
+    month: "long",
+    year: "numeric",
+  });
+  return label
+    .replace(/\s+de\s+/i, " ")
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+function buildForecastMonthOptions(selectedMonth) {
+  const baseMonth = selectedMonth || getCurrentMonth();
+  const [yearPart, monthPart] = String(baseMonth).split("-");
+  const year = Number(yearPart);
+  const monthIndex = Number(monthPart) - 1;
+  const anchor = new Date(
+    Number.isFinite(year) ? year : new Date().getFullYear(),
+    Number.isFinite(monthIndex) ? monthIndex : new Date().getMonth(),
+    1,
+  );
+
+  return Array.from({ length: 24 }, (_, index) => {
+    const optionDate = new Date(
+      anchor.getFullYear(),
+      anchor.getMonth() - 11 + index,
+      1,
+    );
+    const optionValue = `${optionDate.getFullYear()}-${String(optionDate.getMonth() + 1).padStart(2, "0")}`;
+    return {
+      value: optionValue,
+      label: formatMonthLabel(optionValue),
+    };
+  });
 }
 
 function getDefaultPeriodStart() {
@@ -66,6 +192,16 @@ function formatDate(value) {
   });
 }
 
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "0%";
+  }
+
+  return `${new Intl.NumberFormat("es-MX", {
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))}%`;
+}
+
 function formatDelta(current, previous, hasBase = true) {
   if (!hasBase) return "Sin base";
   const delta = Number(current || 0) - Number(previous || 0);
@@ -78,6 +214,30 @@ function normalizeOptions(data) {
   if (Array.isArray(data?.items)) return data.items;
   if (Array.isArray(data?.rows)) return data.rows;
   return [];
+}
+
+function compareForecastOpportunityValues(left, right, field) {
+  if (
+    field === "hasNextStep" ||
+    field === "isBlocked" ||
+    field === "isStale" ||
+    field === "isHighAmountHighRisk"
+  ) {
+    return Number(Boolean(left?.[field])) - Number(Boolean(right?.[field]));
+  }
+
+  if (field === "amountUsd") {
+    return Number(left?.amountUsd || 0) - Number(right?.amountUsd || 0);
+  }
+
+  const leftValue = String(left?.[field] || "");
+  const rightValue = String(right?.[field] || "");
+  return leftValue.localeCompare(rightValue, "es", { sensitivity: "base" });
+}
+
+function getForecastSortArrow(activeField, activeDirection, field) {
+  if (activeField !== field) return "↕";
+  return activeDirection === "asc" ? "↑" : "↓";
 }
 
 function SummaryCard({ label, value, helper, tone = "default", onClick }) {
@@ -93,6 +253,36 @@ function SummaryCard({ label, value, helper, tone = "default", onClick }) {
       <strong className="tracking-summary-value">{value}</strong>
       <span className="tracking-summary-helper">{helper}</span>
     </Tag>
+  );
+}
+
+function QuarterQuotaCard({ summary }) {
+  const periodLabel = summary?.period?.label || "Sin trimestre";
+  const hasPublishedQuota =
+    Boolean(summary?.hasPlan) &&
+    Boolean(summary?.hasPublishedVersion) &&
+    summary?.quotaAmount !== null &&
+    summary?.quotaAmount !== undefined;
+
+  if (!hasPublishedQuota) {
+    return (
+      <SummaryCard
+        label="Cuota trimestral"
+        value="Sin cuota"
+        helper={`${periodLabel} · Sin cuota publicada`}
+        tone="alert"
+      />
+    );
+  }
+
+  const tone = summary?.isCovered ? "soft" : "default";
+  return (
+    <SummaryCard
+      label="Cuota trimestral"
+      value={formatCurrency(summary.quotaAmount)}
+      helper={`${periodLabel} · Ganado ${formatCurrency(summary.wonAmount)} · ${formatPercent(summary.attainmentPercent)}`}
+      tone={tone}
+    />
   );
 }
 
@@ -187,6 +377,7 @@ export default function CommercialTrackingPage() {
   const [openData, setOpenData] = useState(null);
   const [periodData, setPeriodData] = useState(null);
   const [forecastData, setForecastData] = useState(null);
+  const [forecastSort, setForecastSort] = useState(FORECAST_SORT_DEFAULT);
   const [loading, setLoading] = useState(true);
   const [loadingTab, setLoadingTab] = useState(false);
   const [error, setError] = useState("");
@@ -258,7 +449,6 @@ export default function CommercialTrackingPage() {
           weekStart: forecastWeekStart || undefined,
           sellerUserId: sellerUserId || undefined,
           businessLineId: businessLineId || undefined,
-          viewMode,
         },
       },
     );
@@ -398,18 +588,85 @@ export default function CommercialTrackingPage() {
   ]);
 
   const overviewSummary = overview?.summary || {};
+  const overviewQuarterQuota = overview?.quarterQuota || null;
   const weekChange = overview?.weekChange || {};
   const immediateAttention = overview?.immediateAttention || {};
   const openItems = openData?.items || [];
   const periodSeries = periodData?.series || [];
   const forecastSummary = forecastData?.summary || {};
+  const forecastQuarterQuota = forecastData?.quarterQuota || null;
   const forecastWeekChange = forecastData?.weekChange || {};
-  const forecastAttention = forecastData?.immediateAttention || {};
-  const forecastSeries = forecastData?.generationTrend || [];
-  const forecastPipeline = forecastData?.pipelineMovement || [];
+  const forecastOpportunities = forecastData?.forecastOpportunities || [];
+  const cockpitWeekOptions = useMemo(
+    () => buildCockpitWeekOptions(weekStart),
+    [weekStart],
+  );
+  const forecastMonthOptions = useMemo(
+    () => buildForecastMonthOptions(forecastMonth),
+    [forecastMonth],
+  );
+  const forecastPipeline = useMemo(() => {
+    const items = [...(forecastData?.pipelineMovement || [])];
+    items.sort((left, right) => {
+      const leftOrder = Number(COMMERCIAL_STAGE_ORDER[left?.stageCode] || 0);
+      const rightOrder = Number(COMMERCIAL_STAGE_ORDER[right?.stageCode] || 0);
+      if (rightOrder !== leftOrder) {
+        return rightOrder - leftOrder;
+      }
+
+      return String(right?.stageName || "").localeCompare(
+        String(left?.stageName || ""),
+        "es",
+        { sensitivity: "base" },
+      );
+    });
+    return items;
+  }, [forecastData?.pipelineMovement]);
   const forecastWeeks = forecastData?.meta?.validWeeks || [];
-  const forecastActiveWeekStart =
-    forecastData?.meta?.activeWeekStart || forecastWeekStart;
+  const sortedForecastOpportunities = useMemo(() => {
+    const items = [...forecastOpportunities];
+    items.sort((left, right) => {
+      const primary = compareForecastOpportunityValues(
+        left,
+        right,
+        forecastSort.field,
+      );
+      if (primary !== 0) {
+        return forecastSort.direction === "asc" ? primary : -primary;
+      }
+
+      const fallback = compareForecastOpportunityValues(
+        left,
+        right,
+        "amountUsd",
+      );
+      if (fallback !== 0) {
+        return forecastSort.direction === "asc" &&
+          forecastSort.field === "amountUsd"
+          ? fallback
+          : -fallback;
+      }
+
+      return String(left?.name || "").localeCompare(String(right?.name || ""));
+    });
+    return items;
+  }, [forecastOpportunities, forecastSort]);
+
+  function toggleForecastSort(field) {
+    setForecastSort((current) => {
+      if (current.field === field) {
+        return {
+          field,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+
+      return {
+        field,
+        direction: field === "amountUsd" ? "desc" : "asc",
+      };
+    });
+  }
 
   return (
     <section className="panel tracking-page">
@@ -444,11 +701,16 @@ export default function CommercialTrackingPage() {
         <div className="tracking-toolbar">
           <label>
             Semana
-            <input
-              type="date"
+            <select
               value={weekStart}
               onChange={(event) => setWeekStart(event.target.value)}
-            />
+            >
+              {cockpitWeekOptions.map((week) => (
+                <option key={week.value} value={week.value}>
+                  {week.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Vendedor
@@ -459,10 +721,11 @@ export default function CommercialTrackingPage() {
               <option value="">Todos</option>
               {sellers.map((seller) => (
                 <option
-                  key={seller.id || seller.userId || seller.value}
-                  value={seller.id || seller.userId || ""}
+                  key={seller.id || seller.value || seller.email}
+                  value={seller.id || seller.value || ""}
                 >
-                  {seller.fullName ||
+                  {seller.full_name ||
+                    seller.fullName ||
                     seller.name ||
                     seller.label ||
                     "Sin nombre"}
@@ -484,22 +747,35 @@ export default function CommercialTrackingPage() {
               ))}
             </select>
           </label>
-          <label>
-            Vista
-            <select
-              value={viewMode}
-              onChange={(event) => setViewMode(event.target.value)}
-            >
-              <option value="count">Cantidad</option>
-              <option value="amount">Monto</option>
-            </select>
-          </label>
+          {activeTab !== "forecast" ? (
+            <label>
+              Vista
+              <select
+                value={viewMode}
+                onChange={(event) => setViewMode(event.target.value)}
+              >
+                <option value="count">Cantidad</option>
+                <option value="amount">Monto</option>
+              </select>
+            </label>
+          ) : null}
           <button
             type="button"
-            className="secondary-button"
+            className="tracking-icon-button"
             onClick={reloadAll}
+            aria-label="Actualizar lectura"
+            title="Actualizar lectura"
           >
-            Actualizar lectura
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              aria-hidden="true"
+            >
+              <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+              <path d="M20 4v6h-6" />
+            </svg>
           </button>
         </div>
       </header>
@@ -531,7 +807,7 @@ export default function CommercialTrackingPage() {
 
       {!loading && activeTab === "overview" ? (
         <div className="tracking-layout">
-          <div className="tracking-summary-grid">
+          <div className="tracking-summary-grid tracking-summary-grid-overview">
             <SummaryCard
               label="Oportunidades abiertas"
               value={formatNumber(overviewSummary.openOpportunities)}
@@ -561,6 +837,7 @@ export default function CommercialTrackingPage() {
               helper="Pipeline generado en la semana"
               tone="soft"
             />
+            <QuarterQuotaCard summary={overviewQuarterQuota} />
             <SummaryCard
               label="Avanzadas esta semana"
               value={formatNumber(overviewSummary.advancedThisWeek)}
@@ -588,12 +865,6 @@ export default function CommercialTrackingPage() {
                 <span>{weekStart}</span>
               </div>
               <div className="tracking-week-change-grid">
-                <article>
-                  <strong>
-                    {formatNumber(weekChange?.newThisWeek?.current)}
-                  </strong>
-                  <span>Nuevas</span>
-                </article>
                 <article>
                   <strong>
                     {formatNumber(weekChange?.advancedThisWeek?.current)}
@@ -691,33 +962,50 @@ export default function CommercialTrackingPage() {
 
       {!loading && activeTab === "forecast" ? (
         <div className="tracking-layout">
-          <section className="tracking-panel">
-            <div className="tracking-panel-header tracking-panel-header-wide">
-              <div>
+          <section className="tracking-panel tracking-forecast-hero">
+            <div className="tracking-forecast-hero-main">
+              <div className="tracking-forecast-copy">
+                <span className="tracking-kicker">Seguimiento comercial</span>
                 <h3>Forecast mensual</h3>
-                <span>
-                  {forecastData?.meta?.monthStart &&
-                  forecastData?.meta?.monthEnd
-                    ? `${formatDate(forecastData.meta.monthStart)} - ${formatDate(forecastData.meta.monthEnd)}`
-                    : forecastMonth}
-                </span>
+                <p className="tracking-inline-note tracking-forecast-description">
+                  Vista del mes objetivo con lectura semanal para revisar
+                  avance, riesgo y cobertura del pipeline.
+                </p>
+                <div className="tracking-forecast-meta">
+                  <span className="tracking-forecast-meta-chip">
+                    {forecastData?.meta?.monthStart &&
+                    forecastData?.meta?.monthEnd
+                      ? `${formatDate(forecastData.meta.monthStart)} - ${formatDate(forecastData.meta.monthEnd)}`
+                      : forecastMonth}
+                  </span>
+                  <span className="tracking-forecast-meta-chip tracking-forecast-meta-chip-soft">
+                    Filtra por fecha objetivo de cierre
+                  </span>
+                </div>
               </div>
-              <div className="tracking-inline-filters">
+              <div className="tracking-inline-filters tracking-inline-filters-compact">
                 <label>
                   Mes
-                  <input
-                    type="month"
+                  <select
                     value={forecastMonth}
                     onChange={(event) => {
                       setForecastMonth(event.target.value);
                       setForecastWeekStart("");
                     }}
-                  />
+                  >
+                    {forecastMonthOptions.map((month) => (
+                      <option key={month.value} value={month.value}>
+                        {month.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Semana
                   <select
-                    value={forecastActiveWeekStart}
+                    value={
+                      forecastData?.meta?.activeWeekStart || forecastWeekStart
+                    }
                     onChange={(event) =>
                       setForecastWeekStart(event.target.value)
                     }
@@ -732,13 +1020,9 @@ export default function CommercialTrackingPage() {
                 </label>
               </div>
             </div>
-            <p className="tracking-inline-note">
-              El forecast mensual filtra por fecha objetivo de cierre y mantiene
-              la lectura semanal dentro del mes seleccionado.
-            </p>
           </section>
 
-          <div className="tracking-summary-grid">
+          <div className="tracking-summary-grid is-forecast">
             <SummaryCard
               label="Oportunidades abiertas"
               value={formatNumber(forecastSummary.openOpportunities)}
@@ -765,82 +1049,231 @@ export default function CommercialTrackingPage() {
               helper="Requieren intervención inmediata"
               tone="alert"
             />
+            <QuarterQuotaCard summary={forecastQuarterQuota} />
           </div>
 
-          <div className="tracking-grid-two">
-            <section className="tracking-panel">
-              <div className="tracking-panel-header">
-                <h3>Qué cambió en la semana</h3>
-                <span>{forecastActiveWeekStart || forecastMonth}</span>
+          <section className="tracking-panel">
+            <div className="tracking-panel-header tracking-panel-header-wide">
+              <div>
+                <h3>Oportunidades del mes</h3>
+                <span>{forecastOpportunities.length} oportunidades</span>
               </div>
-              <div className="tracking-week-change-grid">
-                <article>
-                  <strong>
-                    {formatNumber(forecastWeekChange?.newThisWeek?.current)}
-                  </strong>
-                  <span>Nuevas</span>
-                </article>
-                <article>
-                  <strong>
-                    {formatNumber(
-                      forecastWeekChange?.advancedThisWeek?.current,
-                    )}
-                  </strong>
-                  <span>Avanzadas</span>
-                </article>
-                <article>
-                  <strong>
-                    {formatNumber(forecastWeekChange?.wonThisWeek?.current)}
-                  </strong>
-                  <span>Ganadas</span>
-                </article>
-                <article>
-                  <strong>
-                    {formatNumber(forecastWeekChange?.lostThisWeek?.current)}
-                  </strong>
-                  <span>Perdidas</span>
-                </article>
+            </div>
+
+            {forecastOpportunities.length ? (
+              <div className="tracking-table-wrap">
+                <table className="tracking-table tracking-critical-table">
+                  <thead>
+                    <tr>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("name")}
+                        >
+                          Oportunidad{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "name",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("accountName")}
+                        >
+                          Cuenta{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "accountName",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("sellerUserName")}
+                        >
+                          Vendedor{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "sellerUserName",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("stageName")}
+                        >
+                          Etapa comercial{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "stageName",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("amountUsd")}
+                        >
+                          Monto{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "amountUsd",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("hasNextStep")}
+                        >
+                          Sin siguiente paso{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "hasNextStep",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("isBlocked")}
+                        >
+                          Bloqueada{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "isBlocked",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() => toggleForecastSort("isStale")}
+                        >
+                          Sin actividad reciente{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "isStale",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                      <th>
+                        <button
+                          type="button"
+                          className="tracking-table-sort"
+                          onClick={() =>
+                            toggleForecastSort("isHighAmountHighRisk")
+                          }
+                        >
+                          Alto monto y alto riesgo{" "}
+                          <span>
+                            {getForecastSortArrow(
+                              forecastSort.field,
+                              forecastSort.direction,
+                              "isHighAmountHighRisk",
+                            )}
+                          </span>
+                        </button>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedForecastOpportunities.map((item) => (
+                      <tr key={item.opportunityId}>
+                        <td>
+                          <strong>{item.name}</strong>
+                        </td>
+                        <td>{item.accountName}</td>
+                        <td>{item.sellerUserName}</td>
+                        <td>{item.stageName}</td>
+                        <td>{formatCurrency(item.amountUsd)}</td>
+                        <td className="tracking-boolean-cell">
+                          {!item.hasNextStep ? (
+                            <span
+                              className="tracking-boolean-check"
+                              aria-label="Sin siguiente paso"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="tracking-boolean-cell">
+                          {item.isBlocked ? (
+                            <span
+                              className="tracking-boolean-check"
+                              aria-label="Bloqueada"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="tracking-boolean-cell">
+                          {item.isStale ? (
+                            <span
+                              className="tracking-boolean-check"
+                              aria-label="Sin actividad reciente"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="tracking-boolean-cell">
+                          {item.isHighAmountHighRisk ? (
+                            <span
+                              className="tracking-boolean-check"
+                              aria-label="Alto monto y alto riesgo"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </section>
-
-            <section className="tracking-panel">
-              <div className="tracking-panel-header">
-                <h3>Generación semanal del forecast</h3>
-                <span>{viewMode === "amount" ? "Monto" : "Cantidad"}</span>
+            ) : (
+              <div className="tracking-empty-state">
+                Sin oportunidades para el mes seleccionado.
               </div>
-              <SparkBars
-                items={forecastSeries}
-                valueKey={
-                  viewMode === "amount" ? "createdAmountUsd" : "createdCount"
-                }
-                formatter={
-                  viewMode === "amount" ? formatCurrency : formatNumber
-                }
-              />
-            </section>
-          </div>
-
-          <div className="tracking-grid-two">
-            <AttentionList
-              title="Sin siguiente paso"
-              items={forecastAttention.noNextStep || []}
-            />
-            <AttentionList
-              title="Bloqueadas"
-              items={forecastAttention.blocked || []}
-            />
-          </div>
-
-          <div className="tracking-grid-two">
-            <AttentionList
-              title="Sin actividad reciente"
-              items={forecastAttention.stale || []}
-            />
-            <AttentionList
-              title="Alto monto y alto riesgo"
-              items={forecastAttention.highAmountHighRisk || []}
-            />
-          </div>
+            )}
+          </section>
 
           <section className="tracking-panel">
             <div className="tracking-panel-header">

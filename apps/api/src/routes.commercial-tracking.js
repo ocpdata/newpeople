@@ -101,6 +101,19 @@ function getMonthRange(rawMonth) {
   };
 }
 
+function getQuarterSelection(value = new Date()) {
+  const date = startOfDay(value);
+  const year = date.getFullYear();
+  const quarter = Math.floor(date.getMonth() / 3) + 1;
+  return {
+    year,
+    quarter,
+    label: `T${quarter} ${year}`,
+    start: startOfDay(new Date(year, (quarter - 1) * 3, 1)),
+    end: endOfDay(new Date(year, quarter * 3, 0)),
+  };
+}
+
 function buildWeeksForRange(start, end) {
   const weeks = [];
   let cursor = getWeekStart(start);
@@ -640,6 +653,116 @@ function buildVariationWithBase(current, previous, hasPrevious = true) {
   };
 }
 
+function isRealWonOpportunity(item = {}) {
+  return (
+    String(item.commercial_status_code || item.commercialStatusCode || "") ===
+      "ganada" ||
+    String(item.sales_stage_code || item.stageCode || "") === "cierre"
+  );
+}
+
+async function buildQuarterQuotaSummary(
+  user,
+  { referenceDate = new Date(), sellerUserId = null } = {},
+) {
+  const quarter = getQuarterSelection(referenceDate);
+  const sellerFilter = toPositiveInt(sellerUserId);
+  const periodRows = await query(
+    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status,
+            v.id AS version_id, v.version_number, v.status AS version_status, v.label AS version_label
+     FROM commercial_planning_periods p
+     LEFT JOIN commercial_planning_versions v ON v.id = (
+       SELECT v2.id
+       FROM commercial_planning_versions v2
+       WHERE v2.period_id = p.id AND v2.status = 'active'
+       ORDER BY v2.version_number DESC, v2.id DESC
+       LIMIT 1
+     )
+     WHERE p.plan_year = ? AND p.plan_quarter = ?
+     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+              p.id DESC
+     LIMIT 1`,
+    [quarter.year, quarter.quarter],
+  ).catch(() => []);
+
+  const periodRow = periodRows[0] || null;
+  const targetParams = [];
+  const targetWhere = [];
+
+  if (periodRow?.version_id) {
+    targetParams.push(Number(periodRow.version_id));
+    if (!hasGlobalOpportunityScope(user)) {
+      targetWhere.push("t.seller_user_id = ?");
+      targetParams.push(Number(user.id) || 0);
+    }
+    if (sellerFilter) {
+      targetWhere.push("t.seller_user_id = ?");
+      targetParams.push(sellerFilter);
+    }
+  }
+
+  const targetRows = periodRow?.version_id
+    ? await query(
+        `SELECT t.seller_user_id, t.sales_quota_amount, t.currency_code
+         FROM commercial_planning_targets t
+         WHERE t.version_id = ?
+           AND t.status <> 'void'
+           ${targetWhere.length ? `AND ${targetWhere.join(" AND ")}` : ""}`,
+        targetParams,
+      ).catch(() => [])
+    : [];
+
+  const quarterOpportunities = await listScopedOpportunities(user, {
+    sellerUserId: sellerFilter,
+    closeDateFrom: formatIsoDate(quarter.start),
+    closeDateTo: formatIsoDate(quarter.end),
+  });
+  const wonItems = quarterOpportunities.filter((item) =>
+    isRealWonOpportunity(item),
+  );
+
+  const quotaAmount = targetRows.length
+    ? toAmount(
+        targetRows.reduce(
+          (total, item) => total + Number(item.sales_quota_amount || 0),
+          0,
+        ),
+      )
+    : null;
+  const wonAmount = toAmount(
+    wonItems.reduce((total, item) => total + Number(item.amount_usd || 0), 0),
+  );
+  const gapAmount =
+    quotaAmount === null
+      ? null
+      : toAmount(Math.max(quotaAmount - wonAmount, 0));
+  const attainmentPercent =
+    quotaAmount && quotaAmount > 0
+      ? toAmount((wonAmount / quotaAmount) * 100)
+      : null;
+
+  return {
+    period: {
+      year: quarter.year,
+      quarter: quarter.quarter,
+      label: quarter.label,
+    },
+    scope: {
+      sellerUserId: sellerFilter,
+      businessLineIgnored: true,
+    },
+    hasPlan: Boolean(periodRow),
+    hasPublishedVersion: Boolean(periodRow?.version_id),
+    currencyCode:
+      targetRows[0]?.currency_code || periodRow?.base_currency_code || "USD",
+    quotaAmount,
+    wonAmount,
+    gapAmount,
+    attainmentPercent,
+    isCovered: quotaAmount !== null ? wonAmount >= quotaAmount : false,
+  };
+}
+
 async function buildForecastMonthlyPayload(user, params = {}) {
   const sellerUserId = toPositiveInt(params.sellerUserId);
   const businessLineId = toPositiveInt(params.businessLineId);
@@ -764,6 +887,84 @@ async function buildForecastMonthlyPayload(user, params = {}) {
     )
     .slice(0, 5);
 
+  const openItemsByOpportunityId = new Map(
+    openItems.map((item) => [Number(item.opportunityId || 0), item]),
+  );
+
+  const forecastOpportunities = scopedOpportunities
+    .map((row) => {
+      const opportunityId = Number(row.id || 0);
+      const openItem = openItemsByOpportunityId.get(opportunityId) || null;
+      const noNextStep = openItem ? !openItem.nextStep : false;
+      const blocked = openItem
+        ? openItem.executionStateCode === "bloqueada"
+        : false;
+      const stale = openItem ? openItem.isStale : false;
+      const highAmountHighRisk = openItem
+        ? openItem.amountUsd >= 100000 &&
+          ["bloqueada", "sin_conduccion", "esperando_interno"].includes(
+            openItem.executionStateCode,
+          )
+        : false;
+      const flagCount = [noNextStep, blocked, stale, highAmountHighRisk].filter(
+        Boolean,
+      ).length;
+
+      return {
+        id: opportunityId,
+        opportunityId,
+        name: row.name || "",
+        accountName: row.account_name || "",
+        sellerUserName: row.seller_user_name || "Sin vendedor",
+        amountUsd: Number(row.amount_usd || 0),
+        stageName: row.sales_stage_name || "",
+        closeDate: row.close_date || null,
+        commercialStatusCode: row.commercial_status_code || "",
+        lastActivityAt: openItem?.lastActivityAt || null,
+        hasNextStep: openItem ? Boolean(openItem.nextStep) : true,
+        isBlocked: blocked,
+        isStale: stale,
+        isHighAmountHighRisk: highAmountHighRisk,
+        flagCount,
+        priorityScore: Number(openItem?.priorityScore || 0),
+      };
+    })
+    .sort((left, right) => {
+      if (right.flagCount !== left.flagCount) {
+        return right.flagCount - left.flagCount;
+      }
+
+      if (right.priorityScore !== left.priorityScore) {
+        return right.priorityScore - left.priorityScore;
+      }
+
+      if (Number(right.amountUsd || 0) !== Number(left.amountUsd || 0)) {
+        return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+      }
+
+      const leftLastActivity = left.lastActivityAt
+        ? new Date(left.lastActivityAt).getTime()
+        : 0;
+      const rightLastActivity = right.lastActivityAt
+        ? new Date(right.lastActivityAt).getTime()
+        : 0;
+      if (leftLastActivity !== rightLastActivity) {
+        return leftLastActivity - rightLastActivity;
+      }
+
+      const leftCloseDate = left.closeDate
+        ? new Date(left.closeDate).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      const rightCloseDate = right.closeDate
+        ? new Date(right.closeDate).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      if (leftCloseDate !== rightCloseDate) {
+        return leftCloseDate - rightCloseDate;
+      }
+
+      return String(left.name || "").localeCompare(String(right.name || ""));
+    });
+
   const generationTrend = validWeeks.map((week) => {
     const created = scopedOpportunities.filter((item) =>
       isBetween(item.created_at, week.start, week.end),
@@ -797,6 +998,10 @@ async function buildForecastMonthlyPayload(user, params = {}) {
     accumulator.set(key, current);
     return accumulator;
   }, new Map());
+  const quarterQuota = await buildQuarterQuotaSummary(user, {
+    referenceDate: monthRange.start,
+    sellerUserId,
+  });
 
   return {
     meta: {
@@ -854,6 +1059,8 @@ async function buildForecastMonthlyPayload(user, params = {}) {
       stale,
       highAmountHighRisk,
     },
+    quarterQuota,
+    forecastOpportunities,
     generationTrend,
     pipelineMovement: Array.from(pipelineMovementMap.values()).sort(
       (left, right) => right.openCount - left.openCount,
@@ -878,14 +1085,20 @@ router.get(
       end: endOfDay(addDays(weekRange.start, -1)),
     };
 
-    const [allScopedOpportunities, openItems] = await Promise.all([
-      listScopedOpportunities(req.user, { sellerUserId, businessLineId }),
-      buildOpenOpportunityItems(req.user, {
-        sellerUserId,
-        businessLineId,
-        weekRange,
-      }),
-    ]);
+    const [allScopedOpportunities, openItems, quarterQuota] = await Promise.all(
+      [
+        listScopedOpportunities(req.user, { sellerUserId, businessLineId }),
+        buildOpenOpportunityItems(req.user, {
+          sellerUserId,
+          businessLineId,
+          weekRange,
+        }),
+        buildQuarterQuotaSummary(req.user, {
+          referenceDate: weekRange.start,
+          sellerUserId,
+        }),
+      ],
+    );
 
     const currentWeekCreated = allScopedOpportunities.filter((item) =>
       isBetween(item.created_at, weekRange.start, weekRange.end),
@@ -1038,6 +1251,7 @@ router.get(
         stale,
         highAmountHighRisk,
       },
+      quarterQuota,
       generationTrend,
       pipelineMovement: Array.from(pipelineMovementMap.values()).sort(
         (left, right) => right.openCount - left.openCount,
