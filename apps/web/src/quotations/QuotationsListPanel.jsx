@@ -6,6 +6,9 @@ function QuotationsListPanel({
   showDetails,
   loading,
   quotations,
+  duplicateTargetAccounts,
+  duplicateTargetOpportunities,
+  loadingDuplicateTargetOpportunities,
   selectedQuotationId,
   loadVersion,
   quotationStatusFilter,
@@ -28,6 +31,12 @@ function QuotationsListPanel({
   toggleQuotationMenu,
   busyAction,
   openEditQuotationModal,
+  duplicateQuotationModalState,
+  openDuplicateQuotationModal,
+  closeDuplicateQuotationModal,
+  handleDuplicateQuotationTargetAccountChange,
+  handleDuplicateQuotationTargetOpportunityChange,
+  handleDuplicateQuotation,
   onCreateProposalFromQuotationVersion,
   quotationsPage,
   quotationsPerPage,
@@ -354,6 +363,9 @@ function QuotationsListPanel({
                       const proposalActionLabel = canOpenProposal
                         ? "Abrir propuesta"
                         : "Crear propuesta";
+                      const canDuplicateQuotation =
+                        typeof openDuplicateQuotationModal === "function" &&
+                        Number(selectedEditVersionId || 0) > 0;
 
                       return (
                         <>
@@ -427,6 +439,28 @@ function QuotationsListPanel({
                                   <span className="quotation-actions-menu-button-body">
                                     <span className="quotation-actions-menu-button-title">
                                       Editar cotizacion
+                                    </span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="quotation-actions-menu-button is-secondary"
+                                  disabled={!canDuplicateQuotation}
+                                  onClick={() =>
+                                    openDuplicateQuotationModal?.(
+                                      quotation,
+                                      selectedEditVersion,
+                                    )
+                                  }
+                                >
+                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 20 20" focusable="false">
+                                      <path d="M4 4h8a2 2 0 0 1 2 2v2h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-2H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v5h7V6H5zm3 7v2h7v-5h-1v4a1 1 0 0 1-1 1H8z" fill="currentColor" />
+                                    </svg>
+                                  </span>
+                                  <span className="quotation-actions-menu-button-body">
+                                    <span className="quotation-actions-menu-button-title">
+                                      Duplicar cotizacion
                                     </span>
                                   </span>
                                 </button>
@@ -521,6 +555,94 @@ function QuotationsListPanel({
                 {pageSize}
               </button>
             ))}
+          </div>
+        </div>
+      ) : null}
+
+      {duplicateQuotationModalState?.isOpen ? (
+        <div className="modal-overlay" onClick={closeDuplicateQuotationModal}>
+          <div
+            className="modal-dialog modal-dialog-account"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="modal-title">Duplicar cotizacion</h3>
+            <p className="field-hint opportunity-modal-subtitle">
+              La nueva cotizacion copiara la
+              {` ${duplicateQuotationModalState.sourceVersionLabel || "version seleccionada"}`}
+              {" "}
+              sin adjuntar documentos.
+            </p>
+            <div className="field-group">
+              <label>Cuenta destino</label>
+              <select
+                value={duplicateQuotationModalState.targetAccountId || ""}
+                onChange={(event) =>
+                  handleDuplicateQuotationTargetAccountChange?.(
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">Selecciona cuenta</option>
+                {(Array.isArray(duplicateTargetAccounts)
+                  ? duplicateTargetAccounts
+                  : []
+                ).map((account) => (
+                  <option key={account.id} value={String(account.id)}>
+                    {account.name || `Cuenta ${account.id}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field-group">
+              <label>Oportunidad destino</label>
+              <select
+                value={duplicateQuotationModalState.targetOpportunityId || ""}
+                disabled={
+                  !duplicateQuotationModalState.targetAccountId ||
+                  loadingDuplicateTargetOpportunities
+                }
+                onChange={(event) =>
+                  handleDuplicateQuotationTargetOpportunityChange?.(
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">Selecciona oportunidad</option>
+                {(Array.isArray(duplicateTargetOpportunities)
+                  ? duplicateTargetOpportunities
+                  : []
+                ).map((opportunity) => (
+                  <option key={opportunity.id} value={String(opportunity.id)}>
+                    {opportunity.name || `Oportunidad ${opportunity.id}`}
+                  </option>
+                ))}
+              </select>
+              {loadingDuplicateTargetOpportunities ? (
+                <p className="field-hint">Cargando oportunidades...</p>
+              ) : null}
+            </div>
+            {duplicateQuotationModalState.error ? (
+              <p className="field-hint quotation-product-picker-error">
+                {duplicateQuotationModalState.error}
+              </p>
+            ) : null}
+            <div className="modal-buttons">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeDuplicateQuotationModal}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busyAction === "duplicate-quotation"}
+                onClick={handleDuplicateQuotation}
+              >
+                Duplicar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

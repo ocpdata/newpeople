@@ -86,6 +86,105 @@ function getActionLabel(action) {
   return ACTION_LABELS[action.code] || action.name;
 }
 
+function renderActionButtons({
+  action,
+  busyAction,
+  handleAction,
+  className,
+  approvalCapabilities = null,
+}) {
+  const isActionBusy =
+    busyAction === `action-${action.code}` ||
+    busyAction.startsWith(`action-${action.code}-`);
+
+  if (action.code !== "aprobar") {
+    if (
+      action.code === "solicitar_aprobacion" &&
+      approvalCapabilities?.canApprove
+    ) {
+      return [];
+    }
+
+    return [
+      <button
+        key={action.code}
+        type="button"
+        className={className}
+        disabled={isActionBusy}
+        onClick={() => handleAction(action.code)}
+      >
+        {isActionBusy ? "Ejecutando..." : getActionLabel(action)}
+      </button>,
+    ];
+  }
+
+  const isApprovingWithAi = busyAction === "action-aprobar-with_ai";
+  const isApprovingWithoutAi = busyAction === "action-aprobar-without_ai";
+  const canApproveWithAi = Boolean(approvalCapabilities?.canApproveWithAi);
+  const canApproveWithoutAi =
+    approvalCapabilities == null
+      ? true
+      : Boolean(approvalCapabilities?.canApproveWithoutAi);
+
+  const buttons = [];
+
+  if (canApproveWithAi) {
+    buttons.push(
+      <button
+        key={`${action.code}-with-ai`}
+        type="button"
+        className={className}
+        disabled={isActionBusy}
+        onClick={() =>
+          handleAction(action.code, {
+            approvalMode: "with_ai",
+          })
+        }
+      >
+        {isApprovingWithAi ? "Aprobando con IA..." : "Aprobar con IA"}
+      </button>,
+    );
+  }
+
+  if (canApproveWithoutAi) {
+    buttons.push(
+      <button
+        key={`${action.code}-without-ai`}
+        type="button"
+        className={className}
+        disabled={isActionBusy}
+        onClick={() =>
+          handleAction(action.code, {
+            approvalMode: "without_ai",
+          })
+        }
+      >
+        {isApprovingWithoutAi ? "Aprobando sin IA..." : "Aprobar sin IA"}
+      </button>,
+    );
+  }
+
+  return buttons;
+}
+
+function getBusyActionMessage(busyAction) {
+  if (!busyAction || !busyAction.startsWith("action-")) {
+    return "";
+  }
+
+  if (busyAction === "action-aprobar-with_ai") {
+    return "Procesando aprobacion con IA...";
+  }
+  if (busyAction === "action-aprobar-without_ai") {
+    return "Procesando aprobacion sin IA...";
+  }
+  if (busyAction.startsWith("action-aprobar")) {
+    return "Procesando aprobacion...";
+  }
+
+  return "Procesando accion...";
+}
+
 function getRecommendedAction(actions, statusCode) {
   const desiredActionCode = RECOMMENDED_ACTION_BY_STATUS[statusCode] || null;
   if (desiredActionCode) {
@@ -162,6 +261,10 @@ function QuotationWorkflowPanel({
   allowedActions,
   busyAction,
   handleAction,
+  error,
+  success,
+  recommendations,
+  onDismissRecommendations,
 }) {
   const statusCode = selectedVersion?.statusCode || "";
   const statusUiKey = selectedVersion?.statusUiKey || statusCode;
@@ -177,8 +280,58 @@ function QuotationWorkflowPanel({
     (step) => step.code === statusCode,
   );
   const alternateStatusLabel = ALTERNATE_STATUS_LABELS[statusCode] || "";
+  const busyActionMessage = getBusyActionMessage(busyAction);
+  const workflowRecommendations = Array.isArray(recommendations)
+    ? recommendations
+    : [];
+  const approvalCapabilities = selectedVersion?.approvalCapabilities || null;
+  const primaryActionButtons =
+    showWorkflowActions && primaryAction
+      ? renderActionButtons({
+          action: primaryAction,
+          busyAction,
+          handleAction,
+          className: "btn-primary quotation-workflow-primary-action",
+          approvalCapabilities,
+        })
+      : [];
+  const quickActionButtons = showWorkflowActions
+    ? quickActions.flatMap((action) =>
+        renderActionButtons({
+          action,
+          busyAction,
+          handleAction,
+          className: "quotation-workflow-action-chip",
+          approvalCapabilities,
+        }),
+      )
+    : [];
+  const overflowActionButtons = showWorkflowActions
+    ? overflowActions.flatMap((action) =>
+        renderActionButtons({
+          action,
+          busyAction,
+          handleAction,
+          className: "quotation-workflow-action-chip",
+          approvalCapabilities,
+        }),
+      )
+    : [];
+  const riskActionButtons = showWorkflowActions
+    ? riskActions.flatMap((action) =>
+        renderActionButtons({
+          action,
+          busyAction,
+          handleAction,
+          className: "quotation-workflow-action-chip is-risk",
+          approvalCapabilities,
+        }),
+      )
+    : [];
   const hasOverflowActions =
-    overflowActions.length > 0 || riskActions.length > 0;
+    overflowActionButtons.length > 0 || riskActionButtons.length > 0;
+  const overflowActionCount =
+    overflowActionButtons.length + riskActionButtons.length;
 
   return (
     <section className="quotation-create-step quotation-workflow-panel">
@@ -188,14 +341,6 @@ function QuotationWorkflowPanel({
           <p className="field-hint quotation-create-step-hint">
             Resume el estado actual y prioriza las siguientes acciones.
           </p>
-        </div>
-        <div className="quotation-workflow-badges">
-          <span className="record-id-badge">{selectedVersion?.statusName}</span>
-          <span className="record-id-badge">
-            {selectedVersion?.isLatestVersion
-              ? "Version mayor"
-              : "Version historica"}
-          </span>
         </div>
       </div>
 
@@ -268,17 +413,46 @@ function QuotationWorkflowPanel({
         </div>
 
         <div className="quotation-workflow-actions-panel">
+          {busyActionMessage || error || success ? (
+            <div className="quotation-modal-feedback quotation-modal-feedback-inline">
+              {busyActionMessage ? (
+                <div className="toast toast-success">{busyActionMessage}</div>
+              ) : null}
+              {error ? <div className="toast toast-error">{error}</div> : null}
+              {success ? <div className="toast toast-success">{success}</div> : null}
+            </div>
+          ) : null}
+
+          {workflowRecommendations.length ? (
+            <div className="quotation-workflow-recommendations" role="status" aria-live="polite">
+              <div className="quotation-workflow-recommendations-header">
+                <span className="quotation-workflow-eyebrow">
+                  Recomendaciones de aprobacion
+                </span>
+                <button
+                  type="button"
+                  className="quotation-workflow-recommendations-close"
+                  onClick={() => onDismissRecommendations?.()}
+                  aria-label="Cerrar recomendaciones de aprobacion"
+                  title="Cerrar"
+                >
+                  x
+                </button>
+              </div>
+              <ul>
+                {workflowRecommendations.map((recommendation) => (
+                  <li key={recommendation}>{recommendation}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="quotation-workflow-actions-block">
             <span className="quotation-workflow-eyebrow">Accion principal</span>
-            {showWorkflowActions && primaryAction ? (
-              <button
-                type="button"
-                className="btn-primary quotation-workflow-primary-action"
-                disabled={busyAction === `action-${primaryAction.code}`}
-                onClick={() => handleAction(primaryAction.code)}
-              >
-                {getActionLabel(primaryAction)}
-              </button>
+            {primaryActionButtons.length ? (
+              <div className="quotation-workflow-quick-actions">
+                {primaryActionButtons}
+              </div>
             ) : (
               <p className="field-hint quotation-workflow-no-actions">
                 No hay una accion principal disponible para esta version.
@@ -286,69 +460,46 @@ function QuotationWorkflowPanel({
             )}
           </div>
 
-          {showWorkflowActions && quickActions.length ? (
+          {quickActionButtons.length ? (
             <div className="quotation-workflow-actions-block">
               <span className="quotation-workflow-eyebrow">
                 Acciones rapidas
               </span>
               <div className="quotation-workflow-quick-actions">
-                {quickActions.map((action) => (
-                  <button
-                    key={action.code}
-                    type="button"
-                    className="quotation-workflow-action-chip"
-                    disabled={busyAction === `action-${action.code}`}
-                    onClick={() => handleAction(action.code)}
-                  >
-                    {getActionLabel(action)}
-                  </button>
-                ))}
+                {quickActionButtons}
               </div>
             </div>
           ) : null}
 
           {showWorkflowActions && hasOverflowActions ? (
             <details className="quotation-workflow-risk-actions">
-              <summary>Mas opciones</summary>
+              <summary>
+                Mas opciones
+                {overflowActionCount ? (
+                  <span className="quotation-workflow-overflow-count">
+                    {overflowActionCount}
+                  </span>
+                ) : null}
+              </summary>
               <div className="quotation-workflow-risk-actions-body">
-                {overflowActions.length ? (
+                {overflowActionButtons.length ? (
                   <div className="quotation-workflow-overflow-group">
                     <span className="quotation-workflow-eyebrow">
                       Otras acciones
                     </span>
                     <div className="quotation-workflow-overflow-actions">
-                      {overflowActions.map((action) => (
-                        <button
-                          key={action.code}
-                          type="button"
-                          className="quotation-workflow-action-chip"
-                          disabled={busyAction === `action-${action.code}`}
-                          onClick={() => handleAction(action.code)}
-                        >
-                          {getActionLabel(action)}
-                        </button>
-                      ))}
+                      {overflowActionButtons}
                     </div>
                   </div>
                 ) : null}
 
-                {riskActions.length ? (
+                {riskActionButtons.length ? (
                   <div className="quotation-workflow-overflow-group">
                     <span className="quotation-workflow-eyebrow">
                       Acciones de cierre
                     </span>
                     <div className="quotation-workflow-overflow-actions">
-                      {riskActions.map((action) => (
-                        <button
-                          key={action.code}
-                          type="button"
-                          className="quotation-workflow-action-chip is-risk"
-                          disabled={busyAction === `action-${action.code}`}
-                          onClick={() => handleAction(action.code)}
-                        >
-                          {getActionLabel(action)}
-                        </button>
-                      ))}
+                      {riskActionButtons}
                     </div>
                   </div>
                 ) : null}

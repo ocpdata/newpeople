@@ -7,9 +7,12 @@ import {
   calculateQuotationItemDisplayTotals,
   applyCreateQuotationDistributedFinalDiscount,
   DEFAULT_QUOTATION_VAT_PCT,
+  formatQuotationOptionalSectionTitle,
   formatQuantityInputValue,
   formatQuotationMoneyInputValue,
   formatQuotationAmount,
+  isQuotationSectionCountedInSummary,
+  isQuotationSectionVisibleInPrint,
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
   toNumber,
@@ -823,6 +826,8 @@ function QuotationEditorContent({
   companyBranding,
   error,
   success,
+  approvalRecommendations,
+  dismissApprovalRecommendations,
   versionForm,
   setVersionForm,
   contactOptions,
@@ -933,6 +938,7 @@ function QuotationEditorContent({
     () =>
       selectedVersionSections.map((section) => ({
         ...section,
+        ...(sectionEdits[String(section.id)] || {}),
         localId: String(section.id),
         items: (section.items || []).map((item) => {
           const itemDraftValue = itemEdits[String(item.id)] || item;
@@ -948,7 +954,7 @@ function QuotationEditorContent({
           };
         }),
       })),
-    [itemEdits, selectedVersionSections],
+    [itemEdits, sectionEdits, selectedVersionSections],
   );
   const distributedBaseSummarySections = useMemo(
     () =>
@@ -979,8 +985,11 @@ function QuotationEditorContent({
       calculateCreateQuotationSummary(summaryDiscountPreviewSections, {
         mode: summaryDiscountMode,
         value: Number(versionForm.summaryDiscountValue) || 0,
+      }, {}, {
+        inclusionTypes: catalogs.inclusionTypes,
       }),
     [
+      catalogs.inclusionTypes,
       summaryDiscountPreviewSections,
       summaryDiscountMode,
       versionForm.summaryDiscountValue,
@@ -1036,8 +1045,12 @@ function QuotationEditorContent({
           mode: summaryVatMode === "total" ? "total" : "without_vat",
           vatPct: DEFAULT_QUOTATION_VAT_PCT,
         },
+        {
+          inclusionTypes: catalogs.inclusionTypes,
+        },
       ),
     [
+      catalogs.inclusionTypes,
       effectiveSummarySections,
       summaryDiscountMode,
       summaryDistributionMode,
@@ -1073,10 +1086,22 @@ function QuotationEditorContent({
   const selectedSellerName = selectedQuotation?.sellerUserName || "";
   const printSections = useMemo(
     () =>
-      (selectedVersion?.sections || []).map((section) => {
-        const sectionDraftValue =
-          sectionEdits[String(section.id)] ||
-          buildSectionDraft(catalogs.inclusionTypes);
+      (selectedVersion?.sections || [])
+        .map((section) => {
+          const sectionDraftValue = {
+            ...buildSectionDraft(catalogs.inclusionTypes),
+            ...section,
+            ...(sectionEdits[String(section.id)] || {}),
+          };
+
+          if (
+            !isQuotationSectionVisibleInPrint(
+              sectionDraftValue,
+              catalogs.inclusionTypes,
+            )
+          ) {
+            return null;
+          }
         const sectionDisplayItems = buildSectionDisplayItems(section);
         const collapsedBundleIds = new Set(
           collapsedBundleIdsBySection[String(section.id)] || [],
@@ -1143,11 +1168,16 @@ function QuotationEditorContent({
 
         return {
           id: section.id,
-          title: sectionDraftValue.title || `Seccion ${section.id}`,
+          title: formatQuotationOptionalSectionTitle(
+            sectionDraftValue.title || `Seccion ${section.id}`,
+            sectionDraftValue,
+            catalogs.inclusionTypes,
+          ),
           subtotal,
           rows,
         };
-      }),
+        })
+        .filter(Boolean),
     [
       catalogs.inclusionTypes,
       collapsedBundleIdsBySection,
@@ -2320,25 +2350,15 @@ function QuotationEditorContent({
 
   return (
     <div className="quotation-create-flow quotation-edit-flow">
-      <div className="quotation-meta-row">
-        <span className="record-id-badge">
-          Version {selectedVersion.versionNumber}
-        </span>
-        <span className="record-id-badge">
-          Estado: {selectedVersion.statusName}
-        </span>
-        <span className="record-id-badge">
-          {selectedVersion.isLatestVersion
-            ? "Version mayor"
-            : "Version historica"}
-        </span>
-      </div>
-
       <QuotationWorkflowPanel
         selectedVersion={selectedVersion}
         allowedActions={allowedActions}
         busyAction={busyAction}
         handleAction={handleAction}
+        error={error}
+        success={success}
+        recommendations={approvalRecommendations}
+        onDismissRecommendations={dismissApprovalRecommendations}
       />
 
       <section className="account-form-section opportunity-main-data-section">
@@ -2415,28 +2435,15 @@ function QuotationEditorContent({
       <section className="account-form-section opportunity-sales-management-section">
         <div className="quotation-proposal-section-header">
           <div>
-            <h4>Datos de propuesta</h4>
+            <h4>Datos de la cotizacion</h4>
             <p className="field-hint">
               El vendedor se precarga desde la oportunidad seleccionada.
             </p>
           </div>
-          <div className="quotation-proposal-meta">
-            <div className="quotation-proposal-badges">
-              <span className="record-id-badge">
-                Cotizacion {selectedQuotation?.id || "-"}
-              </span>
-              <span className="record-id-badge">
-                Version {selectedVersion.versionNumber}
-              </span>
-            </div>
-            <span className="user-status-badge draft">
-              Estado de la propuesta: {selectedVersion.statusName}
-            </span>
-          </div>
         </div>
         <div className="grid-form account-grid-main">
           <div className="field-group">
-            <label>Nombre de propuesta</label>
+            <label>Nombre de la cotizacion</label>
             <input
               value={versionForm.proposalName}
               onChange={(event) =>
@@ -2524,22 +2531,16 @@ function QuotationEditorContent({
       <section className="account-form-section opportunity-sales-management-section">
         <div className="quotation-section-toolbar">
           <div>
-            <h4>Secciones iniciales</h4>
-            <p className="field-hint">
-              "Precio Lista M.O." conserva la base original del proveedor y
-              "Precio de lista" muestra el valor convertido en la moneda de la
-              cotizacion.
-            </p>
+            <h4>Secciones de la cotizacion</h4>
           </div>
           <div className="quotation-action-groups">
             <div className="quotation-action-group">
-              <span className="quotation-action-group-label">Seccion</span>
               <div className="quotation-icon-actions">
                 <button
                   type="button"
                   className="quotation-icon-button"
-                  aria-label="Agregar seccion inicial"
-                  title="Agregar seccion inicial"
+                  aria-label="Crear seccion nueva"
+                  title="Crear seccion nueva"
                   disabled={busyAction === "create-section"}
                   onClick={handleCreateSection}
                 >

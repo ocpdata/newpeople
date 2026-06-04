@@ -12,8 +12,11 @@ import {
   buildQuotationItemPricing,
   formatQuotationMoneyInputValue,
   formatQuotationAmount,
+  isQuotationSectionCountedInSummary,
+  resolveQuotationItemSaleTarget,
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
+  toNumber,
 } from "./quotationsUtils";
 import {
   QuotationCommercialConditionsCard,
@@ -116,6 +119,55 @@ function CheckIcon() {
   );
 }
 
+function DocumentAddIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4.5a.75.75 0 0 1 .75.75V12h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0V13.5H4.5a.75.75 0 0 1 0-1.5h6.75V5.25A.75.75 0 0 1 12 4.5Z" />
+    </svg>
+  );
+}
+
+function formatPendingQuotationDocumentSize(byteSize) {
+  const numericValue = Number(byteSize || 0);
+  if (!numericValue) return "0 KB";
+  if (numericValue >= 1024 * 1024) {
+    return `${(numericValue / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(numericValue / 1024))} KB`;
+}
+
+function formatPendingQuotationDocumentDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("es-MX", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function appendImportedQuotationNotes(currentNotes, importedNotes) {
+  const baseNotes = String(currentNotes || "").trim();
+  const nextNotes = String(importedNotes || "").trim();
+  if (!nextNotes) {
+    return baseNotes;
+  }
+  if (!baseNotes) {
+    return nextNotes;
+  }
+  if (baseNotes.includes(nextNotes)) {
+    return baseNotes;
+  }
+  return `${baseNotes}\n${nextNotes}`;
+}
+
 function OriginalListPriceInput({ ariaLabel, value, onChange, onBlur }) {
   const [isFocused, setIsFocused] = useState(false);
 
@@ -203,6 +255,20 @@ function BundleManualIcon() {
   );
 }
 
+function BundleTemplateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="5" width="6" height="6" rx="1" />
+      <rect x="14" y="5" width="6" height="6" rx="1" />
+      <rect x="9" y="13" width="6" height="6" rx="1" />
+      <path d="M12 11v2" />
+      <path d="M10 8h4" />
+      <path d="M18 15v4" />
+      <path d="M16 17h4" />
+    </svg>
+  );
+}
+
 function BundleAttachIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -283,6 +349,42 @@ function HighlightOffIcon() {
     </svg>
   );
 }
+
+function SaleAdjustmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M4 6h10" />
+      <path d="M4 12h8" />
+      <path d="M4 18h6" />
+      <path d="M17 8v8" />
+      <path d="m13 12 4-4 4 4" />
+    </svg>
+  );
+}
+
+const SALE_ADJUSTMENT_FIELD_OPTIONS = [
+  {
+    value: "profitMarginPct",
+    label: "Margen %",
+    helper: "Mantiene el precio de lista y ajusta solo el margen.",
+  },
+  {
+    value: "manufacturerDiscountPct",
+    label: "Descuento proveedor %",
+    helper:
+      "Mantiene el precio de lista y ajusta solo el descuento del proveedor.",
+  },
+  {
+    value: "finalDiscountPct",
+    label: "Descuento final %",
+    helper:
+      "Mantiene el precio de lista y ajusta solo el descuento final ofrecido al cliente.",
+  },
+];
+
+const SALE_ADJUSTMENT_FIELD_LABELS = Object.fromEntries(
+  SALE_ADJUSTMENT_FIELD_OPTIONS.map((option) => [option.value, option.label]),
+);
 
 function QuantityInput({ value, onChange, min = "0" }) {
   function handleStep(delta) {
@@ -494,15 +596,23 @@ function QuotationCreateModal({
   handlePasteCreateSectionItems,
   handleRemoveCreateSectionItems,
   handleCreateManualBundle,
+  handleCreateManualBundleFromTemplate,
+  handleApplyCreateSectionItemSaleAdjustment,
   handleAttachCreateSectionItemsToManualBundle,
   handleDetachCreateSectionItemsFromManualBundle,
   hasCreateCopiedItems,
+  currentUserName,
   closeCreateQuotationModal,
   handleCreateQuotation,
+  openCreateProviderDocumentImportModal,
+  createProviderDocumentImportAppliedToken,
+  createProviderDocumentImportAppliedCommercialConditions,
   busyAction,
   canSubmitCreateQuotation,
   canCreateProviderPrices,
 }) {
+  const quotationDocumentsInputRef = useRef(null);
+  const pendingDocumentSequenceRef = useRef(1);
   const [summaryDiscountMode, setSummaryDiscountMode] = useState("percentage");
   const [summaryDiscountValue, setSummaryDiscountValue] = useState("0");
   const [isSummaryDiscountInputFocused, setIsSummaryDiscountInputFocused] =
@@ -511,9 +621,30 @@ function QuotationCreateModal({
     useState("total");
   const [summaryVatMode, setSummaryVatMode] = useState("without_vat");
   const [internalNotes, setInternalNotes] = useState("");
+  const [pendingDocuments, setPendingDocuments] = useState([]);
+  const [documentViewMode, setDocumentViewMode] = useState("current");
   const [commercialConditions, setCommercialConditions] = useState(() =>
     buildQuotationCommercialConditionsForm(),
   );
+  useEffect(() => {
+    if (!createProviderDocumentImportAppliedToken) {
+      return;
+    }
+
+    setCommercialConditions((current) =>
+      buildQuotationCommercialConditionsForm({
+        ...current,
+        ...(createProviderDocumentImportAppliedCommercialConditions || {}),
+        quotationNotes: appendImportedQuotationNotes(
+          current.quotationNotes,
+          createProviderDocumentImportAppliedCommercialConditions?.quotationNotes,
+        ),
+      }),
+    );
+  }, [
+    createProviderDocumentImportAppliedCommercialConditions,
+    createProviderDocumentImportAppliedToken,
+  ]);
   const distributedBaseSectionDrafts = useMemo(
     () => buildCreateQuotationDistributedBaseSections(createSectionDrafts),
     [createSectionDrafts],
@@ -542,8 +673,15 @@ function QuotationCreateModal({
       calculateCreateQuotationSummary(summaryDiscountPreviewSections, {
         mode: summaryDiscountMode,
         value: summaryDiscountValue,
+      }, {}, {
+        inclusionTypes: catalogs.inclusionTypes,
       }),
-    [summaryDiscountMode, summaryDiscountPreviewSections, summaryDiscountValue],
+    [
+      catalogs.inclusionTypes,
+      summaryDiscountMode,
+      summaryDiscountPreviewSections,
+      summaryDiscountValue,
+    ],
   );
   const discountedCreateSectionDrafts = useMemo(
     () =>
@@ -619,8 +757,12 @@ function QuotationCreateModal({
           mode: summaryVatMode === "total" ? "total" : "without_vat",
           vatPct: DEFAULT_QUOTATION_VAT_PCT,
         },
+        {
+          inclusionTypes: catalogs.inclusionTypes,
+        },
       ),
     [
+      catalogs.inclusionTypes,
       effectiveCreateSectionDrafts,
       summaryDiscountMode,
       summaryDistributionMode,
@@ -640,13 +782,16 @@ function QuotationCreateModal({
   });
   const [productPickerState, setProductPickerState] = useState({
     isOpen: false,
+    mode: "draft",
     sectionIndex: -1,
     itemIndex: -1,
     providerId: "",
     priceListId: "",
     activeLists: [],
+    unavailableListMessage: "",
     loadingLists: false,
     query: "",
+    selectedResultId: "",
     isCreateMode: false,
     creating: false,
     createError: "",
@@ -665,6 +810,13 @@ function QuotationCreateModal({
     isOpen: false,
     sectionIndex: -1,
     parentLocalId: "",
+  });
+  const [saleAdjustmentDialogState, setSaleAdjustmentDialogState] = useState({
+    isOpen: false,
+    sectionIndex: -1,
+    itemLocalId: "",
+    targetSalePriceTotal: "",
+    recalculateField: "profitMarginPct",
   });
   const [
     preferredBundleHintActionBySection,
@@ -1048,6 +1200,7 @@ function QuotationCreateModal({
     if (!productPickerState.providerId) {
       setProductPickerState((prev) => ({
         ...prev,
+        unavailableListMessage: "",
         loadingLists: false,
         priceListId: "",
         activeLists: [],
@@ -1062,6 +1215,7 @@ function QuotationCreateModal({
 
     let cancelled = false;
     const timeoutId = window.setTimeout(async () => {
+      const templateMode = productPickerState.mode === "bundle_parent_template";
       setProductPickerState((prev) => ({
         ...prev,
         loadingLists: true,
@@ -1076,15 +1230,29 @@ function QuotationCreateModal({
         });
 
         if (cancelled) return;
+        const hasOnlyBundleLists =
+          templateMode &&
+          Array.isArray(data) &&
+          data.length > 0 &&
+          data.every((entry) => entry.itemType === "grupo_productos");
+        const nextActiveLists = Array.isArray(data)
+          ? templateMode
+            ? data.filter((entry) => entry.itemType !== "grupo_productos")
+            : data
+          : [];
         setProductPickerState((prev) => ({
           ...prev,
           loadingLists: false,
-          activeLists: Array.isArray(data) ? data : [],
-          priceListId:
-            Array.isArray(data) && data.length ? String(data[0].id) : "",
-          results: Array.isArray(data) && data.length ? prev.results : [],
-          isCreateMode:
-            Array.isArray(data) && data.length ? prev.isCreateMode : false,
+          activeLists: nextActiveLists,
+          unavailableListMessage: hasOnlyBundleLists
+            ? "No se pueden seleccionar productos de tipo bundle en este flujo."
+            : "",
+          priceListId: nextActiveLists.length
+            ? String(nextActiveLists[0].id)
+            : "",
+          results: nextActiveLists.length ? prev.results : [],
+          selectedResultId: nextActiveLists.length ? prev.selectedResultId : "",
+          isCreateMode: nextActiveLists.length ? prev.isCreateMode : false,
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1103,7 +1271,11 @@ function QuotationCreateModal({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [productPickerState.isOpen, productPickerState.providerId]);
+  }, [
+    productPickerState.isOpen,
+    productPickerState.mode,
+    productPickerState.providerId,
+  ]);
 
   useEffect(() => {
     if (!productPickerState.isOpen || productPickerState.isCreateMode) {
@@ -1122,6 +1294,7 @@ function QuotationCreateModal({
 
     let cancelled = false;
     const timeoutId = window.setTimeout(async () => {
+      const templateMode = productPickerState.mode === "bundle_parent_template";
       setProductPickerState((prev) => ({
         ...prev,
         loading: true,
@@ -1139,10 +1312,20 @@ function QuotationCreateModal({
         });
 
         if (cancelled) return;
+        const nextResults = Array.isArray(data)
+          ? templateMode
+            ? data.filter((product) => product.itemType !== "grupo_productos")
+            : data
+          : [];
         setProductPickerState((prev) => ({
           ...prev,
           loading: false,
-          results: Array.isArray(data) ? data : [],
+          results: nextResults,
+          selectedResultId: nextResults.some(
+            (product) => String(product.id) === String(prev.selectedResultId),
+          )
+            ? prev.selectedResultId
+            : "",
         }));
       } catch (error) {
         if (cancelled) return;
@@ -1164,6 +1347,7 @@ function QuotationCreateModal({
   }, [
     productPickerState.isOpen,
     productPickerState.isCreateMode,
+    productPickerState.mode,
     productPickerState.providerId,
     productPickerState.priceListId,
     productPickerState.query,
@@ -1427,13 +1611,16 @@ function QuotationCreateModal({
   ) {
     setProductPickerState({
       isOpen: true,
+      mode: "draft",
       sectionIndex,
       itemIndex,
       providerId: String(currentProviderId || ""),
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: String(currentCode || "").trim(),
+      selectedResultId: "",
       isCreateMode: false,
       creating: false,
       createError: "",
@@ -1451,13 +1638,16 @@ function QuotationCreateModal({
   function closeProductPicker() {
     setProductPickerState({
       isOpen: false,
+      mode: "draft",
       sectionIndex: -1,
       itemIndex: -1,
       providerId: "",
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: "",
+      selectedResultId: "",
       isCreateMode: false,
       creating: false,
       createError: "",
@@ -1473,6 +1663,14 @@ function QuotationCreateModal({
   }
 
   async function handleSelectProduct(product) {
+    if (productPickerState.mode === "bundle_parent_template") {
+      setProductPickerState((prev) => ({
+        ...prev,
+        selectedResultId: String(product?.id || ""),
+      }));
+      return;
+    }
+
     handleApplyCreateSectionItemProduct(
       productPickerState.sectionIndex,
       productPickerState.itemIndex,
@@ -1481,14 +1679,55 @@ function QuotationCreateModal({
     closeProductPicker();
   }
 
+  function openBundleParentTemplatePicker(
+    sectionIndex,
+    sectionItems,
+    selectedItemIds,
+  ) {
+    const selection = getManualBundleSelectionState(
+      sectionItems,
+      selectedItemIds,
+    );
+    if (!selection.ok) {
+      return;
+    }
+
+    setProductPickerState({
+      isOpen: true,
+      mode: "bundle_parent_template",
+      sectionIndex,
+      itemIndex: -1,
+      providerId: "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      query: "",
+      selectedResultId: "",
+      isCreateMode: false,
+      creating: false,
+      createError: "",
+      createForm: {
+        code: "",
+        description: "",
+        price: "",
+      },
+      loading: false,
+      error: "",
+      results: [],
+    });
+  }
+
   function handleProductPickerProviderChange(providerId) {
     setProductPickerState((prev) => ({
       ...prev,
       providerId: String(providerId || ""),
       priceListId: "",
       activeLists: [],
+      unavailableListMessage: "",
       loadingLists: false,
       query: "",
+      selectedResultId: "",
       isCreateMode: false,
       createError: "",
       error: "",
@@ -1500,7 +1739,64 @@ function QuotationCreateModal({
     setProductPickerState((prev) => ({
       ...prev,
       query: queryValue,
+      selectedResultId: "",
     }));
+  }
+
+  function openSaleAdjustmentDialog(sectionIndex, itemLocalId, currentSalePriceTotal) {
+    setSaleAdjustmentDialogState({
+      isOpen: true,
+      sectionIndex,
+      itemLocalId: String(itemLocalId || ""),
+      targetSalePriceTotal: formatQuotationMoneyInputValue(
+        currentSalePriceTotal,
+      ),
+      recalculateField: "profitMarginPct",
+    });
+  }
+
+  function closeSaleAdjustmentDialog() {
+    setSaleAdjustmentDialogState({
+      isOpen: false,
+      sectionIndex: -1,
+      itemLocalId: "",
+      targetSalePriceTotal: "",
+      recalculateField: "profitMarginPct",
+    });
+  }
+
+  function confirmBundleParentTemplateSelection() {
+    if (productPickerState.mode !== "bundle_parent_template") {
+      return;
+    }
+
+    const selectedProduct = productPickerState.results.find(
+      (product) =>
+        String(product.id) === String(productPickerState.selectedResultId),
+    );
+    if (!selectedProduct) {
+      return;
+    }
+
+    const createdIds = handleCreateManualBundleFromTemplate(
+      productPickerState.sectionIndex,
+      selectedProduct,
+    );
+
+    if (createdIds.length) {
+      closeProductPicker();
+    }
+  }
+
+  function applySaleAdjustment(sectionIndex, itemLocalId, nextItem) {
+    const updated = handleApplyCreateSectionItemSaleAdjustment(
+      sectionIndex,
+      itemLocalId,
+      nextItem,
+    );
+    if (updated) {
+      closeSaleAdjustmentDialog();
+    }
   }
 
   function openQuickCreateProduct() {
@@ -1570,6 +1866,117 @@ function QuotationCreateModal({
     }
   }
 
+  function buildCreateQuotationSubmissionOptions(extraOptions = {}) {
+    return {
+      summaryDiscountInput:
+        summaryDistributionMode === "per_item"
+          ? null
+          : {
+              mode: summaryDiscountMode,
+              value: Number(summaryDiscountValue) || 0,
+            },
+      summaryMeta: {
+        distributionMode: summaryDistributionMode,
+        vatMode: summaryVatMode,
+        vatPct:
+          summaryVatMode === "without_vat" ? 0 : DEFAULT_QUOTATION_VAT_PCT,
+      },
+      internalNotes,
+      commercialConditions,
+      sectionDrafts: effectiveCreateSectionDrafts,
+      pendingDocuments,
+      ...extraOptions,
+    };
+  }
+
+  function handlePendingDocumentsInputChange(event) {
+    const nextFiles = Array.from(event.target.files || []);
+    if (nextFiles.length) {
+      setPendingDocuments((current) => {
+        const knownKeys = new Set(
+          current.map(
+            (document) =>
+              `${document.originalFileName}::${document.byteSize}::${document.lastModified || 0}`,
+          ),
+        );
+        const uniqueFiles = nextFiles.reduce((accumulator, file) => {
+          const fileKey = `${file.name}::${file.size}::${file.lastModified || 0}`;
+          if (knownKeys.has(fileKey)) {
+            return accumulator;
+          }
+
+          knownKeys.add(fileKey);
+          accumulator.push({
+            localId: `pending-document-${pendingDocumentSequenceRef.current}`,
+            file,
+            originalFileName: file.name || "Documento",
+            byteSize: Number(file.size || 0),
+            lastModified: file.lastModified || 0,
+            aiEnabled: true,
+            createdAt: new Date().toISOString(),
+            uploadedByUserName: currentUserName || "",
+            versionNumber: 1,
+          });
+          pendingDocumentSequenceRef.current += 1;
+          return accumulator;
+        }, []);
+
+        return uniqueFiles.length ? [...current, ...uniqueFiles] : current;
+      });
+    }
+
+    event.target.value = "";
+  }
+
+  function handleTogglePendingDocumentAiEnabled(documentLocalId) {
+    setPendingDocuments((current) =>
+      current.map((document) =>
+        document.localId === documentLocalId
+          ? { ...document, aiEnabled: document.aiEnabled === false }
+          : document,
+      ),
+    );
+  }
+
+  function handleDownloadPendingDocument(document) {
+    if (typeof window === "undefined" || !document?.file) {
+      return;
+    }
+
+    const objectUrl = window.URL.createObjectURL(document.file);
+    const link = window.document.createElement("a");
+    link.href = objectUrl;
+    link.download = document.originalFileName || document.file.name || "documento";
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
+    window.URL.revokeObjectURL(objectUrl);
+  }
+
+  function handleOpenProviderImportFromCreate() {
+    if (
+      busyAction === "create-quotation" ||
+      !createCommercialContextConfirmed ||
+      !pendingDocuments.some((document) => document.aiEnabled !== false)
+    ) {
+      return;
+    }
+
+    openCreateProviderDocumentImportModal({
+      documents: pendingDocuments,
+      commercialConditions,
+    });
+  }
+
+  const visiblePendingDocuments = pendingDocuments;
+  const eligiblePendingDocuments = pendingDocuments.filter(
+    (document) => document.aiEnabled !== false,
+  );
+  const canOpenProviderImportFromCreate =
+    busyAction !== "create-quotation" &&
+    createCommercialContextConfirmed &&
+    eligiblePendingDocuments.length > 0;
+
   const currentCreateSnapshot = useMemo(
     () =>
       JSON.stringify({
@@ -1585,6 +1992,12 @@ function QuotationCreateModal({
         summaryVatMode,
         internalNotes,
         commercialConditions,
+        pendingDocuments: pendingDocuments.map((document) => ({
+          name: document.originalFileName,
+          size: document.byteSize,
+          lastModified: document.lastModified || 0,
+          aiEnabled: document.aiEnabled !== false,
+        })),
       }),
     [
       accountQuery,
@@ -1593,6 +2006,7 @@ function QuotationCreateModal({
       createQuotationForm,
       effectiveCreateSectionDrafts,
       internalNotes,
+      pendingDocuments,
       selectedAccountId,
       selectedOpportunityId,
       summaryDiscountMode,
@@ -1674,26 +2088,7 @@ function QuotationCreateModal({
             className="account-create-form in-modal"
             onSubmit={(event) => {
               event.preventDefault();
-              handleCreateQuotation({
-                summaryDiscountInput:
-                  summaryDistributionMode === "per_item"
-                    ? null
-                    : {
-                        mode: summaryDiscountMode,
-                        value: Number(summaryDiscountValue) || 0,
-                      },
-                summaryMeta: {
-                  distributionMode: summaryDistributionMode,
-                  vatMode: summaryVatMode,
-                  vatPct:
-                    summaryVatMode === "without_vat"
-                      ? 0
-                      : DEFAULT_QUOTATION_VAT_PCT,
-                },
-                internalNotes,
-                commercialConditions,
-                sectionDrafts: effectiveCreateSectionDrafts,
-              });
+              handleCreateQuotation(buildCreateQuotationSubmissionOptions());
             }}
           >
             <section className="account-form-section opportunity-main-data-section">
@@ -1883,7 +2278,7 @@ function QuotationCreateModal({
                   </div>
                   <div className="grid-form account-grid-main">
                     <div className="field-group">
-                      <label>Nombre de propuesta</label>
+                      <label>Nombre de la cotizacion</label>
                       <input
                         value={createQuotationForm.proposalName}
                         onChange={(event) =>
@@ -1954,19 +2349,13 @@ function QuotationCreateModal({
                 <section className="account-form-section opportunity-sales-management-section">
                   <div className="quotation-section-toolbar">
                     <div>
-                      <h4>Secciones iniciales</h4>
-                      <p className="field-hint">
-                        Se enviaran junto con la creacion de la cotizacion.
-                      </p>
+                      <h4>Secciones de la cotizacion</h4>
                     </div>
                     <div className="quotation-action-groups">
                       <div className="quotation-action-group">
-                        <span className="quotation-action-group-label">
-                          Seccion
-                        </span>
                         <div className="quotation-icon-actions">
                           <QuotationIconButton
-                            title="Agregar seccion inicial"
+                            title="Crear seccion nueva"
                             onClick={handleAddCreateSectionDraft}
                           >
                             <PlusIcon />
@@ -2048,6 +2437,62 @@ function QuotationCreateModal({
                           visibleItemIds.every((itemId) =>
                             selectedItemIds.includes(itemId),
                           );
+                        const selectedRowItemId =
+                          selectedItemIds.length === 1
+                            ? String(selectedItemIds[0])
+                            : "";
+                        const selectedRowItem = selectedRowItemId
+                          ? sectionItems.find(
+                              (item) =>
+                                String(item.localId) === selectedRowItemId,
+                            ) || null
+                          : null;
+                        const selectedEffectiveRowItem = selectedRowItemId
+                          ? effectiveCreateItemsByLocalId.get(
+                              selectedRowItemId,
+                            ) ||
+                            selectedRowItem ||
+                            null
+                          : null;
+                        const selectedRowTotals = selectedEffectiveRowItem
+                          ? calculateQuotationItemDisplayTotals(
+                              selectedEffectiveRowItem,
+                              effectiveSectionItems,
+                            )
+                          : null;
+                        const selectedRowIsBundleParent = Boolean(
+                          selectedEffectiveRowItem &&
+                            selectedEffectiveRowItem.itemType ===
+                              "grupo_productos" &&
+                            !selectedEffectiveRowItem.isBundleComponent,
+                        );
+                        const saleAdjustmentFinalDiscountDisabled =
+                          summaryDistributionMode === "per_item";
+                        const saleAdjustmentPreview =
+                          saleAdjustmentDialogState.isOpen &&
+                          saleAdjustmentDialogState.sectionIndex === index &&
+                          saleAdjustmentDialogState.itemLocalId ===
+                            selectedRowItemId &&
+                          selectedEffectiveRowItem &&
+                          String(
+                            saleAdjustmentDialogState.targetSalePriceTotal ||
+                              "",
+                          ).trim()
+                            ? resolveQuotationItemSaleTarget({
+                                item: selectedEffectiveRowItem,
+                                targetSalePriceTotal: Number(
+                                  sanitizeQuotationMoneyInputValue(
+                                    saleAdjustmentDialogState.targetSalePriceTotal,
+                                  ),
+                                ),
+                                recalculateField:
+                                  saleAdjustmentDialogState.recalculateField,
+                                includeVat: summaryVatMode === "per_item",
+                                vatPct:
+                                  selectedEffectiveRowItem.vatPct ||
+                                  DEFAULT_QUOTATION_VAT_PCT,
+                              })
+                            : null;
                         const sectionTotals = sectionItems
                           .filter((item) => !item.isBundleComponent)
                           .reduce(
@@ -2073,6 +2518,7 @@ function QuotationCreateModal({
                             },
                             { costTotal: 0, salePriceTotal: 0 },
                           );
+                        const displayedSectionTotals = sectionTotals;
 
                         return (
                           <div
@@ -2169,6 +2615,36 @@ function QuotationCreateModal({
                                     >
                                       <HighlightOffIcon />
                                     </QuotationIconButton>
+                                    <QuotationIconButton
+                                      title={
+                                        selectedItemIds.length !== 1
+                                          ? "Selecciona una sola fila para ajustar el precio de venta"
+                                          : selectedRowIsBundleParent
+                                            ? "El bundle padre calcula su venta desde los componentes"
+                                            : "Ajustar precio de venta de la fila seleccionada"
+                                      }
+                                      disabled={
+                                        selectedItemIds.length !== 1 ||
+                                        !selectedEffectiveRowItem ||
+                                        selectedRowIsBundleParent
+                                      }
+                                      onClick={() => {
+                                        if (
+                                          !selectedEffectiveRowItem ||
+                                          !selectedRowTotals
+                                        ) {
+                                          return;
+                                        }
+
+                                        openSaleAdjustmentDialog(
+                                          index,
+                                          selectedEffectiveRowItem.localId,
+                                          selectedRowTotals.salePriceTotal,
+                                        );
+                                      }}
+                                    >
+                                      <SaleAdjustmentIcon />
+                                    </QuotationIconButton>
                                     <div
                                       className="quotation-bundle-icon-group"
                                       role="group"
@@ -2204,6 +2680,21 @@ function QuotationCreateModal({
                                             }
                                           >
                                             <BundleManualIcon />
+                                          </QuotationIconButton>
+                                        </span>
+                                        <span>
+                                          <QuotationIconButton
+                                            title="Crear bundle con padre nuevo desde plantilla"
+                                            disabled={!manualBundleSelection.ok}
+                                            onClick={() =>
+                                              openBundleParentTemplatePicker(
+                                                index,
+                                                sectionItems,
+                                                selectedItemIds,
+                                              )
+                                            }
+                                          >
+                                            <BundleTemplateIcon />
                                           </QuotationIconButton>
                                         </span>
                                         <span
@@ -2360,6 +2851,304 @@ function QuotationCreateModal({
                               <p className="field-hint quotation-create-step-hint">
                                 {manualBundleHintMessage}
                               </p>
+                            ) : null}
+
+                            {saleAdjustmentDialogState.isOpen &&
+                            saleAdjustmentDialogState.sectionIndex === index &&
+                            selectedEffectiveRowItem &&
+                            selectedRowItem ? (
+                              <div
+                                className="quotation-sale-adjustment-dialog"
+                                role="dialog"
+                                aria-label="Ajustar precio de venta"
+                              >
+                                <div className="quotation-sale-adjustment-header">
+                                  <div>
+                                    <h5>Ajustar precio de venta</h5>
+                                    <p className="field-hint">
+                                      Modifica el precio de venta total de la
+                                      fila seleccionada sin cambiar el precio de
+                                      lista. El sistema recalculara solo la
+                                      variable que elijas.
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="quotation-sale-adjustment-section quotation-sale-adjustment-section-details">
+                                  <div className="quotation-sale-adjustment-detail-grid">
+                                    <div>
+                                      <span className="quotation-sale-adjustment-label">
+                                        Codigo
+                                      </span>
+                                      <strong>
+                                        {selectedRowItem.productCode ||
+                                          "Sin codigo"}
+                                      </strong>
+                                    </div>
+                                    <div>
+                                      <span className="quotation-sale-adjustment-label">
+                                        Cantidad
+                                      </span>
+                                      <strong>
+                                        {selectedRowItem.quantity || "0"}
+                                      </strong>
+                                    </div>
+                                    <div>
+                                      <span className="quotation-sale-adjustment-label">
+                                        Proveedor
+                                      </span>
+                                      <strong>
+                                        {selectedRowItem.providerName ||
+                                          "Sin proveedor"}
+                                      </strong>
+                                    </div>
+                                    <div className="quotation-sale-adjustment-detail-wide">
+                                      <span className="quotation-sale-adjustment-label">
+                                        Descripcion
+                                      </span>
+                                      <strong>
+                                        {selectedRowItem.productDescription ||
+                                          "Sin descripcion"}
+                                      </strong>
+                                    </div>
+                                  </div>
+                                  <p className="field-hint">
+                                    Verifica que esta sea la fila correcta antes
+                                    de continuar.
+                                  </p>
+                                </div>
+                                <div className="quotation-sale-adjustment-grid">
+                                  <div className="quotation-sale-adjustment-column">
+                                    <label
+                                      htmlFor={`sale-adjustment-total-${section.localId}`}
+                                    >
+                                      Nuevo precio de venta total
+                                    </label>
+                                    <input
+                                      id={`sale-adjustment-total-${section.localId}`}
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={saleAdjustmentDialogState.targetSalePriceTotal}
+                                      onChange={(event) =>
+                                        setSaleAdjustmentDialogState((prev) => ({
+                                          ...prev,
+                                          targetSalePriceTotal:
+                                            sanitizeQuotationMoneyInputValue(
+                                              event.target.value,
+                                            ),
+                                        }))
+                                      }
+                                      onBlur={(event) =>
+                                        setSaleAdjustmentDialogState((prev) => ({
+                                          ...prev,
+                                          targetSalePriceTotal:
+                                            formatQuotationMoneyInputValue(
+                                              event.target.value,
+                                            ),
+                                        }))
+                                      }
+                                    />
+                                    <p className="field-hint quotation-sale-adjustment-context">
+                                      {summaryVatMode === "per_item"
+                                        ? "Ingresa el total final con IVA incluido para esta fila."
+                                        : "Ingresa el nuevo total de venta para esta fila."}
+                                    </p>
+                                  </div>
+                                  <div className="quotation-sale-adjustment-column">
+                                    <span className="quotation-sale-adjustment-label">
+                                      Recalcular
+                                    </span>
+                                    <div className="quotation-sale-adjustment-options">
+                                      {SALE_ADJUSTMENT_FIELD_OPTIONS.map(
+                                        (option) => {
+                                          const isDisabled =
+                                            option.value ===
+                                              "finalDiscountPct" &&
+                                            saleAdjustmentFinalDiscountDisabled;
+
+                                          return (
+                                            <label
+                                              key={option.value}
+                                              className={`quotation-sale-adjustment-option${isDisabled ? " is-disabled" : ""}`}
+                                            >
+                                              <input
+                                                type="radio"
+                                                name={`sale-adjustment-field-${section.localId}`}
+                                                value={option.value}
+                                                checked={
+                                                  saleAdjustmentDialogState.recalculateField ===
+                                                  option.value
+                                                }
+                                                disabled={isDisabled}
+                                                onChange={(event) =>
+                                                  setSaleAdjustmentDialogState(
+                                                    (prev) => ({
+                                                      ...prev,
+                                                      recalculateField:
+                                                        event.target.value,
+                                                    }),
+                                                  )
+                                                }
+                                              />
+                                              <span>
+                                                <strong>{option.label}</strong>
+                                                <span className="quotation-sale-adjustment-option-helper">
+                                                  {option.helper}
+                                                </span>
+                                                {isDisabled ? (
+                                                  <span className="quotation-sale-adjustment-option-helper">
+                                                    No disponible mientras el
+                                                    descuento final se
+                                                    distribuya desde el resumen.
+                                                  </span>
+                                                ) : null}
+                                              </span>
+                                            </label>
+                                          );
+                                        },
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="quotation-sale-adjustment-section">
+                                  <h6>Vista previa</h6>
+                                  {saleAdjustmentPreview?.ok ? (
+                                    <div className="quotation-sale-adjustment-preview">
+                                      <div className="quotation-sale-adjustment-preview-grid quotation-sale-adjustment-preview-grid-header">
+                                        <span>Concepto</span>
+                                        <span>Actual</span>
+                                        <span>Resultado</span>
+                                      </div>
+                                      {summaryVatMode === "per_item" ? (
+                                        <>
+                                          <div className="quotation-sale-adjustment-preview-grid">
+                                            <span>Venta sin IVA</span>
+                                            <strong>
+                                              {formatQuotationAmount(
+                                                saleAdjustmentPreview
+                                                  .currentTotals.netTotal,
+                                              )}
+                                            </strong>
+                                            <strong>
+                                              {formatQuotationAmount(
+                                                saleAdjustmentPreview.nextTotals
+                                                  .netTotal,
+                                              )}
+                                            </strong>
+                                          </div>
+                                          <div className="quotation-sale-adjustment-preview-grid">
+                                            <span>IVA</span>
+                                            <strong>
+                                              {formatQuotationAmount(
+                                                saleAdjustmentPreview
+                                                  .currentTotals.vatTotal,
+                                              )}
+                                            </strong>
+                                            <strong>
+                                              {formatQuotationAmount(
+                                                saleAdjustmentPreview.nextTotals
+                                                  .vatTotal,
+                                              )}
+                                            </strong>
+                                          </div>
+                                        </>
+                                      ) : null}
+                                      <div className="quotation-sale-adjustment-preview-grid">
+                                        <span>Venta total</span>
+                                        <strong>
+                                          {formatQuotationAmount(
+                                            saleAdjustmentPreview.currentTotals
+                                              .salePriceTotal,
+                                          )}
+                                        </strong>
+                                        <strong>
+                                          {formatQuotationAmount(
+                                            saleAdjustmentPreview.nextTotals
+                                              .salePriceTotal,
+                                          )}
+                                        </strong>
+                                      </div>
+                                      <div className="quotation-sale-adjustment-preview-grid">
+                                        <span>
+                                          {SALE_ADJUSTMENT_FIELD_LABELS[
+                                            saleAdjustmentDialogState.recalculateField
+                                          ] || "Variable recalculada"}
+                                        </span>
+                                        <strong>
+                                          {formatQuotationAmount(
+                                            selectedEffectiveRowItem[
+                                              saleAdjustmentDialogState
+                                                .recalculateField
+                                            ],
+                                          )}
+                                        </strong>
+                                        <strong>
+                                          {formatQuotationAmount(
+                                            saleAdjustmentPreview.nextValue,
+                                          )}
+                                        </strong>
+                                      </div>
+                                      <p className="field-hint quotation-sale-adjustment-context">
+                                        {summaryVatMode === "per_item"
+                                          ? "El ajuste considera IVA por item para esta fila."
+                                          : "El ajuste se calcula sin IVA por item."}
+                                      </p>
+                                      <p className="field-hint quotation-sale-adjustment-context">
+                                        No cambia: precio de lista, cantidad,
+                                        importacion y las demas variables no
+                                        seleccionadas.
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <div className="quotation-sale-adjustment-preview quotation-sale-adjustment-preview-empty">
+                                      <p className="field-hint">
+                                        {saleAdjustmentPreview?.message ||
+                                          "Ingresa un precio de venta total valido para ver la vista previa."}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="quotation-sale-adjustment-actions">
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={closeSaleAdjustmentDialog}
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-primary"
+                                    disabled={!saleAdjustmentPreview?.ok}
+                                    onClick={() => {
+                                      if (
+                                        !saleAdjustmentPreview?.ok ||
+                                        !selectedRowItemId
+                                      ) {
+                                        return;
+                                      }
+
+                                      const nextItem = {
+                                        ...selectedRowItem,
+                                        ...selectedEffectiveRowItem,
+                                        [saleAdjustmentDialogState.recalculateField]:
+                                          String(
+                                            toNumber(
+                                              saleAdjustmentPreview.nextValue,
+                                            ),
+                                          ),
+                                      };
+
+                                      applySaleAdjustment(
+                                        index,
+                                        selectedRowItemId,
+                                        nextItem,
+                                      );
+                                    }}
+                                  >
+                                    Aplicar ajuste
+                                  </button>
+                                </div>
+                              </div>
                             ) : null}
 
                             {manualBundlePickerState.isOpen &&
@@ -2962,13 +3751,13 @@ function QuotationCreateModal({
                                       </td>
                                       <td>
                                         {formatQuotationAmount(
-                                          sectionTotals.costTotal,
+                                          displayedSectionTotals.costTotal,
                                         )}
                                       </td>
                                       <td colSpan={3} />
                                       <td>
                                         {formatQuotationAmount(
-                                          sectionTotals.salePriceTotal,
+                                          displayedSectionTotals.salePriceTotal,
                                         )}
                                       </td>
                                       <td />
@@ -3213,6 +4002,182 @@ function QuotationCreateModal({
                     showPricingHelperText={false}
                   />
                 </section>
+
+                <section className="account-form-section opportunity-sales-management-section quotation-documents-section">
+                  <div className="quotation-proposal-section-header quotation-documents-header">
+                    <div>
+                      <h4>Documentacion</h4>
+                      <p className="field-hint quotation-documents-hint">
+                        Adjunta y configura los documentos de soporte para esta cotizacion antes de crearla.
+                      </p>
+                    </div>
+                    <div className="quotation-documents-toolbar">
+                      <div
+                        className="quotation-documents-view-toggle"
+                        role="tablist"
+                        aria-label="Vista de documentos"
+                      >
+                        <button
+                          type="button"
+                          className={`btn-secondary quotation-documents-view-button quotation-documents-icon-button${documentViewMode === "current" ? " is-active" : ""}`}
+                          onClick={() => setDocumentViewMode("current")}
+                          title="Mostrar solo documentos adjuntos de esta version en borrador"
+                          aria-label="Mostrar solo documentos adjuntos de esta version en borrador"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 4.75h8.8L19.25 9.2V19a1.25 1.25 0 0 1-1.25 1.25H6A1.25 1.25 0 0 1 4.75 19V6A1.25 1.25 0 0 1 6 4.75Zm8.5 1.9V9.5h2.85Z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn-secondary quotation-documents-view-button quotation-documents-icon-button${documentViewMode === "all" ? " is-active" : ""}`}
+                          onClick={() => setDocumentViewMode("all")}
+                          title="Mostrar documentos de todas las versiones de esta cotizacion"
+                          aria-label="Mostrar documentos de todas las versiones de esta cotizacion"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M8 4.75h8.8L21.25 9.2V19A1.25 1.25 0 0 1 20 20.25H8A1.25 1.25 0 0 1 6.75 19V6A1.25 1.25 0 0 1 8 4.75Zm8.5 1.9V9.5h2.85Z" />
+                            <path d="M4 7.25a1.25 1.25 0 0 1 1.25-1.25h.5V19A2.75 2.75 0 0 0 8.5 21.75h9.25v.5A1.25 1.25 0 0 1 16.5 23.5h-11A1.25 1.25 0 0 1 4.25 22.25Z" />
+                          </svg>
+                        </button>
+                      </div>
+                      <input
+                        ref={quotationDocumentsInputRef}
+                        type="file"
+                        multiple
+                        className="quotation-documents-input"
+                        onChange={handlePendingDocumentsInputChange}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary quotation-documents-icon-button"
+                        disabled={busyAction === "create-quotation"}
+                        onClick={() => quotationDocumentsInputRef.current?.click()}
+                        title="Adjuntar uno o mas documentos a la nueva cotizacion"
+                        aria-label="Adjuntar uno o mas documentos a la nueva cotizacion"
+                      >
+                        <DocumentAddIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary quotation-documents-icon-button"
+                        disabled={!canOpenProviderImportFromCreate}
+                        onClick={handleOpenProviderImportFromCreate}
+                        title={
+                          canOpenProviderImportFromCreate
+                            ? "Crear la cotizacion y abrir importacion desde documento con IA"
+                            : "Adjunta al menos un documento habilitado para IA y completa la cotizacion para abrir la importacion"
+                        }
+                        aria-label={
+                          canOpenProviderImportFromCreate
+                            ? "Crear la cotizacion y abrir importacion desde documento con IA"
+                            : "Adjunta al menos un documento habilitado para IA y completa la cotizacion para abrir la importacion"
+                        }
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 2.5a.75.75 0 0 1 .75.75V6h2.75a3.5 3.5 0 0 1 3.5 3.5v2.75h2.75a.75.75 0 0 1 0 1.5H19v2.75a3.5 3.5 0 0 1-3.5 3.5h-2.75v2.75a.75.75 0 0 1-1.5 0V20H8.5A3.5 3.5 0 0 1 5 16.5v-2.75H2.25a.75.75 0 0 1 0-1.5H5V9.5A3.5 3.5 0 0 1 8.5 6h2.75V3.25a.75.75 0 0 1 .75-.75Zm-3.5 5A2 2 0 0 0 6.5 9.5v7a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {visiblePendingDocuments.length ? (
+                    <div className="quotation-documents-list">
+                      {visiblePendingDocuments.map((document) => (
+                        <div
+                          key={`${documentViewMode}-${document.localId}`}
+                          className="quotation-document-card"
+                        >
+                          <div className="quotation-document-main">
+                            <div className="quotation-document-title-row">
+                              <strong>
+                                {document.originalFileName || "Documento"}
+                              </strong>
+                              <span
+                                className={`quotation-document-ai-badge${document.aiEnabled === false ? " is-disabled" : ""}`}
+                              >
+                                {document.aiEnabled === false
+                                  ? "Excluido de IA"
+                                  : "Habilitado para IA"}
+                              </span>
+                              {documentViewMode === "all" ? (
+                                <span className="record-id-badge">V1</span>
+                              ) : null}
+                            </div>
+                            <div className="quotation-document-meta">
+                              <span>
+                                {formatPendingQuotationDocumentSize(
+                                  document.byteSize,
+                                )}
+                              </span>
+                              {document.uploadedByUserName ? (
+                                <span>{document.uploadedByUserName}</span>
+                              ) : null}
+                              {document.createdAt ? (
+                                <span>
+                                  {formatPendingQuotationDocumentDate(
+                                    document.createdAt,
+                                  )}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="quotation-document-actions">
+                            <button
+                              type="button"
+                              className="btn-secondary quotation-documents-icon-button"
+                              disabled={busyAction === "create-quotation"}
+                              onClick={() =>
+                                handleTogglePendingDocumentAiEnabled(
+                                  document.localId,
+                                )
+                              }
+                              title={
+                                document.aiEnabled === false
+                                  ? "Permitir nuevamente este documento para analisis con IA"
+                                  : "Excluir este documento del analisis con IA"
+                              }
+                              aria-label={
+                                document.aiEnabled === false
+                                  ? "Permitir nuevamente este documento para analisis con IA"
+                                  : "Excluir este documento del analisis con IA"
+                              }
+                            >
+                              {document.aiEnabled === false ? (
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M7 4.75h10a2.25 2.25 0 0 1 2.25 2.25v10A2.25 2.25 0 0 1 17 19.25H7A2.25 2.25 0 0 1 4.75 17V7A2.25 2.25 0 0 1 7 4.75Zm3.55 3.6a.75.75 0 0 0-.35.63v2.28l-1.98 1.14a.75.75 0 1 0 .76 1.3l1.98-1.14 1.98 1.14a.75.75 0 1 0 .75-1.3l-1.98-1.14V8.98a.75.75 0 0 0-1.16-.63Z" />
+                                </svg>
+                              ) : (
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M12.53 3.22a.75.75 0 0 1 .79.16l7.3 7.3a.75.75 0 0 1 0 1.06l-8.88 8.88a.75.75 0 0 1-1.06 0l-7.3-7.3a.75.75 0 0 1-.16-.79l2.47-7.03a.75.75 0 0 1 .47-.47Zm-.26 2.03-5.24 1.84L5.2 12.33l6.01 6.01 7.82-7.82Z" />
+                                  <path d="M8.9 9.73a1.17 1.17 0 1 0 0-2.34 1.17 1.17 0 0 0 0 2.34Z" />
+                                </svg>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary quotation-documents-icon-button"
+                              disabled={busyAction === "create-quotation"}
+                              onClick={() => handleDownloadPendingDocument(document)}
+                              title="Descargar este documento al equipo"
+                              aria-label="Descargar este documento al equipo"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 0 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 0 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="quotation-documents-empty">
+                      {documentViewMode === "all"
+                        ? "Esta cotizacion aun no tiene documentos adjuntos."
+                        : "Esta version aun no tiene documentos adjuntos."}
+                    </div>
+                  )}
+                </section>
               </>
             ) : (
               <p className="field-hint quotation-create-step-hint">
@@ -3257,6 +4222,7 @@ function QuotationCreateModal({
         onCancelQuickCreate={cancelQuickCreateProduct}
         onQuickCreateFieldChange={handleQuickCreateFieldChange}
         onQuickCreateSubmit={handleQuickCreateSubmit}
+        onConfirmSelection={confirmBundleParentTemplateSelection}
         formatQuotationAmount={formatQuotationAmount}
       />
     </>

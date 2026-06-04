@@ -49,6 +49,49 @@ const CORE_PERMISSIONS = [
     action: "admin",
     description: "Administrar herramientas operativas de alto impacto",
   },
+  {
+    code: "cotizaciones.aprobacion_humana",
+    module: "cotizaciones",
+    action: "aprobacion_humana",
+    description: "Aprobar cotizaciones sin IA",
+  },
+  {
+    code: "cotizaciones.aprobacion_ia",
+    module: "cotizaciones",
+    action: "aprobacion_ia",
+    description: "Aprobar cotizaciones con IA",
+  },
+];
+
+const PERMISSION_DESCRIPTION_OVERRIDES = [
+  {
+    code: "cotizaciones.operacion",
+    description: "Operar cotizaciones (crear, editar y gestionar en trabajo)",
+  },
+  {
+    code: "cotizaciones.ingreso",
+    description: "Solicitar aprobacion de cotizaciones (sin aprobar)",
+  },
+  {
+    code: "cotizaciones.revision",
+    description: "Revisar cotizaciones (validar informacion sin aprobar)",
+  },
+  {
+    code: "cotizaciones.aprobacion_humana",
+    description: "Aprobar cotizaciones sin IA",
+  },
+  {
+    code: "cotizaciones.aprobacion_ia",
+    description: "Aprobar cotizaciones con IA",
+  },
+  {
+    code: "cotizaciones.administracion",
+    description: "Administrar cotizaciones (control total y excepciones)",
+  },
+  {
+    code: "cotizaciones.externo",
+    description: "Acceso externo a cotizaciones (consulta o colaboracion limitada)",
+  },
 ];
 
 export async function ensureCorePermissions() {
@@ -72,6 +115,20 @@ export async function ensureCorePermissions() {
           now,
           now,
           permission.code,
+        ],
+      );
+    }
+
+    for (const permission of PERMISSION_DESCRIPTION_OVERRIDES) {
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [
+          permission.description,
+          now,
+          permission.code,
+          permission.description,
         ],
       );
     }
