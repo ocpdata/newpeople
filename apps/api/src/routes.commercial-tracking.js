@@ -1,0 +1,885 @@
+import express from "express";
+import { requireAnyPermission } from "./auth.js";
+import { query } from "./db.js";
+
+const router = express.Router();
+
+const STAGE_SLA_DAYS = {
+  contacto_inicial: 3,
+  identificacion_oportunidad: 3,
+  desarrollo: 5,
+  cotizacion: 5,
+  demostracion: 6,
+  negociacion: 4,
+  waiting: 3,
+  descubrimiento: 5,
+  validacion_valor: 5,
+};
+
+const NEXT_STEP_ACTION_TYPES = ["next_step", "follow_up", "waiting_customer"];
+
+function userHasPermission(user, permission) {
+  return user?.permissionSet?.has(permission);
+}
+
+function hasGlobalOpportunityScope(user) {
+  return userHasPermission(user, "oportunidades.read_all");
+}
+
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function startOfDay(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfDay(value) {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+function addDays(value, days) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function getWeekStart(value = new Date()) {
+  const date = startOfDay(value);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return addDays(date, diff);
+}
+
+function getWeekRange(rawWeekStart) {
+  const candidate = rawWeekStart ? new Date(rawWeekStart) : new Date();
+  const safeDate = Number.isNaN(candidate.getTime()) ? new Date() : candidate;
+  const start = getWeekStart(safeDate);
+  const end = endOfDay(addDays(start, 6));
+  return { start, end };
+}
+
+function parseDateOrFallback(rawValue, fallback) {
+  const candidate = rawValue ? new Date(rawValue) : null;
+  if (!candidate || Number.isNaN(candidate.getTime())) {
+    return fallback;
+  }
+  return candidate;
+}
+
+function formatIsoDate(value) {
+  return startOfDay(value).toISOString().slice(0, 10);
+}
+
+function formatPeriodLabel(date, granularity) {
+  if (granularity === "month") {
+    return new Intl.DateTimeFormat("es-MX", {
+      month: "short",
+      year: "numeric",
+    }).format(date);
+  }
+
+  const end = addDays(date, 6);
+  const formatter = new Intl.DateTimeFormat("es-MX", {
+    day: "2-digit",
+    month: "short",
+  });
+  return `${formatter.format(date)} - ${formatter.format(end)}`;
+}
+
+function buildOwnershipJoin(user, params, alias = "o") {
+  if (hasGlobalOpportunityScope(user)) {
+    return "";
+  }
+  params.push(Number(user.id));
+  return `LEFT JOIN account_owners ao_scope ON ao_scope.account_id = ${alias}.account_id AND ao_scope.user_id = ?`;
+}
+
+function getDiffDays(fromDate, toDate = new Date()) {
+  const start = new Date(fromDate);
+  const end = new Date(toDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
+}
+
+function toAmount(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+async function listScopedOpportunities(user, filters = {}) {
+  const params = [];
+  const ownershipJoin = buildOwnershipJoin(user, params);
+  const where = ["1 = 1"];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    params.push(Number(user.id));
+    where.push("(ao_scope.user_id IS NOT NULL OR o.created_by = ?)");
+  }
+
+  if (filters.sellerUserId) {
+    params.push(Number(filters.sellerUserId));
+    where.push("o.seller_user_id = ?");
+  }
+
+  if (filters.businessLineId) {
+    params.push(Number(filters.businessLineId));
+    where.push("o.business_line_id = ?");
+  }
+
+  if (filters.createdAtLte) {
+    params.push(filters.createdAtLte);
+    where.push("o.created_at <= ?");
+  }
+
+  return query(
+    `SELECT o.id, o.name, o.account_id, o.amount_usd, o.close_date,
+            o.sales_stage_id, o.commercial_status_id, o.activation_status_id,
+            o.business_line_id, o.seller_user_id, o.created_at, o.updated_at,
+            o.commercial_closed_at,
+            a.name AS account_name,
+            oss.code AS sales_stage_code,
+            oss.name AS sales_stage_name,
+            ocs.code AS commercial_status_code,
+            ocs.name AS commercial_status_name,
+            oas.code AS activation_status_code,
+            su.full_name AS seller_user_name,
+            obl.name AS business_line_name
+     FROM opportunities o
+     ${ownershipJoin}
+     INNER JOIN accounts a ON a.id = o.account_id
+     INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
+     LEFT JOIN opportunity_business_lines obl ON obl.id = o.business_line_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY o.created_at DESC, o.id DESC`,
+    params,
+  );
+}
+
+async function listNextSteps(opportunityIds) {
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const typePlaceholders = NEXT_STEP_ACTION_TYPES.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT id, opportunity_id, action_type, status, title, due_date,
+            owner_user_id, is_primary_next_step
+     FROM opportunity_workspace_actions
+     WHERE opportunity_id IN (${placeholders})
+       AND action_type IN (${typePlaceholders})
+       AND status IN ('pending', 'in_progress', 'blocked')
+     ORDER BY opportunity_id ASC, is_primary_next_step DESC,
+              due_date IS NULL ASC, due_date ASC, id ASC`,
+    [...opportunityIds, ...NEXT_STEP_ACTION_TYPES],
+  ).catch(() => []);
+
+  const map = new Map();
+  rows.forEach((row) => {
+    const opportunityId = Number(row.opportunity_id || 0);
+    if (!opportunityId || map.has(opportunityId)) return;
+    map.set(opportunityId, {
+      id: Number(row.id),
+      title: row.title || "",
+      actionType: row.action_type || "next_step",
+      status: row.status || "pending",
+      dueDate: row.due_date || null,
+      ownerUserId:
+        row.owner_user_id === null || row.owner_user_id === undefined
+          ? null
+          : Number(row.owner_user_id),
+      isOverdue: row.due_date ? getDiffDays(row.due_date) > 0 : false,
+    });
+  });
+  return map;
+}
+
+async function listOpenDependencies(opportunityIds) {
+  if (!opportunityIds.length) {
+    return [];
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  return query(
+    `SELECT d.id, d.opportunity_id, d.status, d.due_date
+     FROM commercial_execution_dependencies d
+     WHERE d.opportunity_id IN (${placeholders})
+       AND d.status IN ('open', 'blocked')`,
+    opportunityIds,
+  ).catch(() => []);
+}
+
+function setLatestActivityTimestamp(
+  activityByOpportunity,
+  opportunityId,
+  value,
+) {
+  const parsed = value ? new Date(value) : null;
+  if (
+    !Number.isInteger(opportunityId) ||
+    opportunityId <= 0 ||
+    !parsed ||
+    Number.isNaN(parsed.getTime())
+  ) {
+    return;
+  }
+
+  const current = activityByOpportunity.get(opportunityId);
+  if (!current || parsed.getTime() > current.getTime()) {
+    activityByOpportunity.set(opportunityId, parsed);
+  }
+}
+
+async function listLastActivityByOpportunity(opportunityIds) {
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const actionTypePlaceholders = NEXT_STEP_ACTION_TYPES.map(() => "?").join(
+    ", ",
+  );
+
+  const [actionRows, dependencyRows, answerRows, auditRows, interactionRows] =
+    await Promise.all([
+      query(
+        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+         FROM opportunity_workspace_actions
+         WHERE opportunity_id IN (${placeholders})
+           AND action_type IN (${actionTypePlaceholders})
+         GROUP BY opportunity_id`,
+        [...opportunityIds, ...NEXT_STEP_ACTION_TYPES],
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+         FROM commercial_execution_dependencies
+         WHERE opportunity_id IN (${placeholders})
+         GROUP BY opportunity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, MAX(answered_at) AS last_activity_at
+         FROM opportunity_stage_question_answers
+         WHERE opportunity_id IN (${placeholders})
+         GROUP BY opportunity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT entity_id AS opportunity_id, MAX(created_at) AS last_activity_at
+         FROM audit_logs
+         WHERE entity_type = 'opportunity'
+           AND entity_id IN (${placeholders})
+         GROUP BY entity_id`,
+        opportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT related.opportunity_id, MAX(related.created_at) AS last_activity_at
+         FROM (
+           SELECT i.primary_opportunity_id AS opportunity_id, i.created_at
+           FROM interactions i
+           WHERE i.primary_opportunity_id IN (${placeholders})
+           UNION ALL
+           SELECT l.opportunity_id, i.created_at
+           FROM interaction_opportunity_links l
+           INNER JOIN interactions i ON i.id = l.interaction_id
+           WHERE l.opportunity_id IN (${placeholders})
+         ) related
+         GROUP BY related.opportunity_id`,
+        [...opportunityIds, ...opportunityIds],
+      ).catch(() => []),
+    ]);
+
+  const activityByOpportunity = new Map();
+  [actionRows, dependencyRows, answerRows, auditRows, interactionRows].forEach(
+    (rows) => {
+      rows.forEach((row) => {
+        setLatestActivityTimestamp(
+          activityByOpportunity,
+          Number(row.opportunity_id || 0),
+          row.last_activity_at,
+        );
+      });
+    },
+  );
+
+  return activityByOpportunity;
+}
+
+async function listAuditEvents(opportunityIds, actions, start, end) {
+  if (!opportunityIds.length || !actions.length) {
+    return [];
+  }
+
+  const opportunityPlaceholders = opportunityIds.map(() => "?").join(", ");
+  const actionPlaceholders = actions.map(() => "?").join(", ");
+  return query(
+    `SELECT entity_id, action, created_at
+     FROM audit_logs
+     WHERE entity_type = 'opportunity'
+       AND entity_id IN (${opportunityPlaceholders})
+       AND action IN (${actionPlaceholders})
+       AND created_at >= ?
+       AND created_at <= ?`,
+    [...opportunityIds, ...actions, start, end],
+  ).catch(() => []);
+}
+
+function getExecutionState({ nextStep, dependencies }) {
+  const openDependencies = dependencies.filter(
+    (item) => item.status === "open",
+  );
+  const blockedDependencies = dependencies.filter(
+    (item) =>
+      item.status === "blocked" ||
+      (item.due_date && getDiffDays(item.due_date) > 0),
+  );
+
+  if (blockedDependencies.length > 0) {
+    return { code: "bloqueada", label: "Bloqueada" };
+  }
+  if (openDependencies.length > 0) {
+    return { code: "esperando_interno", label: "Esperando interno" };
+  }
+  if (!nextStep) {
+    return { code: "sin_conduccion", label: "Sin siguiente paso" };
+  }
+  if (nextStep.actionType === "waiting_customer") {
+    return { code: "esperando_cliente", label: "Esperando cliente" };
+  }
+  if (nextStep.isOverdue) {
+    return { code: "vencida", label: "Seguimiento vencido" };
+  }
+  return { code: "en_curso", label: "En curso" };
+}
+
+function buildPeriods(from, to, granularity) {
+  const periods = [];
+  let cursor = startOfDay(from);
+
+  if (granularity === "month") {
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    while (cursor <= to) {
+      const periodStart = new Date(cursor);
+      const periodEnd = endOfDay(
+        new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0),
+      );
+      periods.push({
+        key: `${periodStart.getFullYear()}-${String(periodStart.getMonth() + 1).padStart(2, "0")}`,
+        label: formatPeriodLabel(periodStart, "month"),
+        start: periodStart,
+        end: periodEnd > to ? endOfDay(to) : periodEnd,
+      });
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return periods;
+  }
+
+  cursor = getWeekStart(cursor);
+  while (cursor <= to) {
+    const periodStart = new Date(cursor);
+    const naturalEnd = endOfDay(addDays(periodStart, 6));
+    periods.push({
+      key: formatIsoDate(periodStart),
+      label: formatPeriodLabel(periodStart, "week"),
+      start: periodStart,
+      end: naturalEnd > to ? endOfDay(to) : naturalEnd,
+    });
+    cursor = addDays(cursor, 7);
+  }
+  return periods;
+}
+
+function isBetween(dateValue, start, end) {
+  const date = dateValue ? new Date(dateValue) : null;
+  if (!date || Number.isNaN(date.getTime())) return false;
+  return date >= start && date <= end;
+}
+
+function isOpenAtDate(item, end) {
+  const createdAt = item.created_at ? new Date(item.created_at) : null;
+  const closedAt = item.commercial_closed_at
+    ? new Date(item.commercial_closed_at)
+    : null;
+  if (!createdAt || Number.isNaN(createdAt.getTime()) || createdAt > end) {
+    return false;
+  }
+  if (String(item.activation_status_code) !== "activada") {
+    return false;
+  }
+  return !closedAt || closedAt > end;
+}
+
+function sumAmounts(items) {
+  return toAmount(
+    items.reduce((total, item) => total + Number(item.amount_usd || 0), 0),
+  );
+}
+
+function buildVariation(current, previous) {
+  const deltaAbsolute = current - previous;
+  return {
+    current,
+    previous,
+    deltaAbsolute,
+    deltaPercent:
+      previous > 0 ? toAmount((deltaAbsolute / previous) * 100) : null,
+  };
+}
+
+function buildPriorityScore(item) {
+  let score = 0;
+  if (item.executionStateCode === "bloqueada") score += 40;
+  if (item.executionStateCode === "sin_conduccion") score += 32;
+  if (item.isStale) score += 24;
+  if (item.executionStateCode === "esperando_interno") score += 20;
+  if (item.nextStep?.isOverdue) score += 14;
+  score += Math.min(20, Math.round(Number(item.amountUsd || 0) / 50000));
+  return score;
+}
+
+async function buildOpenOpportunityItems(user, filters = {}) {
+  const scopedOpportunities = await listScopedOpportunities(user, filters);
+  const openRows = scopedOpportunities.filter(
+    (item) =>
+      String(item.activation_status_code) === "activada" &&
+      String(item.commercial_status_code) === "en_proceso",
+  );
+  const opportunityIds = openRows.map((item) => Number(item.id));
+  const [
+    nextSteps,
+    dependencyRows,
+    lastActivityByOpportunity,
+    stageAdvancedRows,
+  ] = await Promise.all([
+    listNextSteps(opportunityIds),
+    listOpenDependencies(opportunityIds),
+    listLastActivityByOpportunity(opportunityIds),
+    listAuditEvents(
+      opportunityIds,
+      ["stage_advanced"],
+      filters.weekRange.start,
+      filters.weekRange.end,
+    ),
+  ]);
+
+  const dependenciesByOpportunity = dependencyRows.reduce(
+    (accumulator, row) => {
+      const key = Number(row.opportunity_id || 0);
+      const current = accumulator.get(key) || [];
+      current.push(row);
+      accumulator.set(key, current);
+      return accumulator;
+    },
+    new Map(),
+  );
+  const advancedThisWeekIds = new Set(
+    stageAdvancedRows.map((row) => Number(row.entity_id || 0)).filter(Boolean),
+  );
+
+  return openRows
+    .map((row) => {
+      const opportunityId = Number(row.id);
+      const nextStep = nextSteps.get(opportunityId) || null;
+      const dependencies = dependenciesByOpportunity.get(opportunityId) || [];
+      const executionState = getExecutionState({ nextStep, dependencies });
+      const lastActivity = lastActivityByOpportunity.get(opportunityId) || null;
+      const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
+      const daysSinceActivity = lastActivity
+        ? getDiffDays(lastActivity)
+        : getDiffDays(row.updated_at || row.created_at);
+      const isStale = daysSinceActivity > slaDays;
+
+      return {
+        opportunityId,
+        opportunityName: row.name || "",
+        accountId: Number(row.account_id),
+        accountName: row.account_name || "",
+        sellerUserId:
+          row.seller_user_id === null || row.seller_user_id === undefined
+            ? null
+            : Number(row.seller_user_id),
+        sellerUserName: row.seller_user_name || "Sin vendedor",
+        businessLineId: Number(row.business_line_id || 0),
+        businessLineName: row.business_line_name || "",
+        stageCode: row.sales_stage_code || "",
+        stageName: row.sales_stage_name || "",
+        amountUsd: Number(row.amount_usd || 0),
+        closeDate: row.close_date || null,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+        nextStep,
+        dependencies,
+        executionStateCode: executionState.code,
+        executionStateLabel: executionState.label,
+        lastActivityAt: lastActivity
+          ? lastActivity.toISOString()
+          : row.updated_at,
+        daysSinceActivity,
+        slaDays,
+        isStale,
+        advancedThisWeek: advancedThisWeekIds.has(opportunityId),
+      };
+    })
+    .map((item) => ({
+      ...item,
+      priorityScore: buildPriorityScore(item),
+    }))
+    .sort((left, right) => {
+      if (right.priorityScore !== left.priorityScore) {
+        return right.priorityScore - left.priorityScore;
+      }
+      return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+    });
+}
+
+router.get(
+  "/overview",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const sellerUserId = toPositiveInt(req.query?.sellerUserId);
+    const businessLineId = toPositiveInt(req.query?.businessLineId);
+    const viewMode =
+      String(req.query?.viewMode || "count").trim() === "amount"
+        ? "amount"
+        : "count";
+    const weekRange = getWeekRange(req.query?.weekStart);
+    const previousWeekRange = {
+      start: addDays(weekRange.start, -7),
+      end: endOfDay(addDays(weekRange.start, -1)),
+    };
+
+    const [allScopedOpportunities, openItems] = await Promise.all([
+      listScopedOpportunities(req.user, { sellerUserId, businessLineId }),
+      buildOpenOpportunityItems(req.user, {
+        sellerUserId,
+        businessLineId,
+        weekRange,
+      }),
+    ]);
+
+    const currentWeekCreated = allScopedOpportunities.filter((item) =>
+      isBetween(item.created_at, weekRange.start, weekRange.end),
+    );
+    const previousWeekCreated = allScopedOpportunities.filter((item) =>
+      isBetween(
+        item.created_at,
+        previousWeekRange.start,
+        previousWeekRange.end,
+      ),
+    );
+    const currentWeekWon = allScopedOpportunities.filter(
+      (item) =>
+        item.commercial_status_code === "ganada" &&
+        isBetween(item.commercial_closed_at, weekRange.start, weekRange.end),
+    );
+    const previousWeekWon = allScopedOpportunities.filter(
+      (item) =>
+        item.commercial_status_code === "ganada" &&
+        isBetween(
+          item.commercial_closed_at,
+          previousWeekRange.start,
+          previousWeekRange.end,
+        ),
+    );
+    const currentWeekLost = allScopedOpportunities.filter(
+      (item) =>
+        ["perdida", "anulada"].includes(String(item.commercial_status_code)) &&
+        isBetween(item.commercial_closed_at, weekRange.start, weekRange.end),
+    );
+    const previousWeekLost = allScopedOpportunities.filter(
+      (item) =>
+        ["perdida", "anulada"].includes(String(item.commercial_status_code)) &&
+        isBetween(
+          item.commercial_closed_at,
+          previousWeekRange.start,
+          previousWeekRange.end,
+        ),
+    );
+
+    const openAtPreviousWeekEnd = allScopedOpportunities.filter((item) =>
+      isOpenAtDate(item, previousWeekRange.end),
+    );
+    const currentAdvanced = openItems.filter(
+      (item) => item.advancedThisWeek,
+    ).length;
+    const previousAdvancedRows = await listAuditEvents(
+      openAtPreviousWeekEnd
+        .map((item) => Number(item.id || item.opportunityId || 0))
+        .filter(Boolean),
+      ["stage_advanced"],
+      previousWeekRange.start,
+      previousWeekRange.end,
+    );
+
+    const noNextStep = openItems.filter((item) => !item.nextStep).slice(0, 5);
+    const blocked = openItems
+      .filter((item) => item.executionStateCode === "bloqueada")
+      .slice(0, 5);
+    const stale = openItems.filter((item) => item.isStale).slice(0, 5);
+    const highAmountHighRisk = openItems
+      .filter(
+        (item) =>
+          item.amountUsd >= 100000 &&
+          ["bloqueada", "sin_conduccion", "esperando_interno"].includes(
+            item.executionStateCode,
+          ),
+      )
+      .slice(0, 5);
+
+    const generationTrend = buildPeriods(
+      addDays(weekRange.start, -49),
+      weekRange.end,
+      "week",
+    ).map((period) => {
+      const created = allScopedOpportunities.filter((item) =>
+        isBetween(item.created_at, period.start, period.end),
+      );
+      return {
+        periodKey: period.key,
+        periodLabel: period.label,
+        createdCount: created.length,
+        createdAmountUsd: sumAmounts(created),
+      };
+    });
+
+    const pipelineMovementMap = openItems.reduce((accumulator, item) => {
+      const key = String(item.stageCode || "sin_etapa");
+      const current = accumulator.get(key) || {
+        stageCode: item.stageCode,
+        stageName: item.stageName,
+        openCount: 0,
+        advancedInWeek: 0,
+        blockedCount: 0,
+        staleCount: 0,
+      };
+      current.openCount += 1;
+      if (item.advancedThisWeek) current.advancedInWeek += 1;
+      if (item.executionStateCode === "bloqueada") current.blockedCount += 1;
+      if (item.isStale) current.staleCount += 1;
+      accumulator.set(key, current);
+      return accumulator;
+    }, new Map());
+
+    res.json({
+      filters: {
+        weekStart: formatIsoDate(weekRange.start),
+        weekEnd: formatIsoDate(weekRange.end),
+        sellerUserId,
+        businessLineId,
+        viewMode,
+      },
+      summary: {
+        openOpportunities: openItems.length,
+        openAmountUsd: sumAmounts(
+          openItems.map((item) => ({ amount_usd: item.amountUsd })),
+        ),
+        newThisWeek: currentWeekCreated.length,
+        newAmountUsd: sumAmounts(currentWeekCreated),
+        advancedThisWeek: currentAdvanced,
+        blockedOpenOpportunities: openItems.filter(
+          (item) => item.executionStateCode === "bloqueada",
+        ).length,
+      },
+      weekChange: {
+        newThisWeek: buildVariation(
+          currentWeekCreated.length,
+          previousWeekCreated.length,
+        ),
+        advancedThisWeek: buildVariation(
+          currentAdvanced,
+          new Set(
+            previousAdvancedRows
+              .map((row) => Number(row.entity_id || 0))
+              .filter(Boolean),
+          ).size,
+        ),
+        wonThisWeek: buildVariation(
+          currentWeekWon.length,
+          previousWeekWon.length,
+        ),
+        lostThisWeek: buildVariation(
+          currentWeekLost.length,
+          previousWeekLost.length,
+        ),
+      },
+      immediateAttention: {
+        noNextStep,
+        blocked,
+        stale,
+        highAmountHighRisk,
+      },
+      generationTrend,
+      pipelineMovement: Array.from(pipelineMovementMap.values()).sort(
+        (left, right) => right.openCount - left.openCount,
+      ),
+    });
+  },
+);
+
+router.get(
+  "/open-opportunities",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const sellerUserId = toPositiveInt(req.query?.sellerUserId);
+    const businessLineId = toPositiveInt(req.query?.businessLineId);
+    const quickFilter = String(req.query?.quickFilter || "all").trim();
+    const weekRange = getWeekRange(req.query?.weekStart);
+    const items = await buildOpenOpportunityItems(req.user, {
+      sellerUserId,
+      businessLineId,
+      weekRange,
+    });
+
+    const filteredItems = items.filter((item) => {
+      if (quickFilter === "blocked")
+        return item.executionStateCode === "bloqueada";
+      if (quickFilter === "no_next_step") return !item.nextStep;
+      if (quickFilter === "stale") return item.isStale;
+      if (quickFilter === "advanced_this_week") return item.advancedThisWeek;
+      if (quickFilter === "waiting_customer")
+        return item.executionStateCode === "esperando_cliente";
+      if (quickFilter === "waiting_internal")
+        return item.executionStateCode === "esperando_interno";
+      return true;
+    });
+
+    res.json({
+      appliedFilters: {
+        weekStart: formatIsoDate(weekRange.start),
+        sellerUserId,
+        businessLineId,
+        quickFilter,
+      },
+      summary: {
+        total: filteredItems.length,
+        totalAmountUsd: toAmount(
+          filteredItems.reduce(
+            (sum, item) => sum + Number(item.amountUsd || 0),
+            0,
+          ),
+        ),
+      },
+      items: filteredItems,
+    });
+  },
+);
+
+router.get(
+  "/opportunities-by-period",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const sellerUserId = toPositiveInt(req.query?.sellerUserId);
+    const businessLineId = toPositiveInt(req.query?.businessLineId);
+    const viewMode =
+      String(req.query?.viewMode || "count").trim() === "amount"
+        ? "amount"
+        : "count";
+    const granularity =
+      String(req.query?.granularity || "month").trim() === "week"
+        ? "week"
+        : "month";
+    const to = endOfDay(parseDateOrFallback(req.query?.to, new Date()));
+    const fallbackFrom =
+      granularity === "week"
+        ? addDays(to, -83)
+        : new Date(to.getFullYear(), to.getMonth() - 11, 1);
+    const from = startOfDay(parseDateOrFallback(req.query?.from, fallbackFrom));
+
+    const scopedOpportunities = await listScopedOpportunities(req.user, {
+      sellerUserId,
+      businessLineId,
+      createdAtLte: to,
+    });
+    const periods = buildPeriods(from, to, granularity);
+
+    const series = periods.map((period, index) => {
+      const created = scopedOpportunities.filter((item) =>
+        isBetween(item.created_at, period.start, period.end),
+      );
+      const won = scopedOpportunities.filter(
+        (item) =>
+          item.commercial_status_code === "ganada" &&
+          isBetween(item.commercial_closed_at, period.start, period.end),
+      );
+      const lost = scopedOpportunities.filter(
+        (item) =>
+          ["perdida", "anulada"].includes(
+            String(item.commercial_status_code),
+          ) && isBetween(item.commercial_closed_at, period.start, period.end),
+      );
+      const openAtEnd = scopedOpportunities.filter((item) =>
+        isOpenAtDate(item, period.end),
+      );
+      const previous = index > 0 ? periods[index - 1] : null;
+      const previousCreated = previous
+        ? scopedOpportunities.filter((item) =>
+            isBetween(item.created_at, previous.start, previous.end),
+          ).length
+        : 0;
+
+      return {
+        periodKey: period.key,
+        periodLabel: period.label,
+        createdCount: created.length,
+        createdAmountUsd: sumAmounts(created),
+        wonCount: won.length,
+        wonAmountUsd: sumAmounts(won),
+        lostCount: lost.length,
+        lostAmountUsd: sumAmounts(lost),
+        openAtEndCount: openAtEnd.length,
+        openAtEndAmountUsd: sumAmounts(openAtEnd),
+        deltaVsPrevious: buildVariation(created.length, previousCreated),
+      };
+    });
+
+    res.json({
+      meta: {
+        from: formatIsoDate(from),
+        to: formatIsoDate(to),
+        granularity,
+        sellerUserId,
+        businessLineId,
+        viewMode,
+      },
+      totals: {
+        totalCreatedCount: series.reduce(
+          (sum, item) => sum + item.createdCount,
+          0,
+        ),
+        totalCreatedAmountUsd: toAmount(
+          series.reduce(
+            (sum, item) => sum + Number(item.createdAmountUsd || 0),
+            0,
+          ),
+        ),
+        totalWonCount: series.reduce((sum, item) => sum + item.wonCount, 0),
+        totalWonAmountUsd: toAmount(
+          series.reduce((sum, item) => sum + Number(item.wonAmountUsd || 0), 0),
+        ),
+        totalLostCount: series.reduce((sum, item) => sum + item.lostCount, 0),
+        totalLostAmountUsd: toAmount(
+          series.reduce(
+            (sum, item) => sum + Number(item.lostAmountUsd || 0),
+            0,
+          ),
+        ),
+      },
+      series,
+    });
+  },
+);
+
+export default router;

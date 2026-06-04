@@ -47,6 +47,18 @@ const ACTION_TYPE_OPTIONS = [
   { value: "internal_approval", label: "Gestionar aprobacion interna" },
   { value: "other_action", label: "Otra accion" },
 ];
+const DEPENDENCY_TYPE_OPTIONS = [
+  { value: "presales_support", label: "Preventa" },
+  { value: "provider_response", label: "Proveedor" },
+  { value: "legal_review", label: "Legal" },
+  { value: "commercial_management", label: "Direccion comercial" },
+  { value: "pricing_internal", label: "Cotizacion interna" },
+  { value: "finance_approval", label: "Finanzas" },
+  { value: "operations_alignment", label: "Operaciones" },
+];
+const DEPENDENCY_TYPE_LABELS = Object.fromEntries(
+  DEPENDENCY_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+);
 const COMMERCIAL_NARRATIVE_TIMEOUT_MS = 60000;
 const COMMERCIAL_NARRATIVE_JOB_POLL_INTERVAL_MS = 3000;
 const COMMERCIAL_NARRATIVE_TOTAL_POLL_TIMEOUT_MS = 120000;
@@ -236,6 +248,101 @@ function getFunnelBraceRange(stages, stageCodes) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function toSafeText(value, fallback = "") {
+  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "number") return String(value);
+  return fallback;
+}
+
+function normalizeDependencyForUi(dependency) {
+  if (!dependency || typeof dependency !== "object") return null;
+
+  const dependencyType = toSafeText(dependency.dependencyType);
+  const status = toSafeText(dependency.status, "open");
+  const title =
+    toSafeText(dependency.title) ||
+    toSafeText(dependency.name) ||
+    "Dependencia interna";
+
+  return {
+    ...dependency,
+    id: Number(dependency.id || 0) || 0,
+    dependencyType,
+    dependencyLabel:
+      toSafeText(dependency.dependencyLabel) ||
+      DEPENDENCY_TYPE_LABELS[dependencyType] ||
+      "Dependencia interna",
+    title,
+    status: ["open", "blocked", "done"].includes(status) ? status : "open",
+    isOverdue: Boolean(dependency.isOverdue),
+    dueDate: toSafeText(dependency.dueDate) || null,
+    ownerUserName:
+      toSafeText(dependency.ownerUserName) ||
+      toSafeText(dependency.ownerName) ||
+      "",
+    expectedOutcome: toSafeText(dependency.expectedOutcome),
+    details: toSafeText(dependency.details),
+  };
+}
+
+function getActiveDependencies(item) {
+  return asArray(item?.dependencies)
+    .map((dependency) => normalizeDependencyForUi(dependency))
+    .filter(
+      (dependency) =>
+        dependency && ["open", "blocked"].includes(dependency.status),
+    );
+}
+
+function getDependencyStatusLabel(status) {
+  if (status === "blocked") return "Bloqueada";
+  if (status === "done") return "Resuelta";
+  return "Abierta";
+}
+
+function buildDependencySummary(item) {
+  const dependencies = getActiveDependencies(item);
+  const blocked = dependencies.filter(
+    (dependency) => dependency.status === "blocked",
+  );
+  const overdue = dependencies.filter((dependency) => dependency.isOverdue);
+  const open = dependencies.filter(
+    (dependency) => dependency.status === "open",
+  );
+  const highlightedDependency =
+    blocked[0] || overdue[0] || open[0] || dependencies[0] || null;
+
+  let stateCode = "none";
+  let stateLabel = "Sin dependencias";
+  let toneClass = "is-low";
+
+  if (blocked.length) {
+    stateCode = "blocked";
+    stateLabel = "Bloqueada";
+    toneClass = "is-high";
+  } else if (overdue.length) {
+    stateCode = "overdue";
+    stateLabel = "Vencida";
+    toneClass = "is-high";
+  } else if (open.length) {
+    stateCode = "waiting_internal";
+    stateLabel = "Esperando interno";
+    toneClass = "is-medium";
+  }
+
+  return {
+    dependencies,
+    activeCount: dependencies.length,
+    blockedCount: blocked.length,
+    overdueCount: overdue.length,
+    openCount: open.length,
+    highlightedDependency,
+    stateCode,
+    stateLabel,
+    toneClass,
+  };
 }
 
 function formatCurrency(value, currency = "USD") {
@@ -765,7 +872,9 @@ function normalizeEmailAttachmentOptionsResponse(data = {}) {
     error: "",
     libraryFiles: normalizeEmailAttachments(data?.libraryFiles),
     libraryCatalogs: {
-      manufacturer: normalizeCatalogOptions(data?.libraryCatalogs?.manufacturer),
+      manufacturer: normalizeCatalogOptions(
+        data?.libraryCatalogs?.manufacturer,
+      ),
       solution: normalizeCatalogOptions(data?.libraryCatalogs?.solution),
       industry: normalizeCatalogOptions(data?.libraryCatalogs?.industry),
     },
@@ -828,7 +937,9 @@ function areEmailAttachmentLibraryFiltersEqual(left = {}, right = {}) {
 function toggleEmailAttachmentFilterValue(values, nextValue) {
   const normalizedValue = String(nextValue || "").trim();
   if (!normalizedValue) return asArray(values);
-  const currentValues = asArray(values).map((value) => String(value || "").trim());
+  const currentValues = asArray(values).map((value) =>
+    String(value || "").trim(),
+  );
   if (currentValues.includes(normalizedValue)) {
     return currentValues.filter((value) => value !== normalizedValue);
   }
@@ -866,25 +977,25 @@ function buildEmailAttachmentCatalogFilterOptions(attachments, catalogType) {
     // Your implementation here
   }
   const optionsByCode = new Map();
-        asArray(attachments).forEach((attachment) => {
-          const metadata = getEmailAttachmentCatalogInfo(attachment, catalogType);
-          metadata.codes.forEach((code, index) => {
-            const normalizedCode = String(code || "").trim();
-            if (!normalizedCode) return;
-            if (optionsByCode.has(normalizedCode)) return;
-            const label = String(metadata.labels[index] || normalizedCode).trim();
-            optionsByCode.set(normalizedCode, {
-              value: normalizedCode,
-              label,
-            });
-          });
-        });
-        return [...optionsByCode.values()].sort((left, right) =>
-          left.label.localeCompare(right.label, "es"),
-        );
+  asArray(attachments).forEach((attachment) => {
+    const metadata = getEmailAttachmentCatalogInfo(attachment, catalogType);
+    metadata.codes.forEach((code, index) => {
+      const normalizedCode = String(code || "").trim();
+      if (!normalizedCode) return;
+      if (optionsByCode.has(normalizedCode)) return;
+      const label = String(metadata.labels[index] || normalizedCode).trim();
+      optionsByCode.set(normalizedCode, {
+        value: normalizedCode,
+        label,
+      });
+    });
+  });
+  return [...optionsByCode.values()].sort((left, right) =>
+    left.label.localeCompare(right.label, "es"),
+  );
 }
 
-      // eslint-disable-next-line no-unused-vars
+// eslint-disable-next-line no-unused-vars
 function buildEmailAttachmentSearchText(attachment) {
   return [
     attachment?.fileName,
@@ -1187,8 +1298,7 @@ function buildEmailActionDraft(item, activity, options = {}) {
     accountName: item?.accountName || "Sin cuenta",
     sellerUserName: item?.sellerUserName || "Sin vendedor",
     status,
-    isReadOnly:
-      forceReadOnly || status === "done" || status === "cancelled",
+    isReadOnly: forceReadOnly || status === "done" || status === "cancelled",
     details,
   };
 }
@@ -1223,7 +1333,8 @@ function EmailAttachmentsField({
   onRefreshOptions,
 }) {
   const [activePanel, setActivePanel] = useState("");
-  const [areLibraryFiltersVisible, setAreLibraryFiltersVisible] = useState(false);
+  const [areLibraryFiltersVisible, setAreLibraryFiltersVisible] =
+    useState(false);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [libraryManufacturerCodes, setLibraryManufacturerCodes] = useState([]);
   const [librarySolutionCodes, setLibrarySolutionCodes] = useState([]);
@@ -1250,7 +1361,8 @@ function EmailAttachmentsField({
   const libraryFiles = asArray(safeOptionsState.libraryFiles);
   const opportunityDocuments = asArray(safeOptionsState.opportunityDocuments);
   const quotationVersions = asArray(safeOptionsState.quotationVersions);
-  const libraryCatalogs = safeOptionsState.libraryCatalogs ||
+  const libraryCatalogs =
+    safeOptionsState.libraryCatalogs ||
     EMPTY_EMAIL_ATTACHMENT_OPTIONS.libraryCatalogs;
   const normalizedLibraryFilters = useMemo(
     () =>
@@ -1276,7 +1388,9 @@ function EmailAttachmentsField({
       chips.push({ key: "query", label: `Busqueda: ${libraryQuery.trim()}` });
     }
     asArray(libraryCatalogs.manufacturer)
-      .filter((option) => normalizedLibraryFilters.manufacturerCodes.includes(option.value))
+      .filter((option) =>
+        normalizedLibraryFilters.manufacturerCodes.includes(option.value),
+      )
       .forEach((option) => {
         chips.push({
           key: `manufacturer:${option.value}`,
@@ -1286,7 +1400,9 @@ function EmailAttachmentsField({
         });
       });
     asArray(libraryCatalogs.solution)
-      .filter((option) => normalizedLibraryFilters.solutionCodes.includes(option.value))
+      .filter((option) =>
+        normalizedLibraryFilters.solutionCodes.includes(option.value),
+      )
       .forEach((option) => {
         chips.push({
           key: `solution:${option.value}`,
@@ -1296,7 +1412,9 @@ function EmailAttachmentsField({
         });
       });
     asArray(libraryCatalogs.industry)
-      .filter((option) => normalizedLibraryFilters.industryCodes.includes(option.value))
+      .filter((option) =>
+        normalizedLibraryFilters.industryCodes.includes(option.value),
+      )
       .forEach((option) => {
         chips.push({
           key: `industry:${option.value}`,
@@ -1336,7 +1454,12 @@ function EmailAttachmentsField({
 
   useEffect(() => {
     const appliedFilters = safeOptionsState.appliedLibraryFilters;
-    if (areEmailAttachmentLibraryFiltersEqual(appliedFilters, normalizedLibraryFilters)) {
+    if (
+      areEmailAttachmentLibraryFiltersEqual(
+        appliedFilters,
+        normalizedLibraryFilters,
+      )
+    ) {
       return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -1437,8 +1560,12 @@ function EmailAttachmentsField({
             manufacturerLabels.length
               ? `Fabricante: ${manufacturerLabels.join(", ")}`
               : "",
-            solutionLabels.length ? `Solucion: ${solutionLabels.join(", ")}` : "",
-            industryLabels.length ? `Industria: ${industryLabels.join(", ")}` : "",
+            solutionLabels.length
+              ? `Solucion: ${solutionLabels.join(", ")}`
+              : "",
+            industryLabels.length
+              ? `Industria: ${industryLabels.join(", ")}`
+              : "",
             attachment.byteSize ? formatFileSize(attachment.byteSize) : "",
             attachment.createdAt ? formatDate(attachment.createdAt) : "",
           ].filter(Boolean);
@@ -1479,11 +1606,15 @@ function EmailAttachmentsField({
                       disabled={disabled}
                       aria-expanded={isMetadataExpanded}
                     >
-                      {isMetadataExpanded ? "Menos" : `Mas ${extraMetadataPills.length}`}
+                      {isMetadataExpanded
+                        ? "Menos"
+                        : `Mas ${extraMetadataPills.length}`}
                     </button>
                   ) : null}
                 </div>
-                {showLibraryMetadata && isMetadataExpanded && extraMetadataPills.length ? (
+                {showLibraryMetadata &&
+                isMetadataExpanded &&
+                extraMetadataPills.length ? (
                   <div className="commercial-development-email-attachment-meta-row is-secondary">
                     {extraMetadataPills.map((label) => (
                       <span
@@ -1500,7 +1631,9 @@ function EmailAttachmentsField({
                     ) : null}
                   </div>
                 ) : null}
-                {showLibraryMetadata && !isMetadataExpanded && attachment.summary ? (
+                {showLibraryMetadata &&
+                !isMetadataExpanded &&
+                attachment.summary ? (
                   <button
                     type="button"
                     className="commercial-development-email-attachment-summary-toggle"
@@ -1624,12 +1757,14 @@ function EmailAttachmentsField({
             <div>
               <strong>Biblioteca documental</strong>
               <p>
-                Busca por nombre del archivo o filtra por fabricante,
-                solucion e industria.
+                Busca por nombre del archivo o filtra por fabricante, solucion e
+                industria.
               </p>
             </div>
             <span>
-              {Number(safeOptionsState.libraryStats?.totalMatching || 0)} de {Number(safeOptionsState.libraryStats?.totalAvailable || 0)} documento(s)
+              {Number(safeOptionsState.libraryStats?.totalMatching || 0)} de{" "}
+              {Number(safeOptionsState.libraryStats?.totalAvailable || 0)}{" "}
+              documento(s)
             </span>
           </div>
 
@@ -1671,7 +1806,9 @@ function EmailAttachmentsField({
                 disabled={disabled}
                 aria-expanded={areLibraryFiltersVisible}
               >
-                {areLibraryFiltersVisible ? "Ocultar mas filtros" : "Mas filtros"}
+                {areLibraryFiltersVisible
+                  ? "Ocultar mas filtros"
+                  : "Mas filtros"}
               </button>
             </div>
 
@@ -1681,9 +1818,10 @@ function EmailAttachmentsField({
                   <span>Fabricante</span>
                   <div className="commercial-development-email-attachments-multiselect-grid">
                     {asArray(libraryCatalogs.manufacturer).map((option) => {
-                      const isSelected = normalizedLibraryFilters.manufacturerCodes.includes(
-                        option.value,
-                      );
+                      const isSelected =
+                        normalizedLibraryFilters.manufacturerCodes.includes(
+                          option.value,
+                        );
                       return (
                         <button
                           key={option.value}
@@ -1691,7 +1829,10 @@ function EmailAttachmentsField({
                           className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
                           onClick={() =>
                             setLibraryManufacturerCodes((current) =>
-                              toggleEmailAttachmentFilterValue(current, option.value),
+                              toggleEmailAttachmentFilterValue(
+                                current,
+                                option.value,
+                              ),
                             )
                           }
                           disabled={disabled}
@@ -1708,9 +1849,10 @@ function EmailAttachmentsField({
                   <span>Solucion</span>
                   <div className="commercial-development-email-attachments-multiselect-grid">
                     {asArray(libraryCatalogs.solution).map((option) => {
-                      const isSelected = normalizedLibraryFilters.solutionCodes.includes(
-                        option.value,
-                      );
+                      const isSelected =
+                        normalizedLibraryFilters.solutionCodes.includes(
+                          option.value,
+                        );
                       return (
                         <button
                           key={option.value}
@@ -1718,7 +1860,10 @@ function EmailAttachmentsField({
                           className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
                           onClick={() =>
                             setLibrarySolutionCodes((current) =>
-                              toggleEmailAttachmentFilterValue(current, option.value),
+                              toggleEmailAttachmentFilterValue(
+                                current,
+                                option.value,
+                              ),
                             )
                           }
                           disabled={disabled}
@@ -1735,9 +1880,10 @@ function EmailAttachmentsField({
                   <span>Industria</span>
                   <div className="commercial-development-email-attachments-multiselect-grid">
                     {asArray(libraryCatalogs.industry).map((option) => {
-                      const isSelected = normalizedLibraryFilters.industryCodes.includes(
-                        option.value,
-                      );
+                      const isSelected =
+                        normalizedLibraryFilters.industryCodes.includes(
+                          option.value,
+                        );
                       return (
                         <button
                           key={option.value}
@@ -1745,7 +1891,10 @@ function EmailAttachmentsField({
                           className={`commercial-development-email-attachments-toggle${isSelected ? " is-selected" : ""}`}
                           onClick={() =>
                             setLibraryIndustryCodes((current) =>
-                              toggleEmailAttachmentFilterValue(current, option.value),
+                              toggleEmailAttachmentFilterValue(
+                                current,
+                                option.value,
+                              ),
                             )
                           }
                           disabled={disabled}
@@ -1768,7 +1917,9 @@ function EmailAttachmentsField({
                   key={chip.key}
                   type="button"
                   className="commercial-development-email-attachments-filter-chip"
-                  onClick={() => clearLibraryFilter(chip.filterKey || chip.key, chip.value)}
+                  onClick={() =>
+                    clearLibraryFilter(chip.filterKey || chip.key, chip.value)
+                  }
                   disabled={disabled}
                 >
                   <span>{chip.label}</span>
@@ -1908,6 +2059,17 @@ function buildActivityDraft(item, activity = null) {
     successCriteria: "",
     isPrimaryNextStep: !item?.nextStep,
     details: emptyActionDetails(),
+  };
+}
+
+function buildDependencyDraft(item) {
+  return {
+    opportunityId: item?.id || null,
+    dependencyType: "presales_support",
+    title: "",
+    dueDate: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+    expectedOutcome: "",
+    details: "",
   };
 }
 
@@ -2401,8 +2563,11 @@ function CommercialActivityModal({
   item,
   draft,
   setDraft,
+  dependencyDraft,
+  setDependencyDraft,
   canUpdate,
   saving,
+  savingDependencyKey,
   error,
   notice,
   isGeneratingEmailSuggestion,
@@ -2415,11 +2580,14 @@ function CommercialActivityModal({
   onUploadAttachments,
   onClose,
   onSubmit,
+  onSaveDependency,
+  onUpdateDependency,
   onExecute,
   onMarkDone,
   viewMode,
   onShowCreate,
   onShowCreateAction,
+  onShowDependencies,
   onShowList,
   onSelectActivity,
   onOpenEmailDraft,
@@ -2427,23 +2595,27 @@ function CommercialActivityModal({
   recipientOptionsLoading,
   recipientOptionsError,
 }) {
-  if (!item) return null;
-
-  const hasEditableActivity = Boolean(draft?.id);
+  const safeItem = item || null;
+  const safeDraft = draft || buildActivityDraft(null);
+  const hasEditableActivity = Boolean(safeDraft?.id);
   const isCompletionDisabled =
-    saving || !hasEditableActivity || draft.status === "done";
-  const timelineItems = item.recentTimeline?.length
-    ? item.recentTimeline
-    : item.recentActivities?.length
-      ? item.recentActivities
-      : item.nextScheduledActivity
-        ? [item.nextScheduledActivity]
+    saving || !hasEditableActivity || safeDraft.status === "done";
+  const timelineItems = safeItem?.recentTimeline?.length
+    ? safeItem.recentTimeline
+    : safeItem?.recentActivities?.length
+      ? safeItem.recentActivities
+      : safeItem?.nextScheduledActivity
+        ? [safeItem.nextScheduledActivity]
         : [];
   const isHistoryView = viewMode === "list";
-  const entryKind = draft?.entryKind || "activity";
+  const isDependencyView = viewMode === "dependencies";
+  const entryKind = safeDraft?.entryKind || "activity";
   const isActionForm = entryKind === "action";
-  const isCompactActionView = !isHistoryView && isActionForm;
-  const ccVisibilityKey = `${item?.id || "new"}:${draft?.id || "new"}:${draft?.activityType || ""}`;
+  const isCompactActionView =
+    !isHistoryView && !isDependencyView && isActionForm;
+  const dependencySummary = buildDependencySummary(safeItem);
+  const activeDependencies = dependencySummary.dependencies;
+  const ccVisibilityKey = `${safeItem?.id || "new"}:${safeDraft?.id || "new"}:${safeDraft?.activityType || ""}`;
   const typeOptions = isActionForm
     ? ACTION_TYPE_OPTIONS
     : ACTIVITY_TYPE_OPTIONS;
@@ -2452,18 +2624,22 @@ function CommercialActivityModal({
     : ACTIVITY_STATUS_OPTIONS;
   const title = isHistoryView
     ? "Actividades y acciones de la oportunidad"
-    : hasEditableActivity
-      ? isActionForm
-        ? "Actualizar accion"
-        : "Actualizar actividad"
-      : isActionForm
-        ? "Crear accion"
-        : "Crear actividad";
+    : isDependencyView
+      ? "Gestionar dependencias internas"
+      : hasEditableActivity
+        ? isActionForm
+          ? "Actualizar accion"
+          : "Actualizar actividad"
+        : isActionForm
+          ? "Crear accion"
+          : "Crear actividad";
   const helperText = isHistoryView
     ? "Revisa el historial y crea una nueva actividad o una nueva accion desde esta misma vista."
-    : isActionForm
-      ? "Define el siguiente paso comercial con enfoque en resultado, fecha y contexto para el equipo."
-      : "Programa una interaccion comercial y manten visible el siguiente paso de la oportunidad.";
+    : isDependencyView
+      ? "Registra los frentes internos que destraban la oportunidad y actualiza su estado sin salir del cockpit."
+      : isActionForm
+        ? "Define el siguiente paso comercial con enfoque en resultado, fecha y contexto para el equipo."
+        : "Programa una interaccion comercial y manten visible el siguiente paso de la oportunidad.";
   const entryKindGuidance = (
     <div className="section-helper-text">
       <strong>Diferencia clave:</strong> una actividad es una interaccion
@@ -2476,7 +2652,7 @@ function CommercialActivityModal({
   const isModalLocked = saving || isGeneratingEmailSuggestion;
   const emailDetails = {
     ...emptyActionDetails(),
-    ...(draft?.details || {}),
+    ...(safeDraft?.details || {}),
   };
   const hasCcValue = Boolean(String(emailDetails.cc || "").trim());
   const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
@@ -2485,6 +2661,8 @@ function CommercialActivityModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
   }, [ccVisibilityKey, hasCcValue]);
+
+  if (!safeItem) return null;
 
   return (
     <div
@@ -2549,7 +2727,10 @@ function CommercialActivityModal({
               role="status"
               aria-live="polite"
             >
-              <div className="interaction-progress-spinner" aria-hidden="true" />
+              <div
+                className="interaction-progress-spinner"
+                aria-hidden="true"
+              />
               <strong>La IA esta procesando el mensaje del correo</strong>
               <span>
                 Espera un momento mientras se genera el asunto y el mensaje
@@ -2568,6 +2749,14 @@ function CommercialActivityModal({
                 {entryKindGuidance}
               </div>
               <div className="commercial-development-inline-row">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={onShowDependencies}
+                  disabled={isModalLocked}
+                >
+                  Dependencias
+                </button>
                 <button
                   type="button"
                   className="btn-secondary"
@@ -2670,6 +2859,237 @@ function CommercialActivityModal({
               </button>
             </div>
           </div>
+        ) : isDependencyView ? (
+          <div className="commercial-development-dependency-view">
+            <div className="commercial-development-dependency-summary-strip">
+              <div>
+                <span>Estado operativo</span>
+                <strong>{dependencySummary.stateLabel}</strong>
+              </div>
+              <div>
+                <span>Activas</span>
+                <strong>{dependencySummary.activeCount}</strong>
+              </div>
+              <div>
+                <span>Bloqueadas</span>
+                <strong>{dependencySummary.blockedCount}</strong>
+              </div>
+              <div>
+                <span>Vencidas</span>
+                <strong>{dependencySummary.overdueCount}</strong>
+              </div>
+            </div>
+
+            {canUpdate ? (
+              <form
+                className="commercial-development-activity-form-section commercial-development-dependency-form"
+                onSubmit={onSaveDependency}
+              >
+                <div className="commercial-development-activity-section-heading">
+                  <strong>Agregar dependencia</strong>
+                  <p>
+                    Registra el frente interno que destraba el siguiente avance
+                    comercial.
+                  </p>
+                </div>
+                <div className="commercial-development-activity-form-grid">
+                  <label className="commercial-development-field">
+                    <span>Tipo</span>
+                    <select
+                      value={dependencyDraft.dependencyType}
+                      disabled={Boolean(savingDependencyKey)}
+                      onChange={(event) =>
+                        setDependencyDraft((current) => ({
+                          ...current,
+                          dependencyType: event.target.value,
+                        }))
+                      }
+                    >
+                      {DEPENDENCY_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="commercial-development-field">
+                    <span>Fecha compromiso</span>
+                    <input
+                      type="date"
+                      value={dependencyDraft.dueDate}
+                      disabled={Boolean(savingDependencyKey)}
+                      onChange={(event) =>
+                        setDependencyDraft((current) => ({
+                          ...current,
+                          dueDate: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="commercial-development-field commercial-development-field-full-width">
+                    <span>Titulo</span>
+                    <input
+                      value={dependencyDraft.title}
+                      disabled={Boolean(savingDependencyKey)}
+                      onChange={(event) =>
+                        setDependencyDraft((current) => ({
+                          ...current,
+                          title: event.target.value,
+                        }))
+                      }
+                      placeholder="Ej. validacion tecnica de preventa"
+                    />
+                  </label>
+                  <label className="commercial-development-field commercial-development-field-full-width">
+                    <span>Resultado esperado</span>
+                    <input
+                      value={dependencyDraft.expectedOutcome}
+                      disabled={Boolean(savingDependencyKey)}
+                      onChange={(event) =>
+                        setDependencyDraft((current) => ({
+                          ...current,
+                          expectedOutcome: event.target.value,
+                        }))
+                      }
+                      placeholder="Ej. aprobacion para presentar propuesta"
+                    />
+                  </label>
+                  <label className="commercial-development-field commercial-development-field-full-width">
+                    <span>Detalle</span>
+                    <textarea
+                      rows="3"
+                      value={dependencyDraft.details}
+                      disabled={Boolean(savingDependencyKey)}
+                      onChange={(event) =>
+                        setDependencyDraft((current) => ({
+                          ...current,
+                          details: event.target.value,
+                        }))
+                      }
+                      placeholder="Que debe entregar el equipo interno y por que destraba la oportunidad"
+                    />
+                  </label>
+                </div>
+                <div className="modal-buttons commercial-development-activity-actions">
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={savingDependencyKey === `create-${item.id}`}
+                  >
+                    {savingDependencyKey === `create-${item.id}`
+                      ? "Guardando..."
+                      : "Agregar dependencia"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="commercial-development-readonly-note">
+                Tienes acceso de solo lectura. Puedes consultar dependencias,
+                pero no modificarlas.
+              </div>
+            )}
+
+            <div className="commercial-development-activity-form-section commercial-development-dependency-list-panel">
+              <div className="commercial-development-activity-section-heading">
+                <strong>Dependencias activas</strong>
+                <p>
+                  Bloqueadas y abiertas siguen afectando la lectura operativa de
+                  la oportunidad.
+                </p>
+              </div>
+
+              {activeDependencies.length ? (
+                <div className="commercial-development-dependency-list">
+                  {activeDependencies.map((dependency) => (
+                    <article
+                      key={dependency.id}
+                      className="commercial-development-dependency-item"
+                    >
+                      <div className="commercial-development-dependency-topline">
+                        <div>
+                          <strong>{dependency.dependencyLabel}</strong>
+                          <p>{dependency.title}</p>
+                        </div>
+                        <div className="commercial-development-dependency-badges">
+                          <span
+                            className={`commercial-development-pill ${dependency.status === "blocked" ? "is-high" : "is-medium"}`.trim()}
+                          >
+                            {getDependencyStatusLabel(dependency.status)}
+                          </span>
+                          {dependency.isOverdue ? (
+                            <span className="commercial-development-pill is-high">
+                              Vencida
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="commercial-development-dependency-meta-grid">
+                        <span>
+                          <strong>Fecha compromiso:</strong>{" "}
+                          {formatDate(dependency.dueDate)}
+                        </span>
+                        <span>
+                          <strong>Responsable:</strong>{" "}
+                          {dependency.ownerUserName || "Sin responsable"}
+                        </span>
+                      </div>
+                      {dependency.expectedOutcome ? (
+                        <p>
+                          <strong>Resultado esperado:</strong>{" "}
+                          {dependency.expectedOutcome}
+                        </p>
+                      ) : null}
+                      {dependency.details ? <p>{dependency.details}</p> : null}
+
+                      {canUpdate ? (
+                        <div className="commercial-development-dependency-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={
+                              savingDependencyKey === `dep-${dependency.id}`
+                            }
+                            onClick={() =>
+                              onUpdateDependency(dependency.id, {
+                                status:
+                                  dependency.status === "blocked"
+                                    ? "open"
+                                    : "blocked",
+                              })
+                            }
+                          >
+                            {dependency.status === "blocked"
+                              ? "Reabrir"
+                              : "Bloquear"}
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={
+                              savingDependencyKey === `dep-${dependency.id}`
+                            }
+                            onClick={() =>
+                              onUpdateDependency(dependency.id, {
+                                status: "done",
+                                resolutionNote:
+                                  "Resuelta desde Desarrollo Comercial",
+                              })
+                            }
+                          >
+                            Resolver
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  Sin dependencias activas registradas.
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           <form
             className="commercial-development-activity-form"
@@ -2769,7 +3189,6 @@ function CommercialActivityModal({
                   </label>
                 ) : null}
               </div>
-
             </div>
 
             {!isActionForm ? (
@@ -3091,16 +3510,16 @@ function CommercialEmailDraftModal({
   onRequestSend,
   onCancelConfirm,
 }) {
-  if (!item || !draft) return null;
-
+  const safeItem = item || null;
+  const safeDraft = draft || null;
   const emailDetails = {
     ...emptyActionDetails(),
-    ...(draft.details || {}),
+    ...(safeDraft?.details || {}),
   };
-  const isReadOnly = draft.isReadOnly;
+  const isReadOnly = safeDraft?.isReadOnly;
   const sendStatusTone = sendFeedback?.tone || "";
   const sendStatusMessage = sendFeedback?.message || "";
-  const ccVisibilityKey = `${draft.opportunityId || "new"}:${draft.actionId || "new"}:${draft.status || ""}`;
+  const ccVisibilityKey = `${safeDraft?.opportunityId || "new"}:${safeDraft?.actionId || "new"}:${safeDraft?.status || ""}`;
   const hasCcValue = Boolean(String(emailDetails.cc || "").trim());
   const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
 
@@ -3108,6 +3527,8 @@ function CommercialEmailDraftModal({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsCcVisible(hasCcValue);
   }, [ccVisibilityKey, hasCcValue]);
+
+  if (!safeItem || !safeDraft) return null;
 
   function handleEmailPurposeChange(nextPurpose) {
     onChange("purpose", nextPurpose);
@@ -3159,16 +3580,17 @@ function CommercialEmailDraftModal({
             <span className="commercial-development-activity-context-label">
               Oportunidad
             </span>
-            <strong>{draft.opportunityName}</strong>
+            <strong>{safeDraft.opportunityName}</strong>
           </div>
           <div className="commercial-development-inline-row">
-            <span>{draft.accountName}</span>
+            <span>{safeDraft.accountName}</span>
             <span>
-              Estado de la accion: {getEntryStatusLabel("action", draft.status)}
+              Estado de la accion:{" "}
+              {getEntryStatusLabel("action", safeDraft.status)}
             </span>
           </div>
           <div className="commercial-development-inline-row">
-            <span>Respondera comercialmente: {draft.sellerUserName}</span>
+            <span>Respondera comercialmente: {safeDraft.sellerUserName}</span>
             <span>
               {emailDetails.sentAt
                 ? `Enviado: ${formatDateTime(emailDetails.sentAt)}`
@@ -3317,7 +3739,6 @@ function CommercialEmailDraftModal({
               onUploadFiles={onUploadAttachments}
             />
           </div>
-
         </div>
 
         {isConfirmingSend && !isReadOnly ? (
@@ -3410,6 +3831,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   const [activityNotice, setActivityNotice] = useState("");
   const [savingActivity, setSavingActivity] = useState(false);
   const [activityViewMode, setActivityViewMode] = useState("list");
+  const [dependencyDraft, setDependencyDraft] = useState(
+    buildDependencyDraft(null),
+  );
+  const [savingDependencyKey, setSavingDependencyKey] = useState("");
   const [emailDraftModalItem, setEmailDraftModalItem] = useState(null);
   const [emailDraftState, setEmailDraftState] = useState(null);
   const [emailDraftError, setEmailDraftError] = useState("");
@@ -3432,8 +3857,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   ] = useState(false);
   const [generatingEmailDraftSuggestion, setGeneratingEmailDraftSuggestion] =
     useState(false);
-  const [gapCoverageAiLoadingByOpportunityId, setGapCoverageAiLoadingByOpportunityId] =
-    useState({});
+  const [
+    gapCoverageAiLoadingByOpportunityId,
+    setGapCoverageAiLoadingByOpportunityId,
+  ] = useState({});
   const activityEmailSuggestionRef = useRef(null);
   const emailDraftSuggestionRef = useRef(null);
   const emailAttachmentOptionsRef = useRef({});
@@ -3462,30 +3889,33 @@ export default function CommercialDevelopmentPage({ currentUser }) {
       setLoading(true);
       setError("");
       try {
-      const params = {};
-      if (periodKey) {
-        const [year, quarter] = String(periodKey).split("-");
-        if (year) {
-          params.year = Number(year);
+        const params = {};
+        if (periodKey) {
+          const [year, quarter] = String(periodKey).split("-");
+          if (year) {
+            params.year = Number(year);
+          }
+          if (quarter) {
+            params.quarter = Number(quarter);
+          }
         }
-        if (quarter) {
-          params.quarter = Number(quarter);
+        const response = await api.get(
+          "/api/commercial-development/dashboard",
+          {
+            params: Object.keys(params).length ? params : undefined,
+          },
+        );
+        const nextDashboard = normalizeDashboardResponse(response.data);
+        const nextPeriod = nextDashboard?.development?.period;
+        lastLoadedDashboardPeriodKeyRef.current =
+          nextPeriod?.year && nextPeriod?.quarter
+            ? `${nextPeriod.year}-${nextPeriod.quarter}`
+            : requestKey;
+        if (dashboardRequestIdRef.current !== requestId) {
+          return nextDashboard;
         }
-      }
-      const response = await api.get("/api/commercial-development/dashboard", {
-        params: Object.keys(params).length ? params : undefined,
-      });
-      const nextDashboard = normalizeDashboardResponse(response.data);
-      const nextPeriod = nextDashboard?.development?.period;
-      lastLoadedDashboardPeriodKeyRef.current =
-        nextPeriod?.year && nextPeriod?.quarter
-          ? `${nextPeriod.year}-${nextPeriod.quarter}`
-          : requestKey;
-      if (dashboardRequestIdRef.current !== requestId) {
+        setDashboard(nextDashboard);
         return nextDashboard;
-      }
-      setDashboard(nextDashboard);
-      return nextDashboard;
       } catch (requestError) {
         if (dashboardRequestIdRef.current !== requestId) {
           return null;
@@ -3561,9 +3991,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         pollingToken;
 
       const applyNarrative = (payload) => {
-        const nextStatusSummary = String(
-          payload?.aiStatusSummary || "",
-        ).trim();
+        const nextStatusSummary = String(payload?.aiStatusSummary || "").trim();
         const nextStepRecommendation = String(
           payload?.aiNextStepRecommendation || "",
         ).trim();
@@ -3657,10 +4085,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
               ),
               0,
             );
-            nextDelay = Math.min(
-              nextDelay,
-              Math.max(deadline - Date.now(), 0),
-            );
+            nextDelay = Math.min(nextDelay, Math.max(deadline - Date.now(), 0));
           }
         }
       }
@@ -3727,8 +4152,9 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         return existingState;
       }
 
-      emailAttachmentRequestKeyByOpportunityRef.current[normalizedOpportunityId] =
-        requestKey;
+      emailAttachmentRequestKeyByOpportunityRef.current[
+        normalizedOpportunityId
+      ] = requestKey;
 
       setEmailAttachmentOptionsByOpportunityId((current) => ({
         ...current,
@@ -3774,7 +4200,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
             normalizedOpportunityId
           ] !== requestKey
         ) {
-          return emailAttachmentOptionsRef.current[normalizedOpportunityId] || nextState;
+          return (
+            emailAttachmentOptionsRef.current[normalizedOpportunityId] ||
+            nextState
+          );
         }
         setEmailAttachmentOptionsByOpportunityId((current) => ({
           ...current,
@@ -3795,7 +4224,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
             normalizedOpportunityId
           ] !== requestKey
         ) {
-          return emailAttachmentOptionsRef.current[normalizedOpportunityId] || nextState;
+          return (
+            emailAttachmentOptionsRef.current[normalizedOpportunityId] ||
+            nextState
+          );
         }
         setEmailAttachmentOptionsByOpportunityId((current) => ({
           ...current,
@@ -3966,7 +4398,12 @@ export default function CommercialDevelopmentPage({ currentUser }) {
     if (!selectedPeriodKey || !periodExistsInOptions) {
       setSelectedPeriodKey(currentPeriodKey);
     }
-  }, [currentPeriod?.quarter, currentPeriod?.year, periodOptions, selectedPeriodKey]);
+  }, [
+    currentPeriod?.quarter,
+    currentPeriod?.year,
+    periodOptions,
+    selectedPeriodKey,
+  ]);
   const funnel = useMemo(
     () => buildCommercialFunnel(development.pipelineByStage),
     [development.pipelineByStage],
@@ -4290,6 +4727,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
     });
   }, [calendarOpportunityOptions]);
 
+  useEffect(() => {
+    setDependencyDraft(buildDependencyDraft(activityModalItem));
+  }, [activityModalItem]);
+
   if (loading && !dashboard) {
     return (
       <section className="panel centered">
@@ -4418,6 +4859,68 @@ export default function CommercialDevelopmentPage({ currentUser }) {
     setActivityNotice("");
     setActivityAttachmentUploadState({ loading: false, error: "" });
     setActivityViewMode("list");
+  }
+
+  async function handleSaveDependency(event) {
+    event.preventDefault();
+    if (!dependencyDraft.opportunityId) return;
+
+    setSavingDependencyKey(`create-${dependencyDraft.opportunityId}`);
+    setActivityError("");
+    setActivityNotice("");
+    try {
+      await api.post(
+        `/api/execution-commercial/opportunities/${dependencyDraft.opportunityId}/dependencies`,
+        dependencyDraft,
+      );
+      const nextDashboard = await loadDashboard(selectedPeriodKey);
+      syncActivityModalFromDashboard(
+        nextDashboard,
+        dependencyDraft.opportunityId,
+      );
+      const nextItem = findDashboardOpportunity(
+        nextDashboard,
+        dependencyDraft.opportunityId,
+      );
+      setDependencyDraft(buildDependencyDraft(nextItem || activityModalItem));
+      setActivityNotice("Dependencia interna guardada.");
+    } catch (requestError) {
+      setActivityError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible guardar la dependencia interna.",
+        ),
+      );
+    } finally {
+      setSavingDependencyKey("");
+    }
+  }
+
+  async function handleUpdateDependency(dependencyId, payload) {
+    const opportunityId = Number(activityModalItem?.id || 0);
+    if (!opportunityId) return;
+
+    setSavingDependencyKey(`dep-${dependencyId}`);
+    setActivityError("");
+    setActivityNotice("");
+    try {
+      await api.patch(
+        `/api/execution-commercial/dependencies/${dependencyId}`,
+        payload,
+      );
+      const nextDashboard = await loadDashboard(selectedPeriodKey);
+      syncActivityModalFromDashboard(nextDashboard, opportunityId);
+      setActivityNotice("Dependencia interna actualizada.");
+    } catch (requestError) {
+      setActivityError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible actualizar la dependencia interna.",
+        ),
+      );
+    } finally {
+      setSavingDependencyKey("");
+    }
   }
 
   function syncActivityModalFromDashboard(
@@ -5812,179 +6315,243 @@ export default function CommercialDevelopmentPage({ currentUser }) {
               const isGapCoverageAiLoading = Boolean(
                 gapCoverageAiLoadingByOpportunityId[Number(item.id || 0)],
               );
+              const dependencySummary = buildDependencySummary(item);
 
               return (
                 <article
                   key={`gap-coverage-${item.id}`}
                   className="commercial-development-gap-coverage-card"
                 >
-                <div className="commercial-development-inline-row">
-                  <div>
-                    <strong>{item.name}</strong>
-                    <p>{item.accountName}</p>
-                  </div>
-                  <div className="commercial-development-card-actions">
-                    <button
-                      type="button"
-                      className="commercial-development-activity-trigger"
-                      onClick={() => openOpportunityEditor(item.id)}
-                      aria-label={`Editar oportunidad ${item.name}`}
-                      title="Editar oportunidad"
-                    >
-                      <EditOpportunityIcon />
-                    </button>
-                    <div className="commercial-development-card-badges">
-                      <span
-                        className={`commercial-development-pill ${item.coverageKind === "committed" ? "is-low" : "is-medium"}`}
-                      >
-                        {item.coverageKind === "committed"
-                          ? "Comprometida"
-                          : "Ponderada"}
-                      </span>
-                      <span className="commercial-development-date-badge">
-                        Fecha objetivo: {formatDate(item.closeDate)}
-                      </span>
+                  <div className="commercial-development-inline-row">
+                    <div>
+                      <strong>{item.name}</strong>
+                      <p>{item.accountName}</p>
                     </div>
-                    <button
-                      type="button"
-                      className={`commercial-development-activity-trigger ${item.activityCount ? "has-activity" : ""}`.trim()}
-                      onClick={() => openActivityViewer(item)}
-                      aria-label={`Ver actividades y acciones de ${item.name}`}
-                      title="Ver actividades y acciones"
-                    >
-                      <ActivityIcon />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="commercial-development-gap-coverage-grid">
-                  <div>
-                    <span>Monto total</span>
-                    <strong>
-                      {formatCurrency(
-                        item.amountUsd,
-                        currentPeriod?.baseCurrencyCode,
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Etapa actual</span>
-                    <strong>{item.stageName || "Sin etapa"}</strong>
-                  </div>
-                  <div>
-                    <span>Riesgo</span>
-                    <strong>{getRiskLabel(item.riskLevel)}</strong>
-                  </div>
-                </div>
-
-                <div className="commercial-development-gap-coverage-meta">
-                  <div className="commercial-development-gap-coverage-insight">
-                    <div className="commercial-development-gap-coverage-insight-header">
-                      <span>Lectura actual</span>
+                    <div className="commercial-development-card-actions">
                       <button
                         type="button"
-                        className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
-                        onClick={() => requestGapCoverageAiNarrative(item.id)}
-                        disabled={isGapCoverageAiLoading}
-                        aria-label={`Generar lectura actual con IA para ${item.name}`}
-                        title={
-                          isGapCoverageAiLoading
-                            ? "Generando lectura actual con IA..."
-                            : "Generar lectura actual con IA"
-                        }
+                        className="commercial-development-activity-trigger"
+                        onClick={() => openOpportunityEditor(item.id)}
+                        aria-label={`Editar oportunidad ${item.name}`}
+                        title="Editar oportunidad"
                       >
-                        <InsightAiIcon />
+                        <EditOpportunityIcon />
                       </button>
-                    </div>
-                    <p>
-                      {item.aiStatusSummary ||
-                        "Sin lectura sugerida disponible."}
-                    </p>
-                  </div>
-                  <div className="commercial-development-gap-coverage-insight is-accent">
-                    <div className="commercial-development-gap-coverage-insight-header">
-                      <span>Siguiente paso sugerido</span>
+                      <div className="commercial-development-card-badges">
+                        <span
+                          className={`commercial-development-pill ${item.coverageKind === "committed" ? "is-low" : "is-medium"}`}
+                        >
+                          {item.coverageKind === "committed"
+                            ? "Comprometida"
+                            : "Ponderada"}
+                        </span>
+                        <span className="commercial-development-date-badge">
+                          Fecha objetivo: {formatDate(item.closeDate)}
+                        </span>
+                      </div>
                       <button
                         type="button"
-                        className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
-                        onClick={() => requestGapCoverageAiNarrative(item.id)}
-                        disabled={isGapCoverageAiLoading}
-                        aria-label={`Generar siguiente paso sugerido con IA para ${item.name}`}
-                        title={
-                          isGapCoverageAiLoading
-                            ? "Generando siguiente paso sugerido con IA..."
-                            : "Generar siguiente paso sugerido con IA"
-                        }
+                        className={`commercial-development-activity-trigger ${item.activityCount ? "has-activity" : ""}`.trim()}
+                        onClick={() => openActivityViewer(item)}
+                        aria-label={`Ver actividades y acciones de ${item.name}`}
+                        title="Ver actividades y acciones"
                       >
-                        <InsightAiIcon />
+                        <ActivityIcon />
                       </button>
                     </div>
-                    <p>
-                      {item.aiNextStepRecommendation ||
-                        "Sin recomendación sugerida."}
-                    </p>
                   </div>
-                </div>
 
-                <div className="commercial-development-activity-preview">
-                  <p>
-                    <strong>Proxima actividad:</strong>{" "}
-                    {item.nextScheduledActivity
-                      ? `${getEntryTypeLabel("activity", item.nextScheduledActivity.activityType)} · ${formatDateTime(item.nextScheduledActivity.scheduledAt)}`
-                      : "Sin actividad programada"}
-                  </p>
-                  <p>
-                    <strong>Proxima accion:</strong>{" "}
-                    {item.nextPendingAction
-                      ? `${getEntryTypeLabel("action", item.nextPendingAction.activityType)} · ${item.nextPendingAction.dueDate ? formatDate(item.nextPendingAction.dueDate) : "Sin fecha"}`
-                      : "Sin accion pendiente"}
-                  </p>
-                  <p>
-                    <strong>Siguiente paso principal:</strong>{" "}
-                    {item.nextStep?.title
-                      ? `${getEntryTypeLabel(getEntryKind(item.nextStep.actionType), item.nextStep.actionType)}: ${item.nextStep.title}`
-                      : "Sin definir"}
-                  </p>
-                  <p>
-                    <strong>Historial:</strong>{" "}
-                    {item.activityCount || item.actionCount
-                      ? `${item.activityCount || 0} ${item.activityCount === 1 ? "actividad" : "actividades"} · ${item.actionCount || 0} ${item.actionCount === 1 ? "accion" : "acciones"}`
-                      : "Sin actividades ni acciones"}
-                  </p>
-                  {item.nextScheduledActivity ||
-                  isSendEmailAction(item.nextPendingAction) ? (
-                    <div className="commercial-development-activity-preview-actions">
-                      {isSendEmailAction(item.nextPendingAction) ? (
+                  <div className="commercial-development-gap-coverage-grid">
+                    <div>
+                      <span>Monto total</span>
+                      <strong>
+                        {formatCurrency(
+                          item.amountUsd,
+                          currentPeriod?.baseCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Etapa actual</span>
+                      <strong>{item.stageName || "Sin etapa"}</strong>
+                    </div>
+                    <div>
+                      <span>Riesgo</span>
+                      <strong>{getRiskLabel(item.riskLevel)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="commercial-development-gap-coverage-meta">
+                    <div className="commercial-development-gap-coverage-insight">
+                      <div className="commercial-development-gap-coverage-insight-header">
+                        <span>Lectura actual</span>
+                        <button
+                          type="button"
+                          className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
+                          onClick={() => requestGapCoverageAiNarrative(item.id)}
+                          disabled={isGapCoverageAiLoading}
+                          aria-label={`Generar lectura actual con IA para ${item.name}`}
+                          title={
+                            isGapCoverageAiLoading
+                              ? "Generando lectura actual con IA..."
+                              : "Generar lectura actual con IA"
+                          }
+                        >
+                          <InsightAiIcon />
+                        </button>
+                      </div>
+                      <p>
+                        {item.aiStatusSummary ||
+                          "Sin lectura sugerida disponible."}
+                      </p>
+                    </div>
+                    <div className="commercial-development-gap-coverage-insight is-accent">
+                      <div className="commercial-development-gap-coverage-insight-header">
+                        <span>Siguiente paso sugerido</span>
+                        <button
+                          type="button"
+                          className={`commercial-development-gap-coverage-ai-trigger ${isGapCoverageAiLoading ? "is-loading" : ""}`.trim()}
+                          onClick={() => requestGapCoverageAiNarrative(item.id)}
+                          disabled={isGapCoverageAiLoading}
+                          aria-label={`Generar siguiente paso sugerido con IA para ${item.name}`}
+                          title={
+                            isGapCoverageAiLoading
+                              ? "Generando siguiente paso sugerido con IA..."
+                              : "Generar siguiente paso sugerido con IA"
+                          }
+                        >
+                          <InsightAiIcon />
+                        </button>
+                      </div>
+                      <p>
+                        {item.aiNextStepRecommendation ||
+                          "Sin recomendación sugerida."}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="commercial-development-activity-preview">
+                    <p>
+                      <strong>Proxima actividad:</strong>{" "}
+                      {item.nextScheduledActivity
+                        ? `${getEntryTypeLabel("activity", item.nextScheduledActivity.activityType)} · ${formatDateTime(item.nextScheduledActivity.scheduledAt)}`
+                        : "Sin actividad programada"}
+                    </p>
+                    <p>
+                      <strong>Proxima accion:</strong>{" "}
+                      {item.nextPendingAction
+                        ? `${getEntryTypeLabel("action", item.nextPendingAction.activityType)} · ${item.nextPendingAction.dueDate ? formatDate(item.nextPendingAction.dueDate) : "Sin fecha"}`
+                        : "Sin accion pendiente"}
+                    </p>
+                    <p>
+                      <strong>Siguiente paso principal:</strong>{" "}
+                      {item.nextStep?.title
+                        ? `${getEntryTypeLabel(getEntryKind(item.nextStep.actionType), item.nextStep.actionType)}: ${item.nextStep.title}`
+                        : "Sin definir"}
+                    </p>
+                    <p>
+                      <strong>Historial:</strong>{" "}
+                      {item.activityCount || item.actionCount
+                        ? `${item.activityCount || 0} ${item.activityCount === 1 ? "actividad" : "actividades"} · ${item.actionCount || 0} ${item.actionCount === 1 ? "accion" : "acciones"}`
+                        : "Sin actividades ni acciones"}
+                    </p>
+                    {item.nextScheduledActivity ||
+                    isSendEmailAction(item.nextPendingAction) ? (
+                      <div className="commercial-development-activity-preview-actions">
+                        {isSendEmailAction(item.nextPendingAction) ? (
+                          <button
+                            type="button"
+                            className="commercial-development-activity-icon-button"
+                            onClick={() =>
+                              openEmailDraftModal(item, item.nextPendingAction)
+                            }
+                            aria-label={`Abrir borrador de correo de ${item.name}`}
+                            title="Abrir borrador de correo"
+                          >
+                            <MailActionIcon />
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="commercial-development-activity-icon-button"
                           onClick={() =>
-                            openEmailDraftModal(item, item.nextPendingAction)
+                            openEditActivityModal(
+                              item,
+                              item.nextScheduledActivity,
+                            )
                           }
-                          aria-label={`Abrir borrador de correo de ${item.name}`}
-                          title="Abrir borrador de correo"
+                          disabled={!item.nextScheduledActivity}
+                          aria-label={`Reprogramar actividad de ${item.name}`}
+                          title="Reprogramar actividad"
                         >
-                          <MailActionIcon />
+                          <RescheduleIcon />
                         </button>
-                      ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="commercial-development-dependency-card-panel">
+                    <div className="commercial-development-dependency-card-header">
+                      <div>
+                        <span className="commercial-development-dependency-kicker">
+                          Dependencias internas
+                        </span>
+                        <strong>{dependencySummary.stateLabel}</strong>
+                      </div>
                       <button
                         type="button"
-                        className="commercial-development-activity-icon-button"
+                        className="secondary-button"
                         onClick={() =>
-                          openEditActivityModal(
-                            item,
-                            item.nextScheduledActivity,
-                          )
+                          openActivityModal(item, { viewMode: "dependencies" })
                         }
-                        disabled={!item.nextScheduledActivity}
-                        aria-label={`Reprogramar actividad de ${item.name}`}
-                        title="Reprogramar actividad"
                       >
-                        <RescheduleIcon />
+                        {dependencySummary.activeCount
+                          ? "Gestionar dependencias"
+                          : "Agregar dependencia"}
                       </button>
                     </div>
-                  ) : null}
-                </div>
+
+                    <div className="commercial-development-dependency-card-chips">
+                      <span
+                        className={`commercial-development-pill ${dependencySummary.toneClass}`.trim()}
+                      >
+                        {dependencySummary.stateLabel}
+                      </span>
+                      <span className="commercial-development-pill is-low">
+                        {dependencySummary.openCount} abiertas
+                      </span>
+                      <span className="commercial-development-pill is-low">
+                        {dependencySummary.blockedCount} bloqueadas
+                      </span>
+                      <span className="commercial-development-pill is-low">
+                        {dependencySummary.overdueCount} vencidas
+                      </span>
+                    </div>
+
+                    {dependencySummary.highlightedDependency ? (
+                      <p className="commercial-development-dependency-card-focus">
+                        <strong>
+                          {
+                            dependencySummary.highlightedDependency
+                              .dependencyLabel
+                          }
+                          :
+                        </strong>{" "}
+                        {dependencySummary.highlightedDependency.title}
+                        {dependencySummary.highlightedDependency.dueDate
+                          ? ` · vence ${formatDate(dependencySummary.highlightedDependency.dueDate)}`
+                          : ""}
+                        {dependencySummary.highlightedDependency.ownerUserName
+                          ? ` · ${dependencySummary.highlightedDependency.ownerUserName}`
+                          : ""}
+                      </p>
+                    ) : (
+                      <p className="commercial-development-dependency-card-focus">
+                        Sin frentes internos activos registrados para esta
+                        oportunidad.
+                      </p>
+                    )}
+                  </div>
                 </article>
               );
             })}
@@ -6002,8 +6569,11 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         item={activityModalItem}
         draft={activityDraft}
         setDraft={setActivityDraft}
+        dependencyDraft={dependencyDraft}
+        setDependencyDraft={setDependencyDraft}
         canUpdate={canUpdateCommercialDevelopment}
         saving={savingActivity}
+        savingDependencyKey={savingDependencyKey}
         error={activityError}
         notice={activityNotice}
         isGeneratingEmailSuggestion={generatingActivityEmailSuggestion}
@@ -6018,11 +6588,14 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         onUploadAttachments={handleUploadActivityAttachments}
         onClose={closeActivityModal}
         onSubmit={handleSaveActivity}
+        onSaveDependency={handleSaveDependency}
+        onUpdateDependency={handleUpdateDependency}
         onExecute={handleExecuteActivity}
         onMarkDone={handleCompleteActivity}
         viewMode={activityViewMode}
         onShowCreate={showCreateActivityForm}
         onShowCreateAction={showCreateActionForm}
+        onShowDependencies={() => setActivityViewMode("dependencies")}
         onShowList={showActivityList}
         onSelectActivity={selectActivityFromList}
         onOpenEmailDraft={(activity) =>

@@ -1227,6 +1227,43 @@ button:disabled {
   line-height: 1.35;
 }
 
+.commercial-development-dependency-card-panel {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.78rem 0.85rem;
+  border: 1px solid rgba(58, 73, 49, 0.1);
+  border-radius: 16px;
+  background: #f8f8f2;
+}
+
+.commercial-development-dependency-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.commercial-development-dependency-kicker {
+  display: block;
+  color: #6d7862;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 0.15rem;
+}
+
+.commercial-development-dependency-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.commercial-development-dependency-card-focus {
+  color: #56614f;
+  font-size: 0.84rem;
+}
+
 .commercial-development-gap-coverage-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -2952,12 +2989,110 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.commercial-development-dependency-view {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.commercial-development-dependency-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.commercial-development-dependency-summary-strip > div {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.72rem 0.78rem;
+  border-radius: 14px;
+  background: #f8f8f2;
+}
+
+.commercial-development-dependency-summary-strip span {
+  color: #61705b;
+  font-size: 0.78rem;
+}
+
+.commercial-development-dependency-summary-strip strong {
+  color: #223120;
+}
+
+.commercial-development-dependency-form {
+  margin: 0;
+}
+
+.commercial-development-dependency-list-panel {
+  gap: 0.7rem;
+}
+
+.commercial-development-dependency-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.commercial-development-dependency-item {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.78rem 0.84rem;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(78, 95, 62, 0.08);
+}
+
+.commercial-development-dependency-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.commercial-development-dependency-badges,
+.commercial-development-dependency-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.commercial-development-dependency-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  color: #54604a;
+  font-size: 0.84rem;
+}
+
+.commercial-development-readonly-note {
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  background: #f8f8f2;
+  color: #56614f;
+}
+
 .commercial-development-activity-list-toolbar,
 .commercial-development-activity-form-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .commercial-development-dependency-summary-strip,
+  .commercial-development-dependency-meta-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .commercial-development-dependency-card-header,
+  .commercial-development-dependency-topline {
+    flex-direction: column;
+  }
+
+  .commercial-development-dependency-summary-strip,
+  .commercial-development-dependency-meta-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .commercial-development-activity-modal.is-compact-action

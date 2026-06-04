@@ -14,6 +14,7 @@ import { ensureCommercialEnablementStarterData } from "./commercial-enablement/l
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
 import { ensureCommercialDevelopmentPermissions } from "./commercial-development/permissions.js";
+import { ensureCommercialTrackingPermissions } from "./commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "./manufacturer-registrations/permissions.js";
@@ -40,6 +41,7 @@ export async function startServer() {
   await ensureCorePermissions();
   await ensureInteractionPermissions();
   await ensureCommercialDevelopmentPermissions();
+  await ensureCommercialTrackingPermissions();
   await ensureCommercialEnablementPermissions();
   await ensureCommercialPlanningPermissions();
   await ensureManufacturerRegistrationPermissions();

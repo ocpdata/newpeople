@@ -14,6 +14,7 @@ import interactionRoutes from "./routes.interactions.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
+import commercialTrackingRoutes from "./routes.commercial-tracking.js";
 import commercialEnablementRoutes from "./routes.commercial-enablement.js";
 import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.js";
@@ -74,6 +75,12 @@ export function createApp() {
     authRequired,
     loadUser,
     executionCommercialRoutes,
+  );
+  app.use(
+    "/api/commercial-tracking",
+    authRequired,
+    loadUser,
+    commercialTrackingRoutes,
   );
   app.use(
     "/api/commercial-enablement",

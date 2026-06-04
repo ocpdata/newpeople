@@ -25,6 +25,7 @@ const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
 const CommercialDevelopmentPage = lazy(
   () => import("./CommercialDevelopmentPage"),
 );
+const CommercialTrackingPage = lazy(() => import("./CommercialTrackingPage"));
 const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
   () => import("./CommercialEnablementPage"),
@@ -124,6 +125,9 @@ export default function AppShell({
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     can("oportunidades.read");
+  const canAccessCommercialTracking =
+    can("seguimiento_comercial.read") &&
+    (can("oportunidades.read") || can("oportunidades.read_all"));
   const canAccessProcessCommercialConfig =
     can("proceso_comercial_config.read") ||
     can("proceso_comercial_config.update");
@@ -265,6 +269,16 @@ export default function AppShell({
         <Route
           path="/execution-commercial"
           element={<Navigate to="/commercial-development" replace />}
+        />
+        <Route
+          path="/commercial-tracking"
+          element={
+            canAccessCommercialTracking ? (
+              <CommercialTrackingPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
         />
         <Route
           path="/commercial-planning"
@@ -422,10 +436,19 @@ export default function AppShell({
           )}
 
           {(canAccessCommercialDevelopment ||
+            canAccessCommercialTracking ||
             canAccessCommercialPlanning ||
             canAccessCommercialEnablement ||
             can("contactos.read")) && (
             <SidebarNavGroup title="Desarrollo">
+              {canAccessCommercialTracking ? (
+                <GuardedNavLink
+                  to="/commercial-tracking"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Seguimiento comercial
+                </GuardedNavLink>
+              ) : null}
               {canAccessCommercialPlanning ? (
                 <GuardedNavLink
                   to="/commercial-planning"
