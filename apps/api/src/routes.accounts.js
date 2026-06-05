@@ -268,9 +268,14 @@ const accountStatusSchema = z.object({
 
 const accountCreatePermissions = ["cuentas.create", "cuentas.request"];
 const accountGlobalReadPermission = "cuentas.read_all";
+const accountAssignAnyOwnersPermission = "cuentas.assign_owners_any";
 
 function hasGlobalAccountReadScope(user) {
   return user?.permissionSet?.has(accountGlobalReadPermission);
+}
+
+function canAssignAnyAccountOwners(user) {
+  return user?.permissionSet?.has(accountAssignAnyOwnersPermission);
 }
 
 function applyAccountOwnershipScope({ user, accountAlias, params }) {
@@ -616,6 +621,20 @@ router.post(
       });
     }
 
+    const actorUserId = Number(req.user.id || 0);
+    const canAssignAnyOwners = canAssignAnyAccountOwners(req.user);
+    const effectiveOwnerUserIds = canAssignAnyOwners
+      ? Array.from(new Set(body.ownerUserIds.map(Number).filter(Boolean)))
+      : actorUserId
+        ? [actorUserId]
+        : [];
+
+    if (!effectiveOwnerUserIds.length) {
+      return res.status(403).json({
+        message: "No autorizado para asignar propietarios en cuentas",
+      });
+    }
+
     const duplicateValidation = await validateAccountDuplicates({
       draft: body,
       user: req.user,
@@ -659,7 +678,7 @@ router.post(
           ],
         );
 
-        for (const ownerUserId of body.ownerUserIds) {
+        for (const ownerUserId of effectiveOwnerUserIds) {
           await conn.query(
             "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
             [insertResult.insertId, ownerUserId, now, req.user.id],
@@ -690,7 +709,7 @@ router.post(
           address_line: body.addressLine || null,
           postal_code: body.postalCode || null,
           activation_status_id: activationStatusId,
-          owner_user_ids: body.ownerUserIds.map(Number),
+          owner_user_ids: effectiveOwnerUserIds,
           duplicate_override: allowDuplicateOverride,
           duplicate_decision:
             duplicateValidation.duplicateDecision === "clear"
@@ -806,6 +825,20 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
     "SELECT user_id FROM account_owners WHERE account_id = ? ORDER BY user_id",
     [id],
   );
+  const canAssignAnyOwners = canAssignAnyAccountOwners(req.user);
+  const effectiveOwnerUserIds = canAssignAnyOwners
+    ? Array.from(new Set(body.ownerUserIds.map(Number).filter(Boolean)))
+    : beforeOwners
+        .map((row) => Number(row.user_id || 0))
+        .filter(
+          (ownerUserId) => Number.isInteger(ownerUserId) && ownerUserId > 0,
+        );
+
+  if (!effectiveOwnerUserIds.length) {
+    return res.status(403).json({
+      message: "No autorizado para modificar propietarios de la cuenta",
+    });
+  }
 
   try {
     await withTransaction(async (conn) => {
@@ -836,7 +869,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
       );
 
       await conn.query("DELETE FROM account_owners WHERE account_id = ?", [id]);
-      for (const ownerUserId of body.ownerUserIds) {
+      for (const ownerUserId of effectiveOwnerUserIds) {
         await conn.query(
           "INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
           [id, ownerUserId, now, req.user.id],

@@ -80,6 +80,20 @@ function hasGlobalOpportunityReadScope(user) {
   return user?.permissionSet?.has(opportunityGlobalReadPermission);
 }
 
+function normalizeRoleName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function hasSellerRole(user) {
+  return (Array.isArray(user?.roles) ? user.roles : []).some((role) =>
+    normalizeRoleName(role?.name).startsWith("vendedor"),
+  );
+}
+
 function applyOwnedAccountScope({
   user,
   accountExpression,
@@ -659,12 +673,17 @@ router.get(
 router.get(
   "/account-owner-users",
   requirePermission("cuentas.read"),
-  async (_req, res) => {
+  async (req, res) => {
+    const canAssignAnyOwners = req.user?.permissionSet?.has(
+      "cuentas.assign_owners_any",
+    );
     const rows = await query(
       `SELECT id, full_name, email, status
        FROM users
        WHERE status = 'active'
+         ${canAssignAnyOwners ? "" : "AND id = ?"}
        ORDER BY full_name`,
+      canAssignAnyOwners ? [] : [Number(req.user.id)],
     );
     res.json(rows);
   },
@@ -907,7 +926,10 @@ router.get(
 router.get(
   "/opportunity-seller-users",
   requirePermission("oportunidades.read"),
-  async (_req, res) => {
+  async (req, res) => {
+    const restrictToCurrentSeller =
+      hasSellerRole(req.user) && !hasGlobalOpportunityReadScope(req.user);
+
     const rows = await query(
       `SELECT DISTINCT u.id, u.full_name, u.email
        FROM users u
@@ -926,7 +948,9 @@ router.get(
              WHERE o.seller_user_id = u.id
            )
          )
+         ${restrictToCurrentSeller ? "AND u.id = ?" : ""}
        ORDER BY u.full_name`,
+      restrictToCurrentSeller ? [Number(req.user.id)] : [],
     );
     res.json(rows);
   },

@@ -32,11 +32,7 @@ export default function ProposalTemplatePickerModal({
   };
 
   return (
-    <div
-      className="modal-overlay modal-overlay-elevated"
-      role="presentation"
-      onClick={onClose}
-    >
+    <div className="modal-overlay modal-overlay-elevated" role="presentation">
       <div
         className="modal-dialog modal-dialog-wide proposal-template-picker-modal"
         role="dialog"
@@ -49,9 +45,18 @@ export default function ProposalTemplatePickerModal({
             <h3 className="modal-title">{title}</h3>
             {subtitle ? <p className="field-hint">{subtitle}</p> : null}
           </div>
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            Cerrar
-          </button>
+          <div className="account-modal-header-actions">
+            <button
+              type="button"
+              className="opportunity-documents-apply-icon-button account-modal-close-button"
+              onClick={onClose}
+              aria-label="Cerrar modal de creación de propuesta"
+              title="Cerrar"
+              disabled={busy}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="proposal-template-picker-intro">

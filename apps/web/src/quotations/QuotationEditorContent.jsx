@@ -18,7 +18,7 @@ import {
   toNumber,
   resolveQuotationItemSaleTarget,
 } from "./quotationsUtils";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   QuotationCommercialConditionsCard,
   QuotationInternalNotesField,
@@ -982,12 +982,17 @@ function QuotationEditorContent({
   );
   const summaryDiscountPreview = useMemo(
     () =>
-      calculateCreateQuotationSummary(summaryDiscountPreviewSections, {
-        mode: summaryDiscountMode,
-        value: Number(versionForm.summaryDiscountValue) || 0,
-      }, {}, {
-        inclusionTypes: catalogs.inclusionTypes,
-      }),
+      calculateCreateQuotationSummary(
+        summaryDiscountPreviewSections,
+        {
+          mode: summaryDiscountMode,
+          value: Number(versionForm.summaryDiscountValue) || 0,
+        },
+        {},
+        {
+          inclusionTypes: catalogs.inclusionTypes,
+        },
+      ),
     [
       catalogs.inclusionTypes,
       summaryDiscountPreviewSections,
@@ -1102,80 +1107,82 @@ function QuotationEditorContent({
           ) {
             return null;
           }
-        const sectionDisplayItems = buildSectionDisplayItems(section);
-        const collapsedBundleIds = new Set(
-          collapsedBundleIdsBySection[String(section.id)] || [],
-        );
-        const effectiveSectionItems =
-          effectiveSummarySections.find(
-            (candidateSection) =>
-              Number(candidateSection.id) === Number(section.id),
-          )?.items || sectionDisplayItems;
-        const effectiveSectionItemsById = new Map(
-          effectiveSectionItems.map((item) => [
-            String(item.localId || item.id),
-            item,
-          ]),
-        );
+          const sectionDisplayItems = buildSectionDisplayItems(section);
+          const collapsedBundleIds = new Set(
+            collapsedBundleIdsBySection[String(section.id)] || [],
+          );
+          const effectiveSectionItems =
+            effectiveSummarySections.find(
+              (candidateSection) =>
+                Number(candidateSection.id) === Number(section.id),
+            )?.items || sectionDisplayItems;
+          const effectiveSectionItemsById = new Map(
+            effectiveSectionItems.map((item) => [
+              String(item.localId || item.id),
+              item,
+            ]),
+          );
 
-        const subtotal = sectionDisplayItems
-          .filter((item) => !item.bundleParentLocalId)
-          .reduce((accumulator, item) => {
-            const effectiveItem =
-              effectiveSectionItemsById.get(String(item.localId || item.id)) ||
-              item;
-            const totals = calculateQuotationItemDisplayTotals(
-              effectiveItem,
-              effectiveSectionItems,
-            );
+          const subtotal = sectionDisplayItems
+            .filter((item) => !item.bundleParentLocalId)
+            .reduce((accumulator, item) => {
+              const effectiveItem =
+                effectiveSectionItemsById.get(
+                  String(item.localId || item.id),
+                ) || item;
+              const totals = calculateQuotationItemDisplayTotals(
+                effectiveItem,
+                effectiveSectionItems,
+              );
 
-            return accumulator + Number(totals.salePriceTotal || 0);
-          }, 0);
+              return accumulator + Number(totals.salePriceTotal || 0);
+            }, 0);
 
-        const rows = sectionDisplayItems
-          .map((item) => {
-            const displayItem =
-              effectiveSectionItemsById.get(String(item.localId || item.id)) ||
-              item;
-            const bundleParentLocalId = displayItem.bundleParentLocalId
-              ? String(displayItem.bundleParentLocalId)
-              : null;
+          const rows = sectionDisplayItems
+            .map((item) => {
+              const displayItem =
+                effectiveSectionItemsById.get(
+                  String(item.localId || item.id),
+                ) || item;
+              const bundleParentLocalId = displayItem.bundleParentLocalId
+                ? String(displayItem.bundleParentLocalId)
+                : null;
 
-            if (
-              bundleParentLocalId &&
-              collapsedBundleIds.has(bundleParentLocalId)
-            ) {
-              return null;
-            }
+              if (
+                bundleParentLocalId &&
+                collapsedBundleIds.has(bundleParentLocalId)
+              ) {
+                return null;
+              }
 
-            const totals = calculateQuotationItemDisplayTotals(
-              displayItem,
-              effectiveSectionItems,
-            );
+              const totals = calculateQuotationItemDisplayTotals(
+                displayItem,
+                effectiveSectionItems,
+              );
 
-            return {
-              id: displayItem.localId || item.localId || item.id,
-              displayOrder: displayItem.displayOrder,
-              productCode: displayItem.productCode,
-              productDescription: displayItem.productDescription,
-              quantity: displayItem.quantity,
-              quantityDisplay: toNumber(displayItem.quantity || 0).toFixed(2),
-              salePriceUnit: totals.salePriceUnit,
-              salePriceTotal: totals.salePriceTotal,
-            };
-          })
-          .filter(Boolean);
+              return {
+                id: displayItem.localId || item.localId || item.id,
+                displayOrder: displayItem.displayOrder,
+                productCode: displayItem.productCode,
+                productDescription: displayItem.productDescription,
+                quantity: displayItem.quantity,
+                quantityDisplay: toNumber(displayItem.quantity || 0).toFixed(2),
+                salePriceUnit: totals.salePriceUnit,
+                salePriceTotal: totals.salePriceTotal,
+              };
+            })
+            .filter(Boolean);
 
-        return {
-          id: section.id,
-          title: formatQuotationOptionalSectionTitle(
-            sectionDraftValue.title || `Seccion ${section.id}`,
-            sectionDraftValue,
-            catalogs.inclusionTypes,
-          ),
-          subtotal,
-          rows,
-        };
+          return {
+            id: section.id,
+            title: formatQuotationOptionalSectionTitle(
+              sectionDraftValue.title || `Seccion ${section.id}`,
+              sectionDraftValue,
+              catalogs.inclusionTypes,
+            ),
+            subtotal,
+            rows,
+          };
         })
         .filter(Boolean),
     [
@@ -4500,7 +4507,6 @@ function QuotationEditorContent({
               : "Esta version aun no tiene documentos adjuntos."}
           </div>
         )}
-
       </section>
 
       <div className="quotation-edit-actions">

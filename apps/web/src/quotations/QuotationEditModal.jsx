@@ -15,7 +15,7 @@ function QuotationEditModal({
   const selectedVersion = editorContentProps?.selectedVersion;
 
   return (
-    <div className="modal-overlay" onClick={closeEditQuotationModal}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog modal-dialog-account quotation-create-modal quotation-edit-modal"
         onClick={(event) => event.stopPropagation()}
@@ -28,24 +28,38 @@ function QuotationEditModal({
               ventana.
             </p>
           </div>
-          {selectedVersion ? (
-            <div className="quotation-edit-modal-meta" aria-label="Resumen de cotizacion">
-              <span className="record-id-badge">
-                Cotizacion {selectedQuotation?.id || "-"}
-              </span>
-              <span className="record-id-badge">
-                Version {selectedVersion.versionNumber}
-              </span>
-              <span className="record-id-badge">
-                Estado: {selectedVersion.statusName}
-              </span>
-              <span className="record-id-badge">
-                {selectedVersion.isLatestVersion
-                  ? "Version mayor"
-                  : "Version historica"}
-              </span>
-            </div>
-          ) : null}
+          <div className="account-modal-header-actions">
+            {selectedVersion ? (
+              <div
+                className="quotation-edit-modal-meta"
+                aria-label="Resumen de cotizacion"
+              >
+                <span className="record-id-badge">
+                  Cotizacion {selectedQuotation?.id || "-"}
+                </span>
+                <span className="record-id-badge">
+                  Version {selectedVersion.versionNumber}
+                </span>
+                <span className="record-id-badge">
+                  Estado: {selectedVersion.statusName}
+                </span>
+                <span className="record-id-badge">
+                  {selectedVersion.isLatestVersion
+                    ? "Version mayor"
+                    : "Version historica"}
+                </span>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="opportunity-documents-apply-icon-button account-modal-close-button"
+              onClick={closeEditQuotationModal}
+              aria-label="Cerrar modal de edición de cotización"
+              title="Cerrar"
+            >
+              ×
+            </button>
+          </div>
         </div>
         <div className="quotation-content quotation-edit-modal-content">
           <QuotationEditorContent

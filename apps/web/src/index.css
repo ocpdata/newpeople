@@ -13901,6 +13901,38 @@ td {
   line-height: 1.4;
 }
 
+.account-modal-header-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.account-modal-header-actions .opportunity-modal-header-meta {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.opportunity-documents-apply-icon-button.account-modal-close-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 24px;
+  color: #b42318;
+  border-color: #efc2be;
+  background: #fff4f3;
+}
+
+.opportunity-documents-apply-icon-button.account-modal-close-button:hover:not(
+    :disabled
+  ) {
+  color: #8f1d13;
+  border-color: #e2a09a;
+  background: #ffe8e6;
+}
+
 @media (max-width: 640px) {
   .account-modal-help-popover {
     width: min(320px, calc(100vw - 3rem));

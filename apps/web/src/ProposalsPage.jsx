@@ -2478,10 +2478,7 @@ function ProposalEditorModal({
   if (!isOpen) return null;
 
   return (
-    <div
-      className="modal-overlay modal-overlay-elevated"
-      onClick={handleCloseRequest}
-    >
+    <div className="modal-overlay modal-overlay-elevated">
       <div
         className="modal-dialog modal-dialog-account modal-dialog-with-scroll-shell proposal-editor-modal"
         role="dialog"
@@ -2497,13 +2494,17 @@ function ProposalEditorModal({
               paso a paso.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleCloseRequest}
-          >
-            Cerrar
-          </button>
+          <div className="account-modal-header-actions">
+            <button
+              type="button"
+              className="opportunity-documents-apply-icon-button account-modal-close-button"
+              onClick={handleCloseRequest}
+              aria-label="Cerrar modal de edición de propuesta"
+              title="Cerrar"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="modal-dialog-scroll-shell proposal-editor-modal-body">
@@ -3393,6 +3394,11 @@ export default function ProposalsPage() {
         if (cancelled) return;
         setProposalAiLibraryAssets([]);
         setProposalAiLibraryLoaded(true);
+        const statusCode = Number(err?.response?.status || 0);
+        if (statusCode === 403) {
+          // La biblioteca comercial es opcional para editar propuestas; omitir ruido de permisos cruzados.
+          return;
+        }
         setError(
           getApiErrorMessage(
             err,

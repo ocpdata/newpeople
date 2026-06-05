@@ -670,12 +670,17 @@ function QuotationCreateModal({
   );
   const summaryDiscountPreview = useMemo(
     () =>
-      calculateCreateQuotationSummary(summaryDiscountPreviewSections, {
-        mode: summaryDiscountMode,
-        value: summaryDiscountValue,
-      }, {}, {
-        inclusionTypes: catalogs.inclusionTypes,
-      }),
+      calculateCreateQuotationSummary(
+        summaryDiscountPreviewSections,
+        {
+          mode: summaryDiscountMode,
+          value: summaryDiscountValue,
+        },
+        {},
+        {
+          inclusionTypes: catalogs.inclusionTypes,
+        },
+      ),
     [
       catalogs.inclusionTypes,
       summaryDiscountMode,
@@ -1743,7 +1748,11 @@ function QuotationCreateModal({
     }));
   }
 
-  function openSaleAdjustmentDialog(sectionIndex, itemLocalId, currentSalePriceTotal) {
+  function openSaleAdjustmentDialog(
+    sectionIndex,
+    itemLocalId,
+    currentSalePriceTotal,
+  ) {
     setSaleAdjustmentDialogState({
       isOpen: true,
       sectionIndex,
@@ -1946,7 +1955,8 @@ function QuotationCreateModal({
     const objectUrl = window.URL.createObjectURL(document.file);
     const link = window.document.createElement("a");
     link.href = objectUrl;
-    link.download = document.originalFileName || document.file.name || "documento";
+    link.download =
+      document.originalFileName || document.file.name || "documento";
     window.document.body.appendChild(link);
     link.click();
     window.document.body.removeChild(link);
@@ -2069,7 +2079,7 @@ function QuotationCreateModal({
 
   return (
     <>
-      <div className="modal-overlay" onClick={requestCloseCreateQuotationModal}>
+      <div className="modal-overlay">
         <div
           className="modal-dialog modal-dialog-account quotation-create-modal"
           onClick={(event) => event.stopPropagation()}
@@ -2081,6 +2091,18 @@ function QuotationCreateModal({
                 Selecciona el contexto comercial y completa los datos para
                 registrar la cotizacion.
               </p>
+            </div>
+            <div className="account-modal-header-actions">
+              <button
+                type="button"
+                className="opportunity-documents-apply-icon-button account-modal-close-button"
+                onClick={requestCloseCreateQuotationModal}
+                aria-label="Cerrar modal de creación de cotización"
+                title="Cerrar"
+                disabled={busyAction === "create-quotation"}
+              >
+                ×
+              </button>
             </div>
           </div>
 
@@ -2462,9 +2484,9 @@ function QuotationCreateModal({
                           : null;
                         const selectedRowIsBundleParent = Boolean(
                           selectedEffectiveRowItem &&
-                            selectedEffectiveRowItem.itemType ===
-                              "grupo_productos" &&
-                            !selectedEffectiveRowItem.isBundleComponent,
+                          selectedEffectiveRowItem.itemType ===
+                            "grupo_productos" &&
+                          !selectedEffectiveRowItem.isBundleComponent,
                         );
                         const saleAdjustmentFinalDiscountDisabled =
                           summaryDistributionMode === "per_item";
@@ -2927,24 +2949,30 @@ function QuotationCreateModal({
                                       id={`sale-adjustment-total-${section.localId}`}
                                       type="text"
                                       inputMode="decimal"
-                                      value={saleAdjustmentDialogState.targetSalePriceTotal}
+                                      value={
+                                        saleAdjustmentDialogState.targetSalePriceTotal
+                                      }
                                       onChange={(event) =>
-                                        setSaleAdjustmentDialogState((prev) => ({
-                                          ...prev,
-                                          targetSalePriceTotal:
-                                            sanitizeQuotationMoneyInputValue(
-                                              event.target.value,
-                                            ),
-                                        }))
+                                        setSaleAdjustmentDialogState(
+                                          (prev) => ({
+                                            ...prev,
+                                            targetSalePriceTotal:
+                                              sanitizeQuotationMoneyInputValue(
+                                                event.target.value,
+                                              ),
+                                          }),
+                                        )
                                       }
                                       onBlur={(event) =>
-                                        setSaleAdjustmentDialogState((prev) => ({
-                                          ...prev,
-                                          targetSalePriceTotal:
-                                            formatQuotationMoneyInputValue(
-                                              event.target.value,
-                                            ),
-                                        }))
+                                        setSaleAdjustmentDialogState(
+                                          (prev) => ({
+                                            ...prev,
+                                            targetSalePriceTotal:
+                                              formatQuotationMoneyInputValue(
+                                                event.target.value,
+                                              ),
+                                          }),
+                                        )
                                       }
                                     />
                                     <p className="field-hint quotation-sale-adjustment-context">
@@ -3070,7 +3098,8 @@ function QuotationCreateModal({
                                       <div className="quotation-sale-adjustment-preview-grid">
                                         <span>
                                           {SALE_ADJUSTMENT_FIELD_LABELS[
-                                            saleAdjustmentDialogState.recalculateField
+                                            saleAdjustmentDialogState
+                                              .recalculateField
                                           ] || "Variable recalculada"}
                                         </span>
                                         <strong>
@@ -4008,7 +4037,8 @@ function QuotationCreateModal({
                     <div>
                       <h4>Documentacion</h4>
                       <p className="field-hint quotation-documents-hint">
-                        Adjunta y configura los documentos de soporte para esta cotizacion antes de crearla.
+                        Adjunta y configura los documentos de soporte para esta
+                        cotizacion antes de crearla.
                       </p>
                     </div>
                     <div className="quotation-documents-toolbar">
@@ -4052,7 +4082,9 @@ function QuotationCreateModal({
                         type="button"
                         className="btn-secondary quotation-documents-icon-button"
                         disabled={busyAction === "create-quotation"}
-                        onClick={() => quotationDocumentsInputRef.current?.click()}
+                        onClick={() =>
+                          quotationDocumentsInputRef.current?.click()
+                        }
                         title="Adjuntar uno o mas documentos a la nueva cotizacion"
                         aria-label="Adjuntar uno o mas documentos a la nueva cotizacion"
                       >
@@ -4158,7 +4190,9 @@ function QuotationCreateModal({
                               type="button"
                               className="btn-secondary quotation-documents-icon-button"
                               disabled={busyAction === "create-quotation"}
-                              onClick={() => handleDownloadPendingDocument(document)}
+                              onClick={() =>
+                                handleDownloadPendingDocument(document)
+                              }
                               title="Descargar este documento al equipo"
                               aria-label="Descargar este documento al equipo"
                             >

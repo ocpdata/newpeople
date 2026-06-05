@@ -56,6 +56,25 @@ const quotationPermissionCodes = [
   "cotizaciones.externo",
 ];
 
+const proposalReadPermissionCodes = [
+  "propuestas.read",
+  "propuestas.create",
+  "propuestas.update",
+];
+
+const proposalCreatePermissionCodes = ["propuestas.create"];
+const proposalUpdatePermissionCodes = ["propuestas.update"];
+
+const proposalReadAccessPermissionCodes = Array.from(
+  new Set([...proposalReadPermissionCodes, ...quotationPermissionCodes]),
+);
+const proposalCreateAccessPermissionCodes = Array.from(
+  new Set([...proposalCreatePermissionCodes, ...quotationPermissionCodes]),
+);
+const proposalUpdateAccessPermissionCodes = Array.from(
+  new Set([...proposalUpdatePermissionCodes, ...quotationPermissionCodes]),
+);
+
 const quotationHumanApprovalPermissionCode = "cotizaciones.aprobacion_humana";
 const quotationAiApprovalPermissionCode = "cotizaciones.aprobacion_ia";
 
@@ -255,7 +274,9 @@ function buildQuotationPublicShareToken() {
 }
 
 function buildQuotationPublicShareTokenHash(token) {
-  return createHash("sha256").update(String(token || "")).digest("hex");
+  return createHash("sha256")
+    .update(String(token || ""))
+    .digest("hex");
 }
 
 const quotationExchangeRateQuerySchema = z.object({
@@ -2100,7 +2121,11 @@ function extractProviderDocumentImportServiceTermMonths(text) {
 
 function detectProviderDocumentImportServiceType(text) {
   const rawText = String(text || "");
-  if (/maintenance|soporte|support\s+contract|hardware\s+only\s+maintenance/i.test(rawText)) {
+  if (
+    /maintenance|soporte|support\s+contract|hardware\s+only\s+maintenance/i.test(
+      rawText,
+    )
+  ) {
     return "maintenance";
   }
   if (/subscription|subscripcion|saas|license\s+subscription/i.test(rawText)) {
@@ -2120,9 +2145,8 @@ function buildProviderDocumentImportSpecificWarnings({
 }) {
   const signalText = buildProviderDocumentImportItemSignalText(item);
   const serviceType = detectProviderDocumentImportServiceType(signalText);
-  const serviceTermMonths = extractProviderDocumentImportServiceTermMonths(
-    signalText,
-  );
+  const serviceTermMonths =
+    extractProviderDocumentImportServiceTermMonths(signalText);
   const warnings = [];
 
   if (serviceTermMonths) {
@@ -2207,7 +2231,11 @@ function buildProviderDocumentImportSpecificWarnings({
     );
   }
 
-  if (/shipping|freight|delivery|logistics|transport|flete|envio/i.test(signalText)) {
+  if (
+    /shipping|freight|delivery|logistics|transport|flete|envio/i.test(
+      signalText,
+    )
+  ) {
     warnings.push(
       buildProviderDocumentImportItemWarning({
         code: "shipping_or_freight_detected",
@@ -2220,7 +2248,11 @@ function buildProviderDocumentImportSpecificWarnings({
     );
   }
 
-  if (/payment terms|lead time|delivery time|validity|condiciones comerciales/i.test(signalText)) {
+  if (
+    /payment terms|lead time|delivery time|validity|condiciones comerciales/i.test(
+      signalText,
+    )
+  ) {
     warnings.push(
       buildProviderDocumentImportItemWarning({
         code: "commercial_conditions_reference_detected",
@@ -2276,7 +2308,10 @@ function buildProviderDocumentImportSpecificWarnings({
     );
   }
 
-  if (Array.isArray(suggestedMatchCandidates) && suggestedMatchCandidates.length > 1) {
+  if (
+    Array.isArray(suggestedMatchCandidates) &&
+    suggestedMatchCandidates.length > 1
+  ) {
     warnings.push(
       buildProviderDocumentImportItemWarning({
         code: "provider_code_ambiguous",
@@ -2306,7 +2341,9 @@ function buildProviderDocumentImportSpecificWarnings({
     );
   }
 
-  if (/user|seat|node|device|appliance|instance|site license/i.test(signalText)) {
+  if (
+    /user|seat|node|device|appliance|instance|site license/i.test(signalText)
+  ) {
     warnings.push(
       buildProviderDocumentImportItemWarning({
         code: "license_metric_unclear",
@@ -2344,9 +2381,8 @@ function normalizeProviderDocumentImportWarningToSpanish(warning) {
     return "";
   }
 
-  const comparableWarning = normalizeProviderDocumentImportComparableText(
-    normalizedWarning,
-  );
+  const comparableWarning =
+    normalizeProviderDocumentImportComparableText(normalizedWarning);
   const knownWarningsByComparable = {
     "no se pudo resolver un costo unitario confiable":
       "No se pudo resolver un costo unitario confiable",
@@ -2386,9 +2422,8 @@ function normalizeProviderDocumentImportWarningToSpanish(warning) {
     /^(subscription|maintenance)(?: with service)? term:? (\d+) months?$/,
   );
   if (serviceTermMatch) {
-    const warningType = serviceTermMatch[1] === "maintenance"
-      ? "Mantenimiento"
-      : "Suscripcion";
+    const warningType =
+      serviceTermMatch[1] === "maintenance" ? "Mantenimiento" : "Suscripcion";
     const monthCount = Number(serviceTermMatch[2]) || 0;
     return `El item corresponde a ${
       warningType === "Mantenimiento" ? "mantenimiento" : "una suscripcion"
@@ -2449,7 +2484,9 @@ function normalizeProviderDocumentImportWarningsToSpanish(warnings = []) {
   return Array.from(
     new Set(
       sourceWarnings
-        .map((warning) => normalizeProviderDocumentImportWarningToSpanish(warning))
+        .map((warning) =>
+          normalizeProviderDocumentImportWarningToSpanish(warning),
+        )
         .filter(Boolean),
     ),
   );
@@ -2459,7 +2496,8 @@ function appendProviderDocumentImportWarningsToDescription(
   description,
   selectedWarnings = [],
 ) {
-  const baseDescription = normalizeProviderDocumentImportDescription(description);
+  const baseDescription =
+    normalizeProviderDocumentImportDescription(description);
   const normalizedBase = normalizeText(baseDescription).replace(/[_-]+/g, " ");
   const uniqueWarnings = Array.from(
     new Set(
@@ -2489,7 +2527,9 @@ function appendProviderDocumentImportWarningsToDescription(
 }
 
 function normalizeProviderDocumentImportDescription(value) {
-  const normalizedValue = String(value || "").replace(/\r\n/g, "\n").trim();
+  const normalizedValue = String(value || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (!normalizedValue) {
     return "";
   }
@@ -2504,7 +2544,9 @@ function normalizeProviderDocumentImportDescription(value) {
   }
 
   const [baseDescription, ...noteSegments] = segments;
-  const notesBlock = noteSegments.map((segment) => `Nota: ${segment}`).join("\n");
+  const notesBlock = noteSegments
+    .map((segment) => `Nota: ${segment}`)
+    .join("\n");
   return [baseDescription, notesBlock].filter(Boolean).join("\n");
 }
 
@@ -3436,7 +3478,8 @@ function buildProviderDocumentImportPdfPrompt({
         },
         extractedContent: {
           summary: normalizeProviderDocumentImportText(
-            extractedContent?.contentSummary || extractedContent?.normalizedText,
+            extractedContent?.contentSummary ||
+              extractedContent?.normalizedText,
             4000,
           ),
           normalizedText: normalizeProviderDocumentImportText(
@@ -3516,9 +3559,11 @@ async function analyzeProviderDocumentImport({
     String(documentRow?.file_extension || "")
       .trim()
       .toLowerCase() === ".pdf" ||
-    String(documentRow?.mime_type || "").trim().toLowerCase() ===
-      "application/pdf";
-  const canUsePdfFallback = isPdfDocument && Buffer.isBuffer(buffer) && buffer.length > 0;
+    String(documentRow?.mime_type || "")
+      .trim()
+      .toLowerCase() === "application/pdf";
+  const canUsePdfFallback =
+    isPdfDocument && Buffer.isBuffer(buffer) && buffer.length > 0;
 
   let parsed = null;
   let primaryError = extractionError || null;
@@ -3683,8 +3728,9 @@ async function buildProviderDocumentImportPreview({
       String(documentRow?.file_extension || "")
         .trim()
         .toLowerCase() === ".pdf" ||
-      String(documentRow?.mime_type || "").trim().toLowerCase() ===
-        "application/pdf";
+      String(documentRow?.mime_type || "")
+        .trim()
+        .toLowerCase() === "application/pdf";
     if (!isPdfDocument) {
       throw error;
     }
@@ -3902,7 +3948,9 @@ async function buildProviderDocumentImportPreviewFromAnalysis({
       originalFileName: documentRow.original_file_name || "Documento",
       mimeType: documentRow.mime_type || "application/octet-stream",
       fileExtension: documentRow.file_extension || null,
-      versionNumber: Number(documentRow.version_number || fallbackVersionNumber || 0),
+      versionNumber: Number(
+        documentRow.version_number || fallbackVersionNumber || 0,
+      ),
     },
     activeProviders,
     suggestedProviderName: analysis.providerName || "",
@@ -4009,7 +4057,11 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
   }
 
   const previewItems = Array.isArray(preview.items) ? preview.items : [];
-  if (!previewItems.length || !Array.isArray(createdItems) || !createdItems.length) {
+  if (
+    !previewItems.length ||
+    !Array.isArray(createdItems) ||
+    !createdItems.length
+  ) {
     return preview;
   }
 
@@ -4017,7 +4069,8 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
     createdItems
       .map((item) => ({
         previewId: String(item?.previewId || "").trim(),
-        createdPriceListItemId: Number(item?.createdPriceListItemId || 0) || null,
+        createdPriceListItemId:
+          Number(item?.createdPriceListItemId || 0) || null,
       }))
       .filter((item) => item.previewId),
   );
@@ -4036,7 +4089,9 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
     return {
       ...item,
       matchedPriceListItemId:
-        createdRecord.createdPriceListItemId || item.matchedPriceListItemId || null,
+        createdRecord.createdPriceListItemId ||
+        item.matchedPriceListItemId ||
+        null,
       requiresPriceListCreation: false,
       matchStatus: "matched",
       canCreateInPriceList: false,
@@ -5508,6 +5563,24 @@ function hasQuotationAnyApprovalPermission(user) {
 
 function hasAnyQuotationPermission(user) {
   return quotationPermissionCodes.some((permission) =>
+    user?.permissionSet?.has(permission),
+  );
+}
+
+function hasAnyProposalReadPermission(user) {
+  return proposalReadPermissionCodes.some((permission) =>
+    user?.permissionSet?.has(permission),
+  );
+}
+
+function hasProposalCreatePermission(user) {
+  return proposalCreatePermissionCodes.some((permission) =>
+    user?.permissionSet?.has(permission),
+  );
+}
+
+function hasProposalUpdatePermission(user) {
+  return proposalUpdatePermissionCodes.some((permission) =>
     user?.permissionSet?.has(permission),
   );
 }
@@ -9219,6 +9292,39 @@ function assertQuotationPermission(req, res) {
   return true;
 }
 
+function assertProposalReadPermission(req, res) {
+  if (
+    !hasAnyProposalReadPermission(req.user) &&
+    !hasAnyQuotationPermission(req.user)
+  ) {
+    res.status(403).json({ message: "No autorizado" });
+    return false;
+  }
+  return true;
+}
+
+function assertProposalCreatePermission(req, res) {
+  if (
+    !hasProposalCreatePermission(req.user) &&
+    !hasAnyQuotationPermission(req.user)
+  ) {
+    res.status(403).json({ message: "No autorizado" });
+    return false;
+  }
+  return true;
+}
+
+function assertProposalUpdatePermission(req, res) {
+  if (
+    !hasProposalUpdatePermission(req.user) &&
+    !hasAnyQuotationPermission(req.user)
+  ) {
+    res.status(403).json({ message: "No autorizado" });
+    return false;
+  }
+  return true;
+}
+
 router.get(
   "/quotation-accounts",
   requireAnyPermission(quotationPermissionCodes),
@@ -10192,9 +10298,9 @@ router.get(
 
 router.get(
   "/proposal-templates",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
     const templates = await getAvailableProposalTemplates();
     return res.json(templates);
   },
@@ -10202,9 +10308,9 @@ router.get(
 
 router.get(
   "/proposal-assets",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
     const assets = await listInstitutionalAssets({ status: "active" });
     return res.json({ items: assets });
   },
@@ -10212,9 +10318,9 @@ router.get(
 
 router.get(
   "/proposals",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
 
     const params = [];
     const ownershipJoin = applyOwnedAccountScope({
@@ -10271,9 +10377,9 @@ router.get(
 
 router.get(
   "/proposals/:proposalId",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
@@ -10310,9 +10416,9 @@ router.get(
 
 router.get(
   "/proposals/:proposalId/components/:componentCode/generation-jobs/latest",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
@@ -10348,9 +10454,9 @@ router.get(
 
 router.get(
   "/proposals/:proposalId/components/:componentCode/generation-jobs/:jobPublicId",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
     const jobPublicId = String(req.params.jobPublicId || "").trim();
@@ -10400,9 +10506,9 @@ router.get(
 
 router.post(
   "/quotation-versions/:versionId/proposals",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalCreateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalCreatePermission(req, res)) return;
     const versionId = Number(req.params.versionId);
     if (!Number.isInteger(versionId) || versionId <= 0) {
       return res.status(400).json({ message: "Id de version invalido" });
@@ -10661,9 +10767,9 @@ router.post(
 
 router.put(
   "/proposals/:proposalId",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
@@ -10769,9 +10875,9 @@ router.put(
 
 router.put(
   "/proposals/:proposalId/components/:componentCode",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
@@ -10911,9 +11017,9 @@ router.put(
 
 router.post(
   "/proposals/:proposalId/components/:componentCode/brochure-recommendations",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
 
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
@@ -10965,9 +11071,9 @@ router.post(
 
 router.post(
   "/proposals/:proposalId/components/:componentCode/generation-jobs",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
@@ -11060,9 +11166,9 @@ router.post(
 
 router.post(
   "/proposals/:proposalId/components/:componentCode/replace-image",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     const componentCode = String(req.params.componentCode || "").trim();
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
@@ -11148,9 +11254,9 @@ router.post(
 
 router.post(
   "/proposals/:proposalId/apply-template",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
@@ -11264,9 +11370,9 @@ router.post(
 
 router.post(
   "/proposals/:proposalId/rebase",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalUpdatePermission(req, res)) return;
     const proposalId = Number(req.params.proposalId);
     if (!Number.isInteger(proposalId) || proposalId <= 0) {
       return res.status(400).json({ message: "Id de propuesta invalido" });
@@ -11693,7 +11799,9 @@ router.post(
       opportunityId: targetOpportunityId,
     });
     if (!targetOpportunity) {
-      return res.status(404).json({ message: "Oportunidad destino no encontrada" });
+      return res
+        .status(404)
+        .json({ message: "Oportunidad destino no encontrada" });
     }
     if (targetOpportunity.activation_status_code !== "activada") {
       return res.status(400).json({
@@ -11752,7 +11860,8 @@ router.post(
         [
           targetOpportunityId,
           Number(
-            sourceQuotation?.activation_status_id || defaultQuotationActivation.id,
+            sourceQuotation?.activation_status_id ||
+              defaultQuotationActivation.id,
           ),
           now,
           now,
@@ -11841,12 +11950,7 @@ router.post(
         `UPDATE quotations
          SET latest_version_id = ?, updated_at = ?, updated_by_user_id = ?
          WHERE id = ?`,
-        [
-          duplicatedVersionId,
-          now,
-          Number(req.user.id),
-          duplicatedQuotationId,
-        ],
+        [duplicatedVersionId, now, Number(req.user.id), duplicatedQuotationId],
       );
 
       return {
@@ -12665,7 +12769,9 @@ router.post(
 
     const { files, fields } = await parseMultipartFiles(req);
     if (!files.length) {
-      return res.status(400).json({ message: "Selecciona un documento para analizar" });
+      return res
+        .status(400)
+        .json({ message: "Selecciona un documento para analizar" });
     }
 
     const [uploadedFile] = files;
@@ -12837,7 +12943,9 @@ router.post(
     }
 
     for (const requestedItem of requestedItems) {
-      const latestItem = latestPreviewItemsById.get(String(requestedItem.previewId));
+      const latestItem = latestPreviewItemsById.get(
+        String(requestedItem.previewId),
+      );
       const normalizedCode = normalizeProviderDocumentImportCode(
         latestItem?.providerCode,
       );
@@ -12865,20 +12973,22 @@ router.post(
       });
     }
 
-      const equivalentItemsByNormalizedCode = new Map();
-      for (const requestedItem of requestedItems) {
-        const latestItem = latestPreviewItemsById.get(String(requestedItem.previewId));
-        const normalizedCode = normalizeProviderDocumentImportCode(
-          latestItem?.providerCode,
-        );
-        const equivalentItem = await findProviderPriceListItemByNormalizedCode({
-          priceListId: activePriceList.id,
-          code: latestItem?.providerCode,
-        });
-        if (equivalentItem) {
-          equivalentItemsByNormalizedCode.set(normalizedCode, equivalentItem);
-        }
+    const equivalentItemsByNormalizedCode = new Map();
+    for (const requestedItem of requestedItems) {
+      const latestItem = latestPreviewItemsById.get(
+        String(requestedItem.previewId),
+      );
+      const normalizedCode = normalizeProviderDocumentImportCode(
+        latestItem?.providerCode,
+      );
+      const equivalentItem = await findProviderPriceListItemByNormalizedCode({
+        priceListId: activePriceList.id,
+        code: latestItem?.providerCode,
+      });
+      if (equivalentItem) {
+        equivalentItemsByNormalizedCode.set(normalizedCode, equivalentItem);
       }
+    }
 
     const now = new Date();
     const createdItems = await withTransaction(async (conn) => {
@@ -12983,9 +13093,10 @@ router.post(
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
 
-    const parsed = providerDocumentImportDraftCreateMissingItemsSchema.safeParse(
-      req.body || {},
-    );
+    const parsed =
+      providerDocumentImportDraftCreateMissingItemsSchema.safeParse(
+        req.body || {},
+      );
     if (!parsed.success) {
       return res.status(400).json({
         message: "Datos invalidos",
@@ -13898,9 +14009,9 @@ router.post(
 
 router.post(
   "/proposals/render-pdf",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(proposalReadAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertProposalReadPermission(req, res)) return;
 
     const parsed = proposalPdfRenderSchema.safeParse(req.body || {});
     if (!parsed.success) {
@@ -14223,7 +14334,10 @@ function calculateQuotationApprovalGlobalDiscountPct({ version, totalSale }) {
   }
 
   if (String(version.summary_discount_mode || "") === "percentage") {
-    return Math.max(0, Math.min(Number(version.summary_discount_value || 0), 100));
+    return Math.max(
+      0,
+      Math.min(Number(version.summary_discount_value || 0), 100),
+    );
   }
 
   return 0;
@@ -14261,7 +14375,8 @@ function evaluateQuotationApprovalMargins({ version, items, blockingRules }) {
     return;
   }
 
-  const totalMarginPct = ((adjustedTotalSale - totalCost) / adjustedTotalSale) * 100;
+  const totalMarginPct =
+    ((adjustedTotalSale - totalCost) / adjustedTotalSale) * 100;
   if (totalMarginPct < QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT) {
     blockingRules.push(
       buildQuotationApprovalBlockingRule(
@@ -14323,13 +14438,17 @@ function evaluateQuotationApprovalMandatoryServices({
   approvalContext,
   blockingRules,
 }) {
-  const serviceLines = items.filter((item) => item.itemType === "servicio_propio");
+  const serviceLines = items.filter(
+    (item) => item.itemType === "servicio_propio",
+  );
 
   const hasMandatoryImplementation = serviceLines.some((item) => {
     const signal = normalizeQuotationApprovalComparableText(
       `${item.productCode || ""} ${item.productDescription || ""}`,
     );
-    return QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES.implementation.test(signal);
+    return QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES.implementation.test(
+      signal,
+    );
   });
   const hasMandatorySupport = serviceLines.some((item) => {
     const signal = normalizeQuotationApprovalComparableText(
@@ -14538,7 +14657,9 @@ function evaluateQuotationApprovalProviderBacking({
       }
 
       const itemProviderId = Number(item.providerId || 0);
-      const importedProviderId = Number(latestProviderDocumentImport.providerId || 0);
+      const importedProviderId = Number(
+        latestProviderDocumentImport.providerId || 0,
+      );
       let reasonCode = "";
 
       if (
@@ -14552,7 +14673,9 @@ function evaluateQuotationApprovalProviderBacking({
       }
 
       const sourceId = Number(
-        item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId || 0,
+        item.sourceProviderPriceListItemId ||
+          item.sourceComponentPriceListItemId ||
+          0,
       );
       if (!reasonCode) {
         if (!Number.isInteger(sourceId) || sourceId <= 0) {
@@ -14577,7 +14700,8 @@ function evaluateQuotationApprovalProviderBacking({
     }
   }
 
-  const requiresConfirmation = providerDocumentMissing || unbackedItems.length > 0;
+  const requiresConfirmation =
+    providerDocumentMissing || unbackedItems.length > 0;
   if (!requiresConfirmation) {
     return {
       providerDocumentMissing,
@@ -14727,10 +14851,7 @@ async function getLatestQuotationProviderDocumentImport(quotationId) {
   };
 }
 
-async function evaluateQuotationApprovalPolicies({
-  version,
-  approvalContext,
-}) {
+async function evaluateQuotationApprovalPolicies({ version, approvalContext }) {
   const blockingRules = [];
   const warnings = [];
 
@@ -14751,7 +14872,9 @@ async function evaluateQuotationApprovalPolicies({
   });
 
   const latestProviderDocumentImport =
-    await getLatestQuotationProviderDocumentImport(Number(version.quotation_id));
+    await getLatestQuotationProviderDocumentImport(
+      Number(version.quotation_id),
+    );
 
   const providerBackingResult = evaluateQuotationApprovalProviderBacking({
     items: leafItems,
@@ -14886,7 +15009,8 @@ router.post(
 
     let approvalValidationResult = null;
     const shouldSkipApprovalValidation =
-      actionCode === "aprobar" && approvalContext?.approvalMode === "without_ai";
+      actionCode === "aprobar" &&
+      approvalContext?.approvalMode === "without_ai";
 
     if (actionCode === "aprobar" && !shouldSkipApprovalValidation) {
       approvalValidationResult = await evaluateQuotationApprovalPolicies({
@@ -14896,7 +15020,8 @@ router.post(
 
       const confirmationBlockingRule =
         approvalValidationResult.blockingRules.find(
-          (rule) => rule.code === "approval_missing_required_services_confirmation",
+          (rule) =>
+            rule.code === "approval_missing_required_services_confirmation",
         ) || null;
 
       const providerBackingConfirmationRule =
@@ -15001,8 +15126,9 @@ router.post(
                 approval_mode: String(approvalContext?.approvalMode || ""),
                 validation_skipped: shouldSkipApprovalValidation,
                 warnings:
-                  approvalValidationResult?.warnings?.map((warning) => warning.code) ||
-                  [],
+                  approvalValidationResult?.warnings?.map(
+                    (warning) => warning.code,
+                  ) || [],
                 missing_mandatory_services:
                   approvalValidationResult?.mandatoryServicesResult
                     ?.missingMandatoryServices || [],

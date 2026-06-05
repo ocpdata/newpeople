@@ -54,6 +54,7 @@ function OpportunitiesPage({ currentUser, can }) {
     canCreateOrRequestOpportunities,
     answerDocumentSelections,
     canChangeOpportunityActivationStatus,
+    sellerFieldReadOnly,
     catalogs,
     form,
     setForm,
@@ -186,6 +187,7 @@ function OpportunitiesPage({ currentUser, can }) {
         getCommercialStatusIconBadgeClass={getCommercialStatusIconBadgeClass}
         form={form}
         setForm={setForm}
+        sellerFieldReadOnly={sellerFieldReadOnly}
         normalizeOpportunityNameField={normalizeOpportunityNameField}
         parseDateFilterValue={parseDateFilterValue}
         formatDateFilterValue={formatDateFilterValue}

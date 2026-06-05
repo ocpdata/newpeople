@@ -36,6 +36,7 @@ function AccountsPage({ can, currentUser }) {
     accountsPendingEnabled,
     canCreateOrRequestAccounts,
     canActivateAccounts,
+    canAssignAnyOwners,
     form,
     setForm,
     visibleAccounts,
@@ -201,6 +202,7 @@ function AccountsPage({ can, currentUser }) {
         getOwnerOptionLabel={getOwnerOptionLabel}
         isInactiveOwner={isInactiveOwner}
         toggleOwnerUser={toggleOwnerUser}
+        canAssignAnyOwners={canAssignAnyOwners}
         onClose={closeAccountModal}
         onSubmit={saveAccount}
         onAnalyzeDraft={analyzeAccountDraft}

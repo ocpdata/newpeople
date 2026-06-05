@@ -269,7 +269,7 @@ export default function ContactFormModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={handleModalClose}>
+    <div className="modal-overlay">
       <div
         className={`modal-dialog modal-dialog-account${savingContact ? " modal-dialog-busy" : ""}`}
         onClick={(e) => e.stopPropagation()}
@@ -300,23 +300,39 @@ export default function ContactFormModal({
                 : "Completa la información principal y guarda para crear el contacto."}
             </p>
           </div>
-          {editingContactId && currentContact ? (
-            <div className="opportunity-modal-header-meta">
-              <span className="record-id-badge" title="ID del contacto">
-                <span className="record-id-icon" aria-hidden="true">
-                  #
+          <div className="account-modal-header-actions">
+            {editingContactId && currentContact ? (
+              <div className="opportunity-modal-header-meta">
+                <span className="record-id-badge" title="ID del contacto">
+                  <span className="record-id-icon" aria-hidden="true">
+                    #
+                  </span>
+                  {editingContactId}
                 </span>
-                {editingContactId}
-              </span>
-              <span
-                className={getContactStatusIconBadgeClass(currentContact)}
-                title="Estado de activación"
-              >
-                <span className="status-dot" aria-hidden="true" />
-                {getContactStatusLabel(currentContact)}
-              </span>
-            </div>
-          ) : null}
+                <span
+                  className={getContactStatusIconBadgeClass(currentContact)}
+                  title="Estado de activación"
+                >
+                  <span className="status-dot" aria-hidden="true" />
+                  {getContactStatusLabel(currentContact)}
+                </span>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="opportunity-documents-apply-icon-button account-modal-close-button"
+              onClick={handleModalClose}
+              aria-label={
+                editingContactId
+                  ? "Cerrar modal de edición de contacto"
+                  : "Cerrar modal de creación de contacto"
+              }
+              title="Cerrar"
+              disabled={savingContact}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <form className="account-create-form in-modal" onSubmit={onSubmit}>

@@ -1,10 +1,10 @@
-  const CONTACT_SUGGESTED_FIELD_LABELS = {
-    addressLine: "Direccion",
-    city: "Ciudad",
-    stateRegion: "Estado",
-    postalCode: "Codigo postal",
-    phone: "Telefono",
-  };
+const CONTACT_SUGGESTED_FIELD_LABELS = {
+  addressLine: "Direccion",
+  city: "Ciudad",
+  stateRegion: "Estado",
+  postalCode: "Codigo postal",
+  phone: "Telefono",
+};
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
@@ -66,8 +66,12 @@ export function useAccountsCrud({ currentUser }) {
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
-  const canDirectCreateAccounts = explicitAccountPermissions.has("cuentas.create");
+  const canDirectCreateAccounts =
+    explicitAccountPermissions.has("cuentas.create");
   const canRequestAccounts = explicitAccountPermissions.has("cuentas.request");
+  const canAssignAnyOwners = explicitAccountPermissions.has(
+    "cuentas.assign_owners_any",
+  );
   const canCreateOrRequestAccounts =
     canDirectCreateAccounts || (canRequestAccounts && accountsPendingEnabled);
   const canActivateAccounts = canDirectCreateAccounts;
@@ -287,9 +291,12 @@ export function useAccountsCrud({ currentUser }) {
         return null;
       }
 
-      const { data } = await api.get(`/api/accounts/draft-analysis/jobs/${jobId}`, {
-        timeout: ACCOUNT_DRAFT_ANALYSIS_REQUEST_TIMEOUT_MS,
-      });
+      const { data } = await api.get(
+        `/api/accounts/draft-analysis/jobs/${jobId}`,
+        {
+          timeout: ACCOUNT_DRAFT_ANALYSIS_REQUEST_TIMEOUT_MS,
+        },
+      );
 
       if (data?.result) {
         return data;
@@ -301,7 +308,9 @@ export function useAccountsCrud({ currentUser }) {
       }
 
       nextDelay = Math.max(
-        Number(data?.job?.pollAfterMs || ACCOUNT_DRAFT_ANALYSIS_POLL_INTERVAL_MS),
+        Number(
+          data?.job?.pollAfterMs || ACCOUNT_DRAFT_ANALYSIS_POLL_INTERVAL_MS,
+        ),
         0,
       );
       nextDelay = Math.min(nextDelay, Math.max(deadline - Date.now(), 0));
@@ -533,6 +542,10 @@ export function useAccountsCrud({ currentUser }) {
   }
 
   function toggleOwnerUser(userId) {
+    if (!canAssignAnyOwners) {
+      return;
+    }
+
     setForm((prev) => {
       const numericId = Number(userId);
       const selected = prev.ownerUserIds.includes(numericId);
@@ -582,15 +595,18 @@ export function useAccountsCrud({ currentUser }) {
       : "user-status-badge inactive";
   }
 
-  const getAccountStatusLabel = useCallback((account) => {
-    const normalizedStatus = normalizeText(account?.activation_status);
-    if (normalizedStatus === "pendiente de activacion") {
-      return accountsPendingEnabled
-        ? "Pendiente de activacion"
-        : "Desactivada";
-    }
-    return normalizedStatus === "activada" ? "Activada" : "Desactivada";
-  }, [accountsPendingEnabled]);
+  const getAccountStatusLabel = useCallback(
+    (account) => {
+      const normalizedStatus = normalizeText(account?.activation_status);
+      if (normalizedStatus === "pendiente de activacion") {
+        return accountsPendingEnabled
+          ? "Pendiente de activacion"
+          : "Desactivada";
+      }
+      return normalizedStatus === "activada" ? "Activada" : "Desactivada";
+    },
+    [accountsPendingEnabled],
+  );
 
   function getEditingActivationMeta() {
     const selectedStatus = catalogs.statuses.find(
@@ -731,8 +747,10 @@ export function useAccountsCrud({ currentUser }) {
           return accountsPendingEnabled && isAccountPending(account);
         }
         if (accountStatusFilter === "inactive")
-          return isAccountInactive(account) ||
-            (!accountsPendingEnabled && isAccountPending(account));
+          return (
+            isAccountInactive(account) ||
+            (!accountsPendingEnabled && isAccountPending(account))
+          );
         return isAccountActive(account);
       }),
     [accounts, accountStatusFilter, accountsPendingEnabled],
@@ -924,7 +942,11 @@ export function useAccountsCrud({ currentUser }) {
       return;
     }
     setAccountStatusFilterState("all");
-  }, [accountStatusFilter, accountsPendingEnabled, setAccountStatusFilterState]);
+  }, [
+    accountStatusFilter,
+    accountsPendingEnabled,
+    setAccountStatusFilterState,
+  ]);
 
   function setAccountStatusFilter(value) {
     setAccountsPage(1);
@@ -1102,6 +1124,7 @@ export function useAccountsCrud({ currentUser }) {
     accountsPendingEnabled,
     canCreateOrRequestAccounts,
     canActivateAccounts,
+    canAssignAnyOwners,
     form,
     setForm,
     visibleAccounts,

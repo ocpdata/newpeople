@@ -76,17 +76,17 @@ const PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS = [
 
 function buildMailtoDraftUrl({ to = "", subject = "", body = "" } = {}) {
   const recipient = String(to || "").trim();
-  const query = new URLSearchParams();
+  const encodedRecipient = encodeURIComponent(recipient);
+  const queryParts = [];
 
   if (subject) {
-    query.set("subject", subject);
+    queryParts.push(`subject=${encodeURIComponent(String(subject))}`);
   }
   if (body) {
-    query.set("body", body);
+    queryParts.push(`body=${encodeURIComponent(String(body))}`);
   }
 
-  const encodedRecipient = encodeURIComponent(recipient);
-  const queryString = query.toString();
+  const queryString = queryParts.join("&");
   if (!queryString) {
     return `mailto:${encodedRecipient}`;
   }
@@ -175,7 +175,9 @@ function patchProviderDocumentImportPreviewWithSelectedSuggestedCandidate(
         return item;
       }
 
-      const suggestedMatchCandidates = Array.isArray(item.suggestedMatchCandidates)
+      const suggestedMatchCandidates = Array.isArray(
+        item.suggestedMatchCandidates,
+      )
         ? item.suggestedMatchCandidates
         : [];
       const hasCandidate = suggestedMatchCandidates.some(
@@ -414,7 +416,11 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
   const sourcePreviewItems = Array.isArray(sourcePreview?.items)
     ? sourcePreview.items
     : [];
-  if (!previewItems.length || !Array.isArray(createdItems) || !createdItems.length) {
+  if (
+    !previewItems.length ||
+    !Array.isArray(createdItems) ||
+    !createdItems.length
+  ) {
     return preview;
   }
 
@@ -428,7 +434,8 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
     createdItems
       .map((item) => ({
         previewId: String(item?.previewId || "").trim(),
-        createdPriceListItemId: Number(item?.createdPriceListItemId || 0) || null,
+        createdPriceListItemId:
+          Number(item?.createdPriceListItemId || 0) || null,
       }))
       .filter((item) => item.previewId),
   );
@@ -449,10 +456,15 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
     return {
       ...item,
       originalMatchStatus:
-        sourceItem.originalMatchStatus || sourceItem.matchStatus || item.originalMatchStatus || item.matchStatus,
+        sourceItem.originalMatchStatus ||
+        sourceItem.matchStatus ||
+        item.originalMatchStatus ||
+        item.matchStatus,
       matchStatus: "matched",
       matchedPriceListItemId:
-        createdRecord.createdPriceListItemId || item.matchedPriceListItemId || null,
+        createdRecord.createdPriceListItemId ||
+        item.matchedPriceListItemId ||
+        null,
       canCreateInPriceList: false,
       createBlockedReason: null,
     };
@@ -464,15 +476,20 @@ function patchProviderDocumentImportPreviewWithCreatedItems(
   };
 }
 
-function buildProviderDocumentImportState(defaultDocumentId = "", options = {}) {
+function buildProviderDocumentImportState(
+  defaultDocumentId = "",
+  options = {},
+) {
   return {
     isOpen: false,
-    sourceMode: options.sourceMode === "create_draft" ? "create_draft" : "version",
+    sourceMode:
+      options.sourceMode === "create_draft" ? "create_draft" : "version",
     sourceDocuments: Array.isArray(options.sourceDocuments)
       ? options.sourceDocuments
       : [],
     draftPricingContext:
-      options.draftPricingContext && typeof options.draftPricingContext === "object"
+      options.draftPricingContext &&
+      typeof options.draftPricingContext === "object"
         ? options.draftPricingContext
         : null,
     selectedDocumentId: defaultDocumentId ? String(defaultDocumentId) : "",
@@ -492,7 +509,10 @@ function buildProviderDocumentImportState(defaultDocumentId = "", options = {}) 
   };
 }
 
-function buildProviderDocumentImportPreviewJobState(responseData, fallbackJob = null) {
+function buildProviderDocumentImportPreviewJobState(
+  responseData,
+  fallbackJob = null,
+) {
   const job = responseData?.job || fallbackJob || null;
   if (!job) {
     return null;
@@ -543,9 +563,8 @@ function normalizeProviderDocumentImportWarningToSpanish(warning) {
 }
 
 function isProviderDocumentImportWarningTransferable(warning) {
-  const normalizedWarning = normalizeProviderDocumentImportWarningToSpanish(
-    warning,
-  );
+  const normalizedWarning =
+    normalizeProviderDocumentImportWarningToSpanish(warning);
   if (!normalizedWarning) {
     return false;
   }
@@ -565,7 +584,8 @@ function appendProviderDocumentImportWarningsToDescription(
   description,
   selectedWarnings = [],
 ) {
-  const baseDescription = normalizeProviderDocumentImportDescription(description);
+  const baseDescription =
+    normalizeProviderDocumentImportDescription(description);
   const normalizedBase = normalizeText(baseDescription).replace(/[_-]+/g, " ");
   const uniqueWarnings = Array.from(
     new Set(
@@ -579,7 +599,9 @@ function appendProviderDocumentImportWarningsToDescription(
             /[_-]+/g,
             " ",
           );
-          return normalizedWarning && !normalizedBase.includes(normalizedWarning);
+          return (
+            normalizedWarning && !normalizedBase.includes(normalizedWarning)
+          );
         }),
     ),
   );
@@ -595,7 +617,9 @@ function appendProviderDocumentImportWarningsToDescription(
 }
 
 function normalizeProviderDocumentImportDescription(value) {
-  const normalizedValue = String(value || "").replace(/\r\n/g, "\n").trim();
+  const normalizedValue = String(value || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (!normalizedValue) {
     return "";
   }
@@ -610,7 +634,9 @@ function normalizeProviderDocumentImportDescription(value) {
   }
 
   const [baseDescription, ...noteSegments] = segments;
-  const notesBlock = noteSegments.map((segment) => `Nota: ${segment}`).join("\n");
+  const notesBlock = noteSegments
+    .map((segment) => `Nota: ${segment}`)
+    .join("\n");
   return [baseDescription, notesBlock].filter(Boolean).join("\n");
 }
 
@@ -1112,9 +1138,7 @@ function buildProviderDocumentImportLocalItem(
   );
 
   return {
-    providerId: String(
-      item?.providerId || providerContext?.providerId || "",
-    ),
+    providerId: String(item?.providerId || providerContext?.providerId || ""),
     productCode: String(item?.providerCode || "").trim(),
     productDescription: normalizeProviderDocumentImportDescription(
       item?.productDescription,
@@ -1153,7 +1177,9 @@ function normalizeProviderDocumentImportCommercialTermValue(value) {
       return codeValue;
     }
 
-    const rawValue = String(value.value || value.name || value.label || "").trim();
+    const rawValue = String(
+      value.value || value.name || value.label || "",
+    ).trim();
     return rawValue;
   }
 
@@ -1170,9 +1196,8 @@ function formatProviderDocumentImportFallbackNoteValue(value) {
     return "";
   }
 
-  const normalizedValue = normalizeProviderDocumentImportComparableValue(
-    rawValue,
-  );
+  const normalizedValue =
+    normalizeProviderDocumentImportComparableValue(rawValue);
   const netDaysMatch = normalizedValue.match(/^net\s*(\d+)$/u);
   if (netDaysMatch) {
     return `${netDaysMatch[1]} dias despues de facturado`;
@@ -1197,16 +1222,14 @@ function buildProviderDocumentImportFallbackNoteLine(label, value) {
 
 function appendProviderDocumentImportNoteLines(baseNotes, noteLines = []) {
   const currentNotes = String(baseNotes || "").trim();
-  const normalizedNotes = normalizeProviderDocumentImportComparableValue(
-    currentNotes,
-  );
+  const normalizedNotes =
+    normalizeProviderDocumentImportComparableValue(currentNotes);
   const uniqueLines = noteLines
     .map((line) => String(line || "").trim())
     .filter(Boolean)
     .filter((line) => {
-      const comparableLine = normalizeProviderDocumentImportComparableValue(
-        line,
-      );
+      const comparableLine =
+        normalizeProviderDocumentImportComparableValue(line);
       return comparableLine && !normalizedNotes.includes(comparableLine);
     });
 
@@ -1234,12 +1257,10 @@ function resolveProviderDocumentImportCommercialTermForForm({
   const normalizedCandidate = buildQuotationCommercialConditionsForm({
     [field]: rawValue,
   })[field];
-  const comparableRawValue = normalizeProviderDocumentImportComparableValue(
-    rawValue,
-  );
-  const comparableCandidate = normalizeProviderDocumentImportComparableValue(
-    normalizedCandidate,
-  );
+  const comparableRawValue =
+    normalizeProviderDocumentImportComparableValue(rawValue);
+  const comparableCandidate =
+    normalizeProviderDocumentImportComparableValue(normalizedCandidate);
 
   const matchedOption = options.find((option) => {
     const optionCode = String(option?.code || "").trim();
@@ -1744,15 +1765,19 @@ export function useQuotationsSection({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [approvalRecommendations, setApprovalRecommendations] = useState([]);
-  const [shouldOpenProviderImportAfterCreate, setShouldOpenProviderImportAfterCreate] =
-    useState(false);
+  const [
+    shouldOpenProviderImportAfterCreate,
+    setShouldOpenProviderImportAfterCreate,
+  ] = useState(false);
   const [providerDocumentImportState, setProviderDocumentImportState] =
     useState(() => buildProviderDocumentImportState());
-  const [createProviderDocumentImportResult, setCreateProviderDocumentImportResult] =
-    useState({
-      token: 0,
-      commercialConditions: null,
-    });
+  const [
+    createProviderDocumentImportResult,
+    setCreateProviderDocumentImportResult,
+  ] = useState({
+    token: 0,
+    commercialConditions: null,
+  });
   const providerDocumentImportEffectiveItems = useMemo(
     () =>
       buildProviderDocumentImportEffectiveItems(
@@ -1825,8 +1850,10 @@ export function useQuotationsSection({
     });
   const [duplicateTargetOpportunities, setDuplicateTargetOpportunities] =
     useState([]);
-  const [loadingDuplicateTargetOpportunities, setLoadingDuplicateTargetOpportunities] =
-    useState(false);
+  const [
+    loadingDuplicateTargetOpportunities,
+    setLoadingDuplicateTargetOpportunities,
+  ] = useState(false);
   const [showEditQuotationModal, setShowEditQuotationModal] = useState(false);
   const [quotationStatusFilter, setQuotationStatusFilter] = useState("all");
   const [quotationQuery, setQuotationQuery] = useState("");
@@ -2224,7 +2251,9 @@ export function useQuotationsSection({
               .map((opportunity) => ({
                 ...opportunity,
                 id: Number(opportunity?.id || 0),
-                accountId: Number(opportunity?.accountId || normalizedAccountId),
+                accountId: Number(
+                  opportunity?.accountId || normalizedAccountId,
+                ),
                 sellerUserId: opportunity?.sellerUserId
                   ? Number(opportunity.sellerUserId)
                   : null,
@@ -2268,7 +2297,9 @@ export function useQuotationsSection({
             : nextOpportunities.find(
                 (opportunity) =>
                   Number(opportunity.id) !== resolvedSourceOpportunityId,
-              ) || nextOpportunities[0] || null;
+              ) ||
+              nextOpportunities[0] ||
+              null;
 
           return {
             ...prev,
@@ -3397,7 +3428,10 @@ export function useQuotationsSection({
         ? pendingDocuments.filter((document) => document?.aiEnabled === false)
         : [];
 
-      if (!excludedPendingDocuments.length || !Array.isArray(uploadedDocuments)) {
+      if (
+        !excludedPendingDocuments.length ||
+        !Array.isArray(uploadedDocuments)
+      ) {
         return { ok: true };
       }
 
@@ -3412,7 +3446,8 @@ export function useQuotationsSection({
       try {
         for (const pendingDocument of excludedPendingDocuments) {
           const pendingDocumentKey = `${String(pendingDocument?.originalFileName || pendingDocument?.file?.name || "").trim()}::${Number(pendingDocument?.byteSize || pendingDocument?.file?.size || 0)}`;
-          const matchingDocuments = uploadedDocumentsByKey.get(pendingDocumentKey) || [];
+          const matchingDocuments =
+            uploadedDocumentsByKey.get(pendingDocumentKey) || [];
           const matchedDocument = matchingDocuments.shift();
           if (!matchedDocument?.id) {
             continue;
@@ -3532,7 +3567,11 @@ export function useQuotationsSection({
           preferredVersionId: data.latestVersionId,
           targetOpportunityId: createdOpportunityId,
         });
-        if (openProviderImportAfterCreate && data.quotationId && data.latestVersionId) {
+        if (
+          openProviderImportAfterCreate &&
+          data.quotationId &&
+          data.latestVersionId
+        ) {
           await loadVersion(data.quotationId, data.latestVersionId, {
             preserveMessage: true,
           });
@@ -4360,8 +4399,7 @@ export function useQuotationsSection({
             return currentSection;
           }
 
-          const parentLocalId =
-            `draft-item-${createItemDraftSequenceRef.current++}`;
+          const parentLocalId = `draft-item-${createItemDraftSequenceRef.current++}`;
           const normalizedParentItem = {
             id: null,
             localId: parentLocalId,
@@ -4473,7 +4511,11 @@ export function useQuotationsSection({
 
       return wasUpdated;
     },
-    [createQuotationForm.currencyCode, createQuotationForm.exchangeRate, createSectionDrafts],
+    [
+      createQuotationForm.currencyCode,
+      createQuotationForm.exchangeRate,
+      createSectionDrafts,
+    ],
   );
 
   const handleAttachCreateSectionItemsToManualBundle = useCallback(
@@ -4908,7 +4950,9 @@ export function useQuotationsSection({
         .filter((document) => document.localId);
 
       if (!eligibleDocuments.length) {
-        setError("Adjunta al menos un documento habilitado para IA antes de importar.");
+        setError(
+          "Adjunta al menos un documento habilitado para IA antes de importar.",
+        );
         return false;
       }
 
@@ -5652,11 +5696,12 @@ export function useQuotationsSection({
         });
 
         setProviderDocumentImportState((current) => {
-          const nextPreview = patchProviderDocumentImportPreviewWithCreatedItems(
-            data.preview || current.preview,
-            data.createdItems,
-            current.preview,
-          );
+          const nextPreview =
+            patchProviderDocumentImportPreviewWithCreatedItems(
+              data.preview || current.preview,
+              data.createdItems,
+              current.preview,
+            );
           const nextItemMatchResolutions =
             pruneProviderDocumentImportItemMatchResolutions(
               nextPreview,
@@ -5820,8 +5865,7 @@ export function useQuotationsSection({
         : { resolvedValue: "", noteLine: "" };
 
       if (isCreateDraftImport) {
-        const nextSectionLocalId =
-          `draft-section-${createSectionDraftSequenceRef.current}`;
+        const nextSectionLocalId = `draft-section-${createSectionDraftSequenceRef.current}`;
         createSectionDraftSequenceRef.current += 1;
         const nextSectionNumber = createSectionDrafts.length + 1;
         const localImportedItems = importedDraftItems.map((item) => ({
@@ -5855,8 +5899,7 @@ export function useQuotationsSection({
             ...(selectedCommercialTerms.quotationValidity &&
             quotationValidityResolution.resolvedValue
               ? {
-                  quotationValidity:
-                    quotationValidityResolution.resolvedValue,
+                  quotationValidity: quotationValidityResolution.resolvedValue,
                 }
               : {}),
             ...(selectedCommercialTerms.warranty &&
@@ -6062,8 +6105,7 @@ export function useQuotationsSection({
 
         const responseCode = err?.response?.data?.code;
         if (
-          responseCode ===
-          "quotation_approval_provider_backing_reason_required"
+          responseCode === "quotation_approval_provider_backing_reason_required"
         ) {
           return (
             String(err?.response?.data?.message || "").trim() ||
@@ -6140,9 +6182,10 @@ export function useQuotationsSection({
         const recommendations = Array.from(
           new Set(
             warnings
-              .map((warning) =>
-                recommendationByCode[String(warning?.code || "").trim()] ||
-                String(warning?.message || "").trim(),
+              .map(
+                (warning) =>
+                  recommendationByCode[String(warning?.code || "").trim()] ||
+                  String(warning?.message || "").trim(),
               )
               .filter(Boolean),
           ),
@@ -6199,6 +6242,9 @@ export function useQuotationsSection({
             )
           : null;
         const recipientEmail = String(selectedContact?.email || "").trim();
+        const recipientName = String(
+          selectedContact?.full_name || selectedContact?.fullName || "",
+        ).trim();
 
         const proposalName = String(versionForm?.proposalName || "").trim();
         const quotationId = Number(selectedQuotation?.id || 0);
@@ -6211,21 +6257,34 @@ export function useQuotationsSection({
           .join(" ");
 
         const subject = proposalName
-          ? `Cotizacion ${proposalName}`
+          ? reference
+            ? `Cotizacion ${reference} - ${proposalName}`
+            : `Cotizacion - ${proposalName}`
           : reference
             ? `Cotizacion ${reference}`
             : "Cotizacion";
+
+        const greetingLine = recipientName ? `Hola ${recipientName},` : "Hola,";
+
         const bodyLines = [
-          "Hola,",
+          greetingLine,
           "",
-          "Comparto la cotizacion para tu revision:",
+          "Te comparto la cotizacion para tu revision.",
+          "",
+          "Enlace publico (PDF):",
           publicQuotationUrl,
           "",
-          "Quedo atento a tus comentarios.",
+          "Resumen:",
         ];
+
         if (reference) {
-          bodyLines.push("", `Referencia: ${reference}`);
+          bodyLines.push(`- Referencia: ${reference}`);
         }
+        if (proposalName) {
+          bodyLines.push(`- Propuesta: ${proposalName}`);
+        }
+
+        bodyLines.push("", "Quedo atento a tus comentarios.", "", "Saludos.");
 
         const mailtoUrl = buildMailtoDraftUrl({
           to: recipientEmail,
@@ -6275,12 +6334,17 @@ export function useQuotationsSection({
         };
 
         const executeTransition = async (approvalContextOverrides) => {
-          const approvalContext = buildApprovalContext(approvalContextOverrides);
+          const approvalContext = buildApprovalContext(
+            approvalContextOverrides,
+          );
 
-          return api.post(`/api/quotation-versions/${selectedVersionId}/transition`, {
-            actionCode,
-            ...(approvalContext ? { approvalContext } : {}),
-          });
+          return api.post(
+            `/api/quotation-versions/${selectedVersionId}/transition`,
+            {
+              actionCode,
+              ...(approvalContext ? { approvalContext } : {}),
+            },
+          );
         };
 
         let response;
@@ -6304,13 +6368,11 @@ export function useQuotationsSection({
               "quotation_approval_missing_required_services_confirmation"
             ) {
               const missingServices =
-                err?.response?.data?.validation?.blockingRules
-                  ?.find(
-                    (rule) =>
-                      rule?.code ===
-                      "approval_missing_required_services_confirmation",
-                  )
-                  ?.missingMandatoryServices || [];
+                err?.response?.data?.validation?.blockingRules?.find(
+                  (rule) =>
+                    rule?.code ===
+                    "approval_missing_required_services_confirmation",
+                )?.missingMandatoryServices || [];
 
               const humanizedMissing = Array.isArray(missingServices)
                 ? missingServices.join(", ")
@@ -7731,9 +7793,11 @@ export function useQuotationsSection({
         setProviderDocumentImportCommercialTermSelection,
       onSelectSuggestedMatchCandidate:
         setProviderDocumentImportSuggestedMatchCandidate,
-      onResolveSuggestedMatch: setProviderDocumentImportSuggestedMatchResolution,
+      onResolveSuggestedMatch:
+        setProviderDocumentImportSuggestedMatchResolution,
       missingItemsSelection: providerDocumentImportState.missingItemsSelection,
-      onToggleMissingItemSelection: setProviderDocumentImportMissingItemSelection,
+      onToggleMissingItemSelection:
+        setProviderDocumentImportMissingItemSelection,
       transferableWarningsSelection:
         providerDocumentImportState.transferableWarningsSelection,
       onToggleTransferableWarningSelection:

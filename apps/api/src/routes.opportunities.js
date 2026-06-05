@@ -290,6 +290,20 @@ function hasGlobalAccountReadScope(user) {
   return user?.permissionSet?.has(opportunityGlobalReadPermission);
 }
 
+function normalizeRoleName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function hasSellerRole(user) {
+  return (Array.isArray(user?.roles) ? user.roles : []).some((role) =>
+    normalizeRoleName(role?.name).startsWith("vendedor"),
+  );
+}
+
 function applyOwnedAccountScope({ user, accountExpression, params }) {
   if (hasGlobalAccountReadScope(user)) return "";
   params.push(Number(user.id));
@@ -1461,6 +1475,19 @@ async function validateOpportunityRelations({
       ok: false,
       status: 400,
       message: "El contacto debe pertenecer a la cuenta seleccionada",
+    };
+  }
+
+  if (
+    hasSellerRole(user) &&
+    !hasGlobalAccountReadScope(user) &&
+    Number(sellerUserId) !== Number(user.id)
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "No autorizado para asignar un vendedor diferente al usuario actual",
     };
   }
 

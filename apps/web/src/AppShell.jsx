@@ -119,7 +119,16 @@ export default function AppShell({
     "cotizaciones.administracion",
     "cotizaciones.externo",
   ].some(can);
-  const canAccessProposals = canAccessQuotations;
+  const canAccessProposals = [
+    "propuestas.read",
+    "propuestas.create",
+    "propuestas.update",
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
   const canAccessCommercialDevelopment =

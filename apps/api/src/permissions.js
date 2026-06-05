@@ -20,6 +20,12 @@ const CORE_PERMISSIONS = [
     description: "Solicitar creacion de cuentas",
   },
   {
+    code: "cuentas.assign_owners_any",
+    module: "cuentas",
+    action: "assign_owners_any",
+    description: "Asignar cualquier propietario en cuentas",
+  },
+  {
     code: "contactos.request",
     module: "contactos",
     action: "request",
@@ -41,7 +47,8 @@ const CORE_PERMISSIONS = [
     code: "herramientas.update",
     module: "herramientas",
     action: "update",
-    description: "Ejecutar acciones correctivas en herramientas administrativas",
+    description:
+      "Ejecutar acciones correctivas en herramientas administrativas",
   },
   {
     code: "herramientas.admin",
@@ -60,6 +67,24 @@ const CORE_PERMISSIONS = [
     module: "cotizaciones",
     action: "aprobacion_ia",
     description: "Aprobar cotizaciones con IA",
+  },
+  {
+    code: "propuestas.read",
+    module: "propuestas",
+    action: "read",
+    description: "Ver propuestas",
+  },
+  {
+    code: "propuestas.create",
+    module: "propuestas",
+    action: "create",
+    description: "Crear propuestas",
+  },
+  {
+    code: "propuestas.update",
+    module: "propuestas",
+    action: "update",
+    description: "Actualizar propuestas",
   },
 ];
 
@@ -90,7 +115,20 @@ const PERMISSION_DESCRIPTION_OVERRIDES = [
   },
   {
     code: "cotizaciones.externo",
-    description: "Acceso externo a cotizaciones (consulta o colaboracion limitada)",
+    description:
+      "Acceso externo a cotizaciones (consulta o colaboracion limitada)",
+  },
+  {
+    code: "propuestas.read",
+    description: "Ver propuestas",
+  },
+  {
+    code: "propuestas.create",
+    description: "Crear propuestas",
+  },
+  {
+    code: "propuestas.update",
+    description: "Actualizar propuestas",
   },
 ];
 
@@ -124,12 +162,7 @@ export async function ensureCorePermissions() {
         `UPDATE permissions
          SET description = ?, updated_at = ?
          WHERE code = ? AND IFNULL(description, '') <> ?`,
-        [
-          permission.description,
-          now,
-          permission.code,
-          permission.description,
-        ],
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

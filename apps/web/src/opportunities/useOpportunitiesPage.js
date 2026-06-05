@@ -379,8 +379,8 @@ export function useOpportunitiesPage({
   const canChangeOpportunityActivationStatus = canDirectCreateOpportunities;
 
   function getDefaultSellerUserId() {
-    const currentUserIsSeller = (currentUser?.roles || []).some(
-      (role) => normalizeText(role.name) === "vendedor",
+    const currentUserIsSeller = (currentUser?.roles || []).some((role) =>
+      normalizeText(role.name).startsWith("vendedor"),
     );
     const currentUserIsAvailableSeller = catalogs.sellerUsers.some(
       (user) => Number(user.id) === Number(currentUser?.id),
@@ -413,6 +413,25 @@ export function useOpportunitiesPage({
     presalesUserId: "",
     activationStatusId: "",
   });
+  const sellerFieldReadOnly = useMemo(() => {
+    const currentUserId = Number(currentUser?.id || 0);
+    if (!currentUserId) return false;
+
+    const currentUserIsSeller = (currentUser?.roles || []).some((role) =>
+      normalizeText(role?.name).startsWith("vendedor"),
+    );
+    if (!currentUserIsSeller) return false;
+
+    const hasGlobalOpportunityScope = explicitOpportunityPermissions.has(
+      "oportunidades.read_all",
+    );
+    if (hasGlobalOpportunityScope) return false;
+
+    return (
+      catalogs.sellerUsers.length === 1 &&
+      Number(catalogs.sellerUsers[0]?.id) === currentUserId
+    );
+  }, [catalogs.sellerUsers, currentUser, explicitOpportunityPermissions]);
   const openEditOpportunityModalRef = useRef(null);
   const commercialSuggestionPollingTokenRef = useRef(0);
   const stageValidationPollingTokenRef = useRef(0);
@@ -3133,6 +3152,7 @@ export function useOpportunitiesPage({
     opportunitiesPendingEnabled,
     canCreateOrRequestOpportunities,
     canChangeOpportunityActivationStatus,
+    sellerFieldReadOnly,
     catalogs,
     form,
     setForm,

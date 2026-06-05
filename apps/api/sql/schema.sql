@@ -2658,6 +2658,9 @@ VALUES
   ('cotizaciones.aprobacion_ia', 'cotizaciones', 'aprobacion_ia', 'Aprobar cotizaciones con IA', NOW(3), NOW(3)),
   ('cotizaciones.administracion', 'cotizaciones', 'administracion', 'Administrar cotizaciones (control total y excepciones)', NOW(3), NOW(3)),
   ('cotizaciones.externo', 'cotizaciones', 'externo', 'Acceso externo a cotizaciones (consulta o colaboracion limitada)', NOW(3), NOW(3)),
+  ('propuestas.read', 'propuestas', 'read', 'Ver propuestas', NOW(3), NOW(3)),
+  ('propuestas.create', 'propuestas', 'create', 'Crear propuestas', NOW(3), NOW(3)),
+  ('propuestas.update', 'propuestas', 'update', 'Actualizar propuestas', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 

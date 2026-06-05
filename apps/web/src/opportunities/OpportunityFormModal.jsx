@@ -41,6 +41,7 @@ function OpportunityFormModal({
   getCommercialStatusIconBadgeClass,
   form,
   setForm,
+  sellerFieldReadOnly = false,
   normalizeOpportunityNameField,
   parseDateFilterValue,
   formatDateFilterValue,
@@ -287,7 +288,7 @@ function OpportunityFormModal({
 
   return (
     <>
-      <div className="modal-overlay" onClick={handleClose}>
+      <div className="modal-overlay">
         <div
           className={`modal-dialog modal-dialog-account opportunity-edit-modal modal-dialog-with-scroll-shell${isModalLocked ? " modal-dialog-busy" : ""}`}
           aria-busy={
@@ -346,46 +347,66 @@ function OpportunityFormModal({
                     : "Completa la información principal para registrar la oportunidad."}
                 </p>
               </div>
-              {editingOpportunityId && editOpportunityAudit ? (
-                <div className="opportunity-modal-header-meta">
-                  <span
-                    className="record-id-badge"
-                    title="ID de la oportunidad"
-                  >
-                    <span className="record-id-icon" aria-hidden="true">
-                      #
+              <div className="account-modal-header-actions">
+                {editingOpportunityId && editOpportunityAudit ? (
+                  <div className="opportunity-modal-header-meta">
+                    <span
+                      className="record-id-badge"
+                      title="ID de la oportunidad"
+                    >
+                      <span className="record-id-icon" aria-hidden="true">
+                        #
+                      </span>
+                      {editingOpportunityId}
                     </span>
-                    {editingOpportunityId}
-                  </span>
-                  {!isHeaderCommercialFlowClosed ? (
-                    <span className="record-id-badge" title="Etapa de venta">
-                      Etapa:{" "}
-                      {currentCommercialStage?.name ||
-                        currentSalesStageName ||
-                        "-"}
+                    {!isHeaderCommercialFlowClosed ? (
+                      <span className="record-id-badge" title="Etapa de venta">
+                        Etapa:{" "}
+                        {currentCommercialStage?.name ||
+                          currentSalesStageName ||
+                          "-"}
+                      </span>
+                    ) : null}
+                    <span
+                      className={getOpportunityStatusIconBadgeClass(
+                        editOpportunityAudit.activationStatus,
+                      )}
+                      title="Estado de activacion"
+                    >
+                      <span className="status-dot" aria-hidden="true" />
+                      {editOpportunityAudit.activationStatus || "Sin estado"}
                     </span>
-                  ) : null}
-                  <span
-                    className={getOpportunityStatusIconBadgeClass(
-                      editOpportunityAudit.activationStatus,
-                    )}
-                    title="Estado de activacion"
-                  >
-                    <span className="status-dot" aria-hidden="true" />
-                    {editOpportunityAudit.activationStatus || "Sin estado"}
-                  </span>
-                  <span
-                    className={getCommercialStatusIconBadgeClass(
-                      editOpportunityAudit.commercialStatus,
-                    )}
-                    title="Estado comercial"
-                  >
-                    <span className="status-dot" aria-hidden="true" />
-                    {editOpportunityAudit.commercialStatus ||
-                      "Sin estado comercial"}
-                  </span>
-                </div>
-              ) : null}
+                    <span
+                      className={getCommercialStatusIconBadgeClass(
+                        editOpportunityAudit.commercialStatus,
+                      )}
+                      title="Estado comercial"
+                    >
+                      <span className="status-dot" aria-hidden="true" />
+                      {editOpportunityAudit.commercialStatus ||
+                        "Sin estado comercial"}
+                    </span>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="opportunity-documents-apply-icon-button account-modal-close-button"
+                  onClick={handleClose}
+                  aria-label={
+                    editingOpportunityId
+                      ? "Cerrar modal de edición de oportunidad"
+                      : "Cerrar modal de creación de oportunidad"
+                  }
+                  title="Cerrar"
+                  disabled={
+                    isModalLocked ||
+                    isStageValidationBlocking ||
+                    isCommercialSuggestionBlocking
+                  }
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
             {error ? (
@@ -581,6 +602,8 @@ function OpportunityFormModal({
                             sellerUserId: event.target.value,
                           }))
                         }
+                        disabled={sellerFieldReadOnly}
+                        aria-readonly={sellerFieldReadOnly}
                         required
                       >
                         <option value="">Selecciona vendedor</option>
@@ -590,6 +613,11 @@ function OpportunityFormModal({
                           </option>
                         ))}
                       </select>
+                      {sellerFieldReadOnly ? (
+                        <p className="field-hint">
+                          Este campo se asigna automaticamente a tu usuario.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="field-group">
                       <label>Ingeniero preventa</label>
