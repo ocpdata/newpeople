@@ -1011,6 +1011,22 @@ const providerDocumentImportCommercialTermsSelectionSchema = z.object({
   currencyCode: z.boolean().optional().default(false),
 });
 
+const providerDocumentImportCommercialClauseSchema = z.object({
+  clauseId: z.string().trim().min(1).max(120),
+  titleEs: z.string().trim().max(180).optional().nullable(),
+  textEs: z.string().trim().min(1).max(2000),
+  category: z.string().trim().min(1).max(40).optional().nullable(),
+  confidence: z
+    .enum(["high", "medium", "low"])
+    .optional()
+    .nullable(),
+  sourceSnippet: z.string().trim().max(1000).optional().nullable(),
+});
+
+const providerDocumentImportCommercialClauseSelectionSchema = z
+  .record(z.boolean())
+  .optional();
+
 const providerDocumentImportResolutionActionSchema = z.enum([
   "use_existing",
   "treat_as_missing",
@@ -1076,6 +1092,11 @@ const providerDocumentImportApplySchema = z.object({
   commercialTerms: providerDocumentImportCommercialTermsSchema.optional(),
   commercialTermsSelection:
     providerDocumentImportCommercialTermsSelectionSchema.optional(),
+  commercialClauses: z
+    .array(providerDocumentImportCommercialClauseSchema)
+    .optional(),
+  commercialClausesSelection:
+    providerDocumentImportCommercialClauseSelectionSchema,
   items: z.array(providerDocumentImportApplyItemSchema).min(1),
 });
 
@@ -2645,6 +2666,15 @@ function resolveProviderDocumentImportPreviewErrorMessage(
 
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_NOTES_MAX_LENGTH = 50000;
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_FALLBACK_CODE = "segun_notas";
+const PROVIDER_DOCUMENT_IMPORT_MAX_COMMERCIAL_CLAUSES = 25;
+const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_CLAUSE_CATEGORIES = new Set([
+  "payment",
+  "delivery",
+  "warranty",
+  "legal",
+  "logistics",
+  "others",
+]);
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_ALIASES_BY_FIELD = {
   deliveryTime: {
     inmediato: "inmediato",
@@ -2697,6 +2727,129 @@ function normalizeProviderDocumentImportComparableText(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeProviderDocumentImportCommercialClauseCategory(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+
+  if (PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_CLAUSE_CATEGORIES.has(normalized)) {
+    return normalized;
+  }
+
+  if (["terms", "condition", "conditions"].includes(normalized)) {
+    return "others";
+  }
+
+  return "others";
+}
+
+function normalizeProviderDocumentImportCommercialClauseConfidence(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["high", "medium", "low"].includes(normalized)) {
+    return normalized;
+  }
+  return "low";
+}
+
+function buildProviderDocumentImportCommercialClauses(rawClauses = []) {
+  const clauses = Array.isArray(rawClauses) ? rawClauses : [];
+  const seen = new Set();
+  const normalizedClauses = [];
+
+  for (const [index, clause] of clauses.entries()) {
+    const rawText =
+      typeof clause === "string"
+        ? clause
+        : clause?.textEs || clause?.text || clause?.content || "";
+    const textEs = normalizeProviderDocumentImportText(rawText, 2000);
+    if (!textEs) {
+      continue;
+    }
+
+    const rawTitle =
+      typeof clause === "string"
+        ? ""
+        : clause?.titleEs || clause?.title || clause?.label || "";
+    const titleEs = normalizeProviderDocumentImportText(rawTitle, 180);
+    const comparableKey = [
+      normalizeProviderDocumentImportComparableText(titleEs),
+      normalizeProviderDocumentImportComparableText(textEs),
+    ]
+      .filter(Boolean)
+      .join("||");
+    if (!comparableKey || seen.has(comparableKey)) {
+      continue;
+    }
+    seen.add(comparableKey);
+
+    const clauseId =
+      normalizeProviderDocumentImportText(
+        typeof clause === "object" ? clause?.clauseId : "",
+        120,
+      ) || `clause-${index + 1}`;
+    const sourceSnippet = normalizeProviderDocumentImportText(
+      typeof clause === "object" ? clause?.sourceSnippet : "",
+      1000,
+    );
+
+    normalizedClauses.push({
+      clauseId,
+      titleEs,
+      textEs,
+      category: normalizeProviderDocumentImportCommercialClauseCategory(
+        typeof clause === "object" ? clause?.category : "",
+      ),
+      confidence: normalizeProviderDocumentImportCommercialClauseConfidence(
+        typeof clause === "object" ? clause?.confidence : "",
+      ),
+      sourceSnippet,
+    });
+
+    if (
+      normalizedClauses.length >= PROVIDER_DOCUMENT_IMPORT_MAX_COMMERCIAL_CLAUSES
+    ) {
+      break;
+    }
+  }
+
+  return normalizedClauses;
+}
+
+function formatProviderDocumentImportCommercialClauseCategoryLabel(category) {
+  switch (String(category || "").trim().toLowerCase()) {
+    case "payment":
+      return "Pago";
+    case "delivery":
+      return "Entrega";
+    case "warranty":
+      return "Garantia";
+    case "legal":
+      return "Legal";
+    case "logistics":
+      return "Logistica";
+    default:
+      return "Condicion";
+  }
+}
+
+function buildProviderDocumentImportCommercialClauseNotes(clauses = []) {
+  const normalizedClauses = buildProviderDocumentImportCommercialClauses(clauses);
+  if (!normalizedClauses.length) {
+    return [];
+  }
+
+  const noteLines = ["Condiciones del proveedor detectadas:"];
+  for (const clause of normalizedClauses) {
+    const label = formatProviderDocumentImportCommercialClauseCategoryLabel(
+      clause.category,
+    );
+    const title = clause.titleEs ? `${clause.titleEs}: ` : "";
+    noteLines.push(`${label} - ${title}${clause.textEs}`.trim());
+  }
+  return noteLines;
 }
 
 async function listActiveQuotationCommercialTermOptions(tableName) {
@@ -3473,17 +3626,25 @@ function resolveProviderDocumentImportPreviewItemForAction({
   };
 }
 
-function buildProviderDocumentImportInstructions() {
-  return "Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Si agregas notes por item, deben ser concretas, específicas para ese item y basadas en evidencia textual; evita frases genéricas como revisar el documento fuente sin indicar el dato detectado. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }";
+function buildProviderDocumentImportInstructions({ strictRecovery = false } = {}) {
+  const strictSuffix = strictRecovery
+    ? "IMPORTANTE: si el documento contiene precios, costos o descuentos por item, debes devolverlos obligatoriamente en listPriceUnit/unitPrice/resolvedCostUnit/discountPct como numeros. Si el documento contiene terminos o condiciones comerciales, debes devolverlas obligatoriamente en deliveryTime/quotationValidity/warranty/paymentTerms y/o commercialClauses en espanol."
+    : "";
+
+  return `Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Extrae tambien clausulas de terminos o condiciones del proveedor y devuelvelas en espanol en commercialClauses. Para campos numericos (quantity, listPriceUnit, unitPrice, discountPct, resolvedCostUnit) devuelve numeros puros sin simbolos ni separadores de miles. Si agregas notes por item, deben ser concretas, específicas para ese item y basadas en evidencia textual; evita frases genéricas como revisar el documento fuente sin indicar el dato detectado. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. ${strictSuffix} expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], commercialClauses: [{ clauseId, titleEs, textEs, category, confidence, sourceSnippet }], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }`;
 }
 
-function buildProviderDocumentImportPrompt({ documentRow, extractedContent }) {
+function buildProviderDocumentImportPrompt({
+  documentRow,
+  extractedContent,
+  strictRecovery = false,
+}) {
   return {
     model: config.openai.model,
     input: [
       {
         role: "system",
-        content: buildProviderDocumentImportInstructions(),
+        content: buildProviderDocumentImportInstructions({ strictRecovery }),
       },
       {
         role: "user",
@@ -3516,13 +3677,15 @@ function buildProviderDocumentImportPdfPrompt({
   documentRow,
   extractedContent,
   buffer,
+  strictRecovery = false,
 }) {
   const content = [
     {
       type: "input_text",
       text: JSON.stringify({
-        instructions:
-          "Analiza el PDF adjunto y responde exclusivamente con JSON valido siguiendo el expectedShape indicado por el sistema.",
+        instructions: strictRecovery
+          ? "Analiza el PDF adjunto y responde exclusivamente con JSON valido siguiendo el expectedShape indicado por el sistema. Prioriza extraer costos/precios/descuentos de cada item y terminos/condiciones comerciales en espanol."
+          : "Analiza el PDF adjunto y responde exclusivamente con JSON valido siguiendo el expectedShape indicado por el sistema.",
         document: {
           fileName: documentRow.original_file_name,
           mimeType: documentRow.mime_type,
@@ -3555,7 +3718,7 @@ function buildProviderDocumentImportPdfPrompt({
     input: [
       {
         role: "system",
-        content: buildProviderDocumentImportInstructions(),
+        content: buildProviderDocumentImportInstructions({ strictRecovery }),
       },
       {
         role: "user",
@@ -3614,6 +3777,35 @@ async function requestProviderDocumentImportAnalysis(payload) {
   }
 
   return parsed;
+}
+
+function hasProviderDocumentImportCostSignals(parsed = {}) {
+  const items = Array.isArray(parsed?.items) ? parsed.items : [];
+  return items.some((item) => {
+    const values = [item?.resolvedCostUnit, item?.unitPrice, item?.listPriceUnit];
+    return values.some((value) => {
+      const numericValue = Number(value);
+      return Number.isFinite(numericValue) && numericValue > 0;
+    });
+  });
+}
+
+function hasProviderDocumentImportCommercialSignals(parsed = {}) {
+  const directTerms = [
+    parsed?.deliveryTime,
+    parsed?.quotationValidity,
+    parsed?.warranty,
+    parsed?.paymentTerms,
+  ].some((value) => String(value || "").trim());
+
+  if (directTerms) {
+    return true;
+  }
+
+  const clauses = Array.isArray(parsed?.commercialClauses)
+    ? parsed.commercialClauses
+    : [];
+  return clauses.some((clause) => String(clause?.textEs || "").trim());
 }
 
 async function analyzeProviderDocumentImport({
@@ -3690,7 +3882,40 @@ async function analyzeProviderDocumentImport({
     }
   }
 
+  const requiresAiRecoveryPass =
+    !hasProviderDocumentImportCostSignals(parsed) ||
+    !hasProviderDocumentImportCommercialSignals(parsed);
+  if (requiresAiRecoveryPass) {
+    try {
+      const recoveryPayload = canUsePdfFallback
+        ? buildProviderDocumentImportPdfPrompt({
+            documentRow,
+            extractedContent,
+            buffer,
+            strictRecovery: true,
+          })
+        : buildProviderDocumentImportPrompt({
+            documentRow,
+            extractedContent,
+            strictRecovery: true,
+          });
+
+      const recoveredParsed = await requestProviderDocumentImportAnalysis({
+        ...recoveryPayload,
+        aiUsageContext,
+      });
+      if (recoveredParsed && typeof recoveredParsed === "object") {
+        parsed = recoveredParsed;
+      }
+    } catch {
+      // Preserve first successful AI analysis if recovery fails.
+    }
+  }
+
   const items = Array.isArray(parsed.items) ? parsed.items : [];
+  const parsedCommercialClauses = buildProviderDocumentImportCommercialClauses(
+    parsed.commercialClauses,
+  );
   return {
     providerName: normalizeProviderDocumentImportText(parsed.providerName, 180),
     currencyCode: normalizeProviderDocumentImportCurrencyCode(
@@ -3707,6 +3932,7 @@ async function analyzeProviderDocumentImport({
     warnings: (Array.isArray(parsed.warnings) ? parsed.warnings : [])
       .map((warning) => normalizeProviderDocumentImportText(warning, 500))
       .filter(Boolean),
+    commercialClauses: parsedCommercialClauses,
     items: items
       .map((item, index) => {
         const resolvedCostUnit = normalizeProviderDocumentImportCost(
@@ -3884,6 +4110,9 @@ async function buildProviderDocumentImportPreviewFromAnalysis({
     : [];
   const commercialTerms =
     buildProviderDocumentImportCommercialTermsSuggestion(analysis);
+  const commercialClauses = buildProviderDocumentImportCommercialClauses(
+    analysis.commercialClauses,
+  );
 
   const items = [];
   for (const item of analysis.items) {
@@ -4056,6 +4285,7 @@ async function buildProviderDocumentImportPreviewFromAnalysis({
       : null,
     suggestedSectionName: "Seccion sugerida",
     commercialTerms,
+    commercialClauses,
     workflowStage,
     items,
     priorImports: history,
@@ -14076,6 +14306,26 @@ router.post(
       paymentTerms: Boolean(parsed.data.commercialTermsSelection?.paymentTerms),
       currencyCode: Boolean(parsed.data.commercialTermsSelection?.currencyCode),
     };
+    const requestedCommercialClauses = buildProviderDocumentImportCommercialClauses(
+      parsed.data.commercialClauses,
+    );
+    const previewCommercialClauses = buildProviderDocumentImportCommercialClauses(
+      latestPreview?.commercialClauses,
+    );
+    const resolvedCommercialClausesSource = requestedCommercialClauses.length
+      ? requestedCommercialClauses
+      : previewCommercialClauses;
+    const commercialClauseSelection = {
+      ...(parsed.data.commercialClausesSelection || {}),
+    };
+    const selectedCommercialClauses = resolvedCommercialClausesSource.filter(
+      (clause) => {
+        if (!Object.keys(commercialClauseSelection).length) {
+          return true;
+        }
+        return Boolean(commercialClauseSelection[clause.clauseId]);
+      },
+    );
     const [
       deliveryTimeOptions,
       quotationValidityOptions,
@@ -14222,9 +14472,12 @@ router.post(
       );
     }
 
+    const commercialClauseNotes = buildProviderDocumentImportCommercialClauseNotes(
+      selectedCommercialClauses,
+    );
     const updatedQuotationNotes = appendProviderDocumentImportNotes(
       version.quotation_notes || "",
-      commercialFallbackNotes,
+      [...commercialFallbackNotes, ...commercialClauseNotes],
     );
 
     const finalCommercialTerms = {
@@ -14359,7 +14612,10 @@ router.post(
         );
       }
 
-      if (Object.values(commercialTermsSelection).some(Boolean)) {
+      if (
+        Object.values(commercialTermsSelection).some(Boolean) ||
+        commercialClauseNotes.length
+      ) {
         await conn.query(
           `UPDATE quotation_versions
            SET delivery_time = ?, quotation_validity = ?, warranty_term = ?, payment_terms = ?, currency_code = ?, quotation_notes = ?,
@@ -14406,6 +14662,8 @@ router.post(
             documentId: documentRow.document_id,
             commercialTerms: finalCommercialTerms,
             commercialTermsSelection,
+            commercialClauses: selectedCommercialClauses,
+            commercialClausesSelection: commercialClauseSelection,
             itemCount: parsed.data.items.length,
           }),
           JSON.stringify(parsed.data),
@@ -14421,6 +14679,7 @@ router.post(
         appliedCommercialTerms: Object.values(commercialTermsSelection).some(
           Boolean,
         ),
+        appliedCommercialClauses: selectedCommercialClauses.length,
       };
     });
 
@@ -14439,6 +14698,7 @@ router.post(
         created_provider_items: Number(result.createdProviderItems),
         created_quotation_items: Number(result.createdQuotationItems),
         applied_commercial_terms: Boolean(result.appliedCommercialTerms),
+        applied_commercial_clauses: Number(result.appliedCommercialClauses),
       },
     });
 

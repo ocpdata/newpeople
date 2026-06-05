@@ -371,7 +371,7 @@ async function validateOpportunityRelations({
          INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
          INNER JOIN permissions p ON p.id = rp.permission_id
          WHERE ur.user_id = u.id
-           AND p.code IN ('oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+           AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
        )
      LIMIT 1`,
     [Number(sellerUserId)],

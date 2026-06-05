@@ -126,6 +126,30 @@ function buildProviderDocumentImportCommercialTermsSelection() {
   };
 }
 
+function buildProviderDocumentImportCommercialClausesSelection(
+  preview,
+  currentSelection = {},
+) {
+  const clauses = Array.isArray(preview?.commercialClauses)
+    ? preview.commercialClauses
+    : [];
+
+  return clauses.reduce((selection, clause) => {
+    const clauseId = String(clause?.clauseId || "").trim();
+    if (!clauseId) {
+      return selection;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(currentSelection, clauseId)) {
+      selection[clauseId] = Boolean(currentSelection[clauseId]);
+      return selection;
+    }
+
+    selection[clauseId] = true;
+    return selection;
+  }, {});
+}
+
 function buildProviderDocumentImportSuggestedMatchFeedbackEntry(
   type,
   message,
@@ -503,6 +527,7 @@ function buildProviderDocumentImportState(
     applying: false,
     commercialTermsSelection:
       buildProviderDocumentImportCommercialTermsSelection(),
+    commercialClausesSelection: {},
     itemMatchResolutions: {},
     missingItemsSelection: {},
     transferableWarningsSelection: {},
@@ -1239,6 +1264,47 @@ function appendProviderDocumentImportNoteLines(baseNotes, noteLines = []) {
 
   const noteBlock = uniqueLines.map((line) => `- ${line}`).join("\n");
   return currentNotes ? `${currentNotes}\n${noteBlock}` : noteBlock;
+}
+
+function formatProviderDocumentImportCommercialClauseCategoryLabel(category) {
+  switch (String(category || "").trim().toLowerCase()) {
+    case "payment":
+      return "Pago";
+    case "delivery":
+      return "Entrega";
+    case "warranty":
+      return "Garantia";
+    case "legal":
+      return "Legal";
+    case "logistics":
+      return "Logistica";
+    default:
+      return "Condicion";
+  }
+}
+
+function buildProviderDocumentImportCommercialClauseNoteLines(clauses = []) {
+  const normalizedClauses = Array.isArray(clauses) ? clauses : [];
+  if (!normalizedClauses.length) {
+    return [];
+  }
+
+  const lines = ["Condiciones del proveedor detectadas:"];
+  normalizedClauses.forEach((clause) => {
+    const text = String(clause?.textEs || "").trim();
+    if (!text) {
+      return;
+    }
+    const categoryLabel = formatProviderDocumentImportCommercialClauseCategoryLabel(
+      clause?.category,
+    );
+    const title = String(clause?.titleEs || "").trim();
+    const textLine = title
+      ? `${categoryLabel} - ${title}: ${text}`
+      : `${categoryLabel} - ${text}`;
+    lines.push(textLine);
+  });
+  return lines;
 }
 
 function resolveProviderDocumentImportCommercialTermForForm({
@@ -5016,6 +5082,7 @@ export function useQuotationsSection({
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
+      commercialClausesSelection: {},
       itemMatchResolutions: {},
       missingItemsSelection: {},
       transferableWarningsSelection: {},
@@ -5036,6 +5103,7 @@ export function useQuotationsSection({
       applying: false,
       commercialTermsSelection:
         buildProviderDocumentImportCommercialTermsSelection(),
+      commercialClausesSelection: {},
       itemMatchResolutions: {},
       missingItemsSelection: {},
       transferableWarningsSelection: {},
@@ -5052,6 +5120,24 @@ export function useQuotationsSection({
         commercialTermsSelection: {
           ...current.commercialTermsSelection,
           [field]: Boolean(value),
+        },
+      }));
+    },
+    [],
+  );
+
+  const setProviderDocumentImportCommercialClauseSelection = useCallback(
+    (clauseId, value) => {
+      const normalizedClauseId = String(clauseId || "").trim();
+      if (!normalizedClauseId) {
+        return;
+      }
+
+      setProviderDocumentImportState((current) => ({
+        ...current,
+        commercialClausesSelection: {
+          ...(current.commercialClausesSelection || {}),
+          [normalizedClauseId]: Boolean(value),
         },
       }));
     },
@@ -5391,6 +5477,11 @@ export function useQuotationsSection({
             : "",
         commercialTermsSelection:
           buildProviderDocumentImportCommercialTermsSelection(),
+        commercialClausesSelection:
+          buildProviderDocumentImportCommercialClausesSelection(
+            resolvedData.result,
+            {},
+          ),
         itemMatchResolutions: {},
         missingItemsSelection: buildProviderDocumentImportMissingItemsSelection(
           resolvedData.result,
@@ -5794,6 +5885,23 @@ export function useQuotationsSection({
       const selectedCommercialTerms =
         providerDocumentImportState.commercialTermsSelection ||
         buildProviderDocumentImportCommercialTermsSelection();
+      const selectedCommercialClauses = (
+        Array.isArray(providerDocumentImportState.preview?.commercialClauses)
+          ? providerDocumentImportState.preview.commercialClauses
+          : []
+      ).filter((clause) => {
+        const clauseId = String(clause?.clauseId || "").trim();
+        if (!clauseId) {
+          return false;
+        }
+        return Boolean(
+          providerDocumentImportState.commercialClausesSelection?.[clauseId],
+        );
+      });
+      const selectedCommercialClauseNoteLines =
+        buildProviderDocumentImportCommercialClauseNoteLines(
+          selectedCommercialClauses,
+        );
       const previewCommercialTerms =
         providerDocumentImportState.preview?.commercialTerms || {};
       const fallbackCurrencyCode = isCreateDraftImport
@@ -5929,6 +6037,7 @@ export function useQuotationsSection({
               quotationValidityResolution.noteLine,
               warrantyResolution.noteLine,
               paymentTermsResolution.noteLine,
+              ...selectedCommercialClauseNoteLines,
             ]),
           },
         }));
@@ -6009,6 +6118,7 @@ export function useQuotationsSection({
               quotationValidityResolution.noteLine,
               warrantyResolution.noteLine,
               paymentTermsResolution.noteLine,
+              ...selectedCommercialClauseNoteLines,
             ],
           ),
         }),
@@ -6047,6 +6157,7 @@ export function useQuotationsSection({
     createSectionDrafts.length,
     providerDocumentImportEffectiveItems,
     providerDocumentImportState.commercialTermsSelection,
+    providerDocumentImportState.commercialClausesSelection,
     providerDocumentImportState.confirmedProviderId,
     providerDocumentImportState.draftPricingContext,
     providerDocumentImportState.preview,
@@ -7802,6 +7913,10 @@ export function useQuotationsSection({
         providerDocumentImportState.commercialTermsSelection,
       onToggleCommercialTermSelection:
         setProviderDocumentImportCommercialTermSelection,
+      commercialClausesSelection:
+        providerDocumentImportState.commercialClausesSelection,
+      onToggleCommercialClauseSelection:
+        setProviderDocumentImportCommercialClauseSelection,
       onSelectSuggestedMatchCandidate:
         setProviderDocumentImportSuggestedMatchCandidate,
       onResolveSuggestedMatch:

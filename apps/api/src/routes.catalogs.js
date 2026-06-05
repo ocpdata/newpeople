@@ -934,20 +934,13 @@ router.get(
       `SELECT DISTINCT u.id, u.full_name, u.email
        FROM users u
        WHERE u.status = 'active'
-         AND (
-           EXISTS (
-             SELECT 1
-             FROM user_roles ur
-             INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
-             INNER JOIN permissions p ON p.id = rp.permission_id
-             WHERE ur.user_id = u.id
-               AND p.code IN ('oportunidades.create', 'oportunidades.request', 'oportunidades.update')
-           )
-           OR EXISTS (
-             SELECT 1
-             FROM opportunities o
-             WHERE o.seller_user_id = u.id
-           )
+         AND EXISTS (
+           SELECT 1
+           FROM user_roles ur
+           INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+           INNER JOIN permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id
+               AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
          )
          ${restrictToCurrentSeller ? "AND u.id = ?" : ""}
        ORDER BY u.full_name`,

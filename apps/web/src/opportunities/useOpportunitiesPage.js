@@ -10,6 +10,8 @@ const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
 const SELLER_CAPABILITY_PERMISSION_CODES = [
+  "oportunidades.read",
+  "oportunidades.read_all",
   "oportunidades.create",
   "oportunidades.request",
   "oportunidades.update",
@@ -620,6 +622,17 @@ export function useOpportunitiesPage({
 
       return { ...prev, name: normalizedValue };
     });
+  }
+
+  function isPermittedSellerUserId(value) {
+    const sellerUserId = Number(value || 0);
+    if (!sellerUserId) {
+      return false;
+    }
+
+    return catalogs.sellerUsers.some(
+      (sellerUser) => Number(sellerUser.id) === sellerUserId,
+    );
   }
 
   function buildDefaultCommercialContext() {
@@ -2689,6 +2702,11 @@ export function useOpportunitiesPage({
       return;
     }
 
+    if (!isPermittedSellerUserId(form.sellerUserId)) {
+      setError("Selecciona un vendedor con permisos vigentes de oportunidades");
+      return;
+    }
+
     setError("");
     setSuccess("");
     setSavingCommercialAction("advance");
@@ -2907,6 +2925,10 @@ export function useOpportunitiesPage({
     const wasEditing = Boolean(editingOpportunityId);
     if (!form.sellerUserId) {
       setError("Selecciona un vendedor");
+      return;
+    }
+    if (!isPermittedSellerUserId(form.sellerUserId)) {
+      setError("Selecciona un vendedor con permisos vigentes de oportunidades");
       return;
     }
 

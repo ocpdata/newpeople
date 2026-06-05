@@ -23,6 +23,8 @@ function QuotationProviderImportWindow({
   applying,
   commercialTermsSelection,
   onToggleCommercialTermSelection,
+  commercialClausesSelection,
+  onToggleCommercialClauseSelection,
   onSelectSuggestedMatchCandidate,
   onResolveSuggestedMatch,
   missingItemsSelection,
@@ -68,6 +70,10 @@ function QuotationProviderImportWindow({
             applying={applying}
             commercialTermsSelection={commercialTermsSelection}
             onToggleCommercialTermSelection={onToggleCommercialTermSelection}
+            commercialClausesSelection={commercialClausesSelection}
+            onToggleCommercialClauseSelection={
+              onToggleCommercialClauseSelection
+            }
             onSelectSuggestedMatchCandidate={onSelectSuggestedMatchCandidate}
             onResolveSuggestedMatch={onResolveSuggestedMatch}
             missingItemsSelection={missingItemsSelection}

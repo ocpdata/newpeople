@@ -15,10 +15,31 @@ const COMMERCIAL_TERM_ORDER = [
   "paymentTerms",
   "currencyCode",
 ];
+const COMMERCIAL_CLAUSE_CATEGORY_LABELS = {
+  payment: "Pago",
+  delivery: "Entrega",
+  warranty: "Garantia",
+  legal: "Legal",
+  logistics: "Logistica",
+  others: "Condicion",
+};
 const SUGGESTED_MATCH_STATUSES = [
   "suggested_match_pending_confirmation",
   "ambiguous_similar_match",
 ];
+
+function formatCommercialClauseConfidence(value) {
+  const normalizedValue = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedValue === "high") {
+    return "Alta";
+  }
+  if (normalizedValue === "medium") {
+    return "Media";
+  }
+  return "Baja";
+}
 
 function getSuggestedMatchCandidateLabel(item) {
   const candidate = item?.effectiveMatchedCandidate;
@@ -297,6 +318,8 @@ function QuotationProviderDocumentImportModal({
   applying,
   commercialTermsSelection,
   onToggleCommercialTermSelection,
+  commercialClausesSelection,
+  onToggleCommercialClauseSelection,
   onSelectSuggestedMatchCandidate,
   onResolveSuggestedMatch,
   missingItemsSelection,
@@ -372,6 +395,10 @@ function QuotationProviderDocumentImportModal({
     selectedDocumentId || previewJob?.request?.documentLinkId,
   );
   const termSelection = commercialTermsSelection || {};
+  const clauseSelection = commercialClausesSelection || {};
+  const commercialClauses = Array.isArray(preview?.commercialClauses)
+    ? preview.commercialClauses
+    : [];
 
   return (
     <div
@@ -628,21 +655,62 @@ function QuotationProviderDocumentImportModal({
                           {item.effectiveMatchStatus ===
                           "missing_in_price_list" ? (
                             item.canCreateInPriceList ? (
-                              <input
-                                type="checkbox"
-                                checked={Boolean(
-                                  missingItemsSelection?.[
-                                    String(item.previewId)
-                                  ],
-                                )}
-                                onChange={(event) =>
-                                  onToggleMissingItemSelection(
-                                    item.previewId,
-                                    event.target.checked,
-                                  )
+                              <div className="quotation-provider-import-warning-line">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(
+                                    missingItemsSelection?.[
+                                      String(item.previewId)
+                                    ],
+                                  )}
+                                  onChange={(event) =>
+                                    onToggleMissingItemSelection(
+                                      item.previewId,
+                                      event.target.checked,
+                                    )
+                                  }
+                                  disabled={isCreatingMissingItems}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-secondary quotation-provider-import-suggestion-btn quotation-provider-import-suggestion-btn-icon quotation-provider-import-suggestion-btn-create"
+                                  onClick={() =>
+                                    onCreateSuggestedMatchItem?.(item.previewId)
+                                  }
+                                  disabled={
+                                    isCreatingMissingItems ||
+                                    isCreatingSuggestedMatchItem ||
+                                    !hasConfirmedProviderContext ||
+                                    !hasDocumentContext
+                                  }
+                                  title={
+                                    !hasConfirmedProviderContext
+                                      ? "Confirma el proveedor para crear un nuevo item"
+                                      : !hasDocumentContext
+                                        ? "Confirma el documento analizado para crear un nuevo item"
+                                        : "Crear item individual en lista"
+                                  }
+                                  aria-label={
+                                    !hasConfirmedProviderContext
+                                      ? "Confirma el proveedor para crear un nuevo item"
+                                      : !hasDocumentContext
+                                        ? "Confirma el documento analizado para crear un nuevo item"
+                                        : "Crear item individual en lista"
                                 }
-                                disabled={isCreatingMissingItems}
-                              />
+                                >
+                                  {String(creatingSuggestedMatchPreviewId || "") ===
+                                  String(item.previewId) ? (
+                                    <span
+                                      className="quotation-provider-import-inline-spinner"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm3.75 9.75h-3v3h-1.5v-3h-3v-1.5h3v-3h1.5v3h3Z" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
                             ) : (
                               <span className="quotation-provider-import-muted">
                                 No
@@ -675,6 +743,16 @@ function QuotationProviderDocumentImportModal({
                               </span>
                             ) : item.resolutionRequired ? (
                               <span>Pendiente de confirmación</span>
+                            ) : null}
+                            {suggestedMatchFeedback?.[String(item.previewId)]
+                              ?.message ? (
+                              <span>
+                                {
+                                  suggestedMatchFeedback[
+                                    String(item.previewId)
+                                  ].message
+                                }
+                              </span>
                             ) : null}
                           </div>
                         </td>
@@ -786,6 +864,82 @@ function QuotationProviderDocumentImportModal({
                   ))}
                 </div>
               </div>
+            </section>
+
+            <section className="quotation-provider-import-conditions-section">
+              <strong>Clausulas comerciales detectadas</strong>
+              <p>
+                Selecciona los terminos o condiciones del proveedor que se
+                anexaran a las notas de la cotizacion en espanol.
+              </p>
+              {commercialClauses.length ? (
+                <div className="quotation-provider-import-terms">
+                  <div className="quotation-provider-import-terms-grid">
+                    {commercialClauses.map((clause, index) => {
+                      const clauseId = String(
+                        clause?.clauseId || `clause-${index + 1}`,
+                      ).trim();
+                      if (!clauseId) {
+                        return null;
+                      }
+
+                      const category = String(clause?.category || "")
+                        .trim()
+                        .toLowerCase();
+                      const categoryLabel =
+                        COMMERCIAL_CLAUSE_CATEGORY_LABELS[category] ||
+                        COMMERCIAL_CLAUSE_CATEGORY_LABELS.others;
+                      const title = String(clause?.titleEs || "").trim();
+                      const text = String(clause?.textEs || "").trim();
+                      const sourceSnippet = String(
+                        clause?.sourceSnippet || "",
+                      ).trim();
+
+                      return (
+                        <label
+                          key={clauseId}
+                          className="quotation-provider-import-term-card"
+                        >
+                          <span className="quotation-provider-import-term-title">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(clauseSelection[clauseId])}
+                              onChange={(event) =>
+                                onToggleCommercialClauseSelection?.(
+                                  clauseId,
+                                  event.target.checked,
+                                )
+                              }
+                              disabled={isCreatingMissingItems}
+                            />
+                            <strong>{title || "Clausula detectada"}</strong>
+                          </span>
+                          <span>
+                            {categoryLabel} · Confianza {formatCommercialClauseConfidence(
+                              clause?.confidence,
+                            )}
+                          </span>
+                          {text ? <span>{text}</span> : null}
+                          {sourceSnippet ? (
+                            <span className="quotation-provider-import-muted">
+                              Evidencia: {sourceSnippet}
+                            </span>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="quotation-provider-import-warning">
+                  <ul>
+                    <li>
+                      No se detectaron clausulas de terminos o condiciones en
+                      el documento analizado.
+                    </li>
+                  </ul>
+                </div>
+              )}
             </section>
 
             {workflowStage === "blocked_missing_price_list" ? (
