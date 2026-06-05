@@ -285,22 +285,19 @@ const opportunityCreatePermissions = [
   "oportunidades.request",
 ];
 const opportunityGlobalReadPermission = "oportunidades.read_all";
+const sellerCapabilityPermissions = [
+  "oportunidades.create",
+  "oportunidades.request",
+  "oportunidades.update",
+];
 
 function hasGlobalAccountReadScope(user) {
   return user?.permissionSet?.has(opportunityGlobalReadPermission);
 }
 
-function normalizeRoleName(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function hasSellerRole(user) {
-  return (Array.isArray(user?.roles) ? user.roles : []).some((role) =>
-    normalizeRoleName(role?.name).startsWith("vendedor"),
+function hasSellerCapability(user) {
+  return sellerCapabilityPermissions.some((permission) =>
+    user?.permissionSet?.has(permission),
   );
 }
 
@@ -1479,7 +1476,7 @@ async function validateOpportunityRelations({
   }
 
   if (
-    hasSellerRole(user) &&
+    hasSellerCapability(user) &&
     !hasGlobalAccountReadScope(user) &&
     Number(sellerUserId) !== Number(user.id)
   ) {
@@ -1494,11 +1491,16 @@ async function validateOpportunityRelations({
   const sellerRows = await query(
     `SELECT u.id
      FROM users u
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE u.id = ?
        AND u.status = 'active'
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+       AND EXISTS (
+         SELECT 1
+         FROM user_roles ur
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.user_id = u.id
+           AND p.code IN ('oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+       )
      LIMIT 1`,
     [sellerUserId],
   );
@@ -1507,7 +1509,7 @@ async function validateOpportunityRelations({
     return {
       ok: false,
       status: 400,
-      message: "El vendedor debe tener rol de vendedor",
+      message: "El vendedor debe tener permisos de oportunidades",
     };
   }
 

@@ -1525,10 +1525,15 @@ async function loadSellerUsers() {
   return query(
     `SELECT DISTINCT u.id, u.full_name
      FROM users u
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE u.status = 'active'
-       AND LOWER(r.name) = 'vendedor'
+       AND EXISTS (
+         SELECT 1
+         FROM user_roles ur
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.user_id = u.id
+           AND p.code IN ('oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+       )
      ORDER BY u.full_name`,
   );
 }

@@ -9,6 +9,11 @@ const DOCUMENT_SESSION_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
+const SELLER_CAPABILITY_PERMISSION_CODES = [
+  "oportunidades.create",
+  "oportunidades.request",
+  "oportunidades.update",
+];
 
 function isDocumentProcessingPending(session, documents) {
   const sessionStatus = normalizeText(session?.status);
@@ -391,20 +396,21 @@ export function useOpportunitiesPage({
   const canRequestOpportunities = explicitOpportunityPermissions.has(
     "oportunidades.request",
   );
+  const currentUserHasSellerCapability =
+    SELLER_CAPABILITY_PERMISSION_CODES.some((permissionCode) =>
+      explicitOpportunityPermissions.has(permissionCode),
+    );
   const canCreateOrRequestOpportunities =
     canDirectCreateOpportunities ||
     (canRequestOpportunities && opportunitiesPendingEnabled);
   const canChangeOpportunityActivationStatus = canDirectCreateOpportunities;
 
   function getDefaultSellerUserId() {
-    const currentUserIsSeller = (currentUser?.roles || []).some((role) =>
-      normalizeText(role.name).startsWith("vendedor"),
-    );
     const currentUserIsAvailableSeller = catalogs.sellerUsers.some(
       (user) => Number(user.id) === Number(currentUser?.id),
     );
 
-    return currentUserIsSeller && currentUserIsAvailableSeller
+    return currentUserHasSellerCapability && currentUserIsAvailableSeller
       ? String(currentUser.id)
       : "";
   }
@@ -435,10 +441,7 @@ export function useOpportunitiesPage({
     const currentUserId = Number(currentUser?.id || 0);
     if (!currentUserId) return false;
 
-    const currentUserIsSeller = (currentUser?.roles || []).some((role) =>
-      normalizeText(role?.name).startsWith("vendedor"),
-    );
-    if (!currentUserIsSeller) return false;
+    if (!currentUserHasSellerCapability) return false;
 
     const hasGlobalOpportunityScope = explicitOpportunityPermissions.has(
       "oportunidades.read_all",
@@ -449,7 +452,12 @@ export function useOpportunitiesPage({
       catalogs.sellerUsers.length === 1 &&
       Number(catalogs.sellerUsers[0]?.id) === currentUserId
     );
-  }, [catalogs.sellerUsers, currentUser, explicitOpportunityPermissions]);
+  }, [
+    catalogs.sellerUsers,
+    currentUser,
+    currentUserHasSellerCapability,
+    explicitOpportunityPermissions,
+  ]);
   const openEditOpportunityModalRef = useRef(null);
   const commercialSuggestionPollingTokenRef = useRef(0);
   const stageValidationPollingTokenRef = useRef(0);
