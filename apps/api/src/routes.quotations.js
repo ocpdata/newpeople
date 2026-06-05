@@ -1146,9 +1146,11 @@ let ensureQuotationStatusesSchemaPromise;
 let ensureQuotationVersionDocumentsSchemaPromise;
 let ensureQuotationDocumentImportsSchemaPromise;
 let ensureQuotationProviderDocumentImportPreviewJobSchemaPromise;
+let ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise;
 let ensureProposalSchemaPromise;
 let quotationProviderDocumentImportPreviewWorkerQueued = false;
 let quotationProviderDocumentImportPreviewWorkerStarted = false;
+let quotationCreateProviderDocumentImportPreviewWorkerQueued = false;
 const tableColumnPresenceCache = new Map();
 
 const defaultProposalTemplateSeedRows = [
@@ -1659,6 +1661,52 @@ export async function ensureQuotationProviderDocumentImportPreviewJobSchema() {
   }
 
   return ensureQuotationProviderDocumentImportPreviewJobSchemaPromise;
+}
+
+async function ensureQuotationCreateProviderDocumentImportPreviewJobSchema() {
+  if (!ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise) {
+    ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise =
+      (async () => {
+        await query(
+          `CREATE TABLE IF NOT EXISTS quotation_create_provider_document_import_preview_jobs (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          public_id VARCHAR(64) NOT NULL,
+          requested_by_user_id BIGINT UNSIGNED NOT NULL,
+          provider_id BIGINT UNSIGNED NULL,
+          status ENUM('pending','running','completed','failed','stale') NOT NULL DEFAULT 'pending',
+          request_fingerprint CHAR(64) NOT NULL,
+          progress_phase VARCHAR(80) NULL,
+          progress_label VARCHAR(255) NULL,
+          progress_percent INT UNSIGNED NOT NULL DEFAULT 0,
+          source_snapshot_json LONGTEXT NULL,
+          result_json LONGTEXT NULL,
+          error_code VARCHAR(64) NULL,
+          error_message TEXT NULL,
+          attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+          lease_token VARCHAR(64) NULL,
+          lease_expires_at DATETIME(3) NULL,
+          started_at DATETIME(3) NULL,
+          finished_at DATETIME(3) NULL,
+          expires_at DATETIME(3) NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          PRIMARY KEY (id),
+          UNIQUE KEY uq_qcpdip_jobs_public_id (public_id),
+          KEY idx_qcpdip_jobs_lookup (requested_by_user_id, created_at),
+          KEY idx_qcpdip_jobs_fingerprint (requested_by_user_id, request_fingerprint, status, created_at),
+          KEY idx_qcpdip_jobs_process (status, lease_expires_at, created_at),
+          CONSTRAINT fk_qcpdip_jobs_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          CONSTRAINT fk_qcpdip_jobs_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        );
+      })().catch((error) => {
+        ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise =
+          undefined;
+        throw error;
+      });
+  }
+
+  return ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise;
 }
 
 async function ensureProposalSchema() {
@@ -3518,6 +3566,17 @@ function buildProviderDocumentImportPdfPrompt({
 }
 
 async function requestProviderDocumentImportAnalysis(payload) {
+  const aiUsageContext = payload?.aiUsageContext || null;
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId = randomUUID();
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
+  const requestPayload = { ...payload };
+  delete requestPayload.aiUsageContext;
+
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -3526,7 +3585,7 @@ async function requestProviderDocumentImportAnalysis(payload) {
         Authorization: `Bearer ${config.openai.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestPayload),
     },
   );
 
@@ -3536,6 +3595,19 @@ async function requestProviderDocumentImportAnalysis(payload) {
   }
 
   const responseData = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode: "quotations.documents.provider_import_preview",
+      model: String(requestPayload?.model || config.openai.model || "").trim(),
+      openAiResponse: responseData,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
+
   const parsed = extractJsonObject(getOpenAiOutputText(responseData));
   if (!parsed || typeof parsed !== "object") {
     throw new Error("OpenAI request failed: invalid JSON response");
@@ -3549,6 +3621,7 @@ async function analyzeProviderDocumentImport({
   extractedContent,
   buffer,
   extractionError = null,
+  aiUsageContext = null,
 }) {
   if (!config.openai.apiKey) {
     const error = new Error(
@@ -3575,7 +3648,10 @@ async function analyzeProviderDocumentImport({
   if (normalizedText) {
     try {
       parsed = await requestProviderDocumentImportAnalysis(
-        buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
+        {
+          ...buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
+          aiUsageContext,
+        },
       );
     } catch (error) {
       primaryError = error;
@@ -3597,11 +3673,14 @@ async function analyzeProviderDocumentImport({
 
     try {
       parsed = await requestProviderDocumentImportAnalysis(
-        buildProviderDocumentImportPdfPrompt({
-          documentRow,
-          extractedContent,
-          buffer,
-        }),
+        {
+          ...buildProviderDocumentImportPdfPrompt({
+            documentRow,
+            extractedContent,
+            buffer,
+          }),
+          aiUsageContext,
+        },
       );
     } catch (fallbackError) {
       if (primaryError) {
@@ -3708,6 +3787,7 @@ async function buildProviderDocumentImportPreview({
   version,
   documentRow,
   providerId = null,
+  aiUsageContext = null,
 }) {
   const history = await getQuotationDocumentImportHistory({
     quotationId: version.quotation_id,
@@ -3759,6 +3839,7 @@ async function buildProviderDocumentImportPreview({
     extractedContent,
     buffer,
     extractionError,
+    aiUsageContext,
   });
 
   return buildProviderDocumentImportPreviewFromAnalysis({
@@ -3984,13 +4065,17 @@ async function buildProviderDocumentImportPreviewFromAnalysis({
 
 async function buildDraftProviderDocumentImportPreview({
   uploadedFile,
+  uploadedBuffer = null,
   providerId = null,
+  aiUsageContext = null,
 }) {
   const fileName =
     uploadedFile?.originalFilename || uploadedFile?.newFilename || "Documento";
   const mimeType = String(uploadedFile?.mimetype || "application/octet-stream");
   const extension = path.extname(fileName || "") || null;
-  const buffer = await readFile(uploadedFile.filepath);
+  const buffer = Buffer.isBuffer(uploadedBuffer)
+    ? uploadedBuffer
+    : await readFile(uploadedFile.filepath);
   let extractedContent = null;
   let extractionError = null;
 
@@ -4040,6 +4125,7 @@ async function buildDraftProviderDocumentImportPreview({
     extractedContent,
     buffer,
     extractionError,
+    aiUsageContext,
   });
 
   return buildProviderDocumentImportPreviewFromAnalysis({
@@ -4242,6 +4328,459 @@ function buildQuotationProviderDocumentImportPreviewJobResponse(row) {
   }
 
   return response;
+}
+
+function buildQuotationCreateProviderDocumentImportPreviewJobPublicId() {
+  return `qcpdip_${randomUUID().replace(/-/g, "")}`;
+}
+
+function buildQuotationCreateProviderDocumentImportPreviewJobSnapshot({
+  providerId,
+  fileName,
+  mimeType,
+  fileExtension,
+  fileByteSize,
+  fileSha256,
+  fileBufferBase64,
+}) {
+  return {
+    providerId: providerId ? Number(providerId) : null,
+    fileName: String(fileName || "Documento").trim() || "Documento",
+    mimeType:
+      String(mimeType || "application/octet-stream").trim() ||
+      "application/octet-stream",
+    fileExtension:
+      String(fileExtension || "").trim() ||
+      path.extname(String(fileName || "").trim() || "") ||
+      null,
+    fileByteSize: Number(fileByteSize || 0) || 0,
+    fileSha256: String(fileSha256 || "").trim() || null,
+    fileBufferBase64: String(fileBufferBase64 || "").trim() || null,
+  };
+}
+
+function hashQuotationCreateProviderDocumentImportPreviewJobSnapshot(snapshot) {
+  const fingerprintPayload = {
+    providerId: snapshot?.providerId ? Number(snapshot.providerId) : null,
+    fileName: String(snapshot?.fileName || "").trim(),
+    mimeType: String(snapshot?.mimeType || "").trim(),
+    fileExtension: String(snapshot?.fileExtension || "").trim(),
+    fileByteSize: Number(snapshot?.fileByteSize || 0) || 0,
+    fileSha256: String(snapshot?.fileSha256 || "").trim(),
+  };
+
+  return createHash("sha256")
+    .update(JSON.stringify(fingerprintPayload))
+    .digest("hex");
+}
+
+function buildQuotationCreateProviderDocumentImportPreviewJobResponse(row) {
+  if (!row) return null;
+
+  const result = safeParseJsonObject(row.result_json) || null;
+  const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
+  const isExpired =
+    row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+  const status =
+    isExpired && ["completed", "failed", "stale"].includes(row.status)
+      ? "expired"
+      : row.status;
+  const response = {
+    job: {
+      id: String(row.public_id || ""),
+      status,
+      pollAfterMs: QUOTATION_PROVIDER_IMPORT_PREVIEW_JOB_POLL_INTERVAL_MS,
+      progress: {
+        phase: String(row.progress_phase || "queued").trim() || "queued",
+        label:
+          String(row.progress_label || "").trim() ||
+          "Analizando documento del proveedor",
+        percent: Math.max(0, Number(row.progress_percent || 0) || 0),
+      },
+      request: {
+        providerId:
+          row.provider_id == null && snapshot.providerId == null
+            ? null
+            : Number((row.provider_id ?? snapshot.providerId) || 0),
+        fileName: String(snapshot.fileName || "Documento").trim() || "Documento",
+        mimeType:
+          String(snapshot.mimeType || "application/octet-stream").trim() ||
+          "application/octet-stream",
+        fileExtension: String(snapshot.fileExtension || "").trim() || null,
+      },
+      createdAt: row.created_at,
+      startedAt: row.started_at || null,
+      finishedAt: row.finished_at || null,
+      expiresAt: row.expires_at || null,
+      resultAvailable: status === "completed" && Boolean(result),
+    },
+  };
+
+  if (status === "completed" && result) {
+    response.result = result;
+    return response;
+  }
+
+  if (status === "failed") {
+    response.error = {
+      code: row.error_code || "provider_document_import_preview_failed",
+      message:
+        String(row.error_message || "").trim() ||
+        "No fue posible analizar el documento del proveedor",
+    };
+    return response;
+  }
+
+  if (status === "stale") {
+    response.error = {
+      code: row.error_code || "stale_snapshot",
+      message:
+        String(row.error_message || "").trim() ||
+        "El documento o los parametros cambiaron antes de completar el analisis. Solicita un nuevo analisis.",
+    };
+    return response;
+  }
+
+  if (status === "expired") {
+    response.error = {
+      code: "preview_expired",
+      message:
+        "El resultado del analisis ya expiro. Vuelve a solicitar el analisis del documento.",
+    };
+  }
+
+  return response;
+}
+
+async function createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
+  providerId,
+  uploadedFile,
+  requestedByUserId,
+}) {
+  await ensureQuotationCreateProviderDocumentImportPreviewJobSchema();
+
+  const fileName =
+    String(
+      uploadedFile?.originalFilename || uploadedFile?.newFilename || "Documento",
+    ).trim() || "Documento";
+  const mimeType =
+    String(uploadedFile?.mimetype || "application/octet-stream").trim() ||
+    "application/octet-stream";
+  const fileBuffer = await readFile(uploadedFile.filepath);
+  const fileSha256 = createHash("sha256").update(fileBuffer).digest("hex");
+
+  const snapshot =
+    buildQuotationCreateProviderDocumentImportPreviewJobSnapshot({
+      providerId,
+      fileName,
+      mimeType,
+      fileExtension: path.extname(fileName || "") || null,
+      fileByteSize: Number(uploadedFile?.size || fileBuffer.length || 0),
+      fileSha256,
+      fileBufferBase64: fileBuffer.toString("base64"),
+    });
+  const fingerprint =
+    hashQuotationCreateProviderDocumentImportPreviewJobSnapshot(snapshot);
+  const reusableRows = await query(
+    `SELECT *
+     FROM quotation_create_provider_document_import_preview_jobs
+     WHERE requested_by_user_id = ?
+       AND request_fingerprint = ?
+       AND status IN ('pending', 'running')
+     ORDER BY id DESC
+     LIMIT 1`,
+    [Number(requestedByUserId), fingerprint],
+  );
+
+  if (reusableRows.length) {
+    return {
+      wasReused: true,
+      response: buildQuotationCreateProviderDocumentImportPreviewJobResponse(
+        reusableRows[0],
+      ),
+    };
+  }
+
+  const publicId = buildQuotationCreateProviderDocumentImportPreviewJobPublicId();
+  await query(
+    `INSERT INTO quotation_create_provider_document_import_preview_jobs (
+       public_id,
+       requested_by_user_id,
+       provider_id,
+       status,
+       request_fingerprint,
+       progress_phase,
+       progress_label,
+       progress_percent,
+       source_snapshot_json
+     ) VALUES (?, ?, ?, 'pending', ?, 'queued', 'Analisis en cola', 0, ?)`,
+    [
+      publicId,
+      Number(requestedByUserId),
+      providerId ? Number(providerId) : null,
+      fingerprint,
+      JSON.stringify(snapshot),
+    ],
+  );
+
+  const rows = await query(
+    `SELECT *
+     FROM quotation_create_provider_document_import_preview_jobs
+     WHERE public_id = ?
+     LIMIT 1`,
+    [publicId],
+  );
+
+  return {
+    wasReused: false,
+    response: buildQuotationCreateProviderDocumentImportPreviewJobResponse(
+      rows[0],
+    ),
+  };
+}
+
+async function getQuotationCreateProviderDocumentImportPreviewJob({
+  publicId,
+  requestedByUserId,
+}) {
+  await ensureQuotationCreateProviderDocumentImportPreviewJobSchema();
+
+  const rows = await query(
+    `SELECT *
+     FROM quotation_create_provider_document_import_preview_jobs
+     WHERE public_id = ?
+       AND requested_by_user_id = ?
+     LIMIT 1`,
+    [String(publicId || "").trim(), Number(requestedByUserId)],
+  );
+  return rows.length
+    ? buildQuotationCreateProviderDocumentImportPreviewJobResponse(rows[0])
+    : null;
+}
+
+async function claimNextQuotationCreateProviderDocumentImportPreviewJob() {
+  const candidates = await query(
+    `SELECT id
+     FROM quotation_create_provider_document_import_preview_jobs
+     WHERE (
+         status = 'pending'
+         OR (
+           status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= NOW(3)
+         )
+       )
+       AND (expires_at IS NULL OR expires_at > NOW(3))
+     ORDER BY created_at ASC, id ASC
+     LIMIT 20`,
+  );
+
+  for (const candidate of candidates) {
+    const leaseToken = randomUUID().replace(/-/g, "");
+    const row = await withTransaction(async (conn) => {
+      const [updateResult] = await conn.query(
+        `UPDATE quotation_create_provider_document_import_preview_jobs
+         SET status = 'running',
+             attempt_count = attempt_count + 1,
+             lease_token = ?,
+             lease_expires_at = DATE_ADD(NOW(3), INTERVAL ? SECOND),
+             started_at = COALESCE(started_at, NOW(3)),
+             progress_phase = 'preparing',
+             progress_label = 'Preparando analisis del documento',
+             progress_percent = GREATEST(progress_percent, 10),
+             updated_at = NOW(3)
+         WHERE id = ?
+           AND (
+             status = 'pending'
+             OR (
+               status = 'running'
+               AND lease_expires_at IS NOT NULL
+               AND lease_expires_at <= NOW(3)
+             )
+           )`,
+        [
+          leaseToken,
+          QUOTATION_PROVIDER_IMPORT_PREVIEW_JOB_LEASE_SECONDS,
+          Number(candidate.id),
+        ],
+      );
+
+      if (!updateResult.affectedRows) {
+        return null;
+      }
+
+      const [rows] = await conn.query(
+        `SELECT *
+         FROM quotation_create_provider_document_import_preview_jobs
+         WHERE id = ?
+         LIMIT 1`,
+        [Number(candidate.id)],
+      );
+      return rows[0] || null;
+    });
+
+    if (row) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
+async function updateQuotationCreateProviderDocumentImportPreviewJobProgress({
+  jobId,
+  leaseToken,
+  phase,
+  label,
+  percent,
+}) {
+  await query(
+    `UPDATE quotation_create_provider_document_import_preview_jobs
+     SET progress_phase = ?,
+         progress_label = ?,
+         progress_percent = ?,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      String(phase || "queued").trim() || "queued",
+      String(label || "Analizando documento del proveedor").trim() ||
+        "Analizando documento del proveedor",
+      Math.max(0, Math.min(100, Number(percent || 0) || 0)),
+      Number(jobId),
+      String(leaseToken || "").trim(),
+    ],
+  );
+}
+
+async function finalizeQuotationCreateProviderDocumentImportPreviewJob({
+  jobId,
+  leaseToken,
+  status,
+  result,
+  errorCode,
+  errorMessage,
+}) {
+  await query(
+    `UPDATE quotation_create_provider_document_import_preview_jobs
+     SET status = ?,
+         progress_phase = CASE
+           WHEN ? = 'completed' THEN 'completed'
+           WHEN ? = 'failed' THEN 'failed'
+           WHEN ? = 'stale' THEN 'stale'
+           ELSE progress_phase
+         END,
+         progress_label = CASE
+           WHEN ? = 'completed' THEN 'Analisis completado'
+           WHEN ? = 'failed' THEN 'Analisis fallido'
+           WHEN ? = 'stale' THEN 'Analisis invalido por cambios'
+           ELSE progress_label
+         END,
+         progress_percent = CASE WHEN ? = 'completed' THEN 100 ELSE progress_percent END,
+         result_json = ?,
+         error_code = ?,
+         error_message = ?,
+         finished_at = NOW(3),
+         expires_at = DATE_ADD(NOW(3), INTERVAL ? MINUTE),
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      status,
+      status,
+      status,
+      status,
+      status,
+      status,
+      status,
+      status,
+      result ? JSON.stringify(result) : null,
+      errorCode || null,
+      errorMessage || null,
+      QUOTATION_PROVIDER_IMPORT_PREVIEW_JOB_RESULT_TTL_MINUTES,
+      Number(jobId),
+      String(leaseToken || "").trim(),
+    ],
+  );
+}
+
+async function processQuotationCreateProviderDocumentImportPreviewJob(row) {
+  const snapshot = safeParseJsonObject(row.source_snapshot_json) || {};
+
+  try {
+    const fileBufferBase64 = String(snapshot.fileBufferBase64 || "").trim();
+    if (!fileBufferBase64) {
+      await finalizeQuotationCreateProviderDocumentImportPreviewJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "file_payload_missing",
+        errorMessage:
+          "No fue posible resolver el documento solicitado para el analisis.",
+      });
+      return;
+    }
+
+    const fileBuffer = Buffer.from(fileBufferBase64, "base64");
+    if (!fileBuffer.length) {
+      await finalizeQuotationCreateProviderDocumentImportPreviewJob({
+        jobId: Number(row.id),
+        leaseToken: row.lease_token,
+        status: "failed",
+        errorCode: "file_payload_invalid",
+        errorMessage:
+          "No fue posible leer el contenido del documento para el analisis.",
+      });
+      return;
+    }
+
+    await updateQuotationCreateProviderDocumentImportPreviewJobProgress({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      phase: "analyzing_document",
+      label: "Extrayendo y analizando documento con IA",
+      percent: 40,
+    });
+
+    const result = await buildDraftProviderDocumentImportPreview({
+      uploadedFile: {
+        originalFilename: String(snapshot.fileName || "Documento").trim() ||
+          "Documento",
+        newFilename: String(snapshot.fileName || "Documento").trim() ||
+          "Documento",
+        mimetype:
+          String(snapshot.mimeType || "application/octet-stream").trim() ||
+          "application/octet-stream",
+      },
+      uploadedBuffer: fileBuffer,
+      providerId:
+        row.provider_id == null && snapshot.providerId == null
+          ? null
+          : Number((row.provider_id ?? snapshot.providerId) || 0),
+      aiUsageContext: {
+        userId: Number(row.requested_by_user_id),
+        jobType: "quotation_create_provider_document_import_preview_job",
+        jobId: Number(row.id),
+      },
+    });
+
+    await finalizeQuotationCreateProviderDocumentImportPreviewJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "completed",
+      result,
+    });
+  } catch (error) {
+    await finalizeQuotationCreateProviderDocumentImportPreviewJob({
+      jobId: Number(row.id),
+      leaseToken: row.lease_token,
+      status: "failed",
+      errorCode: error?.code || "provider_document_import_preview_failed",
+      errorMessage: resolveProviderDocumentImportPreviewErrorMessage(error),
+    });
+  }
 }
 
 async function createOrReuseQuotationProviderDocumentImportPreviewJob({
@@ -4610,6 +5149,11 @@ async function processQuotationProviderDocumentImportPreviewJob(row) {
       version,
       documentRow,
       providerId: snapshot.providerId,
+      aiUsageContext: {
+        userId: Number(row.requested_by_user_id),
+        jobType: "quotation_provider_document_import_preview_job",
+        jobId: Number(row.id),
+      },
     });
 
     await finalizeQuotationProviderDocumentImportPreviewJob({
@@ -4633,6 +5177,10 @@ export function queueQuotationProviderDocumentImportPreviewProcessing() {
   quotationProviderDocumentImportPreviewWorkerQueued = true;
 }
 
+export function queueQuotationCreateProviderDocumentImportPreviewProcessing() {
+  quotationCreateProviderDocumentImportPreviewWorkerQueued = true;
+}
+
 export async function processPendingQuotationProviderDocumentImportPreviewJobs({
   limit = 1,
 } = {}) {
@@ -4648,23 +5196,49 @@ export async function processPendingQuotationProviderDocumentImportPreviewJobs({
   return processed;
 }
 
+export async function processPendingQuotationCreateProviderDocumentImportPreviewJobs({
+  limit = 1,
+} = {}) {
+  let processed = 0;
+  while (processed < limit) {
+    const row = await claimNextQuotationCreateProviderDocumentImportPreviewJob();
+    if (!row) {
+      break;
+    }
+    processed += 1;
+    await processQuotationCreateProviderDocumentImportPreviewJob(row);
+  }
+  return processed;
+}
+
 export async function startQuotationProviderDocumentImportPreviewWorker() {
   if (quotationProviderDocumentImportPreviewWorkerStarted) {
     return;
   }
+  await ensureQuotationCreateProviderDocumentImportPreviewJobSchema();
   quotationProviderDocumentImportPreviewWorkerStarted = true;
 
   const tick = async () => {
     const shouldDrainQueue = quotationProviderDocumentImportPreviewWorkerQueued;
+    const shouldDrainCreateQueue =
+      quotationCreateProviderDocumentImportPreviewWorkerQueued;
     quotationProviderDocumentImportPreviewWorkerQueued = false;
+    quotationCreateProviderDocumentImportPreviewWorkerQueued = false;
 
     try {
       const processed =
         await processPendingQuotationProviderDocumentImportPreviewJobs({
           limit: shouldDrainQueue ? 3 : 1,
         });
+      const createProcessed =
+        await processPendingQuotationCreateProviderDocumentImportPreviewJobs({
+          limit: shouldDrainCreateQueue ? 3 : 1,
+        });
       if (processed > 0) {
         quotationProviderDocumentImportPreviewWorkerQueued = true;
+      }
+      if (createProcessed > 0) {
+        quotationCreateProviderDocumentImportPreviewWorkerQueued = true;
       }
     } catch (error) {
       console.error(
@@ -4680,6 +5254,7 @@ export async function startQuotationProviderDocumentImportPreviewWorker() {
   interval.unref?.();
 
   queueQuotationProviderDocumentImportPreviewProcessing();
+  queueQuotationCreateProviderDocumentImportPreviewProcessing();
   await tick();
 }
 
@@ -4938,6 +5513,7 @@ router.use(async (_req, _res, next) => {
     await ensureQuotationVersionsSchema();
     await ensureQuotationSectionItemsSchema();
     await ensureQuotationDocumentImportsSchema();
+    await ensureQuotationCreateProviderDocumentImportPreviewJobSchema();
     await ensureProposalSchema();
     next();
   } catch (error) {
@@ -12810,15 +13386,18 @@ router.post(
     const providerId = Number(fields?.providerId || 0) || null;
 
     try {
-      const result = await buildDraftProviderDocumentImportPreview({
-        uploadedFile,
-        providerId,
-      });
-      return res.json({
-        message: "Documento analizado",
-        result,
-        workflowStage: result.workflowStage,
-      });
+      const result =
+        await createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
+          uploadedFile,
+          providerId,
+          requestedByUserId: Number(req.user.id),
+        });
+
+      if (!result.wasReused) {
+        queueQuotationCreateProviderDocumentImportPreviewProcessing();
+      }
+
+      return res.status(202).json(result.response);
     } catch (error) {
       return res.status(Number(error?.status) || 500).json({
         message:
@@ -12827,6 +13406,29 @@ router.post(
     } finally {
       await cleanupTempFiles(files);
     }
+  },
+);
+
+router.get(
+  "/quotation-create/provider-document-import/preview/jobs/:jobId",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const jobId = String(req.params.jobId || "").trim();
+    if (!jobId) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const job = await getQuotationCreateProviderDocumentImportPreviewJob({
+      publicId: jobId,
+      requestedByUserId: Number(req.user.id),
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job no encontrado" });
+    }
+
+    return res.json(job);
   },
 );
 
@@ -12937,6 +13539,11 @@ router.post(
         version,
         documentRow,
         providerId: parsed.data.confirmedProviderId,
+        aiUsageContext: {
+          userId: Number(req.user.id),
+          jobType: "quotation_provider_document_import_preview_direct",
+          jobId: null,
+        },
       }));
 
     const requestedItems = (parsed.data.items || []).filter(

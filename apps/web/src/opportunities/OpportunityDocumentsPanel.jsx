@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+
+const OPPORTUNITY_DOCUMENT_FILE_ACCEPT =
+  ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
 
 function buildPastedTextFileName(label) {
   const normalizedLabel = String(label || "")
@@ -147,6 +150,93 @@ function OpportunityDocumentsPanel({
   const [previewDocument, setPreviewDocument] = useState(null);
   const [pastedTextName, setPastedTextName] = useState("");
   const [pastedTextValue, setPastedTextValue] = useState("");
+  const [isUploadDragActive, setIsUploadDragActive] = useState(false);
+  const uploadInputRef = useRef(null);
+  const uploadDragDepthRef = useRef(0);
+
+  const isUploadDisabled =
+    loadingDocumentSession ||
+    loadingOpportunityDocuments ||
+    uploadingOpportunityDocuments;
+
+  async function handleFilesUpload(fileList) {
+    if (!fileList?.length || isUploadDisabled) {
+      return;
+    }
+
+    await onUploadFiles(fileList);
+  }
+
+  function handleUploadInputChange(event) {
+    const nextFiles = event.target.files;
+    if (nextFiles?.length) {
+      handleFilesUpload(nextFiles);
+    }
+    event.target.value = "";
+  }
+
+  function handleUploadDropZoneClick() {
+    if (isUploadDisabled) return;
+    uploadInputRef.current?.click();
+  }
+
+  function handleUploadDropZoneKeyDown(event) {
+    if (isUploadDisabled) return;
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    uploadInputRef.current?.click();
+  }
+
+  function handleUploadDropZoneDragEnter(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadDisabled) return;
+    uploadDragDepthRef.current += 1;
+    setIsUploadDragActive(true);
+  }
+
+  function handleUploadDropZoneDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadDisabled) return;
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    if (!isUploadDragActive) {
+      setIsUploadDragActive(true);
+    }
+  }
+
+  function handleUploadDropZoneDragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadDisabled) return;
+    uploadDragDepthRef.current = Math.max(0, uploadDragDepthRef.current - 1);
+    if (uploadDragDepthRef.current === 0) {
+      setIsUploadDragActive(false);
+    }
+  }
+
+  async function handleUploadDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    uploadDragDepthRef.current = 0;
+    setIsUploadDragActive(false);
+
+    if (isUploadDisabled) {
+      return;
+    }
+
+    const droppedFiles = event.dataTransfer?.files;
+    if (!droppedFiles?.length) {
+      return;
+    }
+
+    await handleFilesUpload(droppedFiles);
+  }
 
   async function openDocumentPreview(document) {
     setPreviewDocument({
@@ -376,73 +466,110 @@ function OpportunityDocumentsPanel({
 
           <div className="opportunity-documents-toolbar-actions">
             {!documentCount || !isCreateMode ? (
-              <label className="btn-secondary opportunity-documents-upload-button">
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
-                  onChange={(event) => {
-                    const nextFiles = event.target.files;
-                    if (nextFiles?.length) {
-                      onUploadFiles(nextFiles);
-                    }
-                    event.target.value = "";
-                  }}
-                  disabled={
-                    loadingDocumentSession ||
-                    loadingOpportunityDocuments ||
-                    uploadingOpportunityDocuments
-                  }
-                />
-                <span
-                  className="opportunity-documents-upload-button-icon"
-                  aria-hidden="true"
+              <div className="opportunity-documents-upload-dropzone-wrapper">
+                <div
+                  className={`opportunity-documents-upload-dropzone${
+                    isUploadDragActive ? " is-drag-active" : ""
+                  }${isUploadDisabled ? " is-disabled" : ""}`}
+                  role="button"
+                  tabIndex={isUploadDisabled ? -1 : 0}
+                  aria-label="Subir documentos arrastrando archivos o seleccionandolos"
+                  aria-disabled={isUploadDisabled}
+                  onClick={handleUploadDropZoneClick}
+                  onKeyDown={handleUploadDropZoneKeyDown}
+                  onDragEnter={handleUploadDropZoneDragEnter}
+                  onDragOver={handleUploadDropZoneDragOver}
+                  onDragLeave={handleUploadDropZoneDragLeave}
+                  onDrop={handleUploadDrop}
                 >
-                  {uploadingOpportunityDocuments ? "…" : "+"}
-                </span>
-                <span className="opportunity-documents-upload-button-text">
-                  {uploadingOpportunityDocuments
-                    ? "Subiendo..."
-                    : isCreateMode
-                      ? "Cargar y analizar archivos"
-                      : "Agregar documentos"}
-                </span>
-              </label>
+                  <input
+                    ref={uploadInputRef}
+                    className="opportunity-documents-upload-input"
+                    type="file"
+                    multiple
+                    accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                    onChange={handleUploadInputChange}
+                    disabled={isUploadDisabled}
+                  />
+                  <div className="btn-secondary opportunity-documents-upload-button" aria-hidden="true">
+                    <span
+                      className="opportunity-documents-upload-button-icon"
+                      aria-hidden="true"
+                    >
+                      {uploadingOpportunityDocuments ? "…" : "+"}
+                    </span>
+                    <span className="opportunity-documents-upload-button-text">
+                      {uploadingOpportunityDocuments
+                        ? "Subiendo..."
+                        : isCreateMode
+                          ? "Cargar y analizar archivos"
+                          : "Agregar documentos"}
+                    </span>
+                  </div>
+                  <span className="field-hint opportunity-documents-upload-dropzone-hint">
+                    {isUploadDragActive
+                      ? "Suelta los archivos para cargarlos"
+                      : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
+                  </span>
+                </div>
+              </div>
             ) : isCreateMode ? (
-              <label className="btn-secondary opportunity-documents-upload-button">
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
-                  onChange={(event) => {
-                    const nextFiles = event.target.files;
-                    if (nextFiles?.length) {
-                      onUploadFiles(nextFiles);
-                    }
-                    event.target.value = "";
-                  }}
-                  disabled={
-                    loadingDocumentSession ||
-                    loadingOpportunityDocuments ||
-                    uploadingOpportunityDocuments
-                  }
-                />
-                <span
-                  className="opportunity-documents-upload-button-icon"
-                  aria-hidden="true"
+              <div className="opportunity-documents-upload-dropzone-wrapper">
+                <div
+                  className={`opportunity-documents-upload-dropzone${
+                    isUploadDragActive ? " is-drag-active" : ""
+                  }${isUploadDisabled ? " is-disabled" : ""}`}
+                  role="button"
+                  tabIndex={isUploadDisabled ? -1 : 0}
+                  aria-label="Subir documentos arrastrando archivos o seleccionandolos"
+                  aria-disabled={isUploadDisabled}
+                  onClick={handleUploadDropZoneClick}
+                  onKeyDown={handleUploadDropZoneKeyDown}
+                  onDragEnter={handleUploadDropZoneDragEnter}
+                  onDragOver={handleUploadDropZoneDragOver}
+                  onDragLeave={handleUploadDropZoneDragLeave}
+                  onDrop={handleUploadDrop}
                 >
-                  {uploadingOpportunityDocuments ? "…" : "+"}
-                </span>
-                <span className="opportunity-documents-upload-button-text">
-                  {uploadingOpportunityDocuments
-                    ? "Subiendo..."
-                    : "Subir y analizar mas archivos"}
-                </span>
-              </label>
+                  <input
+                    ref={uploadInputRef}
+                    className="opportunity-documents-upload-input"
+                    type="file"
+                    multiple
+                    accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                    onChange={handleUploadInputChange}
+                    disabled={isUploadDisabled}
+                  />
+                  <div className="btn-secondary opportunity-documents-upload-button" aria-hidden="true">
+                    <span
+                      className="opportunity-documents-upload-button-icon"
+                      aria-hidden="true"
+                    >
+                      {uploadingOpportunityDocuments ? "…" : "+"}
+                    </span>
+                    <span className="opportunity-documents-upload-button-text">
+                      {uploadingOpportunityDocuments
+                        ? "Subiendo..."
+                        : "Subir y analizar mas archivos"}
+                    </span>
+                  </div>
+                  <span className="field-hint opportunity-documents-upload-dropzone-hint">
+                    {isUploadDragActive
+                      ? "Suelta los archivos para cargarlos"
+                      : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
+                  </span>
+                </div>
+              </div>
             ) : null}
             <span className="field-hint opportunity-documents-toolbar-formats">
               Formatos: PDF, DOCX, XLSX, CSV, TXT, EML, imagen y audio.
             </span>
+            <p className="opportunity-documents-a11y-status" aria-live="polite">
+              {uploadingOpportunityDocuments
+                ? "Subiendo archivos"
+                : isUploadDragActive
+                  ? "Zona de carga activa"
+                  : "Zona de carga lista"}
+            </p>
           </div>
         </div>
 

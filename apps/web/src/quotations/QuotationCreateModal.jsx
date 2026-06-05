@@ -613,6 +613,7 @@ function QuotationCreateModal({
 }) {
   const quotationDocumentsInputRef = useRef(null);
   const pendingDocumentSequenceRef = useRef(1);
+  const pendingDocumentsDragDepthRef = useRef(0);
   const [summaryDiscountMode, setSummaryDiscountMode] = useState("percentage");
   const [summaryDiscountValue, setSummaryDiscountValue] = useState("0");
   const [isSummaryDiscountInputFocused, setIsSummaryDiscountInputFocused] =
@@ -623,6 +624,8 @@ function QuotationCreateModal({
   const [internalNotes, setInternalNotes] = useState("");
   const [pendingDocuments, setPendingDocuments] = useState([]);
   const [documentViewMode, setDocumentViewMode] = useState("current");
+  const [isPendingDocumentsDragActive, setIsPendingDocumentsDragActive] =
+    useState(false);
   const [commercialConditions, setCommercialConditions] = useState(() =>
     buildQuotationCommercialConditionsForm(),
   );
@@ -1898,43 +1901,126 @@ function QuotationCreateModal({
     };
   }
 
-  function handlePendingDocumentsInputChange(event) {
-    const nextFiles = Array.from(event.target.files || []);
-    if (nextFiles.length) {
-      setPendingDocuments((current) => {
-        const knownKeys = new Set(
-          current.map(
-            (document) =>
-              `${document.originalFileName}::${document.byteSize}::${document.lastModified || 0}`,
-          ),
-        );
-        const uniqueFiles = nextFiles.reduce((accumulator, file) => {
-          const fileKey = `${file.name}::${file.size}::${file.lastModified || 0}`;
-          if (knownKeys.has(fileKey)) {
-            return accumulator;
-          }
-
-          knownKeys.add(fileKey);
-          accumulator.push({
-            localId: `pending-document-${pendingDocumentSequenceRef.current}`,
-            file,
-            originalFileName: file.name || "Documento",
-            byteSize: Number(file.size || 0),
-            lastModified: file.lastModified || 0,
-            aiEnabled: true,
-            createdAt: new Date().toISOString(),
-            uploadedByUserName: currentUserName || "",
-            versionNumber: 1,
-          });
-          pendingDocumentSequenceRef.current += 1;
-          return accumulator;
-        }, []);
-
-        return uniqueFiles.length ? [...current, ...uniqueFiles] : current;
-      });
+  function appendPendingFiles(nextFiles) {
+    if (!Array.isArray(nextFiles) || !nextFiles.length) {
+      return;
     }
 
+    setPendingDocuments((current) => {
+      const knownKeys = new Set(
+        current.map(
+          (document) =>
+            `${document.originalFileName}::${document.byteSize}::${document.lastModified || 0}`,
+        ),
+      );
+      const uniqueFiles = nextFiles.reduce((accumulator, file) => {
+        const fileKey = `${file.name}::${file.size}::${file.lastModified || 0}`;
+        if (knownKeys.has(fileKey)) {
+          return accumulator;
+        }
+
+        knownKeys.add(fileKey);
+        accumulator.push({
+          localId: `pending-document-${pendingDocumentSequenceRef.current}`,
+          file,
+          originalFileName: file.name || "Documento",
+          byteSize: Number(file.size || 0),
+          lastModified: file.lastModified || 0,
+          aiEnabled: true,
+          createdAt: new Date().toISOString(),
+          uploadedByUserName: currentUserName || "",
+          versionNumber: 1,
+        });
+        pendingDocumentSequenceRef.current += 1;
+        return accumulator;
+      }, []);
+
+      return uniqueFiles.length ? [...current, ...uniqueFiles] : current;
+    });
+  }
+
+  function handlePendingDocumentsInputChange(event) {
+    const nextFiles = Array.from(event.target.files || []);
+    appendPendingFiles(nextFiles);
     event.target.value = "";
+  }
+
+  function handlePendingDocumentsDropZoneClick() {
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    quotationDocumentsInputRef.current?.click();
+  }
+
+  function handlePendingDocumentsDropZoneKeyDown(event) {
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    quotationDocumentsInputRef.current?.click();
+  }
+
+  function handlePendingDocumentsDropZoneDragEnter(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    pendingDocumentsDragDepthRef.current += 1;
+    setIsPendingDocumentsDragActive(true);
+  }
+
+  function handlePendingDocumentsDropZoneDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+
+    if (!isPendingDocumentsDragActive) {
+      setIsPendingDocumentsDragActive(true);
+    }
+  }
+
+  function handlePendingDocumentsDropZoneDragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    pendingDocumentsDragDepthRef.current = Math.max(
+      0,
+      pendingDocumentsDragDepthRef.current - 1,
+    );
+    if (pendingDocumentsDragDepthRef.current === 0) {
+      setIsPendingDocumentsDragActive(false);
+    }
+  }
+
+  function handlePendingDocumentsDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    pendingDocumentsDragDepthRef.current = 0;
+    setIsPendingDocumentsDragActive(false);
+
+    if (busyAction === "create-quotation") {
+      return;
+    }
+
+    const droppedFiles = Array.from(event.dataTransfer?.files || []);
+    appendPendingFiles(droppedFiles);
   }
 
   function handleTogglePendingDocumentAiEnabled(documentLocalId) {
@@ -1986,6 +2072,7 @@ function QuotationCreateModal({
     busyAction !== "create-quotation" &&
     createCommercialContextConfirmed &&
     eligiblePendingDocuments.length > 0;
+  const isPendingDocumentsInputDisabled = busyAction === "create-quotation";
 
   const currentCreateSnapshot = useMemo(
     () =>
@@ -4077,19 +4164,32 @@ function QuotationCreateModal({
                         multiple
                         className="quotation-documents-input"
                         onChange={handlePendingDocumentsInputChange}
+                        disabled={isPendingDocumentsInputDisabled}
                       />
-                      <button
-                        type="button"
-                        className="btn-secondary quotation-documents-icon-button"
-                        disabled={busyAction === "create-quotation"}
-                        onClick={() =>
-                          quotationDocumentsInputRef.current?.click()
-                        }
-                        title="Adjuntar uno o mas documentos a la nueva cotizacion"
-                        aria-label="Adjuntar uno o mas documentos a la nueva cotizacion"
+                      <div
+                        className={`quotation-documents-dropzone${isPendingDocumentsDragActive ? " is-drag-active" : ""}${isPendingDocumentsInputDisabled ? " is-disabled" : ""}`}
+                        role="button"
+                        tabIndex={isPendingDocumentsInputDisabled ? -1 : 0}
+                        aria-label="Arrastra y suelta documentos o haz clic para adjuntarlos a la cotizacion"
+                        aria-disabled={isPendingDocumentsInputDisabled}
+                        onClick={handlePendingDocumentsDropZoneClick}
+                        onKeyDown={handlePendingDocumentsDropZoneKeyDown}
+                        onDragEnter={handlePendingDocumentsDropZoneDragEnter}
+                        onDragOver={handlePendingDocumentsDropZoneDragOver}
+                        onDragLeave={handlePendingDocumentsDropZoneDragLeave}
+                        onDrop={handlePendingDocumentsDrop}
                       >
-                        <DocumentAddIcon />
-                      </button>
+                        <span className="quotation-documents-dropzone-icon" aria-hidden="true">
+                          <DocumentAddIcon />
+                        </span>
+                        <span className="quotation-documents-dropzone-text">
+                          {isPendingDocumentsDragActive
+                            ? "Suelta los documentos aqui"
+                            : isPendingDocumentsInputDisabled
+                              ? "Creando cotizacion..."
+                              : "Arrastra documentos aqui o haz clic"}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         className="btn-secondary quotation-documents-icon-button"

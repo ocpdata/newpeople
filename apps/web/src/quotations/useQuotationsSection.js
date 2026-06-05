@@ -5322,8 +5322,12 @@ export function useQuotationsSection({
             return false;
           }
 
+          const pollUrl = isCreateDraftImport
+            ? `/api/quotation-create/provider-document-import/preview/jobs/${jobId}`
+            : `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview/jobs/${jobId}`;
+
           const pollResponse = await api.get(
-            `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview/jobs/${jobId}`,
+            pollUrl,
             {
               timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
             },

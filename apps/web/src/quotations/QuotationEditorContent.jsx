@@ -917,10 +917,13 @@ function QuotationEditorContent({
   });
   const [isPrintPreviewModalOpen, setIsPrintPreviewModalOpen] = useState(false);
   const [documentViewMode, setDocumentViewMode] = useState("current");
+  const [isQuotationDocumentsDragActive, setIsQuotationDocumentsDragActive] =
+    useState(false);
   const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
   const [exchangeRateFeedback, setExchangeRateFeedback] = useState("");
   const [exchangeRateError, setExchangeRateError] = useState("");
   const quotationDocumentsInputRef = useRef(null);
+  const quotationDocumentsDragDepthRef = useRef(0);
   const exchangeRateRequestSequenceRef = useRef(0);
   const exchangeRateManualOverrideRef = useRef(0);
   const selectedVersionSections = selectedVersion?.sections || [];
@@ -1308,6 +1311,8 @@ function QuotationEditorContent({
       parentLocalId: "",
     });
     setDocumentViewMode("current");
+    setIsQuotationDocumentsDragActive(false);
+    quotationDocumentsDragDepthRef.current = 0;
     setIsExchangeRateLoading(false);
     setExchangeRateFeedback("");
     setExchangeRateError("");
@@ -1451,6 +1456,88 @@ function QuotationEditorContent({
 
     await handleUploadQuotationDocuments(files);
     event.target.value = "";
+  }
+
+  function handleQuotationDocumentsDropZoneClick() {
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    quotationDocumentsInputRef.current?.click();
+  }
+
+  function handleQuotationDocumentsDropZoneKeyDown(event) {
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    quotationDocumentsInputRef.current?.click();
+  }
+
+  function handleQuotationDocumentsDropZoneDragEnter(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    quotationDocumentsDragDepthRef.current += 1;
+    setIsQuotationDocumentsDragActive(true);
+  }
+
+  function handleQuotationDocumentsDropZoneDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+
+    if (!isQuotationDocumentsDragActive) {
+      setIsQuotationDocumentsDragActive(true);
+    }
+  }
+
+  function handleQuotationDocumentsDropZoneDragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    quotationDocumentsDragDepthRef.current = Math.max(
+      0,
+      quotationDocumentsDragDepthRef.current - 1,
+    );
+    if (quotationDocumentsDragDepthRef.current === 0) {
+      setIsQuotationDocumentsDragActive(false);
+    }
+  }
+
+  async function handleQuotationDocumentsDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    quotationDocumentsDragDepthRef.current = 0;
+    setIsQuotationDocumentsDragActive(false);
+
+    if (isUploadingDocuments) {
+      return;
+    }
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!files.length) {
+      return;
+    }
+
+    await handleUploadQuotationDocuments(files);
   }
 
   function buildSectionDisplayItems(section) {
@@ -4366,27 +4453,34 @@ function QuotationEditorContent({
               multiple
               className="quotation-documents-input"
               onChange={handleQuotationDocumentsInputChange}
-            />
-            <button
-              type="button"
-              className="btn-secondary quotation-documents-icon-button"
               disabled={isUploadingDocuments}
-              onClick={() => quotationDocumentsInputRef.current?.click()}
-              title={
-                isUploadingDocuments
-                  ? "Cargando archivos al servidor"
-                  : "Agregar uno o más documentos de soporte a esta cotización"
-              }
-              aria-label={
-                isUploadingDocuments
-                  ? "Cargando archivos al servidor"
-                  : "Agregar uno o más documentos de soporte a esta cotización"
-              }
+            />
+            <div
+              className={`quotation-documents-dropzone${isQuotationDocumentsDragActive ? " is-drag-active" : ""}${isUploadingDocuments ? " is-disabled" : ""}`}
+              role="button"
+              tabIndex={isUploadingDocuments ? -1 : 0}
+              aria-label="Arrastra y suelta documentos o haz clic para agregarlos a esta cotizacion"
+              aria-disabled={isUploadingDocuments}
+              onClick={handleQuotationDocumentsDropZoneClick}
+              onKeyDown={handleQuotationDocumentsDropZoneKeyDown}
+              onDragEnter={handleQuotationDocumentsDropZoneDragEnter}
+              onDragOver={handleQuotationDocumentsDropZoneDragOver}
+              onDragLeave={handleQuotationDocumentsDropZoneDragLeave}
+              onDrop={handleQuotationDocumentsDrop}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 4.5a.75.75 0 0 1 .75.75V12h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0V13.5H4.5a.75.75 0 0 1 0-1.5h6.75V5.25A.75.75 0 0 1 12 4.5Z" />
-              </svg>
-            </button>
+              <span className="quotation-documents-dropzone-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4.5a.75.75 0 0 1 .75.75V12h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0V13.5H4.5a.75.75 0 0 1 0-1.5h6.75V5.25A.75.75 0 0 1 12 4.5Z" />
+                </svg>
+              </span>
+              <span className="quotation-documents-dropzone-text">
+                {isQuotationDocumentsDragActive
+                  ? "Suelta los documentos aqui"
+                  : isUploadingDocuments
+                    ? "Subiendo documentos..."
+                    : "Arrastra documentos aqui o haz clic"}
+              </span>
+            </div>
             <button
               type="button"
               className="btn-secondary quotation-documents-icon-button"

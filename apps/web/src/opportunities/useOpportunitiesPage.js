@@ -5,9 +5,26 @@ import { usePersistedStatusFilter } from "../appFilters";
 const PROPOSE_ANSWERS_TIMEOUT_MS = 240000;
 const PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS = 3000;
 const PROPOSE_ANSWERS_TOTAL_POLL_TIMEOUT_MS = 120000;
+const DOCUMENT_SESSION_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
+
+function isDocumentProcessingPending(session, documents) {
+  const sessionStatus = normalizeText(session?.status);
+  if (sessionStatus === "processing") {
+    return true;
+  }
+
+  return (Array.isArray(documents) ? documents : []).some((document) => {
+    const processingStatus = normalizeText(document?.processingStatus);
+    return (
+      processingStatus === "uploaded" ||
+      processingStatus === "retry_pending" ||
+      processingStatus === "processing"
+    );
+  });
+}
 
 function normalizeText(value) {
   return String(value || "")
@@ -355,6 +372,7 @@ export function useOpportunitiesPage({
     useState(false);
   const [deletingOpportunityDocumentId, setDeletingOpportunityDocumentId] =
     useState("");
+  const linkingStageDocumentId = "";
   const [linkingAnswerSourceId, setLinkingAnswerSourceId] = useState("");
   const [answerDocumentSelections, setAnswerDocumentSelections] = useState({});
   const [
@@ -435,6 +453,19 @@ export function useOpportunitiesPage({
   const openEditOpportunityModalRef = useRef(null);
   const commercialSuggestionPollingTokenRef = useRef(0);
   const stageValidationPollingTokenRef = useRef(0);
+  const shouldPollDocumentSession = useMemo(
+    () =>
+      Boolean(showOpportunityModal) &&
+      !editingOpportunityId &&
+      Boolean(documentUploadSession?.publicId) &&
+      isDocumentProcessingPending(documentUploadSession, opportunityDocuments),
+    [
+      showOpportunityModal,
+      editingOpportunityId,
+      documentUploadSession,
+      opportunityDocuments,
+    ],
+  );
 
   useEffect(
     () => () => {
@@ -443,6 +474,53 @@ export function useOpportunitiesPage({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!shouldPollDocumentSession || !documentUploadSession?.publicId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timerId = null;
+
+    async function refreshDocumentSession() {
+      try {
+        const { data } = await api.get(
+          `/api/opportunities/document-upload-sessions/${documentUploadSession.publicId}`,
+        );
+        if (cancelled) {
+          return;
+        }
+        hydrateDocumentSessionState(data);
+
+        if (isDocumentProcessingPending(data?.session, data?.documents)) {
+          timerId = window.setTimeout(
+            refreshDocumentSession,
+            DOCUMENT_SESSION_POLL_INTERVAL_MS,
+          );
+        }
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setError(
+          getApiErrorMessage(
+            err,
+            "No fue posible actualizar el estado de los documentos cargados",
+          ),
+        );
+      }
+    }
+
+    timerId = window.setTimeout(refreshDocumentSession, 0);
+
+    return () => {
+      cancelled = true;
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [shouldPollDocumentSession, documentUploadSession?.publicId]);
 
   function findCatalogIdByCode(options, expectedCode) {
     const target = normalizeText(expectedCode);
@@ -1431,6 +1509,12 @@ export function useOpportunitiesPage({
     }
   }
 
+  async function linkOpportunityDocumentToSelectedStage() {
+    setError(
+      "La vinculacion de documentos a etapa no esta disponible en esta version.",
+    );
+  }
+
   function seedCommercialDraftState(baseContext) {
     setCommercialContext(baseContext);
     setCommercialStageViewsById({});
@@ -1569,7 +1653,9 @@ export function useOpportunitiesPage({
     resetOpportunityDocumentState();
     const defaultCommercialContext = buildDefaultCommercialContext();
     seedCommercialDraftState(defaultCommercialContext);
-    setForm(buildDefaultOpportunityForm());
+    const defaultForm = buildDefaultOpportunityForm();
+    defaultForm.salesStageId = findCatalogIdByCode(catalogs.stages, "contacto_inicial");
+    setForm(defaultForm);
     setShowOpportunityModal(true);
   }
 
@@ -2586,6 +2672,10 @@ export function useOpportunitiesPage({
     }
   }
 
+  function retryCurrentStageValidation() {
+    return handleCurrentStageValidation();
+  }
+
   async function confirmValidatedStageAdvance() {
     if (!editingOpportunityId || !commercialContext?.isSelectedStageCurrent) {
       return;
@@ -3185,9 +3275,7 @@ export function useOpportunitiesPage({
     canOpenCommercialStatusReason,
     pendingCommercialCloseStatusName,
     commercialContext,
-    commercialAnswerSuggestionsByStageId,
     contactOptions,
-    answerDocumentSelections,
     formatDateTime,
     formatCloseDate,
     formatOpportunityAmountInput,
@@ -3205,7 +3293,7 @@ export function useOpportunitiesPage({
     normalizeOpportunityNameField,
     closeOpportunityModal,
     closeStageValidationResult,
-    retryCurrentStageValidation: handleCurrentStageValidation,
+    retryCurrentStageValidation,
     toggleOpportunitySort,
     getOpportunitySortArrow,
     openCommercialStatusReasonModal,
@@ -3230,13 +3318,19 @@ export function useOpportunitiesPage({
     applyOpportunityDocumentSuggestions,
     deleteDraftOpportunityDocument,
     downloadOpportunityDocument,
-    linkingAnswerSourceId,
     setDocumentReviewFieldOverride,
     setDocumentReviewMatchSelection,
-    setAnswerDocumentSelection,
-    linkOpportunityDocumentToAnswer,
     toggleOpportunityMenu,
     runOpportunityAction,
     updateOpportunityStatus,
+    answerDocumentSelections,
+    linkingStageDocumentId,
+    linkingAnswerSourceId,
+    setAnswerDocumentSelection,
+    linkOpportunityDocumentToSelectedStage,
+    linkOpportunityDocumentToAnswer,
+    commercialAnswerSuggestionsByStageId,
   };
 }
+
+

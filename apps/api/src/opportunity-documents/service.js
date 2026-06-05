@@ -12,6 +12,10 @@ import { parseBuffer as parseAudioBuffer } from "music-metadata";
 import { getUserAuthContext } from "../auth.js";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "../ai-usage/service.js";
 import { createDocumentStorage } from "./storage.js";
 
 const storage = createDocumentStorage();
@@ -364,7 +368,12 @@ function fallbackAnalyzeText(text, fileName) {
   };
 }
 
-async function analyzeStructuredDocument({ text, fileName, mimeType }) {
+async function analyzeStructuredDocument({
+  text,
+  fileName,
+  mimeType,
+  aiUsageContext,
+}) {
   const trimmedText = summarizeForPrompt(text, 16000);
   if (!trimmedText) {
     return {
@@ -375,6 +384,11 @@ async function analyzeStructuredDocument({ text, fileName, mimeType }) {
 
   if (!config.openai.apiKey) {
     return fallbackAnalyzeText(trimmedText, fileName);
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -418,6 +432,7 @@ async function analyzeStructuredDocument({ text, fileName, mimeType }) {
     ],
   };
 
+  const startedAt = new Date();
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -435,6 +450,18 @@ async function analyzeStructuredDocument({ text, fileName, mimeType }) {
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: randomUUID(),
+      userId: aiUsageUserId,
+      featureCode: "opportunities.documents.analysis",
+      model: String(config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: "opportunity_document_analysis",
+      jobId: aiUsageContext?.jobId || null,
+      startedAt,
+    });
+  }
   const parsed = extractJsonObject(extractResponseOutputText(data));
   if (!parsed) {
     return fallbackAnalyzeText(trimmedText, fileName);
@@ -443,9 +470,14 @@ async function analyzeStructuredDocument({ text, fileName, mimeType }) {
   return mergeAnalysisWithHeuristics(parsed, trimmedText, fileName);
 }
 
-export async function extractImageText(buffer, mimeType) {
+export async function extractImageText(buffer, mimeType, aiUsageContext = null) {
   if (!config.openai.apiKey) {
     throw new Error("OpenAI no configurado para OCR de imagenes");
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -467,6 +499,7 @@ export async function extractImageText(buffer, mimeType) {
     ],
   };
 
+  const startedAt = new Date();
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -485,12 +518,34 @@ export async function extractImageText(buffer, mimeType) {
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: randomUUID(),
+      userId: aiUsageUserId,
+      featureCode: "opportunities.documents.ocr",
+      model: String(config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: "opportunity_document_ocr",
+      jobId: aiUsageContext?.jobId || null,
+      startedAt,
+    });
+  }
   return extractResponseOutputText(data);
 }
 
-export async function transcribeAudio(buffer, mimeType, fileName) {
+export async function transcribeAudio(
+  buffer,
+  mimeType,
+  fileName,
+  aiUsageContext = null,
+) {
   if (!config.openai.apiKey) {
     throw new Error("OpenAI no configurado para transcripcion de audio");
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const body = new FormData();
@@ -501,6 +556,7 @@ export async function transcribeAudio(buffer, mimeType, fileName) {
   );
   body.append("model", config.openai.transcriptionModel);
 
+  const startedAt = new Date();
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/audio/transcriptions`,
     {
@@ -518,6 +574,18 @@ export async function transcribeAudio(buffer, mimeType, fileName) {
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: randomUUID(),
+      userId: aiUsageUserId,
+      featureCode: "opportunities.documents.transcription",
+      model: String(config.openai.transcriptionModel || "").trim(),
+      openAiResponse: data,
+      jobType: "opportunity_document_transcription",
+      jobId: aiUsageContext?.jobId || null,
+      startedAt,
+    });
+  }
   return {
     text: String(data?.text || "").trim(),
     language: String(data?.language || "").trim(),
@@ -529,6 +597,7 @@ export async function extractContentFromBuffer({
   mimeType,
   fileName,
   extension,
+  aiUsageContext,
 }) {
   const normalizedExtension = String(extension || "")
     .trim()
@@ -662,7 +731,7 @@ export async function extractContentFromBuffer({
     resolvedExtension === ".jpg" ||
     resolvedExtension === ".jpeg"
   ) {
-    const text = await extractImageText(buffer, mimeType);
+    const text = await extractImageText(buffer, mimeType, aiUsageContext);
     return {
       extractionStatus: "completed",
       transcriptionStatus: "pending",
@@ -688,7 +757,12 @@ export async function extractContentFromBuffer({
       duration: true,
     });
     const durationSeconds = Math.round(Number(metadata.format.duration || 0));
-    const transcript = await transcribeAudio(buffer, mimeType, fileName);
+    const transcript = await transcribeAudio(
+      buffer,
+      mimeType,
+      fileName,
+      aiUsageContext,
+    );
 
     return {
       extractionStatus: "completed",
@@ -1034,6 +1108,7 @@ async function extractAndAnalyzeDocument({
   extension,
   mimeType,
   originalFileName,
+  aiUsageContext,
 }) {
   try {
     const extracted = await extractContentFromBuffer({
@@ -1041,6 +1116,7 @@ async function extractAndAnalyzeDocument({
       mimeType,
       fileName: originalFileName,
       extension,
+      aiUsageContext,
     });
 
     const analysis = await analyzeStructuredDocument({
@@ -1050,6 +1126,7 @@ async function extractAndAnalyzeDocument({
         extracted.rawText,
       fileName: originalFileName,
       mimeType,
+      aiUsageContext,
     });
 
     return { extracted, analysis, processingError: null };
@@ -1281,6 +1358,10 @@ async function processStoredDocument({ documentId, attemptCount = 0 }) {
       extension: document.file_extension,
       mimeType: document.mime_type,
       originalFileName: document.original_file_name,
+      aiUsageContext: {
+        userId: Number(document.uploaded_by_user_id || 0),
+        jobId: Number(document.id || 0),
+      },
     });
   if (!extracted.durationSeconds && document.duration_seconds) {
     extracted.durationSeconds = Number(document.duration_seconds);
@@ -1731,6 +1812,9 @@ export async function uploadFilesToSession({ req, sessionPublicId, user }) {
             extension,
             mimeType,
             originalFileName,
+            aiUsageContext: {
+              userId: Number(user.id),
+            },
           }));
         if (!extracted.durationSeconds && durationSeconds) {
           extracted.durationSeconds = durationSeconds;
@@ -2131,6 +2215,9 @@ export async function uploadDocumentsToOpportunity({
             extension,
             mimeType,
             originalFileName,
+            aiUsageContext: {
+              userId: Number(user.id),
+            },
           }));
         if (!extracted.durationSeconds && durationSeconds) {
           extracted.durationSeconds = durationSeconds;

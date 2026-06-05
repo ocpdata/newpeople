@@ -98,7 +98,7 @@ export const config = {
         .filter(Boolean),
     },
     processing: {
-      mode: process.env.DOCUMENT_PROCESSING_MODE || "sync",
+      mode: process.env.DOCUMENT_PROCESSING_MODE || "async_in_process",
       pollIntervalMs: Number(
         process.env.DOCUMENT_PROCESSING_POLL_INTERVAL_MS || 5000,
       ),
