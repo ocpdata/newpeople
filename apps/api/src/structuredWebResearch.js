@@ -1,4 +1,9 @@
 import { config } from "./config.js";
+import { randomUUID } from "node:crypto";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 
 function buildFieldSchema(field) {
   if (field.type === "string") {
@@ -103,9 +108,20 @@ export async function runStructuredWebResearch({
   context,
   currentValues,
   fields,
+  aiUsageContext = null,
 }) {
   if (!config.openai.apiKey || !config.openai.enableWebSearch) {
     return null;
+  }
+
+  const safeAiUsageContext =
+    aiUsageContext && typeof aiUsageContext === "object"
+      ? aiUsageContext
+      : null;
+  const aiUsageUserId = Number(safeAiUsageContext?.userId || 0);
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -130,6 +146,7 @@ export async function runStructuredWebResearch({
     ],
   };
 
+  const startedAt = new Date();
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -150,6 +167,23 @@ export async function runStructuredWebResearch({
   }
 
   const data = await response.json();
+
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: randomUUID(),
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          safeAiUsageContext?.featureCode || "accounts.draft_analysis",
+        ).trim() || "accounts.draft_analysis",
+      model: String(config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: safeAiUsageContext?.jobType || null,
+      jobId: safeAiUsageContext?.jobId || null,
+      startedAt,
+    });
+  }
+
   return extractJsonObject(extractResponseOutputText(data));
 }
 
@@ -161,6 +195,10 @@ export async function runProfiledStructuredWebResearch(profile, args) {
     context: profile.buildContext(args),
     currentValues: profile.buildCurrentValues(args),
     fields: profile.fields,
+    aiUsageContext:
+      args?.aiUsageContext && typeof args.aiUsageContext === "object"
+        ? args.aiUsageContext
+        : null,
   });
 }
 

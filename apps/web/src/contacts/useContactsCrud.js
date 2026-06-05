@@ -576,6 +576,7 @@ export function useContactsCrud({
     setSavingContact(true);
 
     try {
+      const wasEditing = Boolean(editingContactId);
       const normalizedForm = normalizeContactPresentationForm(form);
       setForm((prev) => {
         const didChange = Array.from(CONTACT_PRESENTATION_FIELDS).some(
@@ -601,6 +602,14 @@ export function useContactsCrud({
       setEditingContactId(null);
       setEditContactAudit(null);
       await load();
+
+      if (!wasEditing) {
+        setContactStatusFilterState("all");
+        setContactQueryState("");
+        setContactSortField("id");
+        setContactSortDirection("desc");
+        setContactsPage(1);
+      }
     } catch (err) {
       const duplicatePayload = err?.response?.data;
       if (

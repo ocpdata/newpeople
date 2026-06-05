@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import { summarizeForPrompt } from "./opportunity-documents/service.js";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 
 const PROCESS_GUIDE_URL = new URL(
   "../../../readme/proceso-comercial.md",
@@ -983,10 +988,21 @@ function canRunAnotherPass(runtimeBudget) {
 
 async function requestOpenAiSuggestions(payload, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 0);
+  const aiUsageContext =
+    options?.aiUsageContext && typeof options.aiUsageContext === "object"
+      ? options.aiUsageContext
+      : null;
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
   const controller = timeoutMs > 0 ? new AbortController() : null;
   const timeoutId = controller
     ? setTimeout(() => controller.abort(), timeoutMs)
     : null;
+  const startedAt = new Date();
 
   let response;
 
@@ -1022,7 +1038,26 @@ async function requestOpenAiSuggestions(payload, options = {}) {
   }
 
   const data = await response.json();
-  return extractJsonObject(extractResponseOutputText(data));
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: randomUUID(),
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode || "opportunities.stage_suggestions",
+        ) || "opportunities.stage_suggestions",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt,
+    });
+  }
+
+  return {
+    parsed: extractJsonObject(extractResponseOutputText(data)),
+    responseData: data,
+  };
 }
 
 function shouldRetryWithFocusedPass(question, suggestion) {
@@ -1082,6 +1117,7 @@ async function runTargetedQuestionRecovery({
   stageGuide,
   questions,
   runtimeBudget,
+  aiUsageContext,
 }) {
   const recoveredSuggestions = [];
 
@@ -1103,9 +1139,10 @@ async function runTargetedQuestionRecovery({
           PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
           Math.max(remainingRuntimeMs, 1),
         ),
+        aiUsageContext,
       },
     );
-    const normalized = normalizeModelSuggestions(parsed?.suggestions, [
+    const normalized = normalizeModelSuggestions(parsed?.parsed?.suggestions, [
       question,
     ]);
     recoveredSuggestions.push(...normalized.suggestions);
@@ -1790,7 +1827,7 @@ export async function validateOpportunityCurrentStageWithAi({
   );
 
   const normalizedResult = normalizeStageValidationResult(
-    parsed,
+    parsed?.parsed,
     questionContextsWithGuidance,
   );
   const reconciledResult = reconcileStageValidationResult({
@@ -1817,6 +1854,7 @@ export async function suggestOpportunityStageAnswers({
   questions,
   existingAnswers,
   documents,
+  aiUsageContext,
 }) {
   const questionInputs = buildQuestionShape(questions, existingAnswers);
   if (!questionInputs.length) {
@@ -1899,10 +1937,11 @@ export async function suggestOpportunityStageAnswers({
         PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
         Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
       ),
+      aiUsageContext,
     },
   );
   const normalized = normalizeModelSuggestions(
-    parsed?.suggestions,
+    parsed?.parsed?.suggestions,
     questionContexts,
   );
 
@@ -1933,9 +1972,10 @@ export async function suggestOpportunityStageAnswers({
                     PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
                     Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
                   ),
+                  aiUsageContext,
                 },
               )
-            )?.suggestions,
+            )?.parsed?.suggestions,
             retryQuestions,
           ).suggestions,
         )
@@ -1972,9 +2012,10 @@ export async function suggestOpportunityStageAnswers({
                     PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS,
                     Math.max(getRemainingRuntimeMs(runtimeBudget), 1),
                   ),
+                  aiUsageContext,
                 },
               )
-            )?.suggestions,
+            )?.parsed?.suggestions,
             semanticRecoveryQuestions,
           ).suggestions,
         )
@@ -2006,6 +2047,7 @@ export async function suggestOpportunityStageAnswers({
             stageGuide,
             questions: targetedRecoveryQuestions,
             runtimeBudget,
+            aiUsageContext,
           }),
         )
       : (() => {

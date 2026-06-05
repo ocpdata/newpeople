@@ -616,6 +616,12 @@ async function processSingleJob(row) {
       questions: context.questions,
       existingAnswers: context.existingAnswers,
       documents: context.documents,
+      aiUsageContext: {
+        userId: Number(row.requested_by_user_id || 0),
+        featureCode: "opportunities.stage_suggestions",
+        jobType: "opportunity_stage_answer_suggestion_job",
+        jobId,
+      },
     });
 
     const postContext = await loadSuggestionJobContext({
@@ -661,7 +667,7 @@ async function processSingleJob(row) {
       jobId,
       leaseToken,
       status: "failed",
-      errorCode: "generation_failed",
+      errorCode: String(error?.code || "generation_failed"),
       errorMessage:
         String(error?.message || "").trim() ||
         "No fue posible proponer respuestas documentales para la etapa seleccionada.",

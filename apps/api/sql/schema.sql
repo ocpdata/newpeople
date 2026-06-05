@@ -2661,6 +2661,10 @@ VALUES
   ('propuestas.read', 'propuestas', 'read', 'Ver propuestas', NOW(3), NOW(3)),
   ('propuestas.create', 'propuestas', 'create', 'Crear propuestas', NOW(3), NOW(3)),
   ('propuestas.update', 'propuestas', 'update', 'Actualizar propuestas', NOW(3), NOW(3)),
+  ('ia.budget.read_self', 'ia', 'budget_read_self', 'Ver su propio credito y consumo de IA', NOW(3), NOW(3)),
+  ('ia.budget.read_all', 'ia', 'budget_read_all', 'Ver credito y consumo de IA de todos los usuarios', NOW(3), NOW(3)),
+  ('ia.budget.manage', 'ia', 'budget_manage', 'Gestionar creditos y politicas de consumo de IA', NOW(3), NOW(3)),
+  ('ia.usage.read_all', 'ia', 'usage_read_all', 'Ver reportes agregados de uso de IA', NOW(3), NOW(3)),
   ('audit.read', 'audit', 'read', 'Ver auditoria del sistema', NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at);
 

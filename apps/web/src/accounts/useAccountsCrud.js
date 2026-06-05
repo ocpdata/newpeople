@@ -204,6 +204,7 @@ export function useAccountsCrud({ currentUser }) {
 
   function openCreateAccountModal() {
     cancelAccountDraftAnalysisPolling();
+    setAnalyzingAccountDraft(false);
     setError("");
     setSuccess("");
     setAccountDraftAnalysis(null);
@@ -219,6 +220,7 @@ export function useAccountsCrud({ currentUser }) {
   function closeAccountModal() {
     if (creatingAccount) return;
     cancelAccountDraftAnalysisPolling();
+    setAnalyzingAccountDraft(false);
     setAccountDraftAnalysis(null);
     setAccountDraftAnalysisError("");
     setAccountDuplicateReview(null);
@@ -446,6 +448,7 @@ export function useAccountsCrud({ currentUser }) {
     setCreatingAccount(true);
 
     try {
+      const wasEditing = Boolean(editingAccountId);
       const fallbackActivationStatusId =
         Number(accountForm.activationStatusId) ||
         Number(catalogs.statuses?.[0]?.id);
@@ -479,9 +482,18 @@ export function useAccountsCrud({ currentUser }) {
       setEditingAccountId(null);
       setShowCreateAccountModal(false);
       await load();
+
+      if (!wasEditing) {
+        setAccountStatusFilterState("all");
+        setAccountQueryState("");
+        setAccountSortField("id");
+        setAccountSortDirection("desc");
+        setAccountsPage(1);
+      }
+
       setSuccess(
         data?.message ||
-          (editingAccountId
+          (wasEditing
             ? "Cuenta actualizada correctamente"
             : "Cuenta creada correctamente"),
       );

@@ -86,6 +86,30 @@ const CORE_PERMISSIONS = [
     action: "update",
     description: "Actualizar propuestas",
   },
+  {
+    code: "ia.budget.read_self",
+    module: "ia",
+    action: "budget_read_self",
+    description: "Ver su propio credito y consumo de IA",
+  },
+  {
+    code: "ia.budget.read_all",
+    module: "ia",
+    action: "budget_read_all",
+    description: "Ver credito y consumo de IA de todos los usuarios",
+  },
+  {
+    code: "ia.budget.manage",
+    module: "ia",
+    action: "budget_manage",
+    description: "Gestionar creditos y politicas de consumo de IA",
+  },
+  {
+    code: "ia.usage.read_all",
+    module: "ia",
+    action: "usage_read_all",
+    description: "Ver reportes agregados de uso de IA",
+  },
 ];
 
 const PERMISSION_DESCRIPTION_OVERRIDES = [
@@ -129,6 +153,22 @@ const PERMISSION_DESCRIPTION_OVERRIDES = [
   {
     code: "propuestas.update",
     description: "Actualizar propuestas",
+  },
+  {
+    code: "ia.budget.read_self",
+    description: "Ver su propio credito y consumo de IA",
+  },
+  {
+    code: "ia.budget.read_all",
+    description: "Ver credito y consumo de IA de todos los usuarios",
+  },
+  {
+    code: "ia.budget.manage",
+    description: "Gestionar creditos y politicas de consumo de IA",
+  },
+  {
+    code: "ia.usage.read_all",
+    description: "Ver reportes agregados de uso de IA",
   },
 ];
 

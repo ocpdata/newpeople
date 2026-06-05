@@ -568,6 +568,512 @@ function ConfigurationBrandingPreview({
   );
 }
 
+function AiCreditConfigurationPanel({
+  items,
+  loading,
+  error,
+  latestUpdateText,
+  selectedUserId,
+  selectedDetail,
+  detailLoading,
+  actionKey,
+  onSelectUser,
+  onGrantCredit,
+  onAdjustCredit,
+  onUpdatePolicy,
+}) {
+  const [filterText, setFilterText] = useState("");
+  const [grantAmountUsd, setGrantAmountUsd] = useState("5.00");
+  const [grantReasonCode, setGrantReasonCode] = useState("manual_topup");
+  const [grantReasonText, setGrantReasonText] = useState(
+    "Recarga de crédito IA",
+  );
+  const [adjustAmountUsd, setAdjustAmountUsd] = useState("");
+  const [adjustReasonCode, setAdjustReasonCode] = useState("manual_adjustment");
+  const [adjustReasonText, setAdjustReasonText] = useState("");
+  const [policyDraft, setPolicyDraft] = useState({
+    hardLimitEnabled: true,
+    warningThresholdPercent: 80,
+    criticalThresholdPercent: 95,
+  });
+
+  const currencyFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat("es-MX", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+    [],
+  );
+
+  const selectedWallet = selectedDetail?.wallet || null;
+  const selectedUser = useMemo(
+    () =>
+      items.find((item) => Number(item.userId) === Number(selectedUserId)) ||
+      items[0] ||
+      null,
+    [items, selectedUserId],
+  );
+  const selectedVisibleUser = selectedWallet || selectedUser;
+
+  useEffect(() => {
+    if (!selectedVisibleUser) return;
+    setPolicyDraft({
+      hardLimitEnabled: Boolean(selectedVisibleUser.hardLimitEnabled),
+      warningThresholdPercent: Number(
+        selectedVisibleUser.warningThresholdPercent || 80,
+      ),
+      criticalThresholdPercent: Number(
+        selectedVisibleUser.criticalThresholdPercent || 95,
+      ),
+    });
+  }, [selectedVisibleUser?.userId, selectedVisibleUser?.updatedAtUtc]);
+
+  const filteredItems = useMemo(() => {
+    const normalizedFilter = String(filterText || "")
+      .toLowerCase()
+      .trim();
+    if (!normalizedFilter) return items;
+    return items.filter((item) => {
+      const haystack = [item.fullName, item.email, item.roles, item.state]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedFilter);
+    });
+  }, [filterText, items]);
+
+  const summary = useMemo(() => {
+    return filteredItems.reduce(
+      (accumulator, item) => {
+        accumulator.totalGranted += Number(item.lifetimeGrantedUsd || 0);
+        accumulator.totalConsumed += Number(item.lifetimeConsumedUsd || 0);
+        accumulator.totalBalance += Number(item.balanceUsd || 0);
+        accumulator[item.state || "normal"] += 1;
+        return accumulator;
+      },
+      {
+        totalGranted: 0,
+        totalConsumed: 0,
+        totalBalance: 0,
+        normal: 0,
+        warning: 0,
+        critical: 0,
+        exhausted: 0,
+      },
+    );
+  }, [filteredItems]);
+
+  async function submitGrant(event) {
+    event.preventDefault();
+    if (!selectedVisibleUser?.userId) return;
+    await onGrantCredit(selectedVisibleUser.userId, {
+      amountUsd: Number(grantAmountUsd),
+      reasonCode: String(grantReasonCode || "manual_topup").trim(),
+      reasonText: String(grantReasonText || "").trim(),
+      idempotencyKey:
+        window.crypto?.randomUUID?.() ||
+        `grant-${selectedVisibleUser.userId}-${Date.now()}`,
+    });
+  }
+
+  async function submitAdjustment(event) {
+    event.preventDefault();
+    if (!selectedVisibleUser?.userId) return;
+    await onAdjustCredit(selectedVisibleUser.userId, {
+      amountUsd: Number(adjustAmountUsd),
+      reasonCode: String(adjustReasonCode || "manual_adjustment").trim(),
+      reasonText: String(adjustReasonText || "").trim(),
+      idempotencyKey:
+        window.crypto?.randomUUID?.() ||
+        `adjust-${selectedVisibleUser.userId}-${Date.now()}`,
+    });
+    setAdjustAmountUsd("");
+    setAdjustReasonText("");
+  }
+
+  async function submitPolicy(event) {
+    event.preventDefault();
+    if (!selectedVisibleUser?.userId) return;
+    await onUpdatePolicy(selectedVisibleUser.userId, {
+      hardLimitEnabled: Boolean(policyDraft.hardLimitEnabled),
+      warningThresholdPercent: Number(policyDraft.warningThresholdPercent),
+      criticalThresholdPercent: Number(policyDraft.criticalThresholdPercent),
+    });
+  }
+
+  return (
+    <div className="configuration-section-stack">
+      <section className="configuration-card ai-credit-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Credito IA</h4>
+            <p>
+              Gestiona el saldo por usuario, sus umbrales de consumo y el
+              historial de movimientos.
+            </p>
+          </div>
+          <span className="configuration-inline-pill">{latestUpdateText}</span>
+        </div>
+
+        <div className="ai-credit-summary-grid">
+          <article className="ai-credit-summary-card">
+            <strong>
+              {currencyFormatter.format(summary.totalGranted || 0)}
+            </strong>
+            <span>Credito total asignado</span>
+          </article>
+          <article className="ai-credit-summary-card">
+            <strong>
+              {currencyFormatter.format(summary.totalConsumed || 0)}
+            </strong>
+            <span>Consumo acumulado</span>
+          </article>
+          <article className="ai-credit-summary-card">
+            <strong>
+              {currencyFormatter.format(summary.totalBalance || 0)}
+            </strong>
+            <span>Saldo disponible</span>
+          </article>
+          <article className="ai-credit-summary-card">
+            <strong>{filteredItems.length}</strong>
+            <span>Usuarios visibles</span>
+          </article>
+        </div>
+
+        <div className="ai-credit-toolbar">
+          <input
+            type="search"
+            value={filterText}
+            onChange={(event) => setFilterText(event.target.value)}
+            placeholder="Buscar por nombre, correo, rol o estado"
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onSelectUser(selectedVisibleUser?.userId || null)}
+          >
+            Refrescar detalle
+          </button>
+        </div>
+
+        {loading ? <p className="field-hint">Cargando crédito IA...</p> : null}
+        {error ? <p className="field-error-text">{error}</p> : null}
+
+        <div className="ai-credit-table-wrap">
+          <table className="configuration-table ai-credit-table">
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Saldo</th>
+                <th>Consumido</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.map((item) => (
+                <tr
+                  key={item.userId}
+                  className={
+                    Number(item.userId) === Number(selectedUserId)
+                      ? "is-selected"
+                      : ""
+                  }
+                  onClick={() => void onSelectUser(item.userId)}
+                >
+                  <td>
+                    <strong>{item.fullName}</strong>
+                    <span>{item.email}</span>
+                    <small>{item.roles || "Sin roles"}</small>
+                  </td>
+                  <td>{currencyFormatter.format(item.balanceUsd || 0)}</td>
+                  <td>
+                    <div className="ai-credit-row-progress">
+                      <div className="ai-credit-row-track" aria-hidden="true">
+                        <span
+                          className={`ai-credit-row-fill state-${item.state}`}
+                          style={{
+                            width: `${Math.max(0, Math.min(100, item.consumedPercent || 0))}%`,
+                          }}
+                        />
+                      </div>
+                      <span>
+                        {Math.max(0, Math.min(100, item.consumedPercent || 0))}%
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      className={`configuration-status-pill ai-credit-state-${item.state}`}
+                    >
+                      {item.state}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!filteredItems.length ? (
+                <tr>
+                  <td colSpan="4">
+                    <p className="field-hint">
+                      No hay usuarios para mostrar con ese filtro.
+                    </p>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="configuration-card ai-credit-detail-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Detalle por usuario</h4>
+            <p>
+              Selecciona un usuario para ver su saldo, políticas y movimientos
+              recientes.
+            </p>
+          </div>
+          {selectedVisibleUser ? (
+            <span className="configuration-inline-pill">
+              {selectedVisibleUser.fullName || selectedVisibleUser.email}
+            </span>
+          ) : null}
+        </div>
+
+        {!selectedVisibleUser ? (
+          <p className="field-hint">
+            Selecciona un usuario para administrar su crédito IA.
+          </p>
+        ) : (
+          <div className="ai-credit-detail-grid">
+            <div className="ai-credit-detail-summary">
+              <div>
+                <strong>{selectedVisibleUser.fullName}</strong>
+                <p>{selectedVisibleUser.email}</p>
+                <span>{selectedVisibleUser.roles || "Sin roles"}</span>
+              </div>
+              <div className="ai-credit-detail-metrics">
+                <article>
+                  <strong>
+                    {currencyFormatter.format(
+                      selectedVisibleUser.balanceUsd || 0,
+                    )}
+                  </strong>
+                  <span>Disponible</span>
+                </article>
+                <article>
+                  <strong>
+                    {currencyFormatter.format(
+                      selectedVisibleUser.lifetimeConsumedUsd || 0,
+                    )}
+                  </strong>
+                  <span>Consumido</span>
+                </article>
+                <article>
+                  <strong>
+                    {currencyFormatter.format(
+                      selectedVisibleUser.lifetimeGrantedUsd || 0,
+                    )}
+                  </strong>
+                  <span>Asignado</span>
+                </article>
+                <article>
+                  <strong>{selectedVisibleUser.state}</strong>
+                  <span>Estado</span>
+                </article>
+              </div>
+            </div>
+
+            <form className="ai-credit-form" onSubmit={submitGrant}>
+              <h5>Recargar crédito</h5>
+              <div className="configuration-form-grid">
+                <div className="field-group">
+                  <label>Monto USD</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={grantAmountUsd}
+                    onChange={(event) => setGrantAmountUsd(event.target.value)}
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Codigo motivo</label>
+                  <input
+                    type="text"
+                    value={grantReasonCode}
+                    onChange={(event) => setGrantReasonCode(event.target.value)}
+                  />
+                </div>
+                <div className="field-group configuration-grid-span-full">
+                  <label>Motivo</label>
+                  <textarea
+                    rows="2"
+                    value={grantReasonText}
+                    onChange={(event) => setGrantReasonText(event.target.value)}
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={actionKey === `grant:${selectedVisibleUser.userId}`}
+              >
+                {actionKey === `grant:${selectedVisibleUser.userId}`
+                  ? "Guardando..."
+                  : "Recargar crédito"}
+              </button>
+            </form>
+
+            <form className="ai-credit-form" onSubmit={submitAdjustment}>
+              <h5>Ajuste manual</h5>
+              <div className="configuration-form-grid">
+                <div className="field-group">
+                  <label>Monto USD</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={adjustAmountUsd}
+                    onChange={(event) => setAdjustAmountUsd(event.target.value)}
+                    placeholder="Usa negativo para descontar"
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Codigo motivo</label>
+                  <input
+                    type="text"
+                    value={adjustReasonCode}
+                    onChange={(event) =>
+                      setAdjustReasonCode(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="field-group configuration-grid-span-full">
+                  <label>Motivo obligatorio</label>
+                  <textarea
+                    rows="2"
+                    value={adjustReasonText}
+                    onChange={(event) =>
+                      setAdjustReasonText(event.target.value)
+                    }
+                    placeholder="Explica por que se corrige el saldo"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="btn-secondary"
+                disabled={actionKey === `adjust:${selectedVisibleUser.userId}`}
+              >
+                {actionKey === `adjust:${selectedVisibleUser.userId}`
+                  ? "Aplicando..."
+                  : "Aplicar ajuste"}
+              </button>
+            </form>
+
+            <form className="ai-credit-form" onSubmit={submitPolicy}>
+              <h5>Política del usuario</h5>
+              <div className="configuration-form-grid">
+                <label className="configuration-toggle-row configuration-grid-span-full">
+                  <div className="configuration-toggle-copy">
+                    <strong>Hard limit</strong>
+                    <p>Bloquea la IA cuando el saldo llegue a cero.</p>
+                  </div>
+                  <span className="configuration-toggle-control">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(policyDraft.hardLimitEnabled)}
+                      onChange={(event) =>
+                        setPolicyDraft((current) => ({
+                          ...current,
+                          hardLimitEnabled: event.target.checked,
+                        }))
+                      }
+                    />
+                  </span>
+                </label>
+                <div className="field-group">
+                  <label>Umbral warning %</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="99"
+                    value={policyDraft.warningThresholdPercent}
+                    onChange={(event) =>
+                      setPolicyDraft((current) => ({
+                        ...current,
+                        warningThresholdPercent: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Umbral critical %</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={policyDraft.criticalThresholdPercent}
+                    onChange={(event) =>
+                      setPolicyDraft((current) => ({
+                        ...current,
+                        criticalThresholdPercent: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="btn-secondary"
+                disabled={actionKey === `policy:${selectedVisibleUser.userId}`}
+              >
+                {actionKey === `policy:${selectedVisibleUser.userId}`
+                  ? "Guardando..."
+                  : "Guardar política"}
+              </button>
+            </form>
+
+            <div className="ai-credit-history">
+              <h5>Movimientos recientes</h5>
+              {detailLoading ? (
+                <p className="field-hint">Cargando detalle...</p>
+              ) : selectedDetail?.recentTransactions?.length ? (
+                <div className="configuration-audit-list ai-credit-history-list">
+                  {selectedDetail.recentTransactions.map((movement) => (
+                    <article
+                      key={movement.id}
+                      className="configuration-audit-item"
+                    >
+                      <div>
+                        <strong>{movement.transactionType}</strong>
+                        <p>{movement.reasonText || movement.reasonCode}</p>
+                      </div>
+                      <span>
+                        {currencyFormatter.format(movement.amountUsd || 0)} ·{" "}
+                        {movement.createdAtUtc
+                          ? new Date(movement.createdAtUtc).toLocaleString()
+                          : ""}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="field-hint">
+                  No hay movimientos recientes para este usuario.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function TemporaryFeaturesCard({
   settings,
   latestUpdateText,
@@ -3218,6 +3724,13 @@ export default function ConfigurationPage() {
     proposalComponentDefinitions,
     institutionalAssets,
     aiParametersConfig,
+    aiWalletSummaries,
+    aiWalletSummariesLoading,
+    aiWalletSummariesError,
+    selectedAiWalletUserId,
+    selectedAiWalletDetail,
+    selectedAiWalletDetailLoading,
+    aiWalletActionKey,
     selectedAiCapabilityKey,
     aiParameterDraft,
     aiParameterValidationWarnings,
@@ -3238,6 +3751,7 @@ export default function ConfigurationPage() {
     aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
+    latestAiWalletUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
     sectionItems,
@@ -3260,6 +3774,10 @@ export default function ConfigurationPage() {
     saveAiParametersDraft,
     publishAiParameters,
     restoreAiParameterRevision,
+    selectAiWalletUser,
+    grantAiWalletCredit,
+    adjustAiWalletCredit,
+    updateAiWalletPolicy,
     saveProposalContentComponent,
     createProposalContentComponent,
     reorderProposalContent,
@@ -3460,6 +3978,9 @@ export default function ConfigurationPage() {
     if (activeSection === "ai_parameters") {
       return latestAiParametersUpdateText;
     }
+    if (activeSection === "ai_budget") {
+      return latestAiWalletUpdateText;
+    }
     if (activeSection === "proposal_content") {
       return latestProposalContentUpdateText;
     }
@@ -3470,6 +3991,7 @@ export default function ConfigurationPage() {
   }, [
     activeSection,
     latestAiParametersUpdateText,
+    latestAiWalletUpdateText,
     latestProposalContentUpdateText,
     latestTemporaryFeaturesUpdateText,
     latestUpdateText,
@@ -3482,6 +4004,11 @@ export default function ConfigurationPage() {
         : aiParametersConfig.publishedAt
           ? `Publicado ${formatDateTime(aiParametersConfig.publishedAt)}`
           : "Sin publicacion";
+    }
+    if (activeSection === "ai_budget") {
+      return aiWalletSummariesLoading
+        ? "Cargando creditos..."
+        : `${aiWalletSummaries.length} usuarios con wallet`;
     }
     if (
       activeSection === "proposal_content" &&
@@ -3497,6 +4024,8 @@ export default function ConfigurationPage() {
     aiParametersConfig,
     companyProfile,
     formatDateTime,
+    aiWalletSummariesLoading,
+    aiWalletSummaries.length,
     proposalContentConfig.updatedAt,
   ]);
 
@@ -4030,6 +4559,31 @@ export default function ConfigurationPage() {
               onCreateAsset={createProposalAsset}
               onAddAssetVersion={addProposalAssetVersion}
               onArchiveAsset={archiveProposalAsset}
+            />
+          ) : null}
+
+          {activeSection === "ai_budget" ? (
+            <AiCreditConfigurationPanel
+              items={aiWalletSummaries}
+              loading={aiWalletSummariesLoading}
+              error={aiWalletSummariesError}
+              latestUpdateText={latestAiWalletUpdateText}
+              selectedUserId={selectedAiWalletUserId}
+              selectedDetail={selectedAiWalletDetail}
+              detailLoading={selectedAiWalletDetailLoading}
+              actionKey={aiWalletActionKey}
+              onSelectUser={(userId) => {
+                void selectAiWalletUser(userId);
+              }}
+              onGrantCredit={(userId, payload) =>
+                grantAiWalletCredit(userId, payload)
+              }
+              onAdjustCredit={(userId, payload) =>
+                adjustAiWalletCredit(userId, payload)
+              }
+              onUpdatePolicy={(userId, payload) =>
+                updateAiWalletPolicy(userId, payload)
+              }
             />
           ) : null}
 

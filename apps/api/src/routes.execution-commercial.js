@@ -406,7 +406,9 @@ function isRealWonStage(stageCode) {
 }
 
 function isRealWonOpportunity(item = {}) {
-  return item.commercialStatusCode === "ganada" || isRealWonStage(item.stageCode);
+  return (
+    item.commercialStatusCode === "ganada" || isRealWonStage(item.stageCode)
+  );
 }
 
 async function listDevelopmentPeriods() {
@@ -482,7 +484,9 @@ async function loadPlanningSnapshot({ user, year, quarter, planningItems }) {
     : [];
 
   const { startDate, endDate } = getQuarterDateRange(year, quarter);
-  const stageOrderValues = planningItems.map((item) => Number(item.stageId || 0));
+  const stageOrderValues = planningItems.map((item) =>
+    Number(item.stageId || 0),
+  );
   const maxStageOrder = stageOrderValues.length
     ? Math.max(...stageOrderValues)
     : 6;
@@ -983,7 +987,9 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     opportunityState.salesStageId,
   );
   const mappedNextStep = mapNextStep(nextStep);
-  const activitySummary = buildCommercialActivitySummary(workspace.actions || []);
+  const activitySummary = buildCommercialActivitySummary(
+    workspace.actions || [],
+  );
   const lastActivityAt =
     lastActivityByOpportunity.get(opportunityId) ||
     (opportunity?.updated_at ? new Date(opportunity.updated_at) : null) ||
@@ -1015,7 +1021,8 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     stageCode: opportunity?.sales_stage_code || "",
     stageName: opportunity?.sales_stage_name || "",
     sellerUserId:
-      opportunity?.seller_user_id === null || opportunity?.seller_user_id === undefined
+      opportunity?.seller_user_id === null ||
+      opportunity?.seller_user_id === undefined
         ? null
         : Number(opportunity.seller_user_id),
     sellerUserName: opportunity?.seller_user_name || "Sin vendedor",
@@ -1119,9 +1126,7 @@ function buildCommercialNarrativeSnapshot(item) {
 }
 
 function hashCommercialNarrativeSnapshot(snapshot) {
-  return createHash("sha256")
-    .update(JSON.stringify(snapshot))
-    .digest("hex");
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
 function buildCommercialNarrativeJobResponse(row) {
@@ -1183,7 +1188,10 @@ function buildCommercialNarrativeJobResponse(row) {
   return response;
 }
 
-async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
+async function buildCommercialNarrativeExecutionContext({
+  user,
+  opportunityId,
+}) {
   const opportunity = await loadOpportunityForExecution(user, opportunityId);
   if (!opportunity) {
     const error = new Error("Oportunidad no encontrada");
@@ -1202,41 +1210,53 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
   }
 
   const fallbackNarrative = buildOpportunityNarrativeFallback(narrativeItem);
+  return {
+    narrativeItem,
+    snapshot: buildCommercialNarrativeSnapshot(narrativeItem),
+    fallback: {
+      opportunityId,
+      ...fallbackNarrative,
+    },
+  };
+}
+
+async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
+  const executionContext = await buildCommercialNarrativeExecutionContext({
+    user,
+    opportunityId,
+  });
+
   try {
     const aiInsights = await requestOpportunityNarrativesWithAi([
       {
-        ...narrativeItem,
-        ...fallbackNarrative,
+        ...executionContext.narrativeItem,
+        ...executionContext.fallback,
       },
     ]);
     const aiNarrative = aiInsights.get(opportunityId);
     return {
-      snapshot: buildCommercialNarrativeSnapshot(narrativeItem),
-      fallback: {
-        opportunityId,
-        ...fallbackNarrative,
-      },
+      snapshot: executionContext.snapshot,
+      fallback: executionContext.fallback,
       result: {
         opportunityId,
         aiStatusSummary:
-          aiNarrative?.aiStatusSummary || fallbackNarrative.aiStatusSummary,
+          aiNarrative?.aiStatusSummary ||
+          executionContext.fallback.aiStatusSummary,
         aiNextStepRecommendation:
           aiNarrative?.aiNextStepRecommendation ||
-          fallbackNarrative.aiNextStepRecommendation,
+          executionContext.fallback.aiNextStepRecommendation,
         aiNarrativeSource:
-          aiNarrative?.aiNarrativeSource || fallbackNarrative.aiNarrativeSource,
+          aiNarrative?.aiNarrativeSource ||
+          executionContext.fallback.aiNarrativeSource,
       },
     };
   } catch {
     return {
-      snapshot: buildCommercialNarrativeSnapshot(narrativeItem),
-      fallback: {
-        opportunityId,
-        ...fallbackNarrative,
-      },
+      snapshot: executionContext.snapshot,
+      fallback: executionContext.fallback,
       result: {
         opportunityId,
-        ...fallbackNarrative,
+        ...executionContext.fallback,
       },
     };
   }
@@ -1247,11 +1267,13 @@ async function createOrReuseCommercialNarrativeJob({
   requestedByUserId,
   user,
 }) {
-  const execution = await executeCommercialOpportunityNarrative({
+  const executionContext = await buildCommercialNarrativeExecutionContext({
     user,
     opportunityId,
   });
-  const fingerprint = hashCommercialNarrativeSnapshot(execution.snapshot);
+  const fingerprint = hashCommercialNarrativeSnapshot(
+    executionContext.snapshot,
+  );
   const reusableRows = await query(
     `SELECT *
      FROM commercial_opportunity_narrative_jobs
@@ -1288,8 +1310,8 @@ async function createOrReuseCommercialNarrativeJob({
       opportunityId,
       requestedByUserId,
       fingerprint,
-      JSON.stringify(execution.snapshot),
-      JSON.stringify(execution.fallback),
+      JSON.stringify(executionContext.snapshot),
+      JSON.stringify(executionContext.fallback),
     ],
   );
 
@@ -1463,7 +1485,9 @@ export function queueCommercialNarrativeProcessing() {
   commercialNarrativeWorkerQueued = true;
 }
 
-export async function processPendingCommercialNarrativeJobs({ limit = 1 } = {}) {
+export async function processPendingCommercialNarrativeJobs({
+  limit = 1,
+} = {}) {
   let processed = 0;
   while (processed < limit) {
     const row = await claimNextPendingCommercialNarrativeJob();
@@ -3052,9 +3076,8 @@ async function loadCommercialEmailAttachmentOptions({
     listCommercialQuotationVersionsForEmail({ opportunityId }),
   ]);
 
-  const libraryCatalogs = buildCommercialLibraryAttachmentCatalogs(
-    allLibraryFiles,
-  );
+  const libraryCatalogs =
+    buildCommercialLibraryAttachmentCatalogs(allLibraryFiles);
   const filteredLibraryFiles = filterCommercialLibraryFiles(
     allLibraryFiles,
     libraryFilters,
@@ -3114,7 +3137,8 @@ function buildCommercialLibraryAttachmentCatalogs(libraryFiles) {
         byCode.set(normalizedCode, {
           code: normalizedCode,
           label:
-            String(info.labels[index] || normalizedCode).trim() || normalizedCode,
+            String(info.labels[index] || normalizedCode).trim() ||
+            normalizedCode,
         });
       });
     });
@@ -3133,7 +3157,9 @@ function buildCommercialLibraryAttachmentCatalogs(libraryFiles) {
 function getCommercialAttachmentCatalogInfo(file, catalogType) {
   if (catalogType === "manufacturer") {
     return {
-      codes: Array.isArray(file?.manufacturerCodes) ? file.manufacturerCodes : [],
+      codes: Array.isArray(file?.manufacturerCodes)
+        ? file.manufacturerCodes
+        : [],
       labels: Array.isArray(file?.manufacturerLabels)
         ? file.manufacturerLabels
         : [],
@@ -3214,7 +3240,8 @@ function filterCommercialLibraryFiles(libraryFiles, rawFilters = {}) {
 }
 
 function sortCommercialLibraryFiles(libraryFiles, sort = "updated_desc") {
-  const normalizedSort = String(sort || "updated_desc").trim() || "updated_desc";
+  const normalizedSort =
+    String(sort || "updated_desc").trim() || "updated_desc";
   const nextFiles = [...libraryFiles];
 
   if (normalizedSort === "title_asc") {
@@ -3954,9 +3981,9 @@ function resolveCommercialRecipientName(details = {}, contacts = []) {
 
   const matchedContact = (Array.isArray(contacts) ? contacts : []).find(
     (contact) => {
-    const email = String(contact?.email || "")
-      .trim()
-      .toLowerCase();
+      const email = String(contact?.email || "")
+        .trim()
+        .toLowerCase();
       return email && email === recipient;
     },
   );
@@ -4831,7 +4858,9 @@ router.post(
         queueCommercialNarrativeProcessing();
       }
 
-      return res.status(result.response?.result ? 200 : 202).json(result.response);
+      return res
+        .status(result.response?.result ? 200 : 202)
+        .json(result.response);
     } catch (error) {
       return res.status(error?.status || 500).json({
         message:
@@ -4856,7 +4885,10 @@ router.get(
       return res.status(400).json({ message: "Parametros invalidos" });
     }
 
-    const opportunity = await loadOpportunityForExecution(req.user, opportunityId);
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
     if (!opportunity) {
       return res.status(404).json({ message: "Oportunidad no encontrada" });
     }
@@ -4888,11 +4920,17 @@ router.post(
     }
 
     try {
-      const execution = await executeCommercialOpportunityNarrative({
+      const result = await createOrReuseCommercialNarrativeJob({
         user: req.user,
         opportunityId,
+        requestedByUserId: Number(req.user.id),
       });
-      return res.json(execution.result);
+      if (!result.wasReused) {
+        queueCommercialNarrativeProcessing();
+      }
+      return res
+        .status(result.response?.result ? 200 : 202)
+        .json(result.response);
     } catch (error) {
       return res.status(error?.status || 500).json({
         message:
@@ -5410,22 +5448,28 @@ router.post(
       accountContactsByAccountId.get(Number(opportunity.account_id)) || [],
     );
 
-    try {
-      const suggestion = await requestCommercialEmailSuggestionWithAi({
+    const fallbackSuggestion = buildCommercialEmailSuggestionFallback(
+      opportunity,
+      details,
+      recipientName,
+    );
+
+    setTimeout(() => {
+      void requestCommercialEmailSuggestionWithAi({
         opportunity,
         details,
         recipientName,
+      }).catch((error) => {
+        if (config.nodeEnv !== "test") {
+          console.error(
+            "Commercial email suggestion AI error:",
+            error?.message || error,
+          );
+        }
       });
-      return res.json(suggestion);
-    } catch {
-      return res.json(
-        buildCommercialEmailSuggestionFallback(
-          opportunity,
-          details,
-          recipientName,
-        ),
-      );
-    }
+    }, 0);
+
+    return res.json(fallbackSuggestion);
   },
 );
 

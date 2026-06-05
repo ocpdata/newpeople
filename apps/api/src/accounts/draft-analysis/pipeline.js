@@ -193,6 +193,7 @@ async function runDiscoveryStage({
   fallbackWebsiteSuggestion,
   state,
   metrics,
+  aiUsageContext,
 }) {
   const timer = getStageTimer(metrics, "discovery");
 
@@ -227,6 +228,7 @@ async function runDiscoveryStage({
       const publicSearchResult = await discoverPublicWebsiteByName({
         draft,
         catalogContext,
+        aiUsageContext,
       });
 
       if (publicSearchResult?.website) {
@@ -260,6 +262,7 @@ async function runDiscoveryStage({
         draft,
         catalogContext,
         preferredWebsite: state.suggestedWebsite.value,
+        aiUsageContext,
       });
 
       if (registrationResult?.value) {
@@ -284,6 +287,7 @@ async function runDiscoveryStage({
         draft,
         catalogContext,
         preferredWebsite: state.suggestedWebsite.value,
+        aiUsageContext,
       });
 
       if (hasMeaningfulContactData(publicContactResult?.contactData)) {
@@ -357,6 +361,7 @@ async function runStructuredExtractionStage({
   duplicateWarnings,
   state,
   metrics,
+  aiUsageContext,
 }) {
   const timer = getStageTimer(metrics, "structured_extraction");
 
@@ -375,6 +380,7 @@ async function runStructuredExtractionStage({
         catalogContext,
         preferredWebsite: state.suggestedWebsite.value,
         currentContactData: state.suggestedContactData,
+        aiUsageContext,
       });
 
       if (
@@ -416,6 +422,7 @@ async function runStructuredExtractionStage({
       const webSearchResult = await searchPublicCompanyInfo({
         draft,
         catalogContext,
+        aiUsageContext,
       });
 
       if (webSearchResult) {
@@ -503,6 +510,7 @@ async function runStructuredExtractionStage({
       preferredWebsite: state.suggestedWebsite.value,
       externalContext: state.externalContext,
       currentValues: buildStructuredCurrentValues(state),
+      aiUsageContext,
     });
 
     if (!structuredResult) {
@@ -685,6 +693,7 @@ export async function runAccountDraftAnalysisPipeline({
   draft,
   options,
   user,
+  aiUsageContext = null,
 }) {
   const normalizedDraft = normalizeAccountDraft(draft);
   const normalizedOptions = normalizeDraftAnalysisOptions(options);
@@ -746,6 +755,7 @@ export async function runAccountDraftAnalysisPipeline({
     fallbackWebsiteSuggestion,
     state,
     metrics,
+    aiUsageContext,
   });
 
   await runStructuredExtractionStage({
@@ -755,6 +765,7 @@ export async function runAccountDraftAnalysisPipeline({
     duplicateWarnings,
     state,
     metrics,
+    aiUsageContext,
   });
 
   return buildPipelineResponse({
@@ -770,7 +781,11 @@ export async function runAccountDraftAnalysisPipeline({
   });
 }
 
-export async function runAccountDuplicateReviewPipeline({ draft, user }) {
+export async function runAccountDuplicateReviewPipeline({
+  draft,
+  user,
+  aiUsageContext = null,
+}) {
   const normalizedDraft = normalizeAccountDraft(draft);
   const catalogContext = await getCatalogContext(normalizedDraft);
   const candidates = await getDuplicateCandidates({
@@ -806,6 +821,7 @@ export async function runAccountDuplicateReviewPipeline({ draft, user }) {
         draft: normalizedDraft,
         duplicateReview: fallbackDuplicateReview,
       }),
+      aiUsageContext,
     });
 
     if (structuredResult?.duplicateReview?.verdict) {

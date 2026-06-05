@@ -3628,6 +3628,8 @@ export default function ProposalsPage() {
             ? "La propuesta ya existia y se abrio la version actual"
             : "Propuesta creada correctamente",
         );
+        setProposalStatusFilter("all");
+        setProposalSearchTerm("");
         await loadProposalsRef.current({
           nextSelectedProposalId: nextProposalId,
         });

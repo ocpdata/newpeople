@@ -3567,6 +3567,13 @@ export function useQuotationsSection({
           preferredVersionId: data.latestVersionId,
           targetOpportunityId: createdOpportunityId,
         });
+        setQuotationStatusFilter("all");
+        setQuotationQuery("");
+        setQuotationSort({
+          field: "id",
+          direction: "desc",
+        });
+        setQuotationsPage(1);
         if (
           openProviderImportAfterCreate &&
           data.quotationId &&

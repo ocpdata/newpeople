@@ -36,9 +36,11 @@ import { ensureOpportunityStageValidationJobSchema } from "./opportunity-stage-v
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
 import { ensureCorePermissions } from "./permissions.js";
+import { ensureAiUsageSchema } from "./ai-usage/service.js";
 
 export async function startServer() {
   await ensureCorePermissions();
+  await ensureAiUsageSchema();
   await ensureInteractionPermissions();
   await ensureCommercialDevelopmentPermissions();
   await ensureCommercialTrackingPermissions();

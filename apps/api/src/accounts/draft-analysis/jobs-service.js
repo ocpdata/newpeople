@@ -2,7 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { getUserAuthContext } from "../../auth.js";
 import { query, withTransaction } from "../../db.js";
 import { ensureAccountDraftAnalysisJobSchema } from "./jobs-schema.js";
-import { normalizeAccountDraft, normalizeDraftAnalysisOptions } from "./schemas.js";
+import {
+  normalizeAccountDraft,
+  normalizeDraftAnalysisOptions,
+} from "./schemas.js";
 import * as draftAnalysisService from "./service.js";
 
 const JOB_PUBLIC_ID_PREFIX = "acctdraftjob_";
@@ -10,6 +13,7 @@ const PIPELINE_VERSION = "v1";
 const JOB_RESULT_TTL_HOURS = 24;
 const JOB_POLL_AFTER_MS = 3000;
 const JOB_LEASE_SECONDS = 300;
+const JOB_MAX_TRANSIENT_RETRIES = 3;
 
 function parseJsonField(value, fallback) {
   if (value === null || value === undefined || value === "") {
@@ -322,6 +326,45 @@ async function updateJobStatus({
   );
 }
 
+function isTransientAiNetworkError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  const code = String(error?.code || "").toUpperCase();
+
+  if (["ETIMEDOUT", "ECONNRESET", "ECONNABORTED", "EAI_AGAIN"].includes(code)) {
+    return true;
+  }
+
+  return (
+    message.includes("etimedout") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("econnreset") ||
+    message.includes("econnaborted") ||
+    message.includes("eai_again") ||
+    message.includes("abort")
+  );
+}
+
+async function requeueJobForRetry({ jobId, leaseToken, errorMessage }) {
+  await query(
+    `UPDATE account_draft_analysis_jobs
+     SET status = 'pending',
+         error_code = 'transient_retry',
+         error_message = ?,
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      String(errorMessage || "").trim() ||
+        "Reintentando por timeout temporal del proveedor IA.",
+      Number(jobId),
+      String(leaseToken || ""),
+    ],
+  );
+}
+
 async function processSingleJob(row) {
   const jobId = Number(row?.id || 0);
   const leaseToken = String(row?.lease_token || "");
@@ -339,7 +382,8 @@ async function processSingleJob(row) {
       leaseToken,
       status: "failed",
       errorCode: "user_not_available",
-      errorMessage: "El usuario solicitante ya no esta disponible para ejecutar el analisis.",
+      errorMessage:
+        "El usuario solicitante ya no esta disponible para ejecutar el analisis.",
     });
     return true;
   }
@@ -349,6 +393,12 @@ async function processSingleJob(row) {
       draft: snapshot.draft,
       options: snapshot.options,
       user,
+      aiUsageContext: {
+        userId: requestedByUserId,
+        featureCode: "accounts.draft_analysis",
+        jobType: "account_draft_analysis",
+        jobId,
+      },
     });
 
     await updateJobStatus({
@@ -359,20 +409,37 @@ async function processSingleJob(row) {
     });
     return true;
   } catch (error) {
+    const attemptCount = Number(row?.attempt_count || 0);
+    const isTransientError = isTransientAiNetworkError(error);
+    const shouldRetryTransientError =
+      isTransientError && attemptCount < JOB_MAX_TRANSIENT_RETRIES;
+
+    if (shouldRetryTransientError) {
+      await requeueJobForRetry({
+        jobId,
+        leaseToken,
+        errorMessage: String(error?.message || "").trim(),
+      });
+      return true;
+    }
+
     await updateJobStatus({
       jobId,
       leaseToken,
       status: "failed",
       errorCode: "generation_failed",
-      errorMessage:
-        String(error?.message || "").trim() ||
-        "No fue posible analizar el borrador de cuenta.",
+      errorMessage: isTransientError
+        ? "No fue posible completar el analisis IA del borrador tras varios reintentos. Intenta nuevamente en unos segundos."
+        : String(error?.message || "").trim() ||
+          "No fue posible analizar el borrador de cuenta.",
     });
     return true;
   }
 }
 
-export async function processPendingAccountDraftAnalysisJobs({ limit = 5 } = {}) {
+export async function processPendingAccountDraftAnalysisJobs({
+  limit = 5,
+} = {}) {
   await ensureAccountDraftAnalysisJobSchema();
   await expireOutdatedJobs();
 

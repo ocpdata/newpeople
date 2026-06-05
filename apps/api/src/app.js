@@ -21,6 +21,7 @@ import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.js";
 import settingsRoutes from "./routes.settings.js";
 import toolsRoutes from "./routes.tools.js";
+import aiRoutes from "./routes.ai.js";
 
 export function createApp() {
   const app = express();
@@ -102,6 +103,7 @@ export function createApp() {
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
+  app.use("/api", authRequired, loadUser, aiRoutes);
 
   app.use((err, req, res, _next) => {
     const status = Number(err?.status) || 500;

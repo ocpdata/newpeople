@@ -1790,10 +1790,15 @@ export function buildOpenAiProviderWarning(kind) {
   return "No fue posible obtener sugerencias IA en este momento; se muestran recomendaciones internas.";
 }
 
-export async function searchPublicCompanyInfo({ draft, catalogContext }) {
+export async function searchPublicCompanyInfo({
+  draft,
+  catalogContext,
+  aiUsageContext,
+}) {
   return runProfiledStructuredWebResearch(accountCompanyResearchProfile, {
     draft,
     catalogContext,
+    aiUsageContext,
   });
 }
 
@@ -1802,11 +1807,13 @@ export async function searchPublicCompanyLocationInfo({
   catalogContext,
   preferredWebsite,
   currentContactData,
+  aiUsageContext,
 }) {
   return runProfiledStructuredWebResearch(accountLocationResearchProfile, {
     draft,
     catalogContext,
     preferredWebsite,
     currentContactData,
+    aiUsageContext,
   });
 }

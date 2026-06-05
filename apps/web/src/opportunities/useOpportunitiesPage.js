@@ -2806,6 +2806,7 @@ export function useOpportunitiesPage({
     event.preventDefault();
     setError("");
     setSuccess("");
+    const wasEditing = Boolean(editingOpportunityId);
     if (!form.sellerUserId) {
       setError("Selecciona un vendedor");
       return;
@@ -2907,6 +2908,14 @@ export function useOpportunitiesPage({
       setStageBypassReason("");
       resetOpportunityDocumentState();
       await load();
+
+      if (!wasEditing) {
+        setOpportunityStatusFilterState("all");
+        setOpportunityQueryState("");
+        setOpportunitySortField("id");
+        setOpportunitySortDirection("desc");
+        setOpportunitiesPage(1);
+      }
     } catch (err) {
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
       if (fieldErrors && typeof fieldErrors === "object") {

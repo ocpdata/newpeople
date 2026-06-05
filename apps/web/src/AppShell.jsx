@@ -1,4 +1,4 @@
-import { Suspense, lazy, useMemo } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import {
   NavLink,
   Navigate,
@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import Dashboard from "./Dashboard";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
+import { api } from "./api";
 
 const OpportunityQuestionAdminPage = lazy(
   () => import("./OpportunityQuestionAdminPage"),
@@ -104,6 +105,7 @@ export default function AppShell({
   onLogout,
   onRefreshCurrentUser,
 }) {
+  const [aiCreditSummary, setAiCreditSummary] = useState(null);
   const appVersion = __APP_VERSION__;
   const appCommit = __APP_COMMIT__;
   const location = useLocation();
@@ -111,6 +113,44 @@ export default function AppShell({
     const set = new Set(currentUser.permissions || []);
     return (permission) => set.has(permission);
   }, [currentUser]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchAiCreditSummary() {
+      try {
+        const { data } = await api.get("/api/ai/me/credit-summary");
+        if (mounted) {
+          setAiCreditSummary(data);
+        }
+      } catch {
+        if (mounted) {
+          setAiCreditSummary(null);
+        }
+      }
+    }
+
+    fetchAiCreditSummary();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUser?.id]);
+
+  const aiCreditPercent = Math.max(
+    0,
+    Math.min(100, Number(aiCreditSummary?.consumedPercent || 0)),
+  );
+  const aiCreditState = String(aiCreditSummary?.state || "normal").trim();
+
+  function formatUsd(value) {
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value || 0));
+  }
 
   const canAccessQuotations = [
     "cotizaciones.operacion",
@@ -598,9 +638,37 @@ export default function AppShell({
               fullName={currentUser.full_name}
               size="lg"
             />
-            <div>
-              <strong>{currentUser.full_name}</strong>
-              <p>{currentUser.email}</p>
+            <div className="topbar-user-meta">
+              <div className="topbar-user-info">
+                <strong>{currentUser.full_name}</strong>
+                <p>{currentUser.email}</p>
+              </div>
+              {aiCreditSummary ? (
+                <div
+                  className="topbar-ai-credit"
+                  title="Consumo acumulado de IA"
+                >
+                  <div className="topbar-ai-credit-head">
+                    <span>Credito IA</span>
+                    <span>
+                      {formatUsd(aiCreditSummary?.lifetimeConsumedUsd || 0)} /{" "}
+                      {formatUsd(aiCreditSummary?.lifetimeGrantedUsd || 0)}
+                    </span>
+                  </div>
+                  <div className="topbar-ai-credit-track" aria-hidden="true">
+                    <span
+                      className={`topbar-ai-credit-fill state-${aiCreditState}`}
+                      style={{ width: `${aiCreditPercent}%` }}
+                    />
+                  </div>
+                  <div className="topbar-ai-credit-foot">
+                    <span>{aiCreditPercent}% consumido</span>
+                    <span>
+                      Disponible: {formatUsd(aiCreditSummary?.balanceUsd || 0)}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </header>

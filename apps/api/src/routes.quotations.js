@@ -42,6 +42,10 @@ import {
   getCommercialEnablementFileStream,
   listCommercialEnablementAssets,
 } from "./commercial-enablement/service.js";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 
 const router = express.Router();
 const documentStorage = createDocumentStorage();
@@ -8609,6 +8613,9 @@ async function buildProposalExecutiveSummaryGenerationContext({
   ].filter((source) => String(source.text || "").trim());
 
   return {
+    requestedBy: {
+      userId: Number(user?.id || 0) || null,
+    },
     proposal: {
       id: Number(proposal.id),
       title: proposal.title || "",
@@ -8764,6 +8771,11 @@ async function buildProposalExecutiveSummaryGenerationContext({
 }
 
 async function requestProposalExecutiveSummarySuggestion(context) {
+  const requestedByUserId = Number(context?.requestedBy?.userId || 0);
+  if (requestedByUserId) {
+    await assertAiBudgetAvailable({ userId: requestedByUserId });
+  }
+
   const componentConfig = buildProposalAiComponentConfig({
     componentCode: context?.generationPolicy?.componentCode,
     componentTitle: context?.component?.title,
@@ -8836,6 +8848,8 @@ async function requestProposalExecutiveSummarySuggestion(context) {
   };
 
   const controller = new AbortController();
+  const aiRequestStartedAt = new Date();
+  const internalRequestId = randomUUID();
   const timeoutId = setTimeout(
     () => controller.abort(),
     Math.max(
@@ -8866,6 +8880,19 @@ async function requestProposalExecutiveSummarySuggestion(context) {
     }
 
     const responseData = await response.json();
+    if (requestedByUserId) {
+      await recordAiUsageFromOpenAiResponse({
+        internalRequestId,
+        userId: requestedByUserId,
+        featureCode: "proposals.exec_summary",
+        model: payload.model,
+        openAiResponse: responseData,
+        jobType: "proposal_ai_job",
+        jobId: Number(context?.job?.id || 0) || null,
+        startedAt: aiRequestStartedAt,
+      });
+    }
+
     const parsed = extractJsonObject(getOpenAiOutputText(responseData));
     if (!parsed) {
       throw new Error("OpenAI request failed: invalid JSON response");
@@ -9082,7 +9109,12 @@ async function processProposalExecutiveSummaryGenerationJob(row) {
       percent: 80,
     });
 
-    const result = await requestProposalExecutiveSummarySuggestion(context);
+    const result = await requestProposalExecutiveSummarySuggestion({
+      ...context,
+      job: {
+        id: Number(row.id),
+      },
+    });
     if (
       Array.isArray(context?.libraryContext?.matchedAssets) &&
       context.libraryContext.matchedAssets.length >= row.max_library_assets

@@ -2488,6 +2488,12 @@ router.post(
         questions,
         existingAnswers,
         documents,
+        aiUsageContext: {
+          userId: Number(req.user.id),
+          featureCode: "opportunities.stage_suggestions",
+          jobType: "opportunity_stage_answers_sync",
+          jobId: null,
+        },
       });
 
       return res.json({

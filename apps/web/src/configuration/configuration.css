@@ -1365,6 +1365,252 @@
   gap: 1rem;
 }
 
+.ai-credit-card,
+.ai-credit-detail-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.ai-credit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.ai-credit-summary-card {
+  border-radius: 16px;
+  border: 1px solid #d5dfe6;
+  background: linear-gradient(180deg, #fbfdff, #f1f6f9);
+  padding: 0.95rem 1rem;
+}
+
+.ai-credit-summary-card strong,
+.ai-credit-summary-card span {
+  display: block;
+}
+
+.ai-credit-summary-card strong {
+  color: #173243;
+  font-size: 1rem;
+}
+
+.ai-credit-summary-card span {
+  color: #607585;
+  margin-top: 0.3rem;
+  font-size: 0.9rem;
+}
+
+.ai-credit-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ai-credit-toolbar input[type="search"] {
+  min-width: min(100%, 360px);
+  flex: 1 1 360px;
+}
+
+.ai-credit-table-wrap {
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid #d5dfe6;
+}
+
+.configuration-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.configuration-table th,
+.configuration-table td {
+  padding: 0.95rem 1rem;
+  border-bottom: 1px solid #e2ebf1;
+  vertical-align: top;
+  text-align: left;
+}
+
+.configuration-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fbfd;
+  z-index: 1;
+  color: #586b79;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.configuration-table tbody tr {
+  cursor: pointer;
+}
+
+.configuration-table tbody tr:hover {
+  background: #f7fbfe;
+}
+
+.configuration-table tbody tr.is-selected {
+  background: #eef4f8;
+}
+
+.configuration-table td strong,
+.configuration-table td span,
+.configuration-table td small {
+  display: block;
+}
+
+.configuration-table td span,
+.configuration-table td small {
+  color: #607585;
+  margin-top: 0.2rem;
+}
+
+.ai-credit-row-progress {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ai-credit-row-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e5edf3;
+}
+
+.ai-credit-row-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.state-normal {
+  background: linear-gradient(90deg, #2f7d53, #5bb17d);
+}
+
+.state-warning {
+  background: linear-gradient(90deg, #c88a0a, #f0b94d);
+}
+
+.state-critical {
+  background: linear-gradient(90deg, #be4a2f, #e87456);
+}
+
+.state-exhausted {
+  background: linear-gradient(90deg, #7f8c97, #b2bcc4);
+}
+
+.ai-credit-state-normal {
+  background: #e8f6ef;
+  color: #1d6b43;
+}
+
+.ai-credit-state-warning {
+  background: #fff3dd;
+  color: #8b5a00;
+}
+
+.ai-credit-state-critical,
+.ai-credit-state-exhausted {
+  background: #fde8e1;
+  color: #9e3f26;
+}
+
+.ai-credit-detail-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.ai-credit-detail-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.ai-credit-detail-summary p,
+.ai-credit-detail-summary span,
+.ai-credit-history p {
+  margin: 0.25rem 0 0;
+  color: #607585;
+}
+
+.ai-credit-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ai-credit-detail-metrics article {
+  border: 1px solid #d5dfe6;
+  border-radius: 14px;
+  background: #f9fbfd;
+  padding: 0.9rem 1rem;
+}
+
+.ai-credit-detail-metrics strong,
+.ai-credit-detail-metrics span {
+  display: block;
+}
+
+.ai-credit-detail-metrics span {
+  margin-top: 0.25rem;
+  color: #607585;
+}
+
+.ai-credit-form {
+  border: 1px solid #d5dfe6;
+  border-radius: 16px;
+  background: #f9fbfd;
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.ai-credit-form h5,
+.ai-credit-history h5 {
+  margin: 0;
+}
+
+.ai-credit-history {
+  border: 1px solid #d5dfe6;
+  border-radius: 16px;
+  background: #fff;
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.ai-credit-history-list {
+  gap: 0.75rem;
+}
+
+.configuration-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  border: 1px solid #d5dfe6;
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: #fff;
+}
+
+.configuration-toggle-copy strong,
+.configuration-toggle-copy p {
+  display: block;
+}
+
+.configuration-toggle-copy p {
+  margin: 0.25rem 0 0;
+  color: #607585;
+}
+
+.configuration-toggle-control {
+  flex: 0 0 auto;
+}
+
 .configuration-metrics-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1683,5 +1929,26 @@
 
   .configuration-new-section-form .configuration-inline-actions {
     flex-wrap: wrap;
+  }
+
+  .ai-credit-summary-grid,
+  .ai-credit-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-credit-detail-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .ai-credit-summary-grid,
+  .ai-credit-detail-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-credit-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
