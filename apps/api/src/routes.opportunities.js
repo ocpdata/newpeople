@@ -3000,10 +3000,15 @@ router.put(
     }
 
     if (hasStageChange || hasCommercialCloseChange) {
-      await refreshOpportunityRecommendedStrategy({
+      refreshOpportunityRecommendedStrategy({
         opportunityId: id,
         selectedSalesStageId: requestedSalesStageId,
         userId: Number(req.user.id),
+      }).catch((err) => {
+        console.error(
+          "[opportunities] refreshOpportunityRecommendedStrategy failed:",
+          err,
+        );
       });
     }
 

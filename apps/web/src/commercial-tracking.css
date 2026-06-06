@@ -35,8 +35,9 @@
 
 .tracking-toolbar,
 .tracking-inline-filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
   gap: 0.85rem;
   min-width: min(100%, 30rem);
 }
@@ -44,6 +45,8 @@
 .tracking-toolbar label,
 .tracking-inline-filters label {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;

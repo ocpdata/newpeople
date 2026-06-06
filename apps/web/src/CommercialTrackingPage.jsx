@@ -379,6 +379,7 @@ export default function CommercialTrackingPage() {
   const [forecastData, setForecastData] = useState(null);
   const [forecastSort, setForecastSort] = useState(FORECAST_SORT_DEFAULT);
   const [loading, setLoading] = useState(true);
+  const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingTab, setLoadingTab] = useState(false);
   const [error, setError] = useState("");
 
@@ -397,15 +398,27 @@ export default function CommercialTrackingPage() {
   }
 
   async function loadOverview() {
-    const response = await api.get("/api/commercial-tracking/overview", {
-      params: {
-        weekStart,
-        sellerUserId: sellerUserId || undefined,
-        businessLineId: businessLineId || undefined,
-        viewMode,
-      },
-    });
-    setOverview(response.data);
+    setLoadingOverview(true);
+    try {
+      const response = await api.get("/api/commercial-tracking/overview", {
+        params: {
+          weekStart,
+          sellerUserId: sellerUserId || undefined,
+          businessLineId: businessLineId || undefined,
+          viewMode,
+        },
+      });
+      setOverview(response.data);
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar el resumen comercial",
+        ),
+      );
+    } finally {
+      setLoadingOverview(false);
+    }
   }
 
   async function loadOpenData() {
@@ -470,24 +483,31 @@ export default function CommercialTrackingPage() {
   async function reloadAll() {
     setError("");
     setLoading(true);
+    // overview gestiona su propio estado; se dispara sin bloquear
+    loadOverview();
     try {
-      await Promise.all([loadCatalogs(), loadOverview()]);
-      if (activeTab === "open") {
-        await loadOpenData();
+      await loadCatalogs();
+      setLoadingTab(true);
+      try {
+        if (activeTab === "open") {
+          await loadOpenData();
+        }
+        if (activeTab === "period") {
+          await loadPeriodData();
+        }
+        if (activeTab === "forecast") {
+          await loadForecastData();
+        }
+      } catch (requestError) {
+        setError(
+          getApiErrorMessage(
+            requestError,
+            "No fue posible cargar el seguimiento comercial",
+          ),
+        );
+      } finally {
+        setLoadingTab(false);
       }
-      if (activeTab === "period") {
-        await loadPeriodData();
-      }
-      if (activeTab === "forecast") {
-        await loadForecastData();
-      }
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(
-          requestError,
-          "No fue posible cargar el seguimiento comercial",
-        ),
-      );
     } finally {
       setLoading(false);
     }
@@ -550,8 +570,9 @@ export default function CommercialTrackingPage() {
 
     async function refreshData() {
       setError("");
+      // overview se carga en paralelo sin bloquear los tabs
+      loadOverview();
       try {
-        await loadOverview();
         if (activeTab === "open") {
           await loadOpenData();
         }
@@ -805,159 +826,163 @@ export default function CommercialTrackingPage() {
         </div>
       ) : null}
 
-      {!loading && activeTab === "overview" ? (
-        <div className="tracking-layout">
-          <div className="tracking-summary-grid tracking-summary-grid-overview">
-            <SummaryCard
-              label="Oportunidades abiertas"
-              value={formatNumber(overviewSummary.openOpportunities)}
-              helper="Pipeline activo hoy"
-              onClick={() => {
-                setQuickFilter("all");
-                setActiveTab("open");
-              }}
-            />
-            <SummaryCard
-              label="Monto abierto"
-              value={formatCurrency(overviewSummary.openAmountUsd)}
-              helper="Impacto economico del pipeline"
-              tone="soft"
-            />
-            <SummaryCard
-              label="Nuevas esta semana"
-              value={formatNumber(overviewSummary.newThisWeek)}
-              helper={formatDelta(
-                weekChange?.newThisWeek?.current,
-                weekChange?.newThisWeek?.previous,
-              )}
-            />
-            <SummaryCard
-              label="Monto nuevo semana"
-              value={formatCurrency(overviewSummary.newAmountUsd)}
-              helper="Pipeline generado en la semana"
-              tone="soft"
-            />
-            <QuarterQuotaCard summary={overviewQuarterQuota} />
-            <SummaryCard
-              label="Avanzadas esta semana"
-              value={formatNumber(overviewSummary.advancedThisWeek)}
-              helper={formatDelta(
-                weekChange?.advancedThisWeek?.current,
-                weekChange?.advancedThisWeek?.previous,
-              )}
-            />
-            <SummaryCard
-              label="Bloqueadas"
-              value={formatNumber(overviewSummary.blockedOpenOpportunities)}
-              helper="Requieren intervencion inmediata"
-              tone="alert"
-              onClick={() => {
-                setQuickFilter("blocked");
-                setActiveTab("open");
-              }}
-            />
-          </div>
-
-          <div className="tracking-grid-two">
-            <section className="tracking-panel">
-              <div className="tracking-panel-header">
-                <h3>Qué cambió esta semana</h3>
-                <span>{weekStart}</span>
-              </div>
-              <div className="tracking-week-change-grid">
-                <article>
-                  <strong>
-                    {formatNumber(weekChange?.advancedThisWeek?.current)}
-                  </strong>
-                  <span>Avanzadas</span>
-                </article>
-                <article>
-                  <strong>
-                    {formatNumber(weekChange?.wonThisWeek?.current)}
-                  </strong>
-                  <span>Ganadas</span>
-                </article>
-                <article>
-                  <strong>
-                    {formatNumber(weekChange?.lostThisWeek?.current)}
-                  </strong>
-                  <span>Perdidas</span>
-                </article>
-              </div>
-            </section>
-
-            <section className="tracking-panel">
-              <div className="tracking-panel-header">
-                <h3>Generación últimas semanas</h3>
-                <span>{viewMode === "amount" ? "Monto" : "Cantidad"}</span>
-              </div>
-              <SparkBars
-                items={overview?.generationTrend || []}
-                valueKey={
-                  viewMode === "amount" ? "createdAmountUsd" : "createdCount"
-                }
-                formatter={
-                  viewMode === "amount" ? formatCurrency : formatNumber
-                }
+      {activeTab === "overview" ? (
+        loadingOverview ? (
+          <div className="tracking-empty-state">Cargando resumen...</div>
+        ) : (
+          <div className="tracking-layout">
+            <div className="tracking-summary-grid tracking-summary-grid-overview">
+              <SummaryCard
+                label="Oportunidades abiertas"
+                value={formatNumber(overviewSummary.openOpportunities)}
+                helper="Pipeline activo hoy"
+                onClick={() => {
+                  setQuickFilter("all");
+                  setActiveTab("open");
+                }}
               />
+              <SummaryCard
+                label="Monto abierto"
+                value={formatCurrency(overviewSummary.openAmountUsd)}
+                helper="Impacto economico del pipeline"
+                tone="soft"
+              />
+              <SummaryCard
+                label="Nuevas esta semana"
+                value={formatNumber(overviewSummary.newThisWeek)}
+                helper={formatDelta(
+                  weekChange?.newThisWeek?.current,
+                  weekChange?.newThisWeek?.previous,
+                )}
+              />
+              <SummaryCard
+                label="Monto nuevo semana"
+                value={formatCurrency(overviewSummary.newAmountUsd)}
+                helper="Pipeline generado en la semana"
+                tone="soft"
+              />
+              <QuarterQuotaCard summary={overviewQuarterQuota} />
+              <SummaryCard
+                label="Avanzadas esta semana"
+                value={formatNumber(overviewSummary.advancedThisWeek)}
+                helper={formatDelta(
+                  weekChange?.advancedThisWeek?.current,
+                  weekChange?.advancedThisWeek?.previous,
+                )}
+              />
+              <SummaryCard
+                label="Bloqueadas"
+                value={formatNumber(overviewSummary.blockedOpenOpportunities)}
+                helper="Requieren intervencion inmediata"
+                tone="alert"
+                onClick={() => {
+                  setQuickFilter("blocked");
+                  setActiveTab("open");
+                }}
+              />
+            </div>
+
+            <div className="tracking-grid-two">
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Qué cambió esta semana</h3>
+                  <span>{weekStart}</span>
+                </div>
+                <div className="tracking-week-change-grid">
+                  <article>
+                    <strong>
+                      {formatNumber(weekChange?.advancedThisWeek?.current)}
+                    </strong>
+                    <span>Avanzadas</span>
+                  </article>
+                  <article>
+                    <strong>
+                      {formatNumber(weekChange?.wonThisWeek?.current)}
+                    </strong>
+                    <span>Ganadas</span>
+                  </article>
+                  <article>
+                    <strong>
+                      {formatNumber(weekChange?.lostThisWeek?.current)}
+                    </strong>
+                    <span>Perdidas</span>
+                  </article>
+                </div>
+              </section>
+
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Generación últimas semanas</h3>
+                  <span>{viewMode === "amount" ? "Monto" : "Cantidad"}</span>
+                </div>
+                <SparkBars
+                  items={overview?.generationTrend || []}
+                  valueKey={
+                    viewMode === "amount" ? "createdAmountUsd" : "createdCount"
+                  }
+                  formatter={
+                    viewMode === "amount" ? formatCurrency : formatNumber
+                  }
+                />
+              </section>
+            </div>
+
+            <div className="tracking-grid-two">
+              <AttentionList
+                title="Sin siguiente paso"
+                items={immediateAttention.noNextStep || []}
+              />
+              <AttentionList
+                title="Bloqueadas"
+                items={immediateAttention.blocked || []}
+              />
+            </div>
+
+            <div className="tracking-grid-two">
+              <AttentionList
+                title="Sin actividad reciente"
+                items={immediateAttention.stale || []}
+              />
+              <AttentionList
+                title="Alto monto y alto riesgo"
+                items={immediateAttention.highAmountHighRisk || []}
+              />
+            </div>
+
+            <section className="tracking-panel">
+              <div className="tracking-panel-header">
+                <h3>Movimiento del pipeline por etapa</h3>
+                <span>{overview?.pipelineMovement?.length || 0} etapas</span>
+              </div>
+              <div className="tracking-table-wrap">
+                <table className="tracking-table">
+                  <thead>
+                    <tr>
+                      <th>Etapa</th>
+                      <th>Abiertas</th>
+                      <th>Avanzadas semana</th>
+                      <th>Bloqueadas</th>
+                      <th>Sin actividad</th>
+                      <th>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(overview?.pipelineMovement || []).map((item) => (
+                      <tr key={item.stageCode}>
+                        <td>{item.stageName}</td>
+                        <td>{formatNumber(item.openCount)}</td>
+                        <td>{formatNumber(item.advancedInWeek)}</td>
+                        <td>{formatNumber(item.blockedCount)}</td>
+                        <td>{formatNumber(item.staleCount)}</td>
+                        <td>{formatCurrency(item.totalAmountUsd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           </div>
-
-          <div className="tracking-grid-two">
-            <AttentionList
-              title="Sin siguiente paso"
-              items={immediateAttention.noNextStep || []}
-            />
-            <AttentionList
-              title="Bloqueadas"
-              items={immediateAttention.blocked || []}
-            />
-          </div>
-
-          <div className="tracking-grid-two">
-            <AttentionList
-              title="Sin actividad reciente"
-              items={immediateAttention.stale || []}
-            />
-            <AttentionList
-              title="Alto monto y alto riesgo"
-              items={immediateAttention.highAmountHighRisk || []}
-            />
-          </div>
-
-          <section className="tracking-panel">
-            <div className="tracking-panel-header">
-              <h3>Movimiento del pipeline por etapa</h3>
-              <span>{overview?.pipelineMovement?.length || 0} etapas</span>
-            </div>
-            <div className="tracking-table-wrap">
-              <table className="tracking-table">
-                <thead>
-                  <tr>
-                    <th>Etapa</th>
-                    <th>Abiertas</th>
-                    <th>Avanzadas semana</th>
-                    <th>Bloqueadas</th>
-                    <th>Sin actividad</th>
-                    <th>Monto</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(overview?.pipelineMovement || []).map((item) => (
-                    <tr key={item.stageCode}>
-                      <td>{item.stageName}</td>
-                      <td>{formatNumber(item.openCount)}</td>
-                      <td>{formatNumber(item.advancedInWeek)}</td>
-                      <td>{formatNumber(item.blockedCount)}</td>
-                      <td>{formatNumber(item.staleCount)}</td>
-                      <td>{formatCurrency(item.totalAmountUsd)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
+        )
       ) : null}
 
       {!loading && activeTab === "forecast" ? (
@@ -1496,13 +1521,13 @@ export default function CommercialTrackingPage() {
                             <td>
                               {delta ? (
                                 <span>
-                                  {delta.absolute > 0 ? "+" : ""}
+                                  {delta.deltaAbsolute > 0 ? "+" : ""}
                                   {viewMode === "amount"
-                                    ? formatCurrency(delta.absolute)
-                                    : formatNumber(delta.absolute)}
-                                  {delta.percent === null
+                                    ? formatCurrency(delta.deltaAbsolute)
+                                    : formatNumber(delta.deltaAbsolute)}
+                                  {delta.deltaPercent === null
                                     ? " · sin base"
-                                    : ` · ${delta.percent > 0 ? "+" : ""}${delta.percent}%`}
+                                    : ` · ${delta.deltaPercent > 0 ? "+" : ""}${delta.deltaPercent}%`}
                                 </span>
                               ) : (
                                 <span>Sin base</span>
