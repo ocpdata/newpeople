@@ -1,4 +1,5 @@
 import QuotationEditorContent from "./QuotationEditorContent";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 
 function QuotationEditModal({
   isOpen,
@@ -22,7 +23,10 @@ function QuotationEditModal({
       >
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
-            <h3 className="modal-title">Editar cotizacion</h3>
+            <div className="account-modal-title-row">
+              <h3 className="modal-title">Editar cotizacion</h3>
+              <ModalInlineHelp helpKey="quotation.edit" />
+            </div>
             <p className="field-hint opportunity-modal-subtitle">
               Actualiza la cotizacion, sus secciones y sus items desde esta
               ventana.

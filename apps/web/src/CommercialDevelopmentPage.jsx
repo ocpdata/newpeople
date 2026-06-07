@@ -3998,6 +3998,8 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         const nextNarrativeSource = String(
           payload?.aiNarrativeSource || "",
         ).trim();
+        const nextGeneratedAt =
+          payload?.generatedAt || payload?.aiNarrativeGeneratedAt || null;
 
         setDashboard((current) => {
           if (!current) {
@@ -4018,6 +4020,8 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                       "",
                     aiNarrativeSource:
                       nextNarrativeSource || item.aiNarrativeSource || "",
+                    aiNarrativeGeneratedAt:
+                      nextGeneratedAt || item.aiNarrativeGeneratedAt || null,
                   }
                 : item,
             ),
@@ -6404,6 +6408,12 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                         {item.aiStatusSummary ||
                           "Sin lectura sugerida disponible."}
                       </p>
+                      {item.aiNarrativeGeneratedAt ? (
+                        <small>
+                          Actualizado:{" "}
+                          {formatDateTime(item.aiNarrativeGeneratedAt)}
+                        </small>
+                      ) : null}
                     </div>
                     <div className="commercial-development-gap-coverage-insight is-accent">
                       <div className="commercial-development-gap-coverage-insight-header">
@@ -6427,6 +6437,12 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                         {item.aiNextStepRecommendation ||
                           "Sin recomendación sugerida."}
                       </p>
+                      {item.aiNarrativeGeneratedAt ? (
+                        <small>
+                          Actualizado:{" "}
+                          {formatDateTime(item.aiNarrativeGeneratedAt)}
+                        </small>
+                      ) : null}
                     </div>
                   </div>
 

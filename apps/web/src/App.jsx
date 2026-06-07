@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { api, setAuthToken } from "./api";
 import { FirstUserSetup, LoginPage, SetPasswordPage } from "./AuthPages";
 import AppShell from "./AppShell";
+import { HelpProvider } from "./help/HelpProvider";
 
 function App() {
   const location = useLocation();
@@ -70,15 +71,17 @@ function App() {
   }
 
   return (
-    <AppShell
-      currentUser={currentUser}
-      token={token}
-      onLogout={() => {
-        setCurrentUser(null);
-        setToken("");
-      }}
-      onRefreshCurrentUser={fetchMe}
-    />
+    <HelpProvider currentUser={currentUser}>
+      <AppShell
+        currentUser={currentUser}
+        token={token}
+        onLogout={() => {
+          setCurrentUser(null);
+          setToken("");
+        }}
+        onRefreshCurrentUser={fetchMe}
+      />
+    </HelpProvider>
   );
 }
 

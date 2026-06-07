@@ -67,7 +67,7 @@ function OpportunitiesListSection({
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Oportunidades</h2>
+            <h2 data-help-id="opportunities.title">Oportunidades</h2>
             <span
               className="module-title-icon module-title-icon-opportunities"
               aria-hidden="true"
@@ -112,6 +112,7 @@ function OpportunitiesListSection({
           <button
             type="button"
             className="btn-primary"
+            data-help-id="opportunities.create"
             onClick={openCreateOpportunityModal}
           >
             + Crear oportunidad
@@ -121,6 +122,7 @@ function OpportunitiesListSection({
 
       <div className="roles-pills-bar accounts-pills-bar-row">
         <div
+          data-help-id="opportunities.filters"
           className="accounts-status-pills"
           role="group"
           aria-label="Filtrar oportunidades por estado"

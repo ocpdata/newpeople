@@ -1,0 +1,5 @@
+Cuenta: Prospecto Mu Seguridad
+Contacto: Mauro Diaz
+Tema: Seguimiento comercial
+Correo: mauro.diaz@mu.example.com
+Oportunidad: Servicio gestionado Mu

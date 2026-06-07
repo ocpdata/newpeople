@@ -711,7 +711,7 @@ export default function CommercialTrackingPage() {
                 <path d="M17 18v-6" />
               </svg>
             </span>
-            <h2>Seguimiento comercial</h2>
+            <h2 data-help-id="tracking.title">Seguimiento comercial</h2>
           </div>
           <p className="section-helper-text tracking-hero-text">
             Da visibilidad al pipeline, al forecast y a los movimientos
@@ -719,7 +719,7 @@ export default function CommercialTrackingPage() {
           </p>
         </div>
 
-        <div className="tracking-toolbar">
+        <div className="tracking-toolbar" data-help-id="tracking.toolbar">
           <label>
             Semana
             <select
@@ -804,6 +804,7 @@ export default function CommercialTrackingPage() {
       {error ? <p className="form-error">{error}</p> : null}
 
       <div
+        data-help-id="tracking.tabs"
         className="tracking-tabs"
         role="tablist"
         aria-label="Vistas de seguimiento comercial"

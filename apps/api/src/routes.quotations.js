@@ -732,15 +732,41 @@ const proposalComponentBlockSchema = z
     items: z.array(z.string().trim().max(1000)).optional().default([]),
     assetId: z.number().int().positive().optional().nullable(),
     assetVersionId: z.number().int().positive().optional().nullable(),
+    image: z
+      .object({
+        fileUrl: z
+          .string()
+          .trim()
+          .min(1)
+          .refine((value) => value.startsWith("data:image/"), {
+            message: "La imagen local debe enviarse como data:image/...",
+          }),
+        fileName: z.string().trim().max(255).optional().nullable(),
+        mimeType: z.string().trim().max(120).optional().nullable(),
+        fileSizeBytes: z.number().int().nonnegative().optional().nullable(),
+        width: z.number().int().positive().optional().nullable(),
+        height: z.number().int().positive().optional().nullable(),
+        checksum: z.string().trim().max(120).optional().nullable(),
+        altText: z.string().trim().max(500).optional().nullable(),
+        caption: z.string().trim().max(5000).optional().nullable(),
+      })
+      .optional()
+      .nullable(),
     assetPublicId: z.string().trim().min(4).max(80).optional().nullable(),
   })
   .superRefine((value, context) => {
     if (value.type === "image") {
-      if (!value.assetId || !value.assetVersionId) {
+      const hasInstitutionalImage = Boolean(
+        value.assetId && value.assetVersionId,
+      );
+      const hasLocalImage = Boolean(value.image?.fileUrl);
+
+      if (!hasInstitutionalImage && !hasLocalImage) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Los bloques de imagen requieren assetId y assetVersionId",
-          path: ["assetVersionId"],
+          message:
+            "Los bloques de imagen requieren assetId+assetVersionId o una imagen local",
+          path: ["image"],
         });
       }
       return;
@@ -1016,10 +1042,7 @@ const providerDocumentImportCommercialClauseSchema = z.object({
   titleEs: z.string().trim().max(180).optional().nullable(),
   textEs: z.string().trim().min(1).max(2000),
   category: z.string().trim().min(1).max(40).optional().nullable(),
-  confidence: z
-    .enum(["high", "medium", "low"])
-    .optional()
-    .nullable(),
+  confidence: z.enum(["high", "medium", "low"]).optional().nullable(),
   sourceSnippet: z.string().trim().max(1000).optional().nullable(),
 });
 
@@ -2747,7 +2770,9 @@ function normalizeProviderDocumentImportCommercialClauseCategory(value) {
 }
 
 function normalizeProviderDocumentImportCommercialClauseConfidence(value) {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (["high", "medium", "low"].includes(normalized)) {
     return normalized;
   }
@@ -2809,7 +2834,8 @@ function buildProviderDocumentImportCommercialClauses(rawClauses = []) {
     });
 
     if (
-      normalizedClauses.length >= PROVIDER_DOCUMENT_IMPORT_MAX_COMMERCIAL_CLAUSES
+      normalizedClauses.length >=
+      PROVIDER_DOCUMENT_IMPORT_MAX_COMMERCIAL_CLAUSES
     ) {
       break;
     }
@@ -2819,7 +2845,11 @@ function buildProviderDocumentImportCommercialClauses(rawClauses = []) {
 }
 
 function formatProviderDocumentImportCommercialClauseCategoryLabel(category) {
-  switch (String(category || "").trim().toLowerCase()) {
+  switch (
+    String(category || "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "payment":
       return "Pago";
     case "delivery":
@@ -2836,7 +2866,8 @@ function formatProviderDocumentImportCommercialClauseCategoryLabel(category) {
 }
 
 function buildProviderDocumentImportCommercialClauseNotes(clauses = []) {
-  const normalizedClauses = buildProviderDocumentImportCommercialClauses(clauses);
+  const normalizedClauses =
+    buildProviderDocumentImportCommercialClauses(clauses);
   if (!normalizedClauses.length) {
     return [];
   }
@@ -3626,7 +3657,9 @@ function resolveProviderDocumentImportPreviewItemForAction({
   };
 }
 
-function buildProviderDocumentImportInstructions({ strictRecovery = false } = {}) {
+function buildProviderDocumentImportInstructions({
+  strictRecovery = false,
+} = {}) {
   const strictSuffix = strictRecovery
     ? "IMPORTANTE: si el documento contiene precios, costos o descuentos por item, debes devolverlos obligatoriamente en listPriceUnit/unitPrice/resolvedCostUnit/discountPct como numeros. Si el documento contiene terminos o condiciones comerciales, debes devolverlas obligatoriamente en deliveryTime/quotationValidity/warranty/paymentTerms y/o commercialClauses en espanol."
     : "";
@@ -3782,7 +3815,11 @@ async function requestProviderDocumentImportAnalysis(payload) {
 function hasProviderDocumentImportCostSignals(parsed = {}) {
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
   return items.some((item) => {
-    const values = [item?.resolvedCostUnit, item?.unitPrice, item?.listPriceUnit];
+    const values = [
+      item?.resolvedCostUnit,
+      item?.unitPrice,
+      item?.listPriceUnit,
+    ];
     return values.some((value) => {
       const numericValue = Number(value);
       return Number.isFinite(numericValue) && numericValue > 0;
@@ -3839,12 +3876,10 @@ async function analyzeProviderDocumentImport({
 
   if (normalizedText) {
     try {
-      parsed = await requestProviderDocumentImportAnalysis(
-        {
-          ...buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
-          aiUsageContext,
-        },
-      );
+      parsed = await requestProviderDocumentImportAnalysis({
+        ...buildProviderDocumentImportPrompt({ documentRow, extractedContent }),
+        aiUsageContext,
+      });
     } catch (error) {
       primaryError = error;
       if (!canUsePdfFallback) {
@@ -3864,16 +3899,14 @@ async function analyzeProviderDocumentImport({
     }
 
     try {
-      parsed = await requestProviderDocumentImportAnalysis(
-        {
-          ...buildProviderDocumentImportPdfPrompt({
-            documentRow,
-            extractedContent,
-            buffer,
-          }),
-          aiUsageContext,
-        },
-      );
+      parsed = await requestProviderDocumentImportAnalysis({
+        ...buildProviderDocumentImportPdfPrompt({
+          documentRow,
+          extractedContent,
+          buffer,
+        }),
+        aiUsageContext,
+      });
     } catch (fallbackError) {
       if (primaryError) {
         fallbackError.message = `${fallbackError.message}. Fallback PDF: ${primaryError.message}`;
@@ -4632,7 +4665,8 @@ function buildQuotationCreateProviderDocumentImportPreviewJobResponse(row) {
           row.provider_id == null && snapshot.providerId == null
             ? null
             : Number((row.provider_id ?? snapshot.providerId) || 0),
-        fileName: String(snapshot.fileName || "Documento").trim() || "Documento",
+        fileName:
+          String(snapshot.fileName || "Documento").trim() || "Documento",
         mimeType:
           String(snapshot.mimeType || "application/octet-stream").trim() ||
           "application/octet-stream",
@@ -4691,7 +4725,9 @@ async function createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
 
   const fileName =
     String(
-      uploadedFile?.originalFilename || uploadedFile?.newFilename || "Documento",
+      uploadedFile?.originalFilename ||
+        uploadedFile?.newFilename ||
+        "Documento",
     ).trim() || "Documento";
   const mimeType =
     String(uploadedFile?.mimetype || "application/octet-stream").trim() ||
@@ -4699,8 +4735,8 @@ async function createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
   const fileBuffer = await readFile(uploadedFile.filepath);
   const fileSha256 = createHash("sha256").update(fileBuffer).digest("hex");
 
-  const snapshot =
-    buildQuotationCreateProviderDocumentImportPreviewJobSnapshot({
+  const snapshot = buildQuotationCreateProviderDocumentImportPreviewJobSnapshot(
+    {
       providerId,
       fileName,
       mimeType,
@@ -4708,7 +4744,8 @@ async function createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
       fileByteSize: Number(uploadedFile?.size || fileBuffer.length || 0),
       fileSha256,
       fileBufferBase64: fileBuffer.toString("base64"),
-    });
+    },
+  );
   const fingerprint =
     hashQuotationCreateProviderDocumentImportPreviewJobSnapshot(snapshot);
   const reusableRows = await query(
@@ -4731,7 +4768,8 @@ async function createOrReuseQuotationCreateProviderDocumentImportPreviewJob({
     };
   }
 
-  const publicId = buildQuotationCreateProviderDocumentImportPreviewJobPublicId();
+  const publicId =
+    buildQuotationCreateProviderDocumentImportPreviewJobPublicId();
   await query(
     `INSERT INTO quotation_create_provider_document_import_preview_jobs (
        public_id,
@@ -4976,10 +5014,10 @@ async function processQuotationCreateProviderDocumentImportPreviewJob(row) {
 
     const result = await buildDraftProviderDocumentImportPreview({
       uploadedFile: {
-        originalFilename: String(snapshot.fileName || "Documento").trim() ||
-          "Documento",
-        newFilename: String(snapshot.fileName || "Documento").trim() ||
-          "Documento",
+        originalFilename:
+          String(snapshot.fileName || "Documento").trim() || "Documento",
+        newFilename:
+          String(snapshot.fileName || "Documento").trim() || "Documento",
         mimetype:
           String(snapshot.mimeType || "application/octet-stream").trim() ||
           "application/octet-stream",
@@ -5431,7 +5469,8 @@ export async function processPendingQuotationCreateProviderDocumentImportPreview
 } = {}) {
   let processed = 0;
   while (processed < limit) {
-    const row = await claimNextQuotationCreateProviderDocumentImportPreviewJob();
+    const row =
+      await claimNextQuotationCreateProviderDocumentImportPreviewJob();
     if (!row) {
       break;
     }
@@ -14306,12 +14345,14 @@ router.post(
       paymentTerms: Boolean(parsed.data.commercialTermsSelection?.paymentTerms),
       currencyCode: Boolean(parsed.data.commercialTermsSelection?.currencyCode),
     };
-    const requestedCommercialClauses = buildProviderDocumentImportCommercialClauses(
-      parsed.data.commercialClauses,
-    );
-    const previewCommercialClauses = buildProviderDocumentImportCommercialClauses(
-      latestPreview?.commercialClauses,
-    );
+    const requestedCommercialClauses =
+      buildProviderDocumentImportCommercialClauses(
+        parsed.data.commercialClauses,
+      );
+    const previewCommercialClauses =
+      buildProviderDocumentImportCommercialClauses(
+        latestPreview?.commercialClauses,
+      );
     const resolvedCommercialClausesSource = requestedCommercialClauses.length
       ? requestedCommercialClauses
       : previewCommercialClauses;
@@ -14472,9 +14513,10 @@ router.post(
       );
     }
 
-    const commercialClauseNotes = buildProviderDocumentImportCommercialClauseNotes(
-      selectedCommercialClauses,
-    );
+    const commercialClauseNotes =
+      buildProviderDocumentImportCommercialClauseNotes(
+        selectedCommercialClauses,
+      );
     const updatedQuotationNotes = appendProviderDocumentImportNotes(
       version.quotation_notes || "",
       [...commercialFallbackNotes, ...commercialClauseNotes],

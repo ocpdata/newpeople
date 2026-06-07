@@ -636,6 +636,16 @@
   margin: 4px 0 0;
 }
 
+.quotation-help-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quotation-help-title-row h4 {
+  margin: 0;
+}
+
 .quotation-commercial-conditions-exchange-rate-status {
   margin: 6px 0 0;
 }
@@ -818,7 +828,7 @@
   background: #ffffff;
   border-radius: 18px;
   border: 1px solid #dbe6f4;
-  overflow: clip;
+  overflow: visible;
 }
 
 .quotation-provider-import-modal-inline {

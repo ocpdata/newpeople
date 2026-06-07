@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ConfirmationModal } from "../AppModals";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 import AccountDraftAnalysisPanel from "./AccountDraftAnalysisPanel";
 import AccountInteractionModal from "./AccountInteractionModal";
 import AccountInteractionsSection from "./AccountInteractionsSection";
@@ -497,40 +498,9 @@ function AccountFormModal({
   const [pendingSubmitFormOverride, setPendingSubmitFormOverride] =
     useState(null);
   const [waitingCreateResponse, setWaitingCreateResponse] = useState(false);
-  const [showCreateHelp, setShowCreateHelp] = useState(false);
-  const createHelpRef = useRef(null);
   const isDraftAnalysisLocked = analyzingAccountDraft;
   const isCreateSubmissionLocked = waitingCreateResponse || creatingAccount;
   const isModalLocked = isDraftAnalysisLocked || isCreateSubmissionLocked;
-
-  function closeCreateHelp() {
-    setShowCreateHelp(false);
-  }
-
-  useEffect(() => {
-    if (editingAccountId || !showCreateHelp) {
-      return undefined;
-    }
-
-    function handlePointerDown(event) {
-      if (!createHelpRef.current?.contains(event.target)) {
-        closeCreateHelp();
-      }
-    }
-
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        closeCreateHelp();
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [editingAccountId, showCreateHelp]);
 
   useEffect(() => {
     if (!waitingCreateResponse || creatingAccount) {
@@ -551,7 +521,6 @@ function AccountFormModal({
     setShowNameFormatConfirmation(false);
     setPendingSubmitFormOverride(null);
     setWaitingCreateResponse(false);
-    closeCreateHelp();
     onClose();
   }
 
@@ -696,42 +665,14 @@ function AccountFormModal({
         <div className="modal-dialog-scroll-shell">
           <div className="modal-header">
             <div className="opportunity-modal-header-copy">
-              <div className="account-modal-help-shell" ref={createHelpRef}>
-                <div className="account-modal-title-row">
-                  <h3 className="modal-title">
-                    {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
-                  </h3>
-                  {!editingAccountId ? (
-                    <button
-                      type="button"
-                      className="accounts-module-help-trigger account-modal-help-trigger"
-                      aria-label="Ayuda sobre el modal de crear cuenta"
-                      aria-expanded={showCreateHelp}
-                      title="Ayuda sobre el modal de crear cuenta"
-                      onClick={() => setShowCreateHelp((current) => !current)}
-                    >
-                      ?
-                    </button>
-                  ) : null}
-                </div>
-                {!editingAccountId && showCreateHelp ? (
-                  <div
-                    className="account-modal-help-popover"
-                    role="dialog"
-                    aria-label="Ayuda sobre crear cuenta"
-                  >
-                    <strong>Para qué sirve este modal</strong>
-                    <p>
-                      Úsalo para registrar una cuenta nueva con sus datos
-                      principales, responsables y contexto comercial inicial.
-                    </p>
-                    <strong>Qué debes capturar primero</strong>
-                    <p>
-                      Completa el nombre, tipo, sector, país y propietarios para
-                      que la cuenta pueda quedar lista para seguimiento.
-                    </p>
-                  </div>
-                ) : null}
+              <div className="account-modal-title-row">
+                <h3 className="modal-title">
+                  {editingAccountId ? "Editar cuenta" : "Crear cuenta"}
+                </h3>
+                <ModalInlineHelp
+                  triggerLabel="Ayuda"
+                  helpKey={editingAccountId ? "account.edit" : "account.create"}
+                />
               </div>
               <p className="field-hint opportunity-modal-subtitle">
                 {editingAccountId

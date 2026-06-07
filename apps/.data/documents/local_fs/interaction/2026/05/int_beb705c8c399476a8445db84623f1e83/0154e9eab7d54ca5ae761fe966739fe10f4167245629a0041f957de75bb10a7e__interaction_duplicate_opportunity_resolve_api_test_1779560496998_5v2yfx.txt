@@ -1,0 +1,4 @@
+Cuenta: Prospecto Duplicate Opportunity
+Contacto: Omar Ruiz
+Correo: omar.ruiz@duplicate-opportunity.example.com
+Oportunidad: Oportunidad lead bloqueado api_test_1779560496998_5v2yfx_duplicate_create_check

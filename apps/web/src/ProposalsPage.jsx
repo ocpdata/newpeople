@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
+import ModalInlineHelp from "./help/ModalInlineHelp";
 import { api, getApiErrorMessage } from "./api";
 
 function formatDateTime(value) {
@@ -628,6 +629,15 @@ function formatProposalAiSourceScopeModeLabel(mode) {
   return "Ambas";
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No fue posible leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function ProposalAiIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
@@ -713,6 +723,10 @@ function serializeComponentDraft(draft, componentCode = null) {
       items: Array.isArray(block.items) ? block.items.filter(Boolean) : [],
       assetId: block.assetId || null,
       assetVersionId: block.assetVersionId || null,
+      image:
+        block.type === "image" && !block.assetId && !block.assetVersionId
+          ? block.image || null
+          : null,
       assetPublicId: block.assetPublicId || null,
     })),
     ...(isBrochureComponent
@@ -1135,6 +1149,7 @@ function isProposalPreviewDirty(
 function ProposalComponentCard({
   component,
   draft,
+  proposalId,
   assets,
   busy,
   isDirty,
@@ -1177,6 +1192,13 @@ function ProposalComponentCard({
     componentAiState.sourceScopeMode !== "library_only";
   const isGeneratingSuggestion =
     aiJob && ["pending", "running"].includes(aiJob.status);
+  const [isAiPanelExpanded, setIsAiPanelExpanded] = useState(false);
+  const [isAiSuggestionExpanded, setIsAiSuggestionExpanded] = useState(false);
+
+  useEffect(() => {
+    setIsAiPanelExpanded(false);
+    setIsAiSuggestionExpanded(false);
+  }, [proposalId, component.componentCode]);
   const filteredProposalAiLibraryAssets = isAiEnabledComponent
     ? proposalAiLibraryAssets.filter((asset) => {
         const normalizedQuery = normalizeComparableLabel(
@@ -1301,21 +1323,20 @@ function ProposalComponentCard({
     });
   }
 
-  function selectImage(index, assetId) {
-    const asset = assets.find((item) => Number(item.id) === Number(assetId));
+  async function selectLocalImage(index, file) {
+    if (!file) return;
+    const dataUrl = await readFileAsDataUrl(file);
     updateBlock(index, {
-      assetId: asset?.id || null,
-      assetVersionId: asset?.currentVersion?.id || null,
-      image: asset?.currentVersion
-        ? {
-            assetId: asset.id,
-            assetVersionId: asset.currentVersion.id,
-            fileUrl: asset.currentVersion.fileUrl,
-            fileName: asset.currentVersion.fileName,
-            altText: asset.currentVersion.altText,
-            caption: asset.currentVersion.caption,
-          }
-        : null,
+      assetId: null,
+      assetVersionId: null,
+      image: {
+        fileUrl: dataUrl,
+        fileName: file.name || "imagen-local",
+        mimeType: file.type || "image/*",
+        fileSizeBytes: Number(file.size || 0) || null,
+        altText: "",
+        caption: "",
+      },
     });
   }
 
@@ -1687,180 +1708,50 @@ function ProposalComponentCard({
                   {aiJob.progress?.label || "Sugerencia IA"}
                 </span>
               ) : null}
+              <button
+                type="button"
+                className="btn-secondary proposal-component-ai-panel-toggle"
+                aria-expanded={isAiPanelExpanded}
+                aria-controls={`proposal-ai-panel-${component.componentCode}`}
+                onClick={() => setIsAiPanelExpanded((current) => !current)}
+                aria-label={
+                  isAiPanelExpanded
+                    ? "Contraer seccion de IA"
+                    : "Expandir seccion de IA"
+                }
+                title={
+                  isAiPanelExpanded
+                    ? "Contraer seccion de IA"
+                    : "Expandir seccion de IA"
+                }
+              >
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  {isAiPanelExpanded ? (
+                    <path d="M7.41 14.59 12 10l4.59 4.59L18 13.17l-6-6-6 6z" />
+                  ) : (
+                    <path d="m7.41 8.59 1.42-1.42L12 10.34l3.17-3.17 1.42 1.42-4.59 4.59z" />
+                  )}
+                </svg>
+              </button>
             </div>
           </div>
 
-          <div className="proposal-component-ai-source-mode-panel">
-            <div className="proposal-component-ai-policy-card proposal-component-ai-scope-card">
-              <div className="proposal-component-ai-policy-head">
-                <span className="proposal-component-ai-policy-icon">
-                  <ProposalAiPriorityIcon />
-                </span>
-                <div>
-                  <strong>Usar fuentes de</strong>
-                  <p className="field-hint">
-                    Define si la sugerencia toma evidencia documental de la
-                    oportunidad, de la biblioteca comercial o de ambas.
-                  </p>
-                </div>
-              </div>
-              <div className="proposal-component-ai-policy-toggle is-triple">
-                <button
-                  type="button"
-                  className={
-                    componentAiState.sourceScopeMode === "both"
-                      ? "proposal-component-ai-policy-pill is-selected"
-                      : "proposal-component-ai-policy-pill"
-                  }
-                  onClick={() =>
-                    onProposalAiSourceScopeModeChange(
-                      component.componentCode,
-                      "both",
-                    )
-                  }
-                >
-                  <ProposalAiPriorityIcon />
-                  <span>Ambas</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    componentAiState.sourceScopeMode === "documents_only"
-                      ? "proposal-component-ai-policy-pill is-selected"
-                      : "proposal-component-ai-policy-pill"
-                  }
-                  onClick={() =>
-                    onProposalAiSourceScopeModeChange(
-                      component.componentCode,
-                      "documents_only",
-                    )
-                  }
-                >
-                  <ProposalAiDocumentIcon />
-                  <span>Solo documentos</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    componentAiState.sourceScopeMode === "library_only"
-                      ? "proposal-component-ai-policy-pill is-selected"
-                      : "proposal-component-ai-policy-pill"
-                  }
-                  onClick={() =>
-                    onProposalAiSourceScopeModeChange(
-                      component.componentCode,
-                      "library_only",
-                    )
-                  }
-                >
-                  <ProposalAiDocumentIcon />
-                  <span>Solo biblioteca</span>
-                </button>
-              </div>
-            </div>
-
-            {usesLibraryScope ? (
-              <>
-                <div className="proposal-component-ai-source-mode-copy">
-                  <strong>Fuentes de biblioteca</strong>
-                  <p className="field-hint">
-                    {componentAiState.sourceMode === "manual"
-                      ? "Esta seccion usa modo manual. Debes elegir explicitamente los activos de biblioteca antes de generar la sugerencia."
-                      : "Esta seccion usa modo automatico. La IA elegira automaticamente hasta 4 activos sugeridos."}
-                  </p>
-                </div>
-                <div className="proposal-component-ai-source-mode-toggle">
-                  <div className="proposal-component-ai-source-pill is-selected">
-                    <span>
-                      {componentAiState.sourceMode === "manual"
-                        ? "Manual"
-                        : "Automatico"}
-                    </span>
-                    <small>
-                      {componentAiState.sourceMode === "manual"
-                        ? "Solo usa los activos elegidos"
-                        : "La IA elige hasta 4 activos"}
-                    </small>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="proposal-component-ai-source-mode-copy">
-                <strong>Alcance activo</strong>
-                <p className="field-hint">
-                  Se excluye la biblioteca comercial. La sugerencia sigue usando
-                  el contexto de oportunidad, cotizacion y borrador actual de la
-                  seccion.
-                </p>
-              </div>
-            )}
-
-            <div className="proposal-component-ai-policy-grid">
-              {usesLibraryScope ? (
-                <div className="proposal-component-ai-policy-card">
-                  <div className="proposal-component-ai-policy-head">
-                    <span className="proposal-component-ai-policy-icon">
-                      <ProposalAiDocumentIcon />
-                    </span>
-                    <div>
-                      <strong>Contenido de biblioteca</strong>
-                      <p className="field-hint">
-                        Elige si cada activo aporta texto fuente o una vista
-                        breve con summary y extract.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="proposal-component-ai-policy-toggle is-dual">
-                    <button
-                      type="button"
-                      className={
-                        componentAiState.libraryContentMode === "source_text"
-                          ? "proposal-component-ai-policy-pill is-selected"
-                          : "proposal-component-ai-policy-pill"
-                      }
-                      onClick={() =>
-                        onProposalAiLibraryContentModeChange(
-                          component.componentCode,
-                          "source_text",
-                        )
-                      }
-                    >
-                      <ProposalAiDocumentIcon />
-                      <span>Texto fuente</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={
-                        componentAiState.libraryContentMode ===
-                        "summary_extract"
-                          ? "proposal-component-ai-policy-pill is-selected"
-                          : "proposal-component-ai-policy-pill"
-                      }
-                      onClick={() =>
-                        onProposalAiLibraryContentModeChange(
-                          component.componentCode,
-                          "summary_extract",
-                        )
-                      }
-                    >
-                      <ProposalAiDocumentIcon />
-                      <span>Summary + extract</span>
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {usesLibraryScope && usesDocumentsScope ? (
-                <div className="proposal-component-ai-policy-card">
+          {isAiPanelExpanded ? (
+            <>
+              <div
+                id={`proposal-ai-panel-${component.componentCode}`}
+                className="proposal-component-ai-source-mode-panel"
+              >
+                <div className="proposal-component-ai-policy-card proposal-component-ai-scope-card">
                   <div className="proposal-component-ai-policy-head">
                     <span className="proposal-component-ai-policy-icon">
                       <ProposalAiPriorityIcon />
                     </span>
                     <div>
-                      <strong>Prioridad de fuentes</strong>
+                      <strong>Usar fuentes de</strong>
                       <p className="field-hint">
-                        Decide si el foco narrativo favorece documentos de la
-                        oportunidad, la biblioteca o un balance entre ambos.
+                        Define si la sugerencia toma evidencia documental de la
+                        oportunidad, de la biblioteca comercial o de ambas.
                       </p>
                     </div>
                   </div>
@@ -1868,313 +1759,532 @@ function ProposalComponentCard({
                     <button
                       type="button"
                       className={
-                        componentAiState.sourcePriorityMode ===
-                        "non_library_first"
+                        componentAiState.sourceScopeMode === "both"
                           ? "proposal-component-ai-policy-pill is-selected"
                           : "proposal-component-ai-policy-pill"
                       }
                       onClick={() =>
-                        onProposalAiSourcePriorityModeChange(
+                        onProposalAiSourceScopeModeChange(
                           component.componentCode,
-                          "non_library_first",
+                          "both",
                         )
                       }
                     >
                       <ProposalAiPriorityIcon />
-                      <span>Documentos primero</span>
+                      <span>Ambas</span>
                     </button>
                     <button
                       type="button"
                       className={
-                        componentAiState.sourcePriorityMode === "balanced"
+                        componentAiState.sourceScopeMode === "documents_only"
                           ? "proposal-component-ai-policy-pill is-selected"
                           : "proposal-component-ai-policy-pill"
                       }
                       onClick={() =>
-                        onProposalAiSourcePriorityModeChange(
+                        onProposalAiSourceScopeModeChange(
                           component.componentCode,
-                          "balanced",
+                          "documents_only",
                         )
                       }
                     >
-                      <ProposalAiPriorityIcon />
-                      <span>Balanceado</span>
+                      <ProposalAiDocumentIcon />
+                      <span>Solo documentos</span>
                     </button>
                     <button
                       type="button"
                       className={
-                        componentAiState.sourcePriorityMode === "library_first"
+                        componentAiState.sourceScopeMode === "library_only"
                           ? "proposal-component-ai-policy-pill is-selected"
                           : "proposal-component-ai-policy-pill"
                       }
                       onClick={() =>
-                        onProposalAiSourcePriorityModeChange(
+                        onProposalAiSourceScopeModeChange(
                           component.componentCode,
-                          "library_first",
+                          "library_only",
                         )
                       }
                     >
-                      <ProposalAiPriorityIcon />
-                      <span>Biblioteca primero</span>
+                      <ProposalAiDocumentIcon />
+                      <span>Solo biblioteca</span>
                     </button>
                   </div>
                 </div>
-              ) : null}
-            </div>
-          </div>
 
-          {usesLibraryScope && componentAiState.sourceMode === "manual" ? (
-            <div className="proposal-component-ai-library-picker">
-              <label className="proposal-component-ai-library-search">
-                <span>Buscar activos</span>
-                <input
-                  type="search"
-                  value={componentAiState.libraryQuery}
-                  placeholder="Buscar por titulo, resumen, fabricante o solucion"
-                  onChange={(event) =>
-                    onProposalAiLibraryQueryChange(
-                      component.componentCode,
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
+                {usesLibraryScope ? (
+                  <>
+                    <div className="proposal-component-ai-source-mode-copy">
+                      <strong>Fuentes de biblioteca</strong>
+                      <p className="field-hint">
+                        {componentAiState.sourceMode === "manual"
+                          ? "Esta seccion usa modo manual. Debes elegir explicitamente los activos de biblioteca antes de generar la sugerencia."
+                          : "Esta seccion usa modo automatico. La IA elegira automaticamente hasta 4 activos sugeridos."}
+                      </p>
+                    </div>
+                    <div className="proposal-component-ai-source-mode-toggle">
+                      <div className="proposal-component-ai-source-pill is-selected">
+                        <span>
+                          {componentAiState.sourceMode === "manual"
+                            ? "Manual"
+                            : "Automatico"}
+                        </span>
+                        <small>
+                          {componentAiState.sourceMode === "manual"
+                            ? "Solo usa los activos elegidos"
+                            : "La IA elige hasta 4 activos"}
+                        </small>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="proposal-component-ai-source-mode-copy">
+                    <strong>Alcance activo</strong>
+                    <p className="field-hint">
+                      Se excluye la biblioteca comercial. La sugerencia sigue
+                      usando el contexto de oportunidad, cotizacion y borrador
+                      actual de la seccion.
+                    </p>
+                  </div>
+                )}
 
-              <div className="proposal-component-ai-library-selected-bar">
-                <strong>
-                  Seleccionados:{" "}
-                  {componentAiState.selectedLibraryAssetPublicIds.length}
-                  /4
-                </strong>
-                <div className="proposal-component-ai-library-selected-chips">
-                  {selectedProposalAiAssets.filter(Boolean).length ? (
-                    selectedProposalAiAssets.filter(Boolean).map((asset) => (
-                      <button
-                        key={asset.publicId}
-                        type="button"
-                        className="proposal-component-ai-library-selected-chip"
-                        onClick={() =>
-                          onToggleProposalAiLibraryAsset(
-                            component.componentCode,
-                            asset.publicId,
-                          )
-                        }
-                      >
-                        <span>{asset.title}</span>
-                        <strong>×</strong>
-                      </button>
-                    ))
-                  ) : (
-                    <span className="field-hint">
-                      Selecciona entre 1 y 4 activos compartibles con cliente.
-                    </span>
-                  )}
+                <div className="proposal-component-ai-policy-grid">
+                  {usesLibraryScope ? (
+                    <div className="proposal-component-ai-policy-card">
+                      <div className="proposal-component-ai-policy-head">
+                        <span className="proposal-component-ai-policy-icon">
+                          <ProposalAiDocumentIcon />
+                        </span>
+                        <div>
+                          <strong>Contenido de biblioteca</strong>
+                          <p className="field-hint">
+                            Elige si cada activo aporta texto fuente o una vista
+                            breve con summary y extract.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="proposal-component-ai-policy-toggle is-dual">
+                        <button
+                          type="button"
+                          className={
+                            componentAiState.libraryContentMode ===
+                            "source_text"
+                              ? "proposal-component-ai-policy-pill is-selected"
+                              : "proposal-component-ai-policy-pill"
+                          }
+                          onClick={() =>
+                            onProposalAiLibraryContentModeChange(
+                              component.componentCode,
+                              "source_text",
+                            )
+                          }
+                        >
+                          <ProposalAiDocumentIcon />
+                          <span>Texto fuente</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            componentAiState.libraryContentMode ===
+                            "summary_extract"
+                              ? "proposal-component-ai-policy-pill is-selected"
+                              : "proposal-component-ai-policy-pill"
+                          }
+                          onClick={() =>
+                            onProposalAiLibraryContentModeChange(
+                              component.componentCode,
+                              "summary_extract",
+                            )
+                          }
+                        >
+                          <ProposalAiDocumentIcon />
+                          <span>Summary + extract</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {usesLibraryScope && usesDocumentsScope ? (
+                    <div className="proposal-component-ai-policy-card">
+                      <div className="proposal-component-ai-policy-head">
+                        <span className="proposal-component-ai-policy-icon">
+                          <ProposalAiPriorityIcon />
+                        </span>
+                        <div>
+                          <strong>Prioridad de fuentes</strong>
+                          <p className="field-hint">
+                            Decide si el foco narrativo favorece documentos de
+                            la oportunidad, la biblioteca o un balance entre
+                            ambos.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="proposal-component-ai-policy-toggle is-triple">
+                        <button
+                          type="button"
+                          className={
+                            componentAiState.sourcePriorityMode ===
+                            "non_library_first"
+                              ? "proposal-component-ai-policy-pill is-selected"
+                              : "proposal-component-ai-policy-pill"
+                          }
+                          onClick={() =>
+                            onProposalAiSourcePriorityModeChange(
+                              component.componentCode,
+                              "non_library_first",
+                            )
+                          }
+                        >
+                          <ProposalAiPriorityIcon />
+                          <span>Documentos primero</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            componentAiState.sourcePriorityMode === "balanced"
+                              ? "proposal-component-ai-policy-pill is-selected"
+                              : "proposal-component-ai-policy-pill"
+                          }
+                          onClick={() =>
+                            onProposalAiSourcePriorityModeChange(
+                              component.componentCode,
+                              "balanced",
+                            )
+                          }
+                        >
+                          <ProposalAiPriorityIcon />
+                          <span>Balanceado</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            componentAiState.sourcePriorityMode ===
+                            "library_first"
+                              ? "proposal-component-ai-policy-pill is-selected"
+                              : "proposal-component-ai-policy-pill"
+                          }
+                          onClick={() =>
+                            onProposalAiSourcePriorityModeChange(
+                              component.componentCode,
+                              "library_first",
+                            )
+                          }
+                        >
+                          <ProposalAiPriorityIcon />
+                          <span>Biblioteca primero</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
-              {proposalAiLibraryLoading ? (
+              {usesLibraryScope && componentAiState.sourceMode === "manual" ? (
+                <div className="proposal-component-ai-library-picker">
+                  <label className="proposal-component-ai-library-search">
+                    <span>Buscar activos</span>
+                    <input
+                      type="search"
+                      value={componentAiState.libraryQuery}
+                      placeholder="Buscar por titulo, resumen, fabricante o solucion"
+                      onChange={(event) =>
+                        onProposalAiLibraryQueryChange(
+                          component.componentCode,
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </label>
+
+                  <div className="proposal-component-ai-library-selected-bar">
+                    <strong>
+                      Seleccionados:{" "}
+                      {componentAiState.selectedLibraryAssetPublicIds.length}
+                      /4
+                    </strong>
+                    <div className="proposal-component-ai-library-selected-chips">
+                      {selectedProposalAiAssets.filter(Boolean).length ? (
+                        selectedProposalAiAssets
+                          .filter(Boolean)
+                          .map((asset) => (
+                            <button
+                              key={asset.publicId}
+                              type="button"
+                              className="proposal-component-ai-library-selected-chip"
+                              onClick={() =>
+                                onToggleProposalAiLibraryAsset(
+                                  component.componentCode,
+                                  asset.publicId,
+                                )
+                              }
+                            >
+                              <span>{asset.title}</span>
+                              <strong>×</strong>
+                            </button>
+                          ))
+                      ) : (
+                        <span className="field-hint">
+                          Selecciona entre 1 y 4 activos compartibles con
+                          cliente.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {proposalAiLibraryLoading ? (
+                    <div className="proposal-component-ai-status-row">
+                      <span
+                        className="proposal-component-ai-spinner"
+                        aria-hidden="true"
+                      />
+                      <span>Cargando biblioteca comercial...</span>
+                    </div>
+                  ) : filteredProposalAiLibraryAssets.length ? (
+                    <div className="proposal-component-ai-library-grid">
+                      {filteredProposalAiLibraryAssets
+                        .slice(0, 8)
+                        .map((asset) => {
+                          const isSelected =
+                            componentAiState.selectedLibraryAssetPublicIds.includes(
+                              asset.publicId,
+                            );
+                          const manufacturerNames =
+                            getCommercialEnablementCatalogNames(
+                              asset,
+                              "manufacturer",
+                            );
+                          const solutionNames =
+                            getCommercialEnablementCatalogNames(
+                              asset,
+                              "solution",
+                            );
+                          return (
+                            <label
+                              key={asset.publicId}
+                              className={
+                                isSelected
+                                  ? "proposal-component-ai-library-option is-selected"
+                                  : "proposal-component-ai-library-option"
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() =>
+                                  onToggleProposalAiLibraryAsset(
+                                    component.componentCode,
+                                    asset.publicId,
+                                  )
+                                }
+                                disabled={
+                                  !isSelected &&
+                                  componentAiState.selectedLibraryAssetPublicIds
+                                    .length >= 4
+                                }
+                              />
+                              <div className="proposal-component-ai-library-option-copy">
+                                <div className="proposal-component-ai-library-option-topline">
+                                  <strong>{asset.title}</strong>
+                                  <span>{asset.assetTypeLabel}</span>
+                                </div>
+                                <p>
+                                  {asset.summary || "Sin resumen disponible"}
+                                </p>
+                                <div className="proposal-component-ai-library-option-meta">
+                                  <span>{asset.visibilityLabel}</span>
+                                  {manufacturerNames.map((name) => (
+                                    <span key={`${asset.publicId}-${name}`}>
+                                      {name}
+                                    </span>
+                                  ))}
+                                  {solutionNames.map((name) => (
+                                    <span key={`${asset.publicId}-${name}`}>
+                                      {name}
+                                    </span>
+                                  ))}
+                                  <span>
+                                    {asset.files.length} archivo(s) ·{" "}
+                                    {asset.links.length} URL(s)
+                                  </span>
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div className="proposal-component-ai-library-empty">
+                      <strong>No hay activos disponibles</strong>
+                      <span>
+                        Ajusta tu busqueda o verifica que existan activos
+                        publicados y compartibles con cliente.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : usesLibraryScope ? (
+                <p className="field-hint proposal-component-ai-helper-note">
+                  La IA elegira automaticamente hasta 4 activos publicados y
+                  compartibles con cliente usando{" "}
+                  {formatExecutiveSummaryLibraryContentModeLabel(
+                    componentAiState.libraryContentMode,
+                  ).toLowerCase()}{" "}
+                  con prioridad{" "}
+                  {formatExecutiveSummarySourcePriorityModeLabel(
+                    componentAiState.sourcePriorityMode,
+                  ).toLowerCase()}
+                  .
+                </p>
+              ) : (
+                <p className="field-hint proposal-component-ai-helper-note">
+                  La sugerencia se generara usando solo documentos de la
+                  oportunidad, junto con el contexto comercial general de la
+                  propuesta.
+                </p>
+              )}
+              {aiSuggestion ? (
+                <div className="proposal-component-ai-suggestion-card">
+                  <div className="proposal-component-ai-suggestion-head">
+                    <div>
+                      <strong>Sugerencia paralela con IA</strong>
+                      <p className="field-hint">
+                        {isAiSuggestionExpanded
+                          ? "Revisa el texto sugerido, las fuentes usadas y decide si quieres aplicarlo."
+                          : "Sugerencia disponible. Expande para ver el detalle completo."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary proposal-component-ai-suggestion-toggle"
+                      aria-expanded={isAiSuggestionExpanded}
+                      aria-controls={`proposal-ai-suggestion-${component.componentCode}`}
+                      onClick={() =>
+                        setIsAiSuggestionExpanded((current) => !current)
+                      }
+                    >
+                      {isAiSuggestionExpanded ? "Contraer" : "Expandir"}
+                    </button>
+                  </div>
+
+                  {isAiSuggestionExpanded ? (
+                    <div
+                      id={`proposal-ai-suggestion-${component.componentCode}`}
+                      className="proposal-component-ai-suggestion-body"
+                    >
+                      <div className="proposal-component-ai-suggestion-copy">
+                        {aiSuggestion.blocks.map((block, index) => (
+                          <p key={`${component.componentCode}-ai-${index}`}>
+                            {block.text}
+                          </p>
+                        ))}
+                      </div>
+
+                      {aiSuggestion.sourceSummary ? (
+                        <div className="proposal-component-ai-sources">
+                          <span>
+                            Respuestas:{" "}
+                            {aiSuggestion.sourceSummary
+                              .opportunityAnswersUsed || 0}
+                          </span>
+                          <span>
+                            Documentos:{" "}
+                            {aiSuggestion.sourceSummary
+                              .opportunityDocumentsUsed || 0}
+                          </span>
+                          <span>
+                            Secciones:{" "}
+                            {aiSuggestion.sourceSummary.quotationSectionsUsed ||
+                              0}
+                          </span>
+                          <span>
+                            Activos:{" "}
+                            {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
+                          </span>
+                          <span>
+                            Fuentes:{" "}
+                            {formatProposalAiSourceScopeModeLabel(
+                              aiSuggestion.sources?.generationPolicy
+                                ?.sourceScopeMode,
+                            )}
+                          </span>
+                          <span>
+                            Contenido:{" "}
+                            {formatExecutiveSummaryLibraryContentModeLabel(
+                              aiSuggestion.sources?.generationPolicy
+                                ?.libraryContentMode,
+                            )}
+                          </span>
+                          <span>
+                            Prioridad:{" "}
+                            {formatExecutiveSummarySourcePriorityModeLabel(
+                              aiSuggestion.sources?.generationPolicy
+                                ?.sourcePriorityMode,
+                            )}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(aiSuggestion.sources?.libraryAssets) &&
+                      aiSuggestion.sources.libraryAssets.length ? (
+                        <div className="proposal-component-ai-library-used-list">
+                          <strong>Biblioteca usada</strong>
+                          <span>
+                            {aiSuggestion.sources.libraryAssets
+                              .map((asset) => asset.title)
+                              .filter(Boolean)
+                              .join(", ")}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      <div className="proposal-component-ai-actions">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() =>
+                            onApplySuggestion(component.componentCode)
+                          }
+                        >
+                          Usar sugerencia
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() =>
+                            onDismissSuggestion(component.componentCode)
+                          }
+                        >
+                          Descartar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : isGeneratingSuggestion ? (
                 <div className="proposal-component-ai-status-row">
                   <span
                     className="proposal-component-ai-spinner"
                     aria-hidden="true"
                   />
-                  <span>Cargando biblioteca comercial...</span>
+                  <span>
+                    {aiJob?.progress?.label || "Generando sugerencia..."}
+                  </span>
                 </div>
-              ) : filteredProposalAiLibraryAssets.length ? (
-                <div className="proposal-component-ai-library-grid">
-                  {filteredProposalAiLibraryAssets.slice(0, 8).map((asset) => {
-                    const isSelected =
-                      componentAiState.selectedLibraryAssetPublicIds.includes(
-                        asset.publicId,
-                      );
-                    const manufacturerNames =
-                      getCommercialEnablementCatalogNames(
-                        asset,
-                        "manufacturer",
-                      );
-                    const solutionNames = getCommercialEnablementCatalogNames(
-                      asset,
-                      "solution",
-                    );
-                    return (
-                      <label
-                        key={asset.publicId}
-                        className={
-                          isSelected
-                            ? "proposal-component-ai-library-option is-selected"
-                            : "proposal-component-ai-library-option"
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() =>
-                            onToggleProposalAiLibraryAsset(
-                              component.componentCode,
-                              asset.publicId,
-                            )
-                          }
-                          disabled={
-                            !isSelected &&
-                            componentAiState.selectedLibraryAssetPublicIds
-                              .length >= 4
-                          }
-                        />
-                        <div className="proposal-component-ai-library-option-copy">
-                          <div className="proposal-component-ai-library-option-topline">
-                            <strong>{asset.title}</strong>
-                            <span>{asset.assetTypeLabel}</span>
-                          </div>
-                          <p>{asset.summary || "Sin resumen disponible"}</p>
-                          <div className="proposal-component-ai-library-option-meta">
-                            <span>{asset.visibilityLabel}</span>
-                            {manufacturerNames.map((name) => (
-                              <span key={`${asset.publicId}-${name}`}>
-                                {name}
-                              </span>
-                            ))}
-                            {solutionNames.map((name) => (
-                              <span key={`${asset.publicId}-${name}`}>
-                                {name}
-                              </span>
-                            ))}
-                            <span>
-                              {asset.files.length} archivo(s) ·{" "}
-                              {asset.links.length} URL(s)
-                            </span>
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
+              ) : aiJob?.status === "failed" &&
+                componentAiState.showJobError ? (
+                <div className="proposal-component-ai-error">
+                  {aiJob.error?.message ||
+                    "No fue posible generar una sugerencia para esta seccion."}
                 </div>
               ) : (
-                <div className="proposal-component-ai-library-empty">
-                  <strong>No hay activos disponibles</strong>
-                  <span>
-                    Ajusta tu busqueda o verifica que existan activos publicados
-                    y compartibles con cliente.
-                  </span>
-                </div>
+                <p className="field-hint">
+                  Genera una version sugerida sin sobrescribir el contenido
+                  actual.
+                </p>
               )}
-            </div>
-          ) : usesLibraryScope ? (
-            <p className="field-hint proposal-component-ai-helper-note">
-              La IA elegira automaticamente hasta 4 activos publicados y
-              compartibles con cliente usando{" "}
-              {formatExecutiveSummaryLibraryContentModeLabel(
-                componentAiState.libraryContentMode,
-              ).toLowerCase()}{" "}
-              con prioridad{" "}
-              {formatExecutiveSummarySourcePriorityModeLabel(
-                componentAiState.sourcePriorityMode,
-              ).toLowerCase()}
-              .
-            </p>
+            </>
           ) : (
             <p className="field-hint proposal-component-ai-helper-note">
-              La sugerencia se generara usando solo documentos de la
-              oportunidad, junto con el contexto comercial general de la
-              propuesta.
-            </p>
-          )}
-
-          {aiSuggestion ? (
-            <div className="proposal-component-ai-suggestion-card">
-              <div className="proposal-component-ai-suggestion-copy">
-                {aiSuggestion.blocks.map((block, index) => (
-                  <p key={`${component.componentCode}-ai-${index}`}>
-                    {block.text}
-                  </p>
-                ))}
-              </div>
-
-              {aiSuggestion.sourceSummary ? (
-                <div className="proposal-component-ai-sources">
-                  <span>
-                    Respuestas:{" "}
-                    {aiSuggestion.sourceSummary.opportunityAnswersUsed || 0}
-                  </span>
-                  <span>
-                    Documentos:{" "}
-                    {aiSuggestion.sourceSummary.opportunityDocumentsUsed || 0}
-                  </span>
-                  <span>
-                    Secciones:{" "}
-                    {aiSuggestion.sourceSummary.quotationSectionsUsed || 0}
-                  </span>
-                  <span>
-                    Activos: {aiSuggestion.sourceSummary.libraryAssetsUsed || 0}
-                  </span>
-                  <span>
-                    Fuentes:{" "}
-                    {formatProposalAiSourceScopeModeLabel(
-                      aiSuggestion.sources?.generationPolicy?.sourceScopeMode,
-                    )}
-                  </span>
-                  <span>
-                    Contenido:{" "}
-                    {formatExecutiveSummaryLibraryContentModeLabel(
-                      aiSuggestion.sources?.generationPolicy
-                        ?.libraryContentMode,
-                    )}
-                  </span>
-                  <span>
-                    Prioridad:{" "}
-                    {formatExecutiveSummarySourcePriorityModeLabel(
-                      aiSuggestion.sources?.generationPolicy
-                        ?.sourcePriorityMode,
-                    )}
-                  </span>
-                </div>
-              ) : null}
-
-              {Array.isArray(aiSuggestion.sources?.libraryAssets) &&
-              aiSuggestion.sources.libraryAssets.length ? (
-                <div className="proposal-component-ai-library-used-list">
-                  <strong>Biblioteca usada</strong>
-                  <span>
-                    {aiSuggestion.sources.libraryAssets
-                      .map((asset) => asset.title)
-                      .filter(Boolean)
-                      .join(", ")}
-                  </span>
-                </div>
-              ) : null}
-
-              <div className="proposal-component-ai-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => onApplySuggestion(component.componentCode)}
-                >
-                  Usar sugerencia
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => onDismissSuggestion(component.componentCode)}
-                >
-                  Descartar
-                </button>
-              </div>
-            </div>
-          ) : isGeneratingSuggestion ? (
-            <div className="proposal-component-ai-status-row">
-              <span
-                className="proposal-component-ai-spinner"
-                aria-hidden="true"
-              />
-              <span>{aiJob?.progress?.label || "Generando sugerencia..."}</span>
-            </div>
-          ) : aiJob?.status === "failed" && componentAiState.showJobError ? (
-            <div className="proposal-component-ai-error">
-              {aiJob.error?.message ||
-                "No fue posible generar una sugerencia para esta seccion."}
-            </div>
-          ) : (
-            <p className="field-hint">
-              Genera una version sugerida sin sobrescribir el contenido actual.
+              Seccion minimizada. Expande para configurar fuentes y revisar la
+              sugerencia de IA.
             </p>
           )}
         </section>
@@ -2302,18 +2412,22 @@ function ProposalComponentCard({
 
               {block.type === "image" ? (
                 <div className="proposal-component-image-editor">
-                  <select
-                    value={block.assetId || ""}
-                    onChange={(event) => selectImage(index, event.target.value)}
-                  >
-                    <option value="">Selecciona un asset</option>
-                    {assets.map((asset) => (
-                      <option key={asset.id} value={asset.id}>
-                        {asset.name} · v
-                        {asset.currentVersion?.versionNumber || 1}
-                      </option>
-                    ))}
-                  </select>
+                  <label>
+                    <span>Imagen desde tu PC</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={async (event) => {
+                        const file = event.target.files?.[0] || null;
+                        try {
+                          await selectLocalImage(index, file);
+                        } catch {
+                          // Evita romper el modal por errores de lectura local.
+                        }
+                      }}
+                    />
+                  </label>
+
                   {block.image?.fileUrl ? (
                     <div
                       className={
@@ -2488,7 +2602,10 @@ function ProposalEditorModal({
       >
         <div className="modal-header proposal-editor-modal-header">
           <div>
-            <h3 className="modal-title">Editar propuesta</h3>
+            <div className="account-modal-title-row">
+              <h3 className="modal-title">Editar propuesta</h3>
+              <ModalInlineHelp helpKey="proposal.edit" />
+            </div>
             <p className="modal-message">
               Wizard por secciones para editar contenido, validar IA y guardar
               paso a paso.
@@ -2769,6 +2886,7 @@ function ProposalEditorModal({
                       <ProposalComponentCard
                         key={activeComponent.componentCode}
                         component={activeComponent}
+                        proposalId={proposal?.id}
                         draft={
                           componentDrafts[activeComponent.componentCode] ||
                           cloneComponentDraft(activeComponent)
@@ -2920,6 +3038,8 @@ export default function ProposalsPage() {
   const [proposals, setProposals] = useState([]);
   const [proposalSearchTerm, setProposalSearchTerm] = useState("");
   const [proposalStatusFilter, setProposalStatusFilter] = useState("all");
+  const [proposalsPage, setProposalsPage] = useState(1);
+  const [proposalsPerPage, setProposalsPerPage] = useState(10);
   const [selectedProposal, setSelectedProposal] = useState(null);
   const [openProposalMenuId, setOpenProposalMenuId] = useState(null);
   const [loadingList, setLoadingList] = useState(true);
@@ -3120,6 +3240,24 @@ export default function ProposalsPage() {
       return searchableText.includes(normalizedSearch);
     });
   }, [proposals, proposalSearchTerm, proposalStatusFilter]);
+  const totalProposalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredProposals.length / proposalsPerPage)),
+    [filteredProposals.length, proposalsPerPage],
+  );
+  const pagedProposals = useMemo(() => {
+    const start = (proposalsPage - 1) * proposalsPerPage;
+    return filteredProposals.slice(start, start + proposalsPerPage);
+  }, [filteredProposals, proposalsPage, proposalsPerPage]);
+
+  useEffect(() => {
+    setProposalsPage(1);
+  }, [proposalSearchTerm, proposalStatusFilter]);
+
+  useEffect(() => {
+    if (proposalsPage > totalProposalPages) {
+      setProposalsPage(totalProposalPages);
+    }
+  }, [proposalsPage, totalProposalPages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4310,7 +4448,7 @@ export default function ProposalsPage() {
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Propuestas</h2>
+            <h2 data-help-id="proposals.title">Propuestas</h2>
             <span
               className="module-title-icon module-title-icon-quotations"
               aria-hidden="true"
@@ -4423,96 +4561,144 @@ export default function ProposalsPage() {
             </p>
           ) : null}
 
-          <div className="proposal-list-items">
-            <div className="proposal-list-table" role="list">
-              <div className="proposal-list-row proposal-list-row-header">
-                <span>Titulo</span>
-                <span>Cuenta</span>
-                <span>Contacto</span>
-                <span>Estado</span>
-                <span>Cotizacion</span>
-                <span>Actualizada</span>
-                <span>Acciones</span>
-              </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Titulo</th>
+                <th>Cuenta</th>
+                <th>Contacto</th>
+                <th>Estado</th>
+                <th>Cotizacion</th>
+                <th>Actualizada</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProposals.length > 0 ? (
+                pagedProposals.map((proposal) => {
+                  const isSelected =
+                    Number(selectedProposalId) === Number(proposal.id);
 
-              {filteredProposals.map((proposal) => {
-                const isSelected =
-                  Number(selectedProposalId) === Number(proposal.id);
-
-                return (
-                  <div
-                    key={proposal.id}
-                    className={
-                      isSelected
-                        ? "proposal-list-row is-selected"
-                        : "proposal-list-row"
-                    }
-                    role="listitem"
-                  >
-                    <div className="proposal-list-cell proposal-list-cell-title">
-                      <strong>
-                        {proposal.title || `Propuesta #${proposal.id}`}
-                      </strong>
-                    </div>
-                    <div className="proposal-list-cell">
-                      <span className="proposal-list-mobile-label">Cuenta</span>
-                      <span>{proposal.accountName || "Sin cuenta"}</span>
-                    </div>
-                    <div className="proposal-list-cell">
-                      <span className="proposal-list-mobile-label">
-                        Contacto
-                      </span>
-                      <span>{proposal.contactName || "Sin contacto"}</span>
-                    </div>
-                    <div className="proposal-list-cell">
-                      <span className="proposal-list-mobile-label">Estado</span>
-                      <span className="proposal-chip proposal-chip-soft">
-                        {formatProposalStatusLabel(proposal.statusCode)}
-                      </span>
-                    </div>
-                    <div className="proposal-list-cell">
-                      <span className="proposal-list-mobile-label">
-                        Cotizacion
-                      </span>
-                      <span>
+                  return (
+                    <tr
+                      key={proposal.id}
+                      className={
+                        isSelected
+                          ? "accounts-row-clickable proposal-row-selected"
+                          : "accounts-row-clickable"
+                      }
+                      onClick={() => handleSelectProposal(proposal.id)}
+                    >
+                      <td>
+                        <strong>
+                          {proposal.title || `Propuesta #${proposal.id}`}
+                        </strong>
+                      </td>
+                      <td>{proposal.accountName || "Sin cuenta"}</td>
+                      <td>{proposal.contactName || "Sin contacto"}</td>
+                      <td>
+                        <span className="proposal-chip proposal-chip-soft">
+                          {formatProposalStatusLabel(proposal.statusCode)}
+                        </span>
+                      </td>
+                      <td>
                         #{proposal.quotationId} · v
                         {proposal.quotationVersionNumber || "-"}
-                      </span>
-                    </div>
-                    <div className="proposal-list-cell">
-                      <span className="proposal-list-mobile-label">
-                        Actualizada
-                      </span>
-                      <span>{formatDateTime(proposal.updatedAt)}</span>
-                    </div>
-                    <div className="proposal-list-cell proposal-list-cell-action">
-                      <div className="user-kebab-wrap proposal-kebab-wrap">
-                        <button
-                          type="button"
-                          className="kebab-btn"
-                          aria-label="Abrir acciones de propuesta"
-                          title="Acciones"
-                          onClick={() => toggleProposalMenu(proposal.id)}
-                        >
-                          ⋮
-                        </button>
-                        {openProposalMenuId === proposal.id ? (
-                          <div className="user-kebab-menu proposal-actions-menu">
-                            <button
-                              type="button"
-                              onClick={() => handleSelectProposal(proposal.id)}
-                            >
-                              Editar
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                      </td>
+                      <td>{formatDateTime(proposal.updatedAt)}</td>
+                      <td
+                        className="accounts-actions-cell"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <div className="user-kebab-wrap proposal-kebab-wrap">
+                          <button
+                            type="button"
+                            className="kebab-btn"
+                            data-help-id="proposals.actions"
+                            aria-label="Abrir acciones de propuesta"
+                            title="Acciones"
+                            onClick={() => toggleProposalMenu(proposal.id)}
+                          >
+                            ⋮
+                          </button>
+                          {openProposalMenuId === proposal.id ? (
+                            <div className="user-kebab-menu proposal-actions-menu">
+                              data-help-id="proposals.save-component"
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleSelectProposal(proposal.id)
+                                }
+                              >
+                                Editar
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={7} className="empty-state">
+                    No hay propuestas que coincidan con los filtros
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {filteredProposals.length > 0 ? (
+            <div className="users-pagination">
+              <div className="users-pagination-left">
+                <span className="users-pagination-info">
+                  {(proposalsPage - 1) * proposalsPerPage + 1}-
+                  {Math.min(
+                    proposalsPage * proposalsPerPage,
+                    filteredProposals.length,
+                  )}{" "}
+                  de {filteredProposals.length}
+                </span>
+              </div>
+              <div className="users-pagination-center">
+                <button
+                  type="button"
+                  className="users-page-btn"
+                  disabled={proposalsPage === 1}
+                  onClick={() => setProposalsPage((page) => page - 1)}
+                >
+                  ‹
+                </button>
+                <span className="users-pagination-pages">
+                  {proposalsPage} / {totalProposalPages}
+                </span>
+                <button
+                  type="button"
+                  className="users-page-btn"
+                  disabled={proposalsPage === totalProposalPages}
+                  onClick={() => setProposalsPage((page) => page + 1)}
+                >
+                  ›
+                </button>
+              </div>
+              <div className="users-pagination-right">
+                <span className="users-pagination-label">Por pagina:</span>
+                {[10, 50, 100].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    className={`users-perpage-btn${
+                      proposalsPerPage === size ? " is-active" : ""
+                    }`}
+                    onClick={() => setProposalsPerPage(size)}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
         </aside>
       </div>
 

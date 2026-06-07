@@ -2165,6 +2165,22 @@ export async function saveProposalComponentBlocks({
         snapshot = versionRow
           ? buildInstitutionalAssetSnapshot(versionRow)
           : null;
+      } else if (block.type === "image" && block.image?.fileUrl) {
+        snapshot = {
+          fileUrl: asText(block.image.fileUrl),
+          fileName: asText(block.image.fileName),
+          mimeType: asText(block.image.mimeType),
+          fileSizeBytes:
+            block.image.fileSizeBytes == null
+              ? null
+              : Number(block.image.fileSizeBytes),
+          width: block.image.width == null ? null : Number(block.image.width),
+          height:
+            block.image.height == null ? null : Number(block.image.height),
+          checksum: asText(block.image.checksum),
+          altText: asText(block.image.altText),
+          caption: asText(block.image.caption),
+        };
       } else if (block.type === "brochure") {
         snapshot = buildProposalBrochureSnapshot(
           brochureAssetsByPublicId[asText(block.assetPublicId)] || null,

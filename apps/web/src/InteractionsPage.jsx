@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import ModalInlineHelp from "./help/ModalInlineHelp";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
@@ -683,32 +684,6 @@ function CreateInteractionModal({
   pastedText,
   setPastedText,
 }) {
-  const createHelpRef = useRef(null);
-  const [showCreateHelp, setShowCreateHelp] = useState(false);
-
-  useEffect(() => {
-    if (!showCreateHelp) return undefined;
-
-    function handlePointerDown(event) {
-      if (!createHelpRef.current?.contains(event.target)) {
-        setShowCreateHelp(false);
-      }
-    }
-
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        setShowCreateHelp(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [showCreateHelp]);
-
   if (!isOpen) return null;
 
   const handleFileChange = (event) => {
@@ -747,39 +722,9 @@ function CreateInteractionModal({
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
                 <span className="interaction-create-kicker">Nuevo lead</span>
-                <div className="account-modal-help-shell" ref={createHelpRef}>
-                  <div className="account-modal-title-row">
-                    <h3 className="modal-title">Crear lead</h3>
-                    <button
-                      type="button"
-                      className="accounts-module-help-trigger account-modal-help-trigger"
-                      aria-label="Ayuda sobre el modal de crear lead"
-                      aria-expanded={showCreateHelp}
-                      title="Ayuda sobre el modal de crear lead"
-                      onClick={() => setShowCreateHelp((current) => !current)}
-                    >
-                      ?
-                    </button>
-                  </div>
-                  {showCreateHelp ? (
-                    <div
-                      className="account-modal-help-popover"
-                      role="dialog"
-                      aria-label="Ayuda sobre crear lead"
-                    >
-                      <strong>Para qué sirve este modal</strong>
-                      <p>
-                        Úsalo para reunir evidencia comercial inicial y crear un
-                        lead analizable a partir de archivos o texto.
-                      </p>
-                      <strong>Cómo conviene usarlo</strong>
-                      <p>
-                        Sube documentos, agrega texto adicional si hace falta y
-                        luego crea el lead para que el sistema sugiera cuenta,
-                        contactos y oportunidades relacionadas.
-                      </p>
-                    </div>
-                  ) : null}
+                <div className="account-modal-title-row">
+                  <h3 className="modal-title">Crear lead</h3>
+                  <ModalInlineHelp helpKey="lead.create" />
                 </div>
               </div>
               <div className="interaction-create-header-meta">
@@ -1333,7 +1278,10 @@ function InteractionDetailModal({
         <div className="modal-dialog-scroll-shell">
           <div className="modal-header">
             <div className="interaction-detail-header-copy">
-              <h3 className="modal-title">{detail.title}</h3>
+              <div className="account-modal-title-row">
+                <h3 className="modal-title">{detail.title}</h3>
+                <ModalInlineHelp helpKey="lead.edit" />
+              </div>
               <p className="roles-subtitle">
                 Creada {formatDate(detail.createdAt)}
               </p>

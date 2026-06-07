@@ -1,3 +1,5 @@
+import ModalInlineHelp from "../help/ModalInlineHelp";
+
 function getDuplicateSeverityLabel(severity) {
   if (severity === "high") return "Alta";
   if (severity === "medium") return "Media";
@@ -291,9 +293,14 @@ export default function ContactFormModal({
         ) : null}
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
-            <h3 className="modal-title">
-              {editingContactId ? "Editar contacto" : "Crear contacto"}
-            </h3>
+            <div className="account-modal-title-row">
+              <h3 className="modal-title">
+                {editingContactId ? "Editar contacto" : "Crear contacto"}
+              </h3>
+              <ModalInlineHelp
+                helpKey={editingContactId ? "contact.edit" : "contact.create"}
+              />
+            </div>
             <p className="field-hint opportunity-modal-subtitle">
               {editingContactId
                 ? "Actualiza los datos necesarios y guarda los cambios."

@@ -1,0 +1,7 @@
+Cuenta: Prospecto Integrado Alpha
+Contacto: Maria Gomez
+Tema: Renovacion de plataforma F5
+Accion realizada: Reunion de descubrimiento comercial
+Proximo paso: Enviar propuesta ejecutiva
+Oportunidad: Renovacion F5 Alpha
+Correo: maria.gomez@alpha.example.com

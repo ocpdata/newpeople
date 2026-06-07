@@ -1,0 +1,7 @@
+Cuenta: Prospecto Async Beta
+Contacto: Laura Perez
+Tema: Expansion de servicios administrados
+Accion realizada: Llamada de seguimiento
+Proximo paso: Coordinar reunion tecnica
+Oportunidad: Expansion Beta
+Correo: laura.perez@beta.example.com

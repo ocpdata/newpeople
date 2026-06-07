@@ -1,3 +1,5 @@
+import ModalInlineHelp from "./help/ModalInlineHelp";
+
 export default function ProposalTemplatePickerModal({
   isOpen,
   title,
@@ -42,7 +44,10 @@ export default function ProposalTemplatePickerModal({
       >
         <div className="modal-header">
           <div>
-            <h3 className="modal-title">{title}</h3>
+            <div className="account-modal-title-row">
+              <h3 className="modal-title">{title}</h3>
+              <ModalInlineHelp helpKey="proposal.create" />
+            </div>
             {subtitle ? <p className="field-hint">{subtitle}</p> : null}
           </div>
           <div className="account-modal-header-actions">

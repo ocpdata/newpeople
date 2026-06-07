@@ -372,6 +372,7 @@ function QuotationsListPanel({
                           <button
                             type="button"
                             className="kebab-btn"
+                            data-help-id="quotations.actions"
                             onClick={() => toggleQuotationMenu(quotation)}
                             aria-label="Abrir acciones"
                             aria-haspopup="menu"
@@ -431,9 +432,15 @@ function QuotationsListPanel({
                                     )
                                   }
                                 >
-                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                  <span
+                                    className="quotation-actions-menu-button-icon"
+                                    aria-hidden="true"
+                                  >
                                     <svg viewBox="0 0 20 20" focusable="false">
-                                      <path d="M13.7 2.3a1 1 0 0 1 1.4 0l2.6 2.6a1 1 0 0 1 0 1.4l-8.6 8.6-3.8.9.9-3.8 8.6-8.6zM5.8 13.3l.9.9-.3-1.2-.6.3z" fill="currentColor" />
+                                      <path
+                                        d="M13.7 2.3a1 1 0 0 1 1.4 0l2.6 2.6a1 1 0 0 1 0 1.4l-8.6 8.6-3.8.9.9-3.8 8.6-8.6zM5.8 13.3l.9.9-.3-1.2-.6.3z"
+                                        fill="currentColor"
+                                      />
                                     </svg>
                                   </span>
                                   <span className="quotation-actions-menu-button-body">
@@ -453,9 +460,15 @@ function QuotationsListPanel({
                                     )
                                   }
                                 >
-                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                  <span
+                                    className="quotation-actions-menu-button-icon"
+                                    aria-hidden="true"
+                                  >
                                     <svg viewBox="0 0 20 20" focusable="false">
-                                      <path d="M4 4h8a2 2 0 0 1 2 2v2h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-2H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v5h7V6H5zm3 7v2h7v-5h-1v4a1 1 0 0 1-1 1H8z" fill="currentColor" />
+                                      <path
+                                        d="M4 4h8a2 2 0 0 1 2 2v2h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-2H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v5h7V6H5zm3 7v2h7v-5h-1v4a1 1 0 0 1-1 1H8z"
+                                        fill="currentColor"
+                                      />
                                     </svg>
                                   </span>
                                   <span className="quotation-actions-menu-button-body">
@@ -479,9 +492,15 @@ function QuotationsListPanel({
                                     setOpenQuotationMenuId(null);
                                   }}
                                 >
-                                  <span className="quotation-actions-menu-button-icon" aria-hidden="true">
+                                  <span
+                                    className="quotation-actions-menu-button-icon"
+                                    aria-hidden="true"
+                                  >
                                     <svg viewBox="0 0 20 20" focusable="false">
-                                      <path d="M4 3h8a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v7h7V5H5zm3 8v2h7V8h-1v6a1 1 0 0 1-1 1H8z" fill="currentColor" />
+                                      <path
+                                        d="M4 3h8a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2v-1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v7h7V5H5zm3 8v2h7V8h-1v6a1 1 0 0 1-1 1H8z"
+                                        fill="currentColor"
+                                      />
                                     </svg>
                                   </span>
                                   <span className="quotation-actions-menu-button-body">
@@ -568,8 +587,7 @@ function QuotationsListPanel({
             <h3 className="modal-title">Duplicar cotizacion</h3>
             <p className="field-hint opportunity-modal-subtitle">
               La nueva cotizacion copiara la
-              {` ${duplicateQuotationModalState.sourceVersionLabel || "version seleccionada"}`}
-              {" "}
+              {` ${duplicateQuotationModalState.sourceVersionLabel || "version seleccionada"}`}{" "}
               sin adjuntar documentos.
             </p>
             <div className="field-group">

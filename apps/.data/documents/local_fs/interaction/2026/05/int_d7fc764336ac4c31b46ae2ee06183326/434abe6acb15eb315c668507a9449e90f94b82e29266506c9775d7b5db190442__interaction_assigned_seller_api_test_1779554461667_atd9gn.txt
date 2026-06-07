@@ -1,0 +1,4 @@
+Cuenta: Prospecto Gamma Infraestructura
+Contacto: Luis Gomez
+Tema: Seguimiento comercial de infraestructura
+Correo: luis.gomez@gamma.example.com

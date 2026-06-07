@@ -15,6 +15,10 @@ import {
   recommendCommercialEnablementResources,
 } from "./commercial-enablement/service.js";
 import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 import { config } from "./config.js";
 import { query } from "./db.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
@@ -804,9 +808,17 @@ function buildOpportunityNarrativeFallback(item) {
   };
 }
 
-async function requestOpportunityNarrativesWithAi(items) {
+async function requestOpportunityNarrativesWithAi(
+  items,
+  { aiUsageContext = null } = {},
+) {
   if (!config.openai.apiKey || !items.length) {
     return new Map();
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -911,6 +923,24 @@ async function requestOpportunityNarrativesWithAi(items) {
   }
 
   const data = await response.json();
+
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId:
+        aiUsageContext?.internalRequestId ||
+        `commercial_opportunity_narrative:${Date.now()}:${Math.random()}`,
+      userId: aiUsageUserId,
+      featureCode:
+        aiUsageContext?.featureCode ||
+        "commercial_development.opportunity_narrative",
+      model: config.openai.model,
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || "commercial_narrative",
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageContext?.startedAt || null,
+    });
+  }
+
   const parsed = extractJsonObject(extractResponseOutputText(data));
   const insights = Array.isArray(parsed?.insights) ? parsed.insights : [];
 
@@ -1153,7 +1183,15 @@ function buildCommercialNarrativeJobResponse(row) {
   };
 
   if (status === "completed" && result) {
-    response.result = result;
+    response.result = {
+      ...result,
+      generatedAt:
+        result?.generatedAt ||
+        row.finished_at ||
+        row.updated_at ||
+        row.created_at ||
+        null,
+    };
     return response;
   }
 
@@ -1227,12 +1265,24 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
   });
 
   try {
-    const aiInsights = await requestOpportunityNarrativesWithAi([
+    const aiInsights = await requestOpportunityNarrativesWithAi(
+      [
+        {
+          ...executionContext.narrativeItem,
+          ...executionContext.fallback,
+        },
+      ],
       {
-        ...executionContext.narrativeItem,
-        ...executionContext.fallback,
+        aiUsageContext: {
+          userId: Number(user.id),
+          featureCode: "commercial_development.opportunity_narrative",
+          jobType: "commercial_narrative",
+          jobId: Number(opportunityId),
+          internalRequestId: `commercial_opportunity_narrative:${Number(opportunityId)}:${Date.now()}`,
+          startedAt: new Date().toISOString(),
+        },
       },
-    ]);
+    );
     const aiNarrative = aiInsights.get(opportunityId);
     return {
       snapshot: executionContext.snapshot,
@@ -1248,6 +1298,7 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
         aiNarrativeSource:
           aiNarrative?.aiNarrativeSource ||
           executionContext.fallback.aiNarrativeSource,
+        generatedAt: new Date().toISOString(),
       },
     };
   } catch {
@@ -1257,6 +1308,7 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
       result: {
         opportunityId,
         ...executionContext.fallback,
+        generatedAt: new Date().toISOString(),
       },
     };
   }
@@ -2031,6 +2083,67 @@ async function listOpenDependencies(opportunityIds) {
      ORDER BY d.due_date IS NULL ASC, d.due_date ASC, d.updated_at DESC`,
     opportunityIds,
   );
+}
+
+async function listLatestCommercialNarrativesByOpportunity(opportunityIds) {
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT j.opportunity_id,
+            j.result_json,
+            j.finished_at,
+            j.updated_at,
+            j.created_at
+     FROM commercial_opportunity_narrative_jobs j
+     INNER JOIN (
+       SELECT opportunity_id,
+              MAX(COALESCE(finished_at, updated_at, created_at)) AS latest_at
+       FROM commercial_opportunity_narrative_jobs
+       WHERE opportunity_id IN (${placeholders})
+         AND status = 'completed'
+         AND result_json IS NOT NULL
+       GROUP BY opportunity_id
+     ) latest
+       ON latest.opportunity_id = j.opportunity_id
+      AND latest.latest_at = COALESCE(j.finished_at, j.updated_at, j.created_at)
+     WHERE j.opportunity_id IN (${placeholders})
+       AND j.status = 'completed'
+       AND j.result_json IS NOT NULL
+     ORDER BY j.opportunity_id ASC, j.id DESC`,
+    [...opportunityIds, ...opportunityIds],
+  ).catch(() => []);
+
+  const narrativeByOpportunity = new Map();
+  for (const row of rows) {
+    const opportunityId = Number(row?.opportunity_id || 0);
+    if (!opportunityId || narrativeByOpportunity.has(opportunityId)) {
+      continue;
+    }
+
+    const result = parseCommercialNarrativeJson(row.result_json, null);
+    if (!result || typeof result !== "object") {
+      continue;
+    }
+
+    narrativeByOpportunity.set(opportunityId, {
+      aiStatusSummary: String(result.aiStatusSummary || "").trim(),
+      aiNextStepRecommendation: String(
+        result.aiNextStepRecommendation || "",
+      ).trim(),
+      aiNarrativeSource: String(result.aiNarrativeSource || "openai").trim(),
+      aiNarrativeGeneratedAt:
+        result.generatedAt ||
+        row.finished_at ||
+        row.updated_at ||
+        row.created_at ||
+        null,
+    });
+  }
+
+  return narrativeByOpportunity;
 }
 
 function setLatestActivityTimestamp(
@@ -4512,18 +4625,37 @@ router.get(
         )
         .map((item) => item.id),
     );
-    const quarterNarratives = executionItems
+    const quarterNarrativeFallbacks = executionItems
       .filter((item) => quarterOpportunityIds.has(item.id))
       .map((item) => ({
-        ...item,
+        id: Number(item.id),
         ...buildOpportunityNarrativeFallback(item),
       }));
-    const quarterNarrativeById = new Map(
-      quarterNarratives.map((item) => [item.id, item]),
+    const quarterNarrativeFallbackById = new Map(
+      quarterNarrativeFallbacks.map((item) => [item.id, item]),
     );
-    executionItems = executionItems.map(
-      (item) => quarterNarrativeById.get(item.id) || item,
-    );
+    const quarterLatestNarrativeById =
+      await listLatestCommercialNarrativesByOpportunity(
+        Array.from(quarterOpportunityIds),
+      );
+
+    executionItems = executionItems.map((item) => {
+      if (!quarterOpportunityIds.has(item.id)) {
+        return item;
+      }
+
+      const persistedNarrative = quarterLatestNarrativeById.get(
+        Number(item.id),
+      );
+      const fallbackNarrative = quarterNarrativeFallbackById.get(
+        Number(item.id),
+      );
+      return {
+        ...item,
+        ...(fallbackNarrative || {}),
+        ...(persistedNarrative || {}),
+      };
+    });
 
     const activeCadenceRows = await listActiveCadences(opportunityIds);
     const opportunitiesById = new Map(

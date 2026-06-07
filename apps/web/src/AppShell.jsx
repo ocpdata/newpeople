@@ -9,6 +9,7 @@ import {
 import Dashboard from "./Dashboard";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
 import { api } from "./api";
+import { HelpDrawer, HelpFabButton, HelpTourCoach } from "./help/HelpWidgets";
 
 const OpportunityQuestionAdminPage = lazy(
   () => import("./OpportunityQuestionAdminPage"),
@@ -675,6 +676,9 @@ export default function AppShell({
 
         {appRoutes}
       </main>
+      <HelpDrawer />
+      <HelpTourCoach />
+      <HelpFabButton />
     </div>
   );
 }

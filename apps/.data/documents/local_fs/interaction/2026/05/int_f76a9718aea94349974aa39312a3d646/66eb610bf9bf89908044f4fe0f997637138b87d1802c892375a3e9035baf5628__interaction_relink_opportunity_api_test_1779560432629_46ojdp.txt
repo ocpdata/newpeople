@@ -1,0 +1,5 @@
+Cuenta: Prospecto Nu Seguridad
+Contacto: Nadia Soto
+Tema: Seguimiento comercial
+Correo: nadia.soto@nu.example.com
+Oportunidad: Servicio gestionado Nu

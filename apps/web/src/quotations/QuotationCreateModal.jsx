@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 import {
   applyCreateQuotationPerItemVat,
   applyCreateQuotationDistributedFinalDiscount,
@@ -2173,7 +2174,10 @@ function QuotationCreateModal({
         >
           <div className="modal-header">
             <div className="opportunity-modal-header-copy">
-              <h3 className="modal-title">Crear cotizacion</h3>
+              <div className="account-modal-title-row">
+                <h3 className="modal-title">Crear cotizacion</h3>
+                <ModalInlineHelp helpKey="quotation.create" />
+              </div>
               <p className="field-hint opportunity-modal-subtitle">
                 Selecciona el contexto comercial y completa los datos para
                 registrar la cotizacion.
@@ -2458,7 +2462,10 @@ function QuotationCreateModal({
                 <section className="account-form-section opportunity-sales-management-section">
                   <div className="quotation-section-toolbar">
                     <div>
-                      <h4>Secciones de la cotizacion</h4>
+                      <div className="quotation-help-title-row">
+                        <h4>Secciones de la cotizacion</h4>
+                        <ModalInlineHelp helpKey="quotation.sections.toolbar" />
+                      </div>
                     </div>
                     <div className="quotation-action-groups">
                       <div className="quotation-action-group">
@@ -4122,7 +4129,10 @@ function QuotationCreateModal({
                 <section className="account-form-section opportunity-sales-management-section quotation-documents-section">
                   <div className="quotation-proposal-section-header quotation-documents-header">
                     <div>
-                      <h4>Documentacion</h4>
+                      <div className="quotation-help-title-row">
+                        <h4>Documentacion</h4>
+                        <ModalInlineHelp helpKey="quotation.documentation.toolbar" />
+                      </div>
                       <p className="field-hint quotation-documents-hint">
                         Adjunta y configura los documentos de soporte para esta
                         cotizacion antes de crearla.
@@ -4179,7 +4189,10 @@ function QuotationCreateModal({
                         onDragLeave={handlePendingDocumentsDropZoneDragLeave}
                         onDrop={handlePendingDocumentsDrop}
                       >
-                        <span className="quotation-documents-dropzone-icon" aria-hidden="true">
+                        <span
+                          className="quotation-documents-dropzone-icon"
+                          aria-hidden="true"
+                        >
                           <DocumentAddIcon />
                         </span>
                         <span className="quotation-documents-dropzone-text">

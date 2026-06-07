@@ -1,0 +1,7 @@
+Cuenta: Prospecto Beta Seguridad
+Contacto: Laura Perez
+Tema: Servicios administrados de seguridad
+Accion realizada: Demo tecnica inicial
+Proximo paso: Preparar propuesta economica
+Oportunidad: Servicios de seguridad administrada Beta
+Correo: laura.perez@beta.example.com

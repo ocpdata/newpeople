@@ -28,6 +28,7 @@ import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
 import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 
 function updateDraftEntry(setter, entryId, currentValue, field, value) {
   setter((prev) => ({
@@ -2640,7 +2641,10 @@ function QuotationEditorContent({
       <section className="account-form-section opportunity-sales-management-section">
         <div className="quotation-section-toolbar">
           <div>
-            <h4>Secciones de la cotizacion</h4>
+            <div className="quotation-help-title-row">
+              <h4>Secciones de la cotizacion</h4>
+              <ModalInlineHelp helpKey="quotation.sections.toolbar" />
+            </div>
           </div>
           <div className="quotation-action-groups">
             <div className="quotation-action-group">
@@ -4412,7 +4416,10 @@ function QuotationEditorContent({
       <section className="account-form-section opportunity-sales-management-section quotation-documents-section">
         <div className="quotation-proposal-section-header quotation-documents-header">
           <div>
-            <h4>Documentacion</h4>
+            <div className="quotation-help-title-row">
+              <h4>Documentacion</h4>
+              <ModalInlineHelp helpKey="quotation.documentation.toolbar" />
+            </div>
             <p className="field-hint quotation-documents-hint">
               Adjunta documentos de soporte para esta version de la cotizacion.
             </p>
@@ -4468,7 +4475,10 @@ function QuotationEditorContent({
               onDragLeave={handleQuotationDocumentsDropZoneDragLeave}
               onDrop={handleQuotationDocumentsDrop}
             >
-              <span className="quotation-documents-dropzone-icon" aria-hidden="true">
+              <span
+                className="quotation-documents-dropzone-icon"
+                aria-hidden="true"
+              >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 4.5a.75.75 0 0 1 .75.75V12h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0V13.5H4.5a.75.75 0 0 1 0-1.5h6.75V5.25A.75.75 0 0 1 12 4.5Z" />
                 </svg>

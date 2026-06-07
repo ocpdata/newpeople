@@ -1,4 +1,5 @@
 import { normalizeText } from "./quotationsUtils";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 
 const COMMERCIAL_TERM_LABELS = {
   deliveryTime: "Entrega",
@@ -352,7 +353,9 @@ function QuotationProviderDocumentImportModal({
   const previewJobStatusLabel = formatProviderImportJobStatus(previewJobStatus);
   const previewJobLabel = String(previewJob?.progress?.label || "").trim();
   const previewJobPercent = Number(previewJob?.progress?.percent || 0) || 0;
-  const previewJobErrorMessage = String(previewJob?.error?.message || "").trim();
+  const previewJobErrorMessage = String(
+    previewJob?.error?.message || "",
+  ).trim();
   const suggestedMatchFeedback = suggestedMatchFeedbackByPreviewId || {};
   const suggestedMatchItems = previewItems.filter(
     (item) => item.resolutionRequired,
@@ -388,8 +391,8 @@ function QuotationProviderDocumentImportModal({
   const isBlockingImport = Boolean(loadingPreview || creatingMissingItems);
   const hasConfirmedProviderContext = Boolean(
     confirmedProviderId ||
-      preview?.confirmedProvider?.id ||
-      previewJob?.request?.providerId,
+    preview?.confirmedProvider?.id ||
+    previewJob?.request?.providerId,
   );
   const hasDocumentContext = Boolean(
     selectedDocumentId || previewJob?.request?.documentLinkId,
@@ -410,9 +413,16 @@ function QuotationProviderDocumentImportModal({
       aria-busy={isBlockingImport}
     >
       {isBlockingImport ? (
-        <div className="quotation-provider-import-blocking-overlay" role="status" aria-live="polite">
+        <div
+          className="quotation-provider-import-blocking-overlay"
+          role="status"
+          aria-live="polite"
+        >
           <div className="quotation-provider-import-blocking-dialog">
-            <span className="quotation-provider-import-blocking-spinner" aria-hidden="true" />
+            <span
+              className="quotation-provider-import-blocking-spinner"
+              aria-hidden="true"
+            />
             <strong>
               {loadingPreview
                 ? "Analizando documento con IA..."
@@ -429,9 +439,15 @@ function QuotationProviderDocumentImportModal({
       ) : null}
       <div className="modal-header">
         <div>
-          <h3 id="quotation-provider-import-title">
-            Crear items desde documento con IA
-          </h3>
+          <div className="quotation-help-title-row">
+            <h3 id="quotation-provider-import-title">
+              Crear items desde documento con IA
+            </h3>
+            <ModalInlineHelp
+              helpKey="quotation.provider-document-import"
+              triggerLabel="Ayuda"
+            />
+          </div>
           <p className="field-hint">
             La IA propone proveedor, condiciones e items. El usuario confirma
             antes de aplicar.
@@ -560,9 +576,7 @@ function QuotationProviderDocumentImportModal({
         {previewJob ? (
           <div className="quotation-provider-import-job-status">
             <div className="quotation-provider-import-job-status-row">
-              <strong>
-                Estado del analisis: {previewJobStatusLabel}
-              </strong>
+              <strong>Estado del analisis: {previewJobStatusLabel}</strong>
               <span>{Math.max(0, Math.min(100, previewJobPercent))}%</span>
             </div>
             <p>
@@ -696,10 +710,11 @@ function QuotationProviderDocumentImportModal({
                                       : !hasDocumentContext
                                         ? "Confirma el documento analizado para crear un nuevo item"
                                         : "Crear item individual en lista"
-                                }
+                                  }
                                 >
-                                  {String(creatingSuggestedMatchPreviewId || "") ===
-                                  String(item.previewId) ? (
+                                  {String(
+                                    creatingSuggestedMatchPreviewId || "",
+                                  ) === String(item.previewId) ? (
                                     <span
                                       className="quotation-provider-import-inline-spinner"
                                       aria-hidden="true"
@@ -748,9 +763,8 @@ function QuotationProviderDocumentImportModal({
                               ?.message ? (
                               <span>
                                 {
-                                  suggestedMatchFeedback[
-                                    String(item.previewId)
-                                  ].message
+                                  suggestedMatchFeedback[String(item.previewId)]
+                                    .message
                                 }
                               </span>
                             ) : null}
@@ -775,36 +789,36 @@ function QuotationProviderDocumentImportModal({
                                 }
 
                                 return (
-                                <li key={`${item.previewId}-${index}`}>
-                                  <div className="quotation-provider-import-warning-line">
-                                    <span className="quotation-provider-import-warning-text">
-                                      {formattedWarning}
-                                    </span>
-                                    {isWarningTransferable?.(warning) ? (
-                                      <label className="quotation-provider-import-warning-transfer-toggle">
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(
-                                            transferableWarningsSelection?.[
-                                              `${String(item.previewId || "").trim()}::${String(
-                                                warning || "",
-                                              ).trim()}`
-                                            ],
-                                          )}
-                                          onChange={(event) =>
-                                            onToggleTransferableWarningSelection?.(
-                                              item.previewId,
-                                              warning,
-                                              event.target.checked,
-                                            )
-                                          }
-                                          disabled={isCreatingMissingItems}
-                                        />
-                                        <span>Agregar a descripcion</span>
-                                      </label>
-                                    ) : null}
-                                  </div>
-                                </li>
+                                  <li key={`${item.previewId}-${index}`}>
+                                    <div className="quotation-provider-import-warning-line">
+                                      <span className="quotation-provider-import-warning-text">
+                                        {formattedWarning}
+                                      </span>
+                                      {isWarningTransferable?.(warning) ? (
+                                        <label className="quotation-provider-import-warning-transfer-toggle">
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(
+                                              transferableWarningsSelection?.[
+                                                `${String(item.previewId || "").trim()}::${String(
+                                                  warning || "",
+                                                ).trim()}`
+                                              ],
+                                            )}
+                                            onChange={(event) =>
+                                              onToggleTransferableWarningSelection?.(
+                                                item.previewId,
+                                                warning,
+                                                event.target.checked,
+                                              )
+                                            }
+                                            disabled={isCreatingMissingItems}
+                                          />
+                                          <span>Agregar a descripcion</span>
+                                        </label>
+                                      ) : null}
+                                    </div>
+                                  </li>
                                 );
                               })}
                             </ul>
@@ -915,7 +929,8 @@ function QuotationProviderDocumentImportModal({
                             <strong>{title || "Clausula detectada"}</strong>
                           </span>
                           <span>
-                            {categoryLabel} · Confianza {formatCommercialClauseConfidence(
+                            {categoryLabel} · Confianza{" "}
+                            {formatCommercialClauseConfidence(
                               clause?.confidence,
                             )}
                           </span>
@@ -934,8 +949,8 @@ function QuotationProviderDocumentImportModal({
                 <div className="quotation-provider-import-warning">
                   <ul>
                     <li>
-                      No se detectaron clausulas de terminos o condiciones en
-                      el documento analizado.
+                      No se detectaron clausulas de terminos o condiciones en el
+                      documento analizado.
                     </li>
                   </ul>
                 </div>
@@ -1013,8 +1028,8 @@ function QuotationProviderDocumentImportModal({
                         <p>{item.productDescription}</p>
                       </div>
                       <span className="quotation-provider-import-resolved-match-badge">
-                        {suggestedMatchFeedback?.[String(item.previewId)]?.type ===
-                        "success"
+                        {suggestedMatchFeedback?.[String(item.previewId)]
+                          ?.type === "success"
                           ? suggestedMatchFeedback?.[String(item.previewId)]
                               ?.mode === "reused"
                             ? "Ya existe en lista activa"
@@ -1026,7 +1041,8 @@ function QuotationProviderDocumentImportModal({
                           {getSuggestedMatchCandidateLabel(item)}
                         </span>
                       ) : null}
-                      {suggestedMatchFeedback?.[String(item.previewId)]?.message ? (
+                      {suggestedMatchFeedback?.[String(item.previewId)]
+                        ?.message ? (
                         <p className="quotation-provider-import-row-feedback is-success">
                           {
                             suggestedMatchFeedback[String(item.previewId)]
@@ -1098,7 +1114,10 @@ function QuotationProviderDocumentImportModal({
                                   Selecciona un item existente
                                 </option>
                                 {candidates.map((candidate) => (
-                                  <option key={candidate.id} value={candidate.id}>
+                                  <option
+                                    key={candidate.id}
+                                    value={candidate.id}
+                                  >
                                     {candidate.code} · {candidate.description}
                                   </option>
                                 ))}
@@ -1128,8 +1147,8 @@ function QuotationProviderDocumentImportModal({
                               disabled={
                                 isCreatingMissingItems ||
                                 isCreatingSuggestedMatchItem ||
-                                candidates.length > 1 &&
-                                !item.selectedSuggestedPriceListItemId
+                                (candidates.length > 1 &&
+                                  !item.selectedSuggestedPriceListItemId)
                               }
                               title="Usar existente"
                               aria-label="Usar existente"
@@ -1239,79 +1258,82 @@ function QuotationProviderDocumentImportModal({
           </span>
         </div>
         <div className="quotation-provider-import-footer-actions">
-        <button
-          type="button"
-          className="btn-secondary quotation-provider-import-icon-button"
-          onClick={onClose}
-          disabled={isBlockingImport}
-          title="Cancelar y cerrar esta ventana de importación asistida por IA"
-          aria-label="Cancelar y cerrar esta ventana de importación asistida por IA"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M6.53 5.47a.75.75 0 0 1 1.06 0L12 9.88l4.41-4.41a.75.75 0 1 1 1.06 1.06L13.06 10.94l4.41 4.41a.75.75 0 1 1-1.06 1.06L12 12l-4.41 4.41a.75.75 0 0 1-1.06-1.06l4.41-4.41-4.41-4.41a.75.75 0 0 1 0-1.06Z" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className="btn-primary quotation-provider-import-icon-button quotation-provider-import-icon-button-primary"
-          onClick={
-            workflowStage === "ready_to_create_missing_items"
-              ? onCreateMissingItems
-              : onApply
-          }
-          disabled={
-            !preview ||
-            !confirmedProviderId ||
-            loadingPreview ||
-            creatingMissingItems ||
-            applying ||
-            (workflowStage === "provider_mismatch_confirmation_required" &&
-              true) ||
-            (workflowStage === "blocked_missing_price_list" && true) ||
-            (workflowStage === "resolve_suggested_matches" && true) ||
-            (workflowStage === "ready_to_create_missing_items" &&
-              !selectedCreatableMissingItems.length) ||
-            (workflowStage !== "ready_to_create_missing_items" && !canApply)
-          }
-          title={
-            workflowStage === "provider_mismatch_confirmation_required"
-              ? "Revisa el proveedor confirmado antes de continuar"
-              : workflowStage === "resolve_suggested_matches"
-                ? "Primero resuelve las coincidencias sugeridas pendientes"
-                : workflowStage === "ready_to_create_missing_items"
-                  ? creatingMissingItems
-                    ? "Creando los items faltantes en la lista activa del proveedor"
-                    : "Crear los items faltantes seleccionados en la lista activa del proveedor"
-                  : applying
-                    ? "Agregando los items confirmados a la edicion actual"
-                    : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
-          }
-          aria-label={
-            workflowStage === "provider_mismatch_confirmation_required"
-              ? "Revisa el proveedor confirmado antes de continuar"
-              : workflowStage === "resolve_suggested_matches"
-                ? "Primero resuelve las coincidencias sugeridas pendientes"
-                : workflowStage === "ready_to_create_missing_items"
-                  ? creatingMissingItems
-                    ? "Creando los items faltantes en la lista activa del proveedor"
-                    : "Crear los items faltantes seleccionados en la lista activa del proveedor"
-                  : applying
-                    ? "Agregando los items confirmados a la edicion actual"
-                    : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
-          }
-        >
-          {creatingMissingItems || applying ? (
-            <span className="quotation-provider-import-inline-spinner is-on-primary" aria-hidden="true" />
-          ) : workflowStage === "ready_to_create_missing_items" ? (
+          <button
+            type="button"
+            className="btn-secondary quotation-provider-import-icon-button"
+            onClick={onClose}
+            disabled={isBlockingImport}
+            title="Cancelar y cerrar esta ventana de importación asistida por IA"
+            aria-label="Cancelar y cerrar esta ventana de importación asistida por IA"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm3.75 9.75h-3v3h-1.5v-3h-3v-1.5h3v-3h1.5v3h3Z" />
+              <path d="M6.53 5.47a.75.75 0 0 1 1.06 0L12 9.88l4.41-4.41a.75.75 0 1 1 1.06 1.06L13.06 10.94l4.41 4.41a.75.75 0 1 1-1.06 1.06L12 12l-4.41 4.41a.75.75 0 0 1-1.06-1.06l4.41-4.41-4.41-4.41a.75.75 0 0 1 0-1.06Z" />
             </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8.78 6.47a.75.75 0 0 1 1.06 0l4.72 4.72a1.13 1.13 0 0 1 0 1.6l-4.72 4.72a.75.75 0 1 1-1.06-1.06l4.34-4.46-4.34-4.46a.75.75 0 0 1 0-1.06Z" />
-            </svg>
-          )}
-        </button>
+          </button>
+          <button
+            type="button"
+            className="btn-primary quotation-provider-import-icon-button quotation-provider-import-icon-button-primary"
+            onClick={
+              workflowStage === "ready_to_create_missing_items"
+                ? onCreateMissingItems
+                : onApply
+            }
+            disabled={
+              !preview ||
+              !confirmedProviderId ||
+              loadingPreview ||
+              creatingMissingItems ||
+              applying ||
+              (workflowStage === "provider_mismatch_confirmation_required" &&
+                true) ||
+              (workflowStage === "blocked_missing_price_list" && true) ||
+              (workflowStage === "resolve_suggested_matches" && true) ||
+              (workflowStage === "ready_to_create_missing_items" &&
+                !selectedCreatableMissingItems.length) ||
+              (workflowStage !== "ready_to_create_missing_items" && !canApply)
+            }
+            title={
+              workflowStage === "provider_mismatch_confirmation_required"
+                ? "Revisa el proveedor confirmado antes de continuar"
+                : workflowStage === "resolve_suggested_matches"
+                  ? "Primero resuelve las coincidencias sugeridas pendientes"
+                  : workflowStage === "ready_to_create_missing_items"
+                    ? creatingMissingItems
+                      ? "Creando los items faltantes en la lista activa del proveedor"
+                      : "Crear los items faltantes seleccionados en la lista activa del proveedor"
+                    : applying
+                      ? "Agregando los items confirmados a la edicion actual"
+                      : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
+            }
+            aria-label={
+              workflowStage === "provider_mismatch_confirmation_required"
+                ? "Revisa el proveedor confirmado antes de continuar"
+                : workflowStage === "resolve_suggested_matches"
+                  ? "Primero resuelve las coincidencias sugeridas pendientes"
+                  : workflowStage === "ready_to_create_missing_items"
+                    ? creatingMissingItems
+                      ? "Creando los items faltantes en la lista activa del proveedor"
+                      : "Crear los items faltantes seleccionados en la lista activa del proveedor"
+                    : applying
+                      ? "Agregando los items confirmados a la edicion actual"
+                      : "Agregar los items confirmados a la edicion actual. Se guardaran al pulsar Guardar como version actual"
+            }
+          >
+            {creatingMissingItems || applying ? (
+              <span
+                className="quotation-provider-import-inline-spinner is-on-primary"
+                aria-hidden="true"
+              />
+            ) : workflowStage === "ready_to_create_missing_items" ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a9 9 0 1 0 9 9 9.01 9.01 0 0 0-9-9Zm3.75 9.75h-3v3h-1.5v-3h-3v-1.5h3v-3h1.5v3h3Z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8.78 6.47a.75.75 0 0 1 1.06 0l4.72 4.72a1.13 1.13 0 0 1 0 1.6l-4.72 4.72a.75.75 0 1 1-1.06-1.06l4.34-4.46-4.34-4.46a.75.75 0 0 1 0-1.06Z" />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
     </div>

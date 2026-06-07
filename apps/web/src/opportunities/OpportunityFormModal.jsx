@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import DatePicker from "react-datepicker";
 import { es } from "date-fns/locale";
+import ModalInlineHelp from "../help/ModalInlineHelp";
 import ManufacturerRegistrationsPanel from "../manufacturer-registrations/ManufacturerRegistrationsPanel";
 import OpportunityDocumentsPanel from "./OpportunityDocumentsPanel";
 import OpportunityWorkspacePanel from "./OpportunityWorkspacePanel";
@@ -104,39 +105,6 @@ function OpportunityFormModal({
   canRequestManufacturerRegistrations,
   canUpdateManufacturerRegistrations,
 }) {
-  const [showCreateHelp, setShowCreateHelp] = useState(false);
-  const createHelpRef = useRef(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setShowCreateHelp(false);
-  }, [editingOpportunityId, isOpen]);
-
-  useEffect(() => {
-    if (editingOpportunityId || !showCreateHelp) {
-      return undefined;
-    }
-
-    function handlePointerDown(event) {
-      if (!createHelpRef.current?.contains(event.target)) {
-        setShowCreateHelp(false);
-      }
-    }
-
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        setShowCreateHelp(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [editingOpportunityId, showCreateHelp]);
-
   if (!isOpen) return null;
 
   const isDocumentUploadLocked =
@@ -301,45 +269,19 @@ function OpportunityFormModal({
           <div className="modal-dialog-scroll-shell">
             <div className="modal-header">
               <div className="opportunity-modal-header-copy">
-                <div className="account-modal-help-shell" ref={createHelpRef}>
-                  <div className="account-modal-title-row">
-                    <h3 className="modal-title">
-                      {editingOpportunityId
-                        ? "Editar oportunidad"
-                        : "Crear oportunidad"}
-                    </h3>
-                    {!editingOpportunityId ? (
-                      <button
-                        type="button"
-                        className="accounts-module-help-trigger account-modal-help-trigger"
-                        aria-label="Ayuda sobre el modal de crear oportunidad"
-                        aria-expanded={showCreateHelp}
-                        title="Ayuda sobre el modal de crear oportunidad"
-                        onClick={() => setShowCreateHelp((current) => !current)}
-                      >
-                        ?
-                      </button>
-                    ) : null}
-                  </div>
-                  {!editingOpportunityId && showCreateHelp ? (
-                    <div
-                      className="account-modal-help-popover"
-                      role="dialog"
-                      aria-label="Ayuda sobre crear oportunidad"
-                    >
-                      <strong>Para qué sirve este modal</strong>
-                      <p>
-                        Úsalo para registrar una oportunidad comercial nueva con
-                        su contexto base, evidencia documental y responsables.
-                      </p>
-                      <strong>Qué conviene definir primero</strong>
-                      <p>
-                        Empieza por la cuenta, el contacto, la línea de negocio
-                        y los documentos de referencia para que el borrador
-                        sugiera mejor nombre, monto y datos relacionados.
-                      </p>
-                    </div>
-                  ) : null}
+                <div className="account-modal-title-row">
+                  <h3 className="modal-title">
+                    {editingOpportunityId
+                      ? "Editar oportunidad"
+                      : "Crear oportunidad"}
+                  </h3>
+                  <ModalInlineHelp
+                    helpKey={
+                      editingOpportunityId
+                        ? "opportunity.edit"
+                        : "opportunity.create"
+                    }
+                  />
                 </div>
                 <p className="field-hint opportunity-modal-subtitle">
                   {editingOpportunityId
