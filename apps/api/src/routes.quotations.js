@@ -9202,6 +9202,14 @@ async function requestProposalBrochureRecommendations({
     };
   }
 
+  const aiUsageUserId = Number(user?.id || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId = randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
   const payload = {
     model: config.openai.model,
     input: [
@@ -9285,6 +9293,18 @@ async function requestProposalBrochureRecommendations({
     }
 
     const responseData = await response.json();
+    if (aiUsageUserId) {
+      await recordAiUsageFromOpenAiResponse({
+        internalRequestId: aiUsageInternalRequestId,
+        userId: aiUsageUserId,
+        featureCode: "proposals.brochure_recommendation",
+        model: String(payload?.model || config.openai.model || "").trim(),
+        openAiResponse: responseData,
+        jobType: "proposal_brochure_recommendation",
+        jobId: Number(proposal?.id || 0) || null,
+        startedAt: aiUsageStartedAt,
+      });
+    }
     const parsed = extractJsonObject(getOpenAiOutputText(responseData));
     const recommendedAssetPublicIds = Array.from(
       new Set(

@@ -47,6 +47,12 @@ const MANUFACTURER_REGISTRATION_PERMISSIONS = [
   },
 ];
 
+const LEGACY_CREATE_PERMISSION = {
+  code: "registros_fabricantes.create",
+  action: "create",
+  description: "Crear registros de fabricantes",
+};
+
 async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
   for (const role of roleRows) {
     for (const permission of permissionRows) {
@@ -65,6 +71,50 @@ async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
 export async function ensureManufacturerRegistrationPermissions() {
   await withTransaction(async (conn) => {
     const now = new Date();
+
+    const [legacyPermissionRows] = await conn.query(
+      `SELECT id
+       FROM permissions
+       WHERE code = ?`,
+      [LEGACY_CREATE_PERMISSION.code],
+    );
+
+    if (legacyPermissionRows.length) {
+      const [requestPermissionRows] = await conn.query(
+        `SELECT id
+         FROM permissions
+         WHERE code = ?`,
+        ["registros_fabricantes.request"],
+      );
+
+      if (requestPermissionRows.length) {
+        for (const legacyPermission of legacyPermissionRows) {
+          await conn.query(
+            `DELETE FROM role_permissions
+             WHERE permission_id = ?`,
+            [legacyPermission.id],
+          );
+          await conn.query(
+            `DELETE FROM permissions
+             WHERE id = ?`,
+            [legacyPermission.id],
+          );
+        }
+      } else {
+        await conn.query(
+          `UPDATE permissions
+           SET code = ?, action = ?, description = ?, updated_at = ?
+           WHERE code = ?`,
+          [
+            "registros_fabricantes.request",
+            "request",
+            "Solicitar registros de fabricantes",
+            now,
+            LEGACY_CREATE_PERMISSION.code,
+          ],
+        );
+      }
+    }
 
     for (const permission of MANUFACTURER_REGISTRATION_PERMISSIONS) {
       await conn.query(

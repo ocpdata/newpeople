@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 import { config } from "./config.js";
 import { query } from "./db.js";
 import {
@@ -1152,10 +1157,15 @@ function buildDescriptionsFromExternalContext({ draft, externalContext }) {
   );
 }
 
-async function searchPublicCompanyInfo({ draft, catalogContext }) {
+async function searchPublicCompanyInfo({
+  draft,
+  catalogContext,
+  aiUsageContext,
+}) {
   return runProfiledStructuredWebResearch(accountCompanyResearchProfile, {
     draft,
     catalogContext,
+    aiUsageContext,
   });
 }
 
@@ -1164,12 +1174,14 @@ async function searchPublicCompanyLocationInfo({
   catalogContext,
   preferredWebsite,
   currentContactData,
+  aiUsageContext,
 }) {
   return runProfiledStructuredWebResearch(accountLocationResearchProfile, {
     draft,
     catalogContext,
     preferredWebsite,
     currentContactData,
+    aiUsageContext,
   });
 }
 
@@ -1714,9 +1726,19 @@ async function generateOpenAiSuggestions({
   dataQualityFindings,
   catalogContext,
   externalContext,
+  aiUsageContext = null,
 }) {
   if (!config.openai.apiKey) {
     return null;
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -1766,6 +1788,20 @@ async function generateOpenAiSuggestions({
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(aiUsageContext?.featureCode || "accounts.draft_analysis") ||
+        "accounts.draft_analysis",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
   const content = data?.choices?.[0]?.message?.content || "";
   return extractJsonObject(content);
 }
@@ -1773,6 +1809,13 @@ async function generateOpenAiSuggestions({
 export async function analyzeLegacyAccountDraft({ draft, options, user }) {
   draft = normalizeAccountDraft(draft);
   options = normalizeDraftAnalysisOptions(options);
+  const aiUsageContext = user?.id
+    ? {
+        userId: Number(user.id),
+        featureCode: "accounts.draft_analysis",
+        jobType: "account_draft_analysis",
+      }
+    : null;
 
   const [catalogContext, economicSectorOptions] = await Promise.all([
     getCatalogContext(draft),
@@ -2024,6 +2067,7 @@ export async function analyzeLegacyAccountDraft({ draft, options, user }) {
           catalogContext,
           preferredWebsite: suggestedWebsite.value,
           currentContactData: suggestedContactData,
+          aiUsageContext,
         });
 
         if (
@@ -2084,6 +2128,7 @@ export async function analyzeLegacyAccountDraft({ draft, options, user }) {
         const webSearchResult = await searchPublicCompanyInfo({
           draft,
           catalogContext,
+          aiUsageContext,
         });
 
         if (webSearchResult) {
@@ -2185,6 +2230,7 @@ export async function analyzeLegacyAccountDraft({ draft, options, user }) {
         dataQualityFindings,
         catalogContext,
         externalContext,
+        aiUsageContext,
       });
 
       if (openAiSuggestions) {

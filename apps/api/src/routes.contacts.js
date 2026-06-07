@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
 import express from "express";
 import { z } from "zod";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
@@ -337,9 +342,22 @@ function getOpenAiOutputText(responseData) {
   return "";
 }
 
-async function analyzeContactDuplicateReview({ draft, duplicateWarnings }) {
+async function analyzeContactDuplicateReview({
+  draft,
+  duplicateWarnings,
+  aiUsageContext = null,
+}) {
   if (!config.openai.apiKey || !duplicateWarnings.length) {
     return { duplicateReview: null, usedAiGeneration: false };
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -402,6 +420,20 @@ async function analyzeContactDuplicateReview({ draft, duplicateWarnings }) {
   }
 
   const responseData = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(aiUsageContext?.featureCode || "contacts.duplicate_review") ||
+        "contacts.duplicate_review",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: responseData,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
   const parsed = extractJsonObject(getOpenAiOutputText(responseData));
   if (!parsed) {
     throw new Error("OpenAI request failed: invalid JSON response");
@@ -434,7 +466,7 @@ function getContactDuplicateDecision({ duplicateWarnings, duplicateReview }) {
   return "blocked";
 }
 
-export async function validateContactDuplicates({ draft }) {
+export async function validateContactDuplicates({ draft, user = null }) {
   const duplicateCandidates = await getContactDuplicateCandidates({ draft });
   const duplicateWarnings = buildContactDuplicateWarnings({
     draft,
@@ -448,6 +480,13 @@ export async function validateContactDuplicates({ draft }) {
     const aiReview = await analyzeContactDuplicateReview({
       draft,
       duplicateWarnings,
+      aiUsageContext: user?.id
+        ? {
+            userId: Number(user.id),
+            featureCode: "contacts.duplicate_review",
+            internalRequestId: `contact_duplicate_review:${Number(user.id)}:${Date.now()}`,
+          }
+        : null,
     });
     duplicateReview = aiReview.duplicateReview;
     if (aiReview.usedAiGeneration) {
@@ -796,6 +835,7 @@ router.post(
 
     const duplicateValidation = await validateContactDuplicates({
       draft: body,
+      user: req.user,
     });
 
     if (duplicateValidation.duplicateDecision !== "clear") {

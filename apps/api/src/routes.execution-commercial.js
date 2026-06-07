@@ -4145,6 +4145,7 @@ async function requestCommercialEmailSuggestionWithAi({
   opportunity,
   details,
   recipientName = "",
+  aiUsageContext = null,
 }) {
   const fallback = buildCommercialEmailSuggestionFallback(
     opportunity,
@@ -4154,6 +4155,15 @@ async function requestCommercialEmailSuggestionWithAi({
 
   if (!config.openai.apiKey) {
     return fallback;
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const normalizedDetails = normalizeCommercialEmailDraft(details);
@@ -4221,6 +4231,22 @@ async function requestCommercialEmailSuggestionWithAi({
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode ||
+            "commercial_development.email_suggestion",
+        ) || "commercial_development.email_suggestion",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
   const parsed = extractJsonObject(extractResponseOutputText(data));
   const subject = String(parsed?.subject || "").trim() || fallback.subject;
   const messageBody =
@@ -5591,6 +5617,15 @@ router.post(
         opportunity,
         details,
         recipientName,
+        aiUsageContext: req.user?.id
+          ? {
+              userId: Number(req.user.id),
+              featureCode: "commercial_development.email_suggestion",
+              jobType: "commercial_email_suggestion",
+              jobId: Number(opportunity.id),
+              internalRequestId: `commercial_email_suggestion:${Number(opportunity.id)}:${Date.now()}`,
+            }
+          : null,
       }).catch((error) => {
         if (config.nodeEnv !== "test") {
           console.error(

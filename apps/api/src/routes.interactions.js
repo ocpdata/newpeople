@@ -1224,6 +1224,13 @@ async function buildInteractionAnalysis({
       ...extractedDocuments.map(buildExtractedDocumentAnalysisInput),
     ],
     accessibleContext,
+    aiUsageContext: user?.id
+      ? {
+          userId: Number(user.id),
+          featureCode: "interactions.analysis",
+          internalRequestId: `interaction_analysis:${Number(user.id)}:${Date.now()}`,
+        }
+      : null,
   });
 }
 
@@ -1838,6 +1845,7 @@ async function createContactFromDraft(conn, user, accountId, draft) {
       managerContactId: null,
       influencesContactId: null,
     },
+    user,
   });
   if (duplicateValidation.duplicateDecision !== "clear") {
     throw Object.assign(

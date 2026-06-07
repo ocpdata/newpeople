@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "../ai-usage/service.js";
 import { config } from "../config.js";
 import { summarizeForPrompt } from "../opportunity-documents/service.js";
 
@@ -363,13 +367,27 @@ function mergeHeuristicAnalysis(aiAnalysis, heuristicAnalysis) {
   };
 }
 
-async function analyzeInteractionTextWithAi({ title, sourceNotes, text }) {
+async function analyzeInteractionTextWithAi({
+  title,
+  sourceNotes,
+  text,
+  aiUsageContext = null,
+}) {
   const trimmedText = summarizeForPrompt(
     [title, sourceNotes, text].filter(Boolean).join("\n\n"),
     18000,
   );
   if (!trimmedText || !config.openai.apiKey) {
     return null;
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
   const payload = {
@@ -454,6 +472,20 @@ async function analyzeInteractionTextWithAi({ title, sourceNotes, text }) {
   }
 
   const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(aiUsageContext?.featureCode || "interactions.analysis") ||
+        "interactions.analysis",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
   return extractJsonObject(extractResponseOutputText(data));
 }
 
@@ -515,6 +547,7 @@ export async function analyzeInteractionEvidence({
   sourceNotes,
   documentExtractions,
   accessibleContext,
+  aiUsageContext = null,
 }) {
   const mergedText = documentExtractions
     .map((extraction) => extraction.normalizedText || extraction.rawText || "")
@@ -529,6 +562,7 @@ export async function analyzeInteractionEvidence({
     title,
     sourceNotes,
     text: mergedText,
+    aiUsageContext,
   }).catch(() => null);
   const analysis = mergeHeuristicAnalysis(aiAnalysis, heuristicAnalysis);
   const warnings = ensureArrayOfStrings([

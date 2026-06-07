@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "../ai-usage/service.js";
 import { config } from "../config.js";
 import { query, withTransaction } from "../db.js";
 import {
@@ -137,9 +141,7 @@ function uniqueStrings(values) {
 
 function toStringArray(value) {
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => String(entry || "").trim())
-      .filter(Boolean);
+    return value.map((entry) => String(entry || "").trim()).filter(Boolean);
   }
   if (typeof value === "string") {
     return value
@@ -383,7 +385,12 @@ function tryParseJsonPayloadPart(part) {
   }
 }
 
-async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
+async function requestOpenAiSummarySuggestion({
+  text,
+  fileName,
+  hint = "",
+  aiUsageContext = null,
+}) {
   if (!config.openai.apiKey) {
     throw createAiOnlyError({
       status: 500,
@@ -394,6 +401,14 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
   }
 
   const requestStartedAt = Date.now();
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
 
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
@@ -443,6 +458,22 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
     response.headers.get("openai-request-id") ||
     null;
 
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode || "commercial_enablement.intake_summary",
+        ) || "commercial_enablement.intake_summary",
+      model: ANALYSIS_MODEL,
+      openAiResponse: payload,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
+
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
     if (parsed && typeof parsed === "object") {
@@ -468,7 +499,8 @@ async function requestOpenAiSummarySuggestion({ text, fileName, hint = "" }) {
             model: ANALYSIS_MODEL,
             requestId,
             latencyMs: Date.now() - requestStartedAt,
-            inputChars: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS).length,
+            inputChars: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS)
+              .length,
             outputChars: summary.length,
           },
         };
@@ -874,7 +906,13 @@ function buildFieldDecisions(analysis, acceptedPayload) {
   return decisions;
 }
 
-async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
+async function requestOpenAiPrefill({
+  catalogs,
+  text,
+  fileName,
+  hint,
+  aiUsageContext = null,
+}) {
   if (!config.openai.apiKey) {
     throw createAiOnlyError({
       status: 500,
@@ -885,6 +923,14 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
   }
 
   const requestStartedAt = Date.now();
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
 
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
@@ -950,6 +996,22 @@ async function requestOpenAiPrefill({ catalogs, text, fileName, hint }) {
     response.headers.get("openai-request-id") ||
     null;
 
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode || "commercial_enablement.intake_prefill",
+        ) || "commercial_enablement.intake_prefill",
+      model: ANALYSIS_MODEL,
+      openAiResponse: payload,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
+
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
     if (parsed) {
@@ -982,6 +1044,7 @@ async function requestOpenAiClassificationSuggestion({
   fileName,
   hint,
   summary,
+  aiUsageContext = null,
 }) {
   if (!config.openai.apiKey) {
     throw createAiOnlyError({
@@ -993,6 +1056,14 @@ async function requestOpenAiClassificationSuggestion({
   }
 
   const requestStartedAt = Date.now();
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
   const response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
@@ -1009,7 +1080,7 @@ async function requestOpenAiClassificationSuggestion({
             content: [
               {
                 type: "input_text",
-                text: "Devuelve exclusivamente JSON valido con clasificacion comercial. Usa solo codigos del catalogo provisto. No inventes codigos. Responde con: {\"assetTypeCode\": string|null, \"audienceCode\": string|null, \"manufacturerCodes\": string[], \"solutionCodes\": string[], \"industryCodes\": string[], \"stageCodes\": string[]}",
+                text: 'Devuelve exclusivamente JSON valido con clasificacion comercial. Usa solo codigos del catalogo provisto. No inventes codigos. Responde con: {"assetTypeCode": string|null, "audienceCode": string|null, "manufacturerCodes": string[], "solutionCodes": string[], "industryCodes": string[], "stageCodes": string[]}',
               },
             ],
           },
@@ -1065,6 +1136,23 @@ async function requestOpenAiClassificationSuggestion({
     response.headers.get("openai-request-id") ||
     null;
 
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode ||
+            "commercial_enablement.intake_classification",
+        ) || "commercial_enablement.intake_classification",
+      model: ANALYSIS_MODEL,
+      openAiResponse: payload,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
+
   for (const part of extractJsonPayloadParts(payload)) {
     const parsed = tryParseJsonPayloadPart(part);
     if (parsed && typeof parsed === "object") {
@@ -1086,7 +1174,8 @@ async function requestOpenAiClassificationSuggestion({
   throw createAiOnlyError({
     status: 502,
     code: "ai_output_unparseable",
-    message: "No fue posible interpretar una salida IA valida para clasificacion",
+    message:
+      "No fue posible interpretar una salida IA valida para clasificacion",
     retryable: true,
   });
 }
@@ -1097,7 +1186,10 @@ export async function reanalyzeCommercialEnablementAssetSummary({
 }) {
   await ensureCommercialEnablementStarterData();
 
-  const asset = await getCommercialEnablementAssetDetail({ user, assetPublicId });
+  const asset = await getCommercialEnablementAssetDetail({
+    user,
+    assetPublicId,
+  });
   if (!asset) {
     const error = new Error("Activo no encontrado");
     error.status = 404;
@@ -1139,8 +1231,7 @@ export async function reanalyzeCommercialEnablementAssetSummary({
     );
     error.status = 422;
     error.body = {
-      message:
-        "No existe texto fuente suficiente para reanalizar el resumen",
+      message: "No existe texto fuente suficiente para reanalizar el resumen",
       error: {
         code: "asset_summary_source_insufficient",
         retryable: false,
@@ -1153,6 +1244,15 @@ export async function reanalyzeCommercialEnablementAssetSummary({
     text: sourceText,
     fileName: source.source_file_name || asset.title || "documento",
     hint: asset.summary || asset.title || "",
+    aiUsageContext: user?.id
+      ? {
+          userId: Number(user.id),
+          featureCode: "commercial_enablement.asset_summary_reanalysis",
+          jobType: "commercial_enablement_asset_summary_reanalysis",
+          jobId: Number(asset.id),
+          internalRequestId: `commercial_enablement_asset_summary_reanalysis:${Number(asset.id)}:${Date.now()}`,
+        }
+      : null,
   });
   const summaryText = summarizeText(
     aiSuggestion?.summary || "",
@@ -1209,6 +1309,13 @@ async function analyzeIntakeSessionInternal({
   }
 
   const catalogs = await getCommercialEnablementCatalogs();
+  const aiUsageBaseContext = Number(sessionRow.uploaded_by_user_id || 0)
+    ? {
+        userId: Number(sessionRow.uploaded_by_user_id),
+        jobType: "commercial_enablement_intake",
+        jobId: Number(sessionRow.id),
+      }
+    : null;
   const textRows = await query(
     `SELECT text_content FROM commercial_enablement_intake_extracted_content WHERE intake_session_id = ? ORDER BY id`,
     [Number(sessionRow.id)],
@@ -1221,6 +1328,13 @@ async function analyzeIntakeSessionInternal({
     text,
     fileName: sessionRow.source_file_name,
     hint: hint || sessionRow.source_hint || "",
+    aiUsageContext: aiUsageBaseContext
+      ? {
+          ...aiUsageBaseContext,
+          featureCode: "commercial_enablement.intake_prefill",
+          internalRequestId: `commercial_enablement_intake_prefill:${Number(sessionRow.id)}:${Date.now()}`,
+        }
+      : null,
   });
   if (!aiResult?.payload || typeof aiResult.payload !== "object") {
     throw createAiOnlyError({
@@ -1250,6 +1364,13 @@ async function analyzeIntakeSessionInternal({
       hint:
         String(hint || sessionRow.source_hint || "").trim() ||
         "Genera un resumen comercial breve en espanol",
+      aiUsageContext: aiUsageBaseContext
+        ? {
+            ...aiUsageBaseContext,
+            featureCode: "commercial_enablement.intake_summary",
+            internalRequestId: `commercial_enablement_intake_summary:${Number(sessionRow.id)}:${Date.now()}`,
+          }
+        : null,
     });
     aiSummary = summarizeNaturalText(
       String(summaryFallback?.summary || ""),
@@ -1294,7 +1415,8 @@ async function analyzeIntakeSessionInternal({
           40000,
         ),
         confidence: aiPrefill?.internalDescription?.confidence || "low",
-        decisionRequired: aiPrefill?.internalDescription?.decisionRequired !== false,
+        decisionRequired:
+          aiPrefill?.internalDescription?.decisionRequired !== false,
         evidence: Array.isArray(aiPrefill?.internalDescription?.evidence)
           ? aiPrefill.internalDescription.evidence
           : [],
@@ -1310,7 +1432,8 @@ async function analyzeIntakeSessionInternal({
       manufacturerCodes: {
         values: uniqueStrings(aiPrefill?.manufacturerCodes?.values || []),
         confidence: aiPrefill?.manufacturerCodes?.confidence || "low",
-        decisionRequired: aiPrefill?.manufacturerCodes?.decisionRequired !== false,
+        decisionRequired:
+          aiPrefill?.manufacturerCodes?.decisionRequired !== false,
         evidence: Array.isArray(aiPrefill?.manufacturerCodes?.evidence)
           ? aiPrefill.manufacturerCodes.evidence
           : [],
@@ -1340,7 +1463,9 @@ async function analyzeIntakeSessionInternal({
           : [],
       },
       languageCode: {
-        value: ["es", "en"].includes(String(aiPrefill?.languageCode?.value || ""))
+        value: ["es", "en"].includes(
+          String(aiPrefill?.languageCode?.value || ""),
+        )
           ? String(aiPrefill.languageCode.value)
           : languageCode,
         confidence: aiPrefill?.languageCode?.confidence || "medium",
@@ -1395,7 +1520,11 @@ async function analyzeIntakeSessionInternal({
     4,
   );
   analysis.prefill.stageCodes = {
-    values: normalizeCatalogCodes(aiPrefill?.stageCodes?.values || [], catalogs.stage, 4),
+    values: normalizeCatalogCodes(
+      aiPrefill?.stageCodes?.values || [],
+      catalogs.stage,
+      4,
+    ),
     confidence: aiPrefill?.stageCodes?.confidence || "low",
     decisionRequired: true,
     evidence: Array.isArray(aiPrefill?.stageCodes?.evidence)
@@ -1413,6 +1542,13 @@ async function analyzeIntakeSessionInternal({
       fileName: sessionRow.source_file_name,
       hint: hint || sessionRow.source_hint || "",
       summary: aiSummary,
+      aiUsageContext: aiUsageBaseContext
+        ? {
+            ...aiUsageBaseContext,
+            featureCode: "commercial_enablement.intake_classification",
+            internalRequestId: `commercial_enablement_intake_classification:${Number(sessionRow.id)}:${Date.now()}`,
+          }
+        : null,
     });
     const c = classify.payload || {};
 
@@ -1428,8 +1564,16 @@ async function analyzeIntakeSessionInternal({
       catalogs.manufacturer,
       6,
     );
-    const solutionCodes = normalizeCatalogCodes(c.solutionCodes, catalogs.solution, 6);
-    const industryCodes = normalizeCatalogCodes(c.industryCodes, catalogs.industry, 4);
+    const solutionCodes = normalizeCatalogCodes(
+      c.solutionCodes,
+      catalogs.solution,
+      6,
+    );
+    const industryCodes = normalizeCatalogCodes(
+      c.industryCodes,
+      catalogs.industry,
+      4,
+    );
     const stageCodes = normalizeCatalogCodes(c.stageCodes, catalogs.stage, 4);
 
     analysis.prefill.manufacturerCodes.values = uniqueStrings([
