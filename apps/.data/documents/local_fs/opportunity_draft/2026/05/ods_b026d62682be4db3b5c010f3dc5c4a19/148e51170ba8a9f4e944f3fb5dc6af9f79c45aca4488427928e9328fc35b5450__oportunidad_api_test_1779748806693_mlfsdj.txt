@@ -1,0 +1,9 @@
+Nombre de la oportunidad: Oportunidad documental api_test_1779748806693_mlfsdj
+Monto: 125000
+Fecha de cierre: 2026-08-15
+Cuenta: Cuenta fixture api_test_1779748806693_mlfsdj_opportunity_documents
+Contacto: Contacto Fixture api_test_1779748806693_mlfsdj_opportunity_documents
+Linea de negocio: F5 tradicional
+Vendedor: API Seller Fixture
+Preventa: 
+Notas: Proyecto derivado de propuesta comercial y llamada de descubrimiento.

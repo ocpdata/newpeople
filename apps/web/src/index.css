@@ -1301,6 +1301,11 @@ button:disabled {
   gap: 0.7rem;
 }
 
+.commercial-development-gap-coverage-card.is-focused {
+  border-color: rgba(44, 92, 59, 0.5);
+  box-shadow: 0 0 0 2px rgba(44, 92, 59, 0.16);
+}
+
 .commercial-development-gap-coverage-card strong {
   color: #223120;
 }

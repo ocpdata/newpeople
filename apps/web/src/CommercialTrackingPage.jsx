@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import "./commercial-tracking.css";
 
@@ -6,7 +7,7 @@ const TAB_OPTIONS = [
   { id: "overview", label: "Resumen" },
   { id: "open", label: "Abiertas" },
   { id: "period", label: "Oportunidades por periodo" },
-  { id: "forecast", label: "Forecast mensual" },
+  { id: "forecast", label: "Pipeline mensual" },
 ];
 
 const QUICK_FILTER_OPTIONS = [
@@ -119,6 +120,19 @@ function buildCockpitWeekOptions(selectedWeekStart) {
 
 function getCurrentMonth() {
   return new Date().toISOString().slice(0, 7);
+}
+
+function getQuarterKeyForDate(rawDate) {
+  const value = String(rawDate || "").trim();
+  if (!value) {
+    return "";
+  }
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const quarter = Math.floor(date.getMonth() / 3) + 1;
+  return `${date.getFullYear()}-${quarter}`;
 }
 
 function formatMonthLabel(value) {
@@ -360,6 +374,7 @@ function AttentionList({ title, items }) {
 }
 
 export default function CommercialTrackingPage() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
   const [weekStart, setWeekStart] = useState(getCurrentWeekStart);
   const [forecastMonth, setForecastMonth] = useState(getCurrentMonth);
@@ -502,7 +517,7 @@ export default function CommercialTrackingPage() {
         setError(
           getApiErrorMessage(
             requestError,
-            "No fue posible cargar el seguimiento comercial",
+            "No fue posible cargar el pipeline",
           ),
         );
       } finally {
@@ -587,7 +602,7 @@ export default function CommercialTrackingPage() {
           setError(
             getApiErrorMessage(
               requestError,
-              "No fue posible actualizar el seguimiento comercial",
+              "No fue posible actualizar el pipeline",
             ),
           );
         }
@@ -689,11 +704,33 @@ export default function CommercialTrackingPage() {
     });
   }
 
+  function openOpportunityFromForecast(opportunityId) {
+    const normalizedOpportunityId = Number(opportunityId || 0);
+    if (!normalizedOpportunityId) {
+      return;
+    }
+    navigate(`/opportunities?edit=${normalizedOpportunityId}`);
+  }
+
+  function openDevelopmentFromForecast(item) {
+    const normalizedOpportunityId = Number(item?.opportunityId || 0);
+    if (!normalizedOpportunityId) {
+      return;
+    }
+    const periodKey = getQuarterKeyForDate(item?.closeDate);
+    const params = new URLSearchParams({
+      opportunity: String(normalizedOpportunityId),
+    });
+    if (periodKey) {
+      params.set("period", periodKey);
+    }
+    navigate(`/commercial-development?${params.toString()}`);
+  }
+
   return (
     <section className="panel tracking-page">
       <header className="tracking-hero">
         <div className="tracking-hero-copy">
-          <span className="tracking-kicker">Cockpit comercial</span>
           <div className="module-title-with-icon">
             <span
               className="module-title-icon tracking-title-icon"
@@ -711,7 +748,7 @@ export default function CommercialTrackingPage() {
                 <path d="M17 18v-6" />
               </svg>
             </span>
-            <h2 data-help-id="tracking.title">Seguimiento comercial</h2>
+            <h2 data-help-id="tracking.title">Pipeline</h2>
           </div>
           <p className="section-helper-text tracking-hero-text">
             Da visibilidad al pipeline, al forecast y a los movimientos
@@ -720,19 +757,54 @@ export default function CommercialTrackingPage() {
         </div>
 
         <div className="tracking-toolbar" data-help-id="tracking.toolbar">
-          <label>
-            Semana
-            <select
-              value={weekStart}
-              onChange={(event) => setWeekStart(event.target.value)}
-            >
-              {cockpitWeekOptions.map((week) => (
-                <option key={week.value} value={week.value}>
-                  {week.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {activeTab === "forecast" ? (
+            <>
+              <label>
+                Mes
+                <select
+                  value={forecastMonth}
+                  onChange={(event) => {
+                    setForecastMonth(event.target.value);
+                    setForecastWeekStart("");
+                  }}
+                >
+                  {forecastMonthOptions.map((month) => (
+                    <option key={month.value} value={month.value}>
+                      {month.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Semana
+                <select
+                  value={forecastData?.meta?.activeWeekStart || forecastWeekStart}
+                  onChange={(event) => setForecastWeekStart(event.target.value)}
+                  disabled={!forecastWeeks.length}
+                >
+                  {forecastWeeks.map((week) => (
+                    <option key={week.key} value={week.key}>
+                      {week.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <label>
+              Semana
+              <select
+                value={weekStart}
+                onChange={(event) => setWeekStart(event.target.value)}
+              >
+                {cockpitWeekOptions.map((week) => (
+                  <option key={week.value} value={week.value}>
+                    {week.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Vendedor
             <select
@@ -807,7 +879,7 @@ export default function CommercialTrackingPage() {
         data-help-id="tracking.tabs"
         className="tracking-tabs"
         role="tablist"
-        aria-label="Vistas de seguimiento comercial"
+        aria-label="Vistas de pipeline"
       >
         {TAB_OPTIONS.map((tab) => (
           <button
@@ -823,7 +895,7 @@ export default function CommercialTrackingPage() {
 
       {loading ? (
         <div className="tracking-empty-state">
-          Cargando seguimiento comercial...
+          Cargando pipeline...
         </div>
       ) : null}
 
@@ -988,66 +1060,6 @@ export default function CommercialTrackingPage() {
 
       {!loading && activeTab === "forecast" ? (
         <div className="tracking-layout">
-          <section className="tracking-panel tracking-forecast-hero">
-            <div className="tracking-forecast-hero-main">
-              <div className="tracking-forecast-copy">
-                <span className="tracking-kicker">Seguimiento comercial</span>
-                <h3>Forecast mensual</h3>
-                <p className="tracking-inline-note tracking-forecast-description">
-                  Vista del mes objetivo con lectura semanal para revisar
-                  avance, riesgo y cobertura del pipeline.
-                </p>
-                <div className="tracking-forecast-meta">
-                  <span className="tracking-forecast-meta-chip">
-                    {forecastData?.meta?.monthStart &&
-                    forecastData?.meta?.monthEnd
-                      ? `${formatDate(forecastData.meta.monthStart)} - ${formatDate(forecastData.meta.monthEnd)}`
-                      : forecastMonth}
-                  </span>
-                  <span className="tracking-forecast-meta-chip tracking-forecast-meta-chip-soft">
-                    Filtra por fecha objetivo de cierre
-                  </span>
-                </div>
-              </div>
-              <div className="tracking-inline-filters tracking-inline-filters-compact">
-                <label>
-                  Mes
-                  <select
-                    value={forecastMonth}
-                    onChange={(event) => {
-                      setForecastMonth(event.target.value);
-                      setForecastWeekStart("");
-                    }}
-                  >
-                    {forecastMonthOptions.map((month) => (
-                      <option key={month.value} value={month.value}>
-                        {month.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Semana
-                  <select
-                    value={
-                      forecastData?.meta?.activeWeekStart || forecastWeekStart
-                    }
-                    onChange={(event) =>
-                      setForecastWeekStart(event.target.value)
-                    }
-                    disabled={!forecastWeeks.length}
-                  >
-                    {forecastWeeks.map((week) => (
-                      <option key={week.key} value={week.key}>
-                        {week.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-          </section>
-
           <div className="tracking-summary-grid is-forecast">
             <SummaryCard
               label="Oportunidades abiertas"
@@ -1237,6 +1249,7 @@ export default function CommercialTrackingPage() {
                           </span>
                         </button>
                       </th>
+                      <th className="tracking-actions-header">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1288,6 +1301,36 @@ export default function CommercialTrackingPage() {
                               ✓
                             </span>
                           ) : null}
+                        </td>
+                        <td className="tracking-actions-cell">
+                          <details className="tracking-kebab-menu">
+                            <summary
+                              className="tracking-kebab-button"
+                              aria-label={`Acciones de ${item.name}`}
+                            >
+                              ...
+                            </summary>
+                            <div className="tracking-kebab-dropdown">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openOpportunityFromForecast(
+                                    item.opportunityId,
+                                  )
+                                }
+                              >
+                                Ir a oportunidad
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openDevelopmentFromForecast(item)
+                                }
+                              >
+                                Ir a Desarrollo
+                              </button>
+                            </div>
+                          </details>
                         </td>
                       </tr>
                     ))}

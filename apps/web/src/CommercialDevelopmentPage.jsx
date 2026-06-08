@@ -23,7 +23,7 @@ function formatOpportunityScore(value) {
   // Your implementation here
 }
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 
 const ACTIVITY_TYPE_OPTIONS = [
@@ -3806,6 +3806,7 @@ function CommercialEmailDraftModal({
 
 export default function CommercialDevelopmentPage({ currentUser }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -3869,6 +3870,8 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   const dashboardRequestIdRef = useRef(0);
   const dashboardPendingRequestRef = useRef({ key: "", promise: null });
   const lastLoadedDashboardPeriodKeyRef = useRef("");
+  const gapCoverageCardRefs = useRef(new Map());
+  const [highlightedOpportunityId, setHighlightedOpportunityId] = useState(0);
 
   useEffect(() => {
     emailAttachmentOptionsRef.current = emailAttachmentOptionsByOpportunityId;
@@ -4390,6 +4393,18 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   ).size;
   const periodOptions = development.periods || [];
   const currentPeriod = development.period || null;
+  const focusOpportunityId = Number(searchParams.get("opportunity") || 0);
+  const focusPeriodKey = String(searchParams.get("period") || "").trim();
+
+  useEffect(() => {
+    if (!/^\d{4}-[1-4]$/.test(focusPeriodKey)) {
+      return;
+    }
+    if (focusPeriodKey === selectedPeriodKey) {
+      return;
+    }
+    setSelectedPeriodKey(focusPeriodKey);
+  }, [focusPeriodKey, selectedPeriodKey]);
 
   useEffect(() => {
     if (!currentPeriod?.year || !currentPeriod?.quarter) return;
@@ -4734,6 +4749,74 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   useEffect(() => {
     setDependencyDraft(buildDependencyDraft(activityModalItem));
   }, [activityModalItem]);
+
+  useEffect(() => {
+    if (!highlightedOpportunityId) {
+      return undefined;
+    }
+    const timerId = window.setTimeout(() => {
+      setHighlightedOpportunityId(0);
+    }, 3000);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [highlightedOpportunityId]);
+
+  useEffect(() => {
+    if (!focusOpportunityId || !workboard.length) {
+      return;
+    }
+
+    const focusItem =
+      workboardById.get(focusOpportunityId) ||
+      findDashboardOpportunity(dashboard, focusOpportunityId);
+    if (!focusItem) {
+      return;
+    }
+
+    if (focusItem.stageCode) {
+      setSelectedFunnelStage(String(focusItem.stageCode));
+    }
+
+    const normalizedFocusId = Number(focusItem.id || focusOpportunityId);
+    if (normalizedFocusId > 0) {
+      setHighlightedOpportunityId(normalizedFocusId);
+    }
+
+    const scrollTimer = window.setTimeout(() => {
+      const card = gapCoverageCardRefs.current.get(normalizedFocusId);
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 120);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("opportunity");
+    setSearchParams(nextParams, { replace: true });
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+    };
+  }, [
+    dashboard,
+    focusOpportunityId,
+    searchParams,
+    setSearchParams,
+    workboard.length,
+    workboardById,
+  ]);
+
+  const setGapCoverageCardRef = useCallback((opportunityId, node) => {
+    const normalizedOpportunityId = Number(opportunityId || 0);
+    if (!normalizedOpportunityId) {
+      return;
+    }
+    if (node) {
+      gapCoverageCardRefs.current.set(normalizedOpportunityId, node);
+      return;
+    }
+    gapCoverageCardRefs.current.delete(normalizedOpportunityId);
+  }, []);
 
   if (loading && !dashboard) {
     return (
@@ -6324,7 +6407,12 @@ export default function CommercialDevelopmentPage({ currentUser }) {
               return (
                 <article
                   key={`gap-coverage-${item.id}`}
-                  className="commercial-development-gap-coverage-card"
+                  ref={(node) => setGapCoverageCardRef(item.id, node)}
+                  className={`commercial-development-gap-coverage-card ${
+                    Number(item.id || 0) === Number(highlightedOpportunityId)
+                      ? "is-focused"
+                      : ""
+                  }`.trim()}
                 >
                   <div className="commercial-development-inline-row">
                     <div>

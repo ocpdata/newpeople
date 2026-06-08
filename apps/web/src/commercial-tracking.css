@@ -227,6 +227,10 @@
   gap: 1rem;
 }
 
+.tracking-forecast-hero-main.is-merged {
+  justify-content: flex-end;
+}
+
 .tracking-forecast-copy {
   display: flex;
   flex-direction: column;
@@ -378,6 +382,73 @@
 .tracking-critical-table .tracking-boolean-cell {
   text-align: center;
   width: 9rem;
+}
+
+.tracking-actions-header {
+  width: 5rem;
+}
+
+.tracking-actions-cell {
+  width: 5rem;
+  text-align: right;
+}
+
+.tracking-kebab-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.tracking-kebab-button {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(35, 58, 43, 0.12);
+  background: #fff;
+  color: #294437;
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.tracking-kebab-button::-webkit-details-marker {
+  display: none;
+}
+
+.tracking-kebab-menu[open] .tracking-kebab-button,
+.tracking-kebab-button:hover {
+  background: #f2f7f3;
+}
+
+.tracking-kebab-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 5;
+  min-width: 11.5rem;
+  padding: 0.35rem;
+  border-radius: 0.7rem;
+  border: 1px solid rgba(35, 58, 43, 0.12);
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(14, 35, 23, 0.14);
+}
+
+.tracking-kebab-dropdown button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #1f3328;
+  border-radius: 0.45rem;
+  padding: 0.5rem 0.55rem;
+  cursor: pointer;
+}
+
+.tracking-kebab-dropdown button:hover {
+  background: #f2f7f3;
 }
 
 .tracking-boolean-check {

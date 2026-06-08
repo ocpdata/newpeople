@@ -198,7 +198,7 @@ function toAmount(value) {
 async function listScopedOpportunities(user, filters = {}) {
   const params = [];
   const ownershipJoin = buildOwnershipJoin(user, params);
-  const where = ["1 = 1"];
+  const where = ["1 = 1", "oas.code = 'activada'"];
 
   if (!hasGlobalOpportunityScope(user)) {
     params.push(Number(user.id));

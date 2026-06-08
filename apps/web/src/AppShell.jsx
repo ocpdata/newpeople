@@ -496,7 +496,7 @@ export default function AppShell({
                   to="/commercial-tracking"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Seguimiento comercial
+                  Pipeline
                 </GuardedNavLink>
               ) : null}
               {canAccessCommercialPlanning ? (
