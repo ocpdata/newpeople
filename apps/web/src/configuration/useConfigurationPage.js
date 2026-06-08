@@ -477,13 +477,13 @@ function formatDateTime(value) {
   try {
     return new Date(value).toLocaleString("es-MX", {
       year: "numeric",
-        description: "Assets institucionales y contenido default por sección",
+      month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     });
-        title: "Parámetros por módulo",
-        description: "Reglas específicas por área funcional",
+  } catch {
+    return String(value);
   }
 }
 
