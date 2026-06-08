@@ -11,6 +11,10 @@ const READ_PERMISSIONS = [
   "registros_fabricantes.read",
   "registros_fabricantes.read_all",
 ];
+const OPPORTUNITY_READ_PERMISSIONS = [
+  "oportunidades.read",
+  "oportunidades.read_all",
+];
 const REQUEST_PERMISSION = "registros_fabricantes.request";
 const UPDATE_PERMISSION = "registros_fabricantes.update";
 const MANAGE_PERMISSION = "registros_fabricantes.manage";
@@ -405,7 +409,7 @@ function mapSortColumn(sortBy) {
 
 router.get(
   "/catalogs/manufacturer-registration-providers",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(READ_PERMISSIONS),
   async (_req, res) => {
     const rows = await query(
@@ -421,7 +425,7 @@ router.get(
 
 router.get(
   "/opportunities/:opportunityId/manufacturer-registrations",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(READ_PERMISSIONS),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);
@@ -471,7 +475,7 @@ router.get(
 
 router.get(
   "/opportunities/:opportunityId/manufacturer-registrations/:registrationId",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(READ_PERMISSIONS),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);
@@ -1032,7 +1036,7 @@ router.post(
 
 router.get(
   "/manufacturer-registrations",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(["registros_fabricantes.read_all"]),
   async (req, res) => {
     const parsed = listQuerySchema.safeParse(req.query || {});
@@ -1163,7 +1167,7 @@ router.get(
 
 router.get(
   "/manufacturer-registrations/alerts",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(["registros_fabricantes.read_all"]),
   async (req, res) => {
     const params = [];
@@ -1205,7 +1209,7 @@ router.get(
 
 router.get(
   "/manufacturer-registrations/:registrationId/audit",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(OPPORTUNITY_READ_PERMISSIONS),
   requireAnyPermission(READ_PERMISSIONS),
   async (req, res) => {
     const registrationId = Number(req.params.registrationId);
