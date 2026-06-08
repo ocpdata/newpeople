@@ -75,6 +75,7 @@ export default function ManufacturerRegistrationsPage({ can }) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [openRegistrationMenuId, setOpenRegistrationMenuId] = useState(null);
 
   async function loadProviders() {
     const { data } = await api.get(
@@ -150,6 +151,15 @@ export default function ManufacturerRegistrationsPage({ can }) {
     setModalMode("");
     setSelectedItem(null);
     setFormState({});
+  }
+
+  function toggleRegistrationMenu(id) {
+    setOpenRegistrationMenuId((current) => (current === id ? null : id));
+  }
+
+  function runRegistrationAction(callback) {
+    setOpenRegistrationMenuId(null);
+    callback();
   }
 
   async function handleActionSubmit(event) {
@@ -345,62 +355,86 @@ export default function ManufacturerRegistrationsPage({ can }) {
                     </span>
                   </td>
                   <td>{item.sellerUserName || "-"}</td>
-                  <td>
-                    <div className="manufacturer-registration-actions">
+                  <td className="accounts-actions-cell">
+                    <div className="user-kebab-wrap">
                       <button
                         type="button"
-                        className="btn-secondary"
-                        onClick={() => openDetail(item)}
+                        className="kebab-btn"
+                        onClick={() => toggleRegistrationMenu(item.id)}
+                        aria-label={`Abrir acciones de ${item.providerName || "registro"}`}
                       >
-                        Ver
+                        ⋮
                       </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() =>
-                          navigate(`/opportunities?edit=${item.opportunityId}`)
-                        }
-                      >
-                        Abrir oportunidad
-                      </button>
-                      {canManage && item.displayStatus === "sin_aprobar" ? (
-                        <>
+                      {openRegistrationMenuId === item.id ? (
+                        <div className="user-kebab-menu">
                           <button
                             type="button"
-                            className="btn-secondary"
-                            onClick={() => openAction("approve", item)}
+                            onClick={() => runRegistrationAction(() => openDetail(item))}
                           >
-                            Aprobar
+                            Ver
                           </button>
                           <button
                             type="button"
-                            className="btn-secondary"
-                            onClick={() => openAction("reject", item)}
+                            onClick={() =>
+                              runRegistrationAction(() =>
+                                navigate(`/opportunities?edit=${item.opportunityId}`),
+                              )
+                            }
                           >
-                            Rechazar
+                            Abrir oportunidad
                           </button>
-                        </>
-                      ) : null}
-                      {canManage &&
-                      (item.displayStatus === "aprobado" ||
-                        item.displayStatus === "renovado" ||
-                        item.displayStatus === "vencido") ? (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => openAction("renew", item)}
-                        >
-                          Renovar
-                        </button>
-                      ) : null}
-                      {canManage && item.displayStatus === "rechazado" ? (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => openAction("reopen", item)}
-                        >
-                          Reabrir
-                        </button>
+                          {canManage && item.displayStatus === "sin_aprobar" ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  runRegistrationAction(() =>
+                                    openAction("approve", item),
+                                  )
+                                }
+                              >
+                                Aprobar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  runRegistrationAction(() =>
+                                    openAction("reject", item),
+                                  )
+                                }
+                              >
+                                Rechazar
+                              </button>
+                            </>
+                          ) : null}
+                          {canManage &&
+                          (item.displayStatus === "aprobado" ||
+                            item.displayStatus === "renovado" ||
+                            item.displayStatus === "vencido") ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                runRegistrationAction(() =>
+                                  openAction("renew", item),
+                                )
+                              }
+                            >
+                              Renovar
+                            </button>
+                          ) : null}
+                          {canManage && item.displayStatus === "rechazado" ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                runRegistrationAction(() =>
+                                  openAction("reopen", item),
+                                )
+                              }
+                            >
+                              Reabrir
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                   </td>

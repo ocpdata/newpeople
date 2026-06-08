@@ -299,7 +299,8 @@ export default function AppShell({
         <Route
           path="/manufacturer-registrations"
           element={
-            canAccessManufacturerRegistrations && can("oportunidades.read") ? (
+            canAccessManufacturerRegistrations &&
+            (can("oportunidades.read") || can("oportunidades.read_all")) ? (
               <ManufacturerRegistrationsPage can={can} />
             ) : (
               <Navigate to="/" />
@@ -536,7 +537,8 @@ export default function AppShell({
 
           {(can("proveedores.read") ||
             (canAccessManufacturerRegistrations &&
-              can("oportunidades.read"))) && (
+              (can("oportunidades.read") ||
+                can("oportunidades.read_all")))) && (
             <SidebarNavGroup title="Operacion comercial">
               {can("proveedores.read") && (
                 <GuardedNavLink
@@ -547,7 +549,8 @@ export default function AppShell({
                 </GuardedNavLink>
               )}
               {canAccessManufacturerRegistrations &&
-              can("oportunidades.read") ? (
+              (can("oportunidades.read") ||
+                can("oportunidades.read_all")) ? (
                 <GuardedNavLink
                   to="/manufacturer-registrations"
                   onBeforeNavigate={confirmRouteChange}
