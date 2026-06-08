@@ -92,7 +92,14 @@ export async function loadUser(req, res, next) {
 
 export function requirePermission(permission) {
   return (req, res, next) => {
-    const hasPermission = req.user?.permissionSet?.has(permission);
+    const fallbackPermission = String(permission || "").endsWith(".read")
+      ? String(permission).replace(/\.read$/, ".read_all")
+      : null;
+    const hasPermission =
+      req.user?.permissionSet?.has(permission) ||
+      (fallbackPermission
+        ? req.user?.permissionSet?.has(fallbackPermission)
+        : false);
     if (!hasPermission) {
       return res.status(403).json({
         message: "No autorizado",

@@ -172,12 +172,17 @@ export default function AppShell({
   ].some(can);
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
+  const canReadAccounts =
+    can("cuentas.read") || can("cuentas.read_all");
+  const canReadContacts =
+    can("contactos.read") || can("contactos.read_all");
+  const canReadOpportunities =
+    can("oportunidades.read") || can("oportunidades.read_all");
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
-    can("oportunidades.read");
+    canReadOpportunities;
   const canAccessCommercialTracking =
-    can("seguimiento_comercial.read") &&
-    (can("oportunidades.read") || can("oportunidades.read_all"));
+    can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessProcessCommercialConfig =
     can("proceso_comercial_config.read") ||
     can("proceso_comercial_config.update");
@@ -247,7 +252,7 @@ export default function AppShell({
         <Route
           path="/accounts"
           element={
-            can("cuentas.read") ? (
+            canReadAccounts ? (
               <AccountsPage can={can} currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -289,7 +294,7 @@ export default function AppShell({
         <Route
           path="/opportunities"
           element={
-            can("oportunidades.read") ? (
+            canReadOpportunities ? (
               <OpportunitiesPage can={can} currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -380,7 +385,7 @@ export default function AppShell({
         <Route
           path="/contacts"
           element={
-            can("contactos.read") ? (
+            canReadContacts ? (
               <ContactsPage can={can} currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -390,7 +395,7 @@ export default function AppShell({
         <Route
           path="/contact-mapping"
           element={
-            can("contactos.read") ? (
+            canReadContacts ? (
               <ContactMappingPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
@@ -423,13 +428,13 @@ export default function AppShell({
             </GuardedNavLink>
           </SidebarNavGroup>
 
-          {(can("cuentas.read") ||
-            can("contactos.read") ||
-            can("oportunidades.read") ||
+          {(canReadAccounts ||
+            canReadContacts ||
+            canReadOpportunities ||
             canAccessQuotations ||
             canAccessManufacturerRegistrations) && (
             <SidebarNavGroup title="Comercial">
-              {can("cuentas.read") && (
+              {canReadAccounts && (
                 <GuardedNavLink
                   to="/accounts"
                   onBeforeNavigate={confirmRouteChange}
@@ -437,7 +442,7 @@ export default function AppShell({
                   Cuentas
                 </GuardedNavLink>
               )}
-              {can("contactos.read") && (
+              {canReadContacts && (
                 <GuardedNavLink
                   to="/contacts"
                   onBeforeNavigate={confirmRouteChange}
@@ -445,7 +450,7 @@ export default function AppShell({
                   Contactos
                 </GuardedNavLink>
               )}
-              {can("oportunidades.read") && (
+              {canReadOpportunities && (
                 <GuardedNavLink
                   to="/opportunities"
                   end
@@ -490,7 +495,7 @@ export default function AppShell({
             canAccessCommercialTracking ||
             canAccessCommercialPlanning ||
             canAccessCommercialEnablement ||
-            can("contactos.read")) && (
+            canReadContacts) && (
             <SidebarNavGroup title="Desarrollo">
               {canAccessCommercialTracking ? (
                 <GuardedNavLink
@@ -516,7 +521,7 @@ export default function AppShell({
                   Desarrollo Comercial
                 </GuardedNavLink>
               ) : null}
-              {can("contactos.read") ? (
+              {canReadContacts ? (
                 <GuardedNavLink
                   to="/contact-mapping"
                   onBeforeNavigate={confirmRouteChange}
@@ -536,9 +541,7 @@ export default function AppShell({
           )}
 
           {(can("proveedores.read") ||
-            (canAccessManufacturerRegistrations &&
-              (can("oportunidades.read") ||
-                can("oportunidades.read_all")))) && (
+            (canAccessManufacturerRegistrations && canReadOpportunities)) && (
             <SidebarNavGroup title="Operacion comercial">
               {can("proveedores.read") && (
                 <GuardedNavLink
@@ -549,8 +552,7 @@ export default function AppShell({
                 </GuardedNavLink>
               )}
               {canAccessManufacturerRegistrations &&
-              (can("oportunidades.read") ||
-                can("oportunidades.read_all")) ? (
+              canReadOpportunities ? (
                 <GuardedNavLink
                   to="/manufacturer-registrations"
                   onBeforeNavigate={confirmRouteChange}
