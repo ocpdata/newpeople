@@ -87,14 +87,14 @@ export default function ProviderFormModal({
             <div className="grid-form account-grid-location">
               <div className="field-group">
                 <label>
-                  Pais <span className="required-mark">*</span>
+                  País <span className="required-mark">*</span>
                 </label>
                 <select
                   value={form.countryId}
                   onChange={(e) => onChange("countryId", e.target.value)}
                   required
                 >
-                  <option value="">Selecciona pais</option>
+                  <option value="">Selecciona país</option>
                   {catalogs.countries.map((country) => (
                     <option key={country.id} value={country.id}>
                       {country.name}
@@ -124,7 +124,7 @@ export default function ProviderFormModal({
                 />
               </div>
               <div className="field-group">
-                <label>Codigo postal</label>
+                <label>Código postal</label>
                 <input
                   value={form.postalCode}
                   onChange={(e) => onChange("postalCode", e.target.value)}
@@ -152,7 +152,7 @@ export default function ProviderFormModal({
 
           {editingProviderId && editProviderAudit && (
             <section className="account-form-section account-modal-section modal-audit-strip">
-              <h4>Auditoria del proveedor</h4>
+              <h4>Auditoría del proveedor</h4>
               <div className="role-audit-grid">
                 <div className="audit-item">
                   <span className="audit-label">Creado por</span>

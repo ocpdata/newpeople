@@ -282,7 +282,7 @@ export function useUsersPage() {
       setShowCreateForm(false);
       setSuccess(
         data?.message ||
-          "Usuario creado. Se envio un correo para crear la contrasena.",
+          "Usuario creado. Se envió un correo para crear la contraseña.",
       );
       await load();
     } catch (err) {
@@ -333,7 +333,7 @@ export function useUsersPage() {
   function getUserActionConfirmationTitle() {
     if (confirmUserAction?.action === "active") return "Activar usuario";
     if (confirmUserAction?.action === "reset-password") {
-      return "Reiniciar contrasena";
+      return "Reiniciar contraseña";
     }
     return "Desactivar usuario";
   }
@@ -344,7 +344,7 @@ export function useUsersPage() {
       return `Seguro que deseas activar al usuario "${fullName}"?`;
     }
     if (confirmUserAction?.action === "reset-password") {
-      return `Seguro que deseas enviar un reinicio de contrasena para el usuario "${fullName}"?`;
+      return `Seguro que deseas enviar un reinicio de contraseña para el usuario "${fullName}"?`;
     }
     return `Seguro que deseas desactivar al usuario "${fullName}"?`;
   }

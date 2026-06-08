@@ -41,14 +41,14 @@ export default function QuotationProductPickerModal({
   const pickerSubtitle = state.isCreateMode
     ? "Completa solo los datos del nuevo item. El resto se hereda del proveedor y su lista activa."
     : isBundleParentTemplateMode
-      ? "Selecciona un producto o servicio propio para precargar codigo, descripcion y proveedor del nuevo padre del bundle."
-      : "Selecciona proveedor y luego el producto para precargar la fila. La lista activa se detecta automaticamente.";
+      ? "Selecciona un producto o servicio propio para precargar código, descripción y proveedor del nuevo padre del bundle."
+      : "Selecciona proveedor y luego el producto para precargar la fila. La lista activa se detecta automáticamente.";
   const searchLabel = isBundleParentTemplateMode
     ? "Buscar plantilla"
     : "Buscar producto";
   const emptyResultsLabel = isBundleParentTemplateMode
-    ? "No hay productos o servicios propios activos que coincidan con la busqueda."
-    : "No hay productos activos en la lista seleccionada que coincidan con la busqueda.";
+    ? "No hay productos o servicios propios activos que coincidan con la búsqueda."
+    : "No hay productos activos en la lista seleccionada que coincidan con la búsqueda.";
 
   const selectedPriceList =
     state.activeLists.find(
@@ -119,7 +119,7 @@ export default function QuotationProductPickerModal({
                 disabled={!selectedPriceList}
                 placeholder={
                   selectedPriceList
-                    ? "Codigo o descripcion"
+                    ? "Código o descripción"
                     : state.loadingLists
                       ? "Resolviendo lista activa..."
                       : "Selecciona primero un proveedor con lista activa"
@@ -142,8 +142,8 @@ export default function QuotationProductPickerModal({
             <table className="quotation-product-picker-table">
               <thead>
                 <tr>
-                  <th>Codigo</th>
-                  <th>Descripcion</th>
+                  <th>Código</th>
+                  <th>Descripción</th>
                   <th>Lista</th>
                   <th>Precio</th>
                   <th />

@@ -21,7 +21,14 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   QuotationCommercialConditionsCard,
+  QuotationFinancingCard,
   QuotationInternalNotesField,
+  buildQuotationFinancingForm,
+  buildQuotationFinancingPreview,
+  parseQuotationFinancingFromNotes,
+  QUOTATION_FINANCING_PAYMENT_TERMS_CODE,
+  removeQuotationFinancingNotesBlock,
+  upsertQuotationFinancingNotesBlock,
 } from "./QuotationCommercialFields";
 import { buildQuotationPrintModel } from "./quotationPrintModel";
 import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
@@ -169,7 +176,7 @@ const ITEM_TABLE_COLUMNS = [
   },
   {
     key: "productDescription",
-    label: "Descripcion",
+    label: "Descripción",
     defaultWidth: 220,
   },
   {
@@ -474,7 +481,7 @@ function CheckIcon() {
   );
 }
 
-function InclusionIcon({ code }) {
+function InclusiónIcon({ code }) {
   if (code === "no_incluida") {
     return (
       <svg
@@ -705,7 +712,7 @@ function getAttachToManualBundleSelectionState(sectionItems, selectedIds) {
     return {
       ok: false,
       message:
-        "Selecciona exactamente un bundle existente y una o mas filas independientes.",
+        "Selecciona exactamente un bundle existente y una o más filas independientes.",
     };
   }
 
@@ -756,7 +763,7 @@ function getDetachFromManualBundleSelectionState(sectionItems, selectedIds) {
     return {
       ok: false,
       message:
-        "Selecciona uno o mas componentes de un bundle manual para quitarlos del grupo.",
+        "Selecciona uno o más componentes de un bundle manual para quitarlos del grupo.",
     };
   }
 
@@ -923,6 +930,9 @@ function QuotationEditorContent({
   const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
   const [exchangeRateFeedback, setExchangeRateFeedback] = useState("");
   const [exchangeRateError, setExchangeRateError] = useState("");
+  const [financingForm, setFinancingForm] = useState(() =>
+    buildQuotationFinancingForm(),
+  );
   const quotationDocumentsInputRef = useRef(null);
   const quotationDocumentsDragDepthRef = useRef(0);
   const exchangeRateRequestSequenceRef = useRef(0);
@@ -1067,6 +1077,20 @@ function QuotationEditorContent({
       summaryVatMode,
     ],
   );
+  const quotationFinalTotal =
+    quotationSummary.summaryVatMode === "total"
+      ? quotationSummary.totalWithVatAmount
+      : quotationSummary.discountedTotalAmount;
+  const financingPreview = useMemo(
+    () =>
+      buildQuotationFinancingPreview({
+        financingForm,
+        totalAmount: quotationFinalTotal,
+        currencyCode: versionForm.currencyCode,
+        summaryVatMode,
+      }),
+    [financingForm, quotationFinalTotal, summaryVatMode, versionForm.currencyCode],
+  );
   const selectedContextContactName =
     contactOptions.find(
       (contact) => Number(contact.id) === Number(versionForm.contactId || 0),
@@ -1180,7 +1204,7 @@ function QuotationEditorContent({
           return {
             id: section.id,
             title: formatQuotationOptionalSectionTitle(
-              sectionDraftValue.title || `Seccion ${section.id}`,
+              sectionDraftValue.title || `Sección ${section.id}`,
               sectionDraftValue,
               catalogs.inclusionTypes,
             ),
@@ -1297,6 +1321,18 @@ function QuotationEditorContent({
       : currentVersionDocuments;
   const isUploadingDocuments = busyAction === "upload-quotation-documents";
 
+  function handleSaveVersionWithBundleState() {
+    handleSaveVersion({
+      bundleCollapseState: collapsedBundleIdsBySection,
+    });
+  }
+
+  function handleSaveAsNewVersionWithBundleState() {
+    handleSaveAsNewVersion({
+      bundleCollapseState: collapsedBundleIdsBySection,
+    });
+  }
+
   useEffect(() => {
     if (!isOpen) {
       return;
@@ -1327,10 +1363,26 @@ function QuotationEditorContent({
       recalculateField: "profitMarginPct",
     });
 
-    setCollapsedBundleIdsBySection(
+    const backendCollapsedState = normalizeBundleCollapseState(
+      selectedVersion?.bundleCollapseState,
+    );
+    const localCollapsedState = normalizeBundleCollapseState(
       readQuotationEditorBundleCollapseState(selectedVersion?.id),
     );
-  }, [isOpen, selectedVersion?.id]);
+    setCollapsedBundleIdsBySection(
+      Object.keys(backendCollapsedState).length
+        ? backendCollapsedState
+        : localCollapsedState,
+    );
+    setFinancingForm(
+      parseQuotationFinancingFromNotes(selectedVersion?.quotationNotes),
+    );
+  }, [
+    isOpen,
+    selectedVersion?.bundleCollapseState,
+    selectedVersion?.id,
+    selectedVersion?.quotationNotes,
+  ]);
 
   useEffect(() => {
     writeQuotationEditorBundleCollapseState(
@@ -1448,6 +1500,65 @@ function QuotationEditorContent({
       }
     }
   }
+
+  function handleFinancingFieldChange(field, value) {
+    setFinancingForm((currentValue) =>
+      buildQuotationFinancingForm({
+        ...currentValue,
+        [field]: value,
+      }),
+    );
+  }
+
+  useEffect(() => {
+    if (!financingForm.enabled) {
+      setVersionForm((prev) => {
+        const nextNotes = removeQuotationFinancingNotesBlock(
+          prev.quotationNotes,
+        );
+
+        if (nextNotes === String(prev.quotationNotes || "")) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          quotationNotes: nextNotes,
+        };
+      });
+      return;
+    }
+
+    if (!financingPreview.isValid || !financingPreview.noteBlock) {
+      return;
+    }
+
+    setVersionForm((prev) => {
+      const nextNotes = upsertQuotationFinancingNotesBlock(
+        prev.quotationNotes,
+        financingPreview.noteBlock,
+      );
+      const nextPaymentTerms = QUOTATION_FINANCING_PAYMENT_TERMS_CODE;
+
+      if (
+        nextNotes === String(prev.quotationNotes || "") &&
+        nextPaymentTerms === String(prev.paymentTerms || "")
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        paymentTerms: nextPaymentTerms,
+        quotationNotes: nextNotes,
+      };
+    });
+  }, [
+    financingForm.enabled,
+    financingPreview.isValid,
+    financingPreview.noteBlock,
+    setVersionForm,
+  ]);
 
   async function handleQuotationDocumentsInputChange(event) {
     const files = Array.from(event.target.files || []);
@@ -1596,10 +1707,27 @@ function QuotationEditorContent({
       }
 
       const parsedValue = JSON.parse(storedValue);
-      return parsedValue && typeof parsedValue === "object" ? parsedValue : {};
+      return normalizeBundleCollapseState(parsedValue);
     } catch {
       return {};
     }
+  }
+
+  function normalizeBundleCollapseState(state) {
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(state).map(([sectionId, bundleIds]) => [
+        String(sectionId),
+        Array.isArray(bundleIds)
+          ? bundleIds
+              .map((bundleId) => String(bundleId || "").trim())
+              .filter(Boolean)
+          : [],
+      ]),
+    );
   }
 
   function writeQuotationEditorBundleCollapseState(versionId, state) {
@@ -2453,7 +2581,7 @@ function QuotationEditorContent({
   if (!selectedVersion) {
     return (
       <p className="field-hint">
-        Selecciona una cotizacion para revisar su version.
+        Selecciona una cotización para revisar su versión.
       </p>
     );
   }
@@ -2545,7 +2673,7 @@ function QuotationEditorContent({
       <section className="account-form-section opportunity-sales-management-section">
         <div className="quotation-proposal-section-header">
           <div>
-            <h4>Datos de la cotizacion</h4>
+            <h4>Datos de la cotización</h4>
             <p className="field-hint">
               El vendedor se precarga desde la oportunidad seleccionada.
             </p>
@@ -2553,7 +2681,7 @@ function QuotationEditorContent({
         </div>
         <div className="grid-form account-grid-main">
           <div className="field-group">
-            <label>Nombre de la cotizacion</label>
+            <label>Nombre de la cotización</label>
             <input
               value={versionForm.proposalName}
               onChange={(event) =>
@@ -2565,7 +2693,7 @@ function QuotationEditorContent({
             />
           </div>
           <div className="field-group">
-            <label>Fecha de cotizacion</label>
+            <label>Fecha de cotización</label>
             <input
               type="date"
               value={versionForm.quotationDate}
@@ -2642,7 +2770,7 @@ function QuotationEditorContent({
         <div className="quotation-section-toolbar">
           <div>
             <div className="quotation-help-title-row">
-              <h4>Secciones de la cotizacion</h4>
+              <h4>Secciónes de la cotización</h4>
               <ModalInlineHelp helpKey="quotation.sections.toolbar" />
             </div>
           </div>
@@ -2652,8 +2780,8 @@ function QuotationEditorContent({
                 <button
                   type="button"
                   className="quotation-icon-button"
-                  aria-label="Crear seccion nueva"
-                  title="Crear seccion nueva"
+                  aria-label="Crear sección nueva"
+                  title="Crear sección nueva"
                   disabled={busyAction === "create-section"}
                   onClick={handleCreateSection}
                 >
@@ -2811,12 +2939,12 @@ function QuotationEditorContent({
                       null,
                   })
                 : "";
-              const sectionInclusionTypeName =
+              const sectionInclusiónTypeName =
                 catalogs.inclusionTypes.find(
                   (type) =>
                     String(type.id) ===
                     String(sectionDraftValue.inclusionTypeId),
-                )?.name || "Titulo de la seccion";
+                )?.name || "Título de la sección";
 
               return (
                 <div key={section.id} className="quotation-section-card">
@@ -3109,13 +3237,13 @@ function QuotationEditorContent({
                       </div>
                       <div className="quotation-action-group">
                         <span className="quotation-action-group-label">
-                          Seccion
+                          Sección
                         </span>
                         <div className="quotation-icon-actions quotation-icon-actions-section">
                           <div
                             className="quotation-inline-icon-group"
                             role="group"
-                            aria-label="Inclusion de la seccion"
+                            aria-label="Inclusión de la seccion"
                           >
                             {catalogs.inclusionTypes.map((type) => {
                               const isSelected =
@@ -3142,13 +3270,13 @@ function QuotationEditorContent({
                                     }));
                                   }}
                                 >
-                                  <InclusionIcon code={type.code} />
+                                  <InclusiónIcon code={type.code} />
                                 </button>
                               );
                             })}
                           </div>
                           <QuotationIconButton
-                            title="Subir seccion"
+                            title="Subir sección"
                             disabled={
                               busyAction === `move-section-${section.id}` ||
                               index === 0
@@ -3160,7 +3288,7 @@ function QuotationEditorContent({
                             <UpIcon />
                           </QuotationIconButton>
                           <QuotationIconButton
-                            title="Bajar seccion"
+                            title="Bajar sección"
                             disabled={
                               busyAction === `move-section-${section.id}` ||
                               index === selectedVersion.sections.length - 1
@@ -3170,7 +3298,7 @@ function QuotationEditorContent({
                             <DownIcon />
                           </QuotationIconButton>
                           <QuotationIconButton
-                            title="Eliminar seccion"
+                            title="Eliminar sección"
                             danger
                             disabled={
                               busyAction === `remove-section-${section.id}`
@@ -3204,7 +3332,7 @@ function QuotationEditorContent({
                       <label>Titulo</label>
                       <input
                         value={sectionDraftValue.title}
-                        placeholder={sectionInclusionTypeName}
+                        placeholder={sectionInclusiónTypeName}
                         onChange={(event) =>
                           setSectionEdits((prev) => ({
                             ...prev,
@@ -3275,11 +3403,11 @@ function QuotationEditorContent({
                           </div>
                           <div className="quotation-sale-adjustment-detail-wide">
                             <span className="quotation-sale-adjustment-label">
-                              Descripcion
+                              Descripción
                             </span>
                             <strong>
                               {selectedRowItem.productDescription ||
-                                "Sin descripcion"}
+                                "Sin descripción"}
                             </strong>
                           </div>
                         </div>
@@ -3457,7 +3585,7 @@ function QuotationEditorContent({
                                 : "El ajuste se calcula sin IVA por item."}
                             </p>
                             <p className="field-hint quotation-sale-adjustment-context">
-                              No cambia: precio de lista, cantidad, importacion
+                              No cambia: precio de lista, cantidad, importación
                               y las demas variables no seleccionadas.
                             </p>
                           </div>
@@ -3556,7 +3684,7 @@ function QuotationEditorContent({
                                   </strong>
                                   <span className="quotation-manual-bundle-option-description">
                                     {item.productDescription ||
-                                      "Sin descripcion"}
+                                      "Sin descripción"}
                                   </span>
                                 </span>
                               </label>
@@ -3581,7 +3709,7 @@ function QuotationEditorContent({
                                   </strong>
                                   <span>
                                     {item.productDescription ||
-                                      "Sin descripcion"}
+                                      "Sin descripción"}
                                   </span>
                                 </li>
                               ))}
@@ -4137,7 +4265,7 @@ function QuotationEditorContent({
                         </tbody>
                         <tfoot>
                           <tr>
-                            <td colSpan={11}>Totales de la seccion</td>
+                            <td colSpan={11}>Totales de la sección</td>
                             <td>
                               {formatQuotationAmount(
                                 displayedSectionTotals.costTotal,
@@ -4394,6 +4522,26 @@ function QuotationEditorContent({
         </div>
       </section>
 
+      <section className="account-form-section opportunity-sales-management-section quotation-financing-section">
+        <div className="quotation-proposal-section-header">
+          <div>
+            <h4>Financiamiento</h4>
+            <p className="field-hint quotation-create-step-hint">
+              Define cuota inicial, TEA y periodos sobre el total final de la
+              version.
+            </p>
+          </div>
+        </div>
+        <QuotationFinancingCard
+          idPrefix="edit-quotation"
+          currencyCode={versionForm.currencyCode}
+          totalAmount={quotationFinalTotal}
+          financingForm={financingForm}
+          financingPreview={financingPreview}
+          onFieldChange={handleFinancingFieldChange}
+        />
+      </section>
+
       <section className="account-form-section opportunity-sales-management-section quotation-commercial-conditions-section">
         <div className="quotation-proposal-section-header">
           <div>
@@ -4421,7 +4569,7 @@ function QuotationEditorContent({
               <ModalInlineHelp helpKey="quotation.documentation.toolbar" />
             </div>
             <p className="field-hint quotation-documents-hint">
-              Adjunta documentos de soporte para esta version de la cotizacion.
+              Adjunta documentos de soporte para esta version de la cotización.
             </p>
           </div>
           <div className="quotation-documents-toolbar">
@@ -4466,7 +4614,7 @@ function QuotationEditorContent({
               className={`quotation-documents-dropzone${isQuotationDocumentsDragActive ? " is-drag-active" : ""}${isUploadingDocuments ? " is-disabled" : ""}`}
               role="button"
               tabIndex={isUploadingDocuments ? -1 : 0}
-              aria-label="Arrastra y suelta documentos o haz clic para agregarlos a esta cotizacion"
+              aria-label="Arrastra y suelta documentos o haz clic para agregarlos a esta cotización"
               aria-disabled={isUploadingDocuments}
               onClick={handleQuotationDocumentsDropZoneClick}
               onKeyDown={handleQuotationDocumentsDropZoneKeyDown}
@@ -4607,8 +4755,8 @@ function QuotationEditorContent({
         ) : (
           <div className="quotation-documents-empty">
             {documentViewMode === "all"
-              ? "Esta cotizacion aun no tiene documentos adjuntos."
-              : "Esta version aun no tiene documentos adjuntos."}
+              ? "Esta cotización aún no tiene documentos adjuntos."
+              : "Esta versión aún no tiene documentos adjuntos."}
           </div>
         )}
       </section>
@@ -4638,7 +4786,7 @@ function QuotationEditorContent({
               type="button"
               className="btn-secondary"
               disabled={busyAction === "save-as-new-version"}
-              onClick={handleSaveAsNewVersion}
+              onClick={handleSaveAsNewVersionWithBundleState}
             >
               Guardar como nueva version
             </button>
@@ -4657,7 +4805,7 @@ function QuotationEditorContent({
               busyAction === "save-version" ||
               busyAction === "save-as-new-version"
             }
-            onClick={handleSaveVersion}
+            onClick={handleSaveVersionWithBundleState}
           >
             Guardar como version actual
           </button>

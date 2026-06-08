@@ -36,7 +36,7 @@ export function LoginPage({ onLogin }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
-          placeholder="Contrasena"
+          placeholder="Contraseña"
           required
         />
         {error && <p className="error">{error}</p>}
@@ -98,7 +98,7 @@ export function FirstUserSetup({ onDone }) {
         <input
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Contrasena"
+          placeholder="Contraseña"
           type="password"
           required
         />
@@ -170,7 +170,7 @@ export function SetPasswordPage({ onDone }) {
       if (!setupToken) {
         setInviteContext(null);
         setContextLoading(false);
-        setError("El enlace no es valido o esta incompleto.");
+        setError("El enlace no es válido o está incompleto.");
         return;
       }
 
@@ -220,7 +220,7 @@ export function SetPasswordPage({ onDone }) {
 
     if (password !== confirmPassword) {
       setSaving(false);
-      setError("Las contrasenas no coinciden");
+      setError("Las contraseñas no coinciden");
       return;
     }
 
@@ -229,11 +229,11 @@ export function SetPasswordPage({ onDone }) {
         token: setupToken,
         password,
       });
-      setSuccess(data?.message || "Contrasena configurada correctamente");
+      setSuccess(data?.message || "Contraseña configurada correctamente");
       onDone(data.token);
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible configurar la contrasena"),
+        getApiErrorMessage(err, "No fue posible configurar la contraseña"),
       );
     } finally {
       setSaving(false);
@@ -245,26 +245,26 @@ export function SetPasswordPage({ onDone }) {
       <div className="password-setup-shell">
         <aside className="password-setup-hero">
           <p className="password-setup-eyebrow">Acceso seguro</p>
-          <h1>Activa tu cuenta con una contrasena clara y fuerte.</h1>
+          <h1>Activa tu cuenta con una contraseña clara y fuerte.</h1>
           <p className="password-setup-copy">
-            Este paso deja tu acceso listo. Usa una contrasena facil de recordar
+            Este paso deja tu acceso listo. Usa una contraseña fácil de recordar
             para ti y dificil de adivinar para otros.
           </p>
           <div className="password-setup-points">
             <div className="password-setup-point">
-              <strong>Mas rapido</strong>
+              <strong>Más rápido</strong>
               <span>
                 Ve al grano con un formulario corto y una guia visual inmediata.
               </span>
             </div>
             <div className="password-setup-point">
-              <strong>Mas claro</strong>
+              <strong>Más claro</strong>
               <span>Revisamos en vivo los requisitos antes de enviar.</span>
             </div>
             <div className="password-setup-point">
-              <strong>Mas seguro</strong>
+              <strong>Más seguro</strong>
               <span>
-                La fortaleza de la contrasena se muestra mientras escribes.
+                La fortaleza de la contraseña se muestra mientras escribes.
               </span>
             </div>
           </div>
@@ -272,9 +272,9 @@ export function SetPasswordPage({ onDone }) {
 
         <form className="auth-card password-setup-card" onSubmit={submit}>
           <div className="password-setup-header">
-            <h2>Configurar contrasena</h2>
+            <h2>Configurar contraseña</h2>
             <p className="auth-copy">
-              Define la contrasena con la que vas a entrar al sistema y te
+              Define la contraseña con la que vas a entrar al sistema y te
               redirigiremos al dashboard.
             </p>
           </div>
@@ -304,12 +304,12 @@ export function SetPasswordPage({ onDone }) {
           ) : null}
 
           <label className="auth-field">
-            <span>Nueva contrasena</span>
+            <span>Nueva contraseña</span>
             <div className="password-input-wrap">
               <input
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Crea una contrasena segura"
+                placeholder="Crea una contraseña segura"
                 type={showPassword ? "text" : "password"}
                 autoComplete="new-password"
                 minLength={8}
@@ -357,12 +357,12 @@ export function SetPasswordPage({ onDone }) {
           </div>
 
           <label className="auth-field">
-            <span>Confirmar contrasena</span>
+            <span>Confirmar contraseña</span>
             <div className="password-input-wrap">
               <input
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repite tu contrasena"
+                placeholder="Repite tu contraseña"
                 type={showConfirmPassword ? "text" : "password"}
                 autoComplete="new-password"
                 minLength={8}
@@ -388,10 +388,10 @@ export function SetPasswordPage({ onDone }) {
             }`}
           >
             {confirmPassword.length === 0
-              ? "Confirma la contrasena para validar que coincide."
+              ? "Confirma la contraseña para validar que coincide."
               : passwordsMatch
-                ? "Las contrasenas coinciden."
-                : "Las contrasenas no coinciden."}
+                ? "Las contraseñas coinciden."
+                : "Las contraseñas no coinciden."}
           </p>
 
           {error && <p className="error">{error}</p>}
@@ -402,7 +402,7 @@ export function SetPasswordPage({ onDone }) {
           )}
 
           <button disabled={!canSubmit}>
-            {saving ? "Guardando..." : "Guardar contrasena"}
+            {saving ? "Guardando..." : "Guardar contraseña"}
           </button>
 
           <p className="auth-hint password-setup-note">

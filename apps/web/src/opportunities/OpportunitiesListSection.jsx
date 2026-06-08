@@ -105,7 +105,7 @@ function OpportunitiesListSection({
             Gestiona las oportunidades comerciales y su seguimiento
           </p>
           <p className="field-hint">
-            Las cotizaciones ahora se administran desde su modulo principal.
+            Las cotizaciones ahora se administran desde su módulo principal.
           </p>
         </div>
         {canCreateOrRequestOpportunities && (

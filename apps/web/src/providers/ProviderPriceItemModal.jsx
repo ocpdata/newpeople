@@ -204,7 +204,7 @@ export default function ProviderPriceItemModal({
                                 onChange={(e) =>
                                   onGroupBaseItemFilterChange(e.target.value)
                                 }
-                                placeholder="Busca por codigo o descripcion"
+                                placeholder="Busca por código o descripción"
                                 disabled={
                                   !groupBaseProviderId ||
                                   !groupBaseActiveList ||
@@ -232,7 +232,7 @@ export default function ProviderPriceItemModal({
                                         {item.code}
                                       </strong>
                                       <span className="provider-group-search-copy-description">
-                                        {item.description || "Sin descripcion"}
+                                        {item.description || "Sin descripción"}
                                       </span>
                                       <span className="provider-group-search-copy-price">
                                         {formatPriceValue(
@@ -296,7 +296,7 @@ export default function ProviderPriceItemModal({
                     <div className="provider-group-item-card">
                       <div className="provider-group-item-card-header">
                         <span className="provider-group-item-step">
-                          2. Descripcion
+                          2. Descripción
                         </span>
                         <p className="field-hint">
                           Resume claramente el alcance o contenido principal del
@@ -304,7 +304,7 @@ export default function ProviderPriceItemModal({
                         </p>
                       </div>
                       <div className="field-group">
-                        <label>Descripcion del item de grupo</label>
+                        <label>Descripción del item de grupo</label>
                         <textarea
                           value={priceItemForm.description}
                           onChange={(e) =>

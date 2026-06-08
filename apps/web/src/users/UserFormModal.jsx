@@ -183,8 +183,8 @@ export default function UserFormModal({
 
           {!isEditMode && (
             <p className="field-hint create-user-email-hint">
-              Al crear el usuario se enviara un correo para que configure su
-              contrasena en otra seccion de la aplicacion.
+              Al crear el usuario se enviará un correo para que configure su
+              contraseña en otra sección de la aplicación.
             </p>
           )}
 

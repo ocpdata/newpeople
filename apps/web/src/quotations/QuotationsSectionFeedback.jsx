@@ -3,7 +3,7 @@ function QuotationsSectionFeedback({ isOpportunityActive, error, success }) {
     <>
       {!isOpportunityActive ? (
         <p className="field-hint quotation-disabled-hint">
-          Solo se puede crear cotizacion desde una oportunidad activada.
+          Solo se puede crear cotización desde una oportunidad activada.
         </p>
       ) : null}
 

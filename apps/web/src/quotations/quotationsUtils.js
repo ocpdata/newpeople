@@ -239,7 +239,7 @@ export function buildCreateQuotationForm({
     proposalName: opportunityName || "",
     quotationDate: new Date().toISOString().slice(0, 10),
     introduction:
-      "Presentamos esta cotizacion para la solucion solicitada, conforme al alcance definido y a las condiciones comerciales acordadas.",
+      "Presentamos esta cotización para la solución solicitada, conforme al alcance definido y a las condiciones comerciales acordadas.",
   };
 }
 

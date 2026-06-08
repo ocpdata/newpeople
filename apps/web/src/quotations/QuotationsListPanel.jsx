@@ -105,7 +105,7 @@ function QuotationsListPanel({
         ) : null}
         {!loading && quotations.length === 0 ? (
           <p className="field-hint">
-            Aun no hay cotizaciones para esta oportunidad.
+            Aún no hay cotizaciones para esta oportunidad.
           </p>
         ) : null}
         {quotations.map((quotation) => (
@@ -124,7 +124,7 @@ function QuotationsListPanel({
               )
             }
           >
-            <strong>Cotizacion #{quotation.id}</strong>
+            <strong>Cotización #{quotation.id}</strong>
             <span>Version mayor: {quotation.latestVersionNumber || "-"}</span>
             <span className="quotation-sidebar-status-row">
               <span>Estado:</span>
@@ -291,7 +291,7 @@ function QuotationsListPanel({
                 className="sort-header-btn"
                 onClick={() => toggleQuotationSort("estado_cotizacion")}
               >
-                Estado cotizacion{" "}
+                Estado cotización{" "}
                 <span>{getQuotationSortArrow("estado_cotizacion")}</span>
               </button>
             </th>
@@ -445,7 +445,7 @@ function QuotationsListPanel({
                                   </span>
                                   <span className="quotation-actions-menu-button-body">
                                     <span className="quotation-actions-menu-button-title">
-                                      Editar cotizacion
+                                      Editar cotización
                                     </span>
                                   </span>
                                 </button>
@@ -473,7 +473,7 @@ function QuotationsListPanel({
                                   </span>
                                   <span className="quotation-actions-menu-button-body">
                                     <span className="quotation-actions-menu-button-title">
-                                      Duplicar cotizacion
+                                      Duplicar cotización
                                     </span>
                                   </span>
                                 </button>
@@ -584,9 +584,9 @@ function QuotationsListPanel({
             className="modal-dialog modal-dialog-account"
             onClick={(event) => event.stopPropagation()}
           >
-            <h3 className="modal-title">Duplicar cotizacion</h3>
+            <h3 className="modal-title">Duplicar cotización</h3>
             <p className="field-hint opportunity-modal-subtitle">
-              La nueva cotizacion copiara la
+              La nueva cotización copiará la
               {` ${duplicateQuotationModalState.sourceVersionLabel || "version seleccionada"}`}{" "}
               sin adjuntar documentos.
             </p>

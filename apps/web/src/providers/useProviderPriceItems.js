@@ -64,7 +64,7 @@ function buildImportTemplateFileName(provider, priceList) {
 
 function buildImportTemplateWorkbook({ currencyCode, itemTypeLabel }) {
   const templateWorksheet = XLSX.utils.aoa_to_sheet([
-    ["Codigo", "Descripcion", "Precio", "Moneda", "Estado", "Tipo"],
+    ["Código", "Descripción", "Precio", "Moneda", "Estado", "Tipo"],
   ]);
   templateWorksheet["!cols"] = [
     { wch: 18 },
@@ -77,9 +77,9 @@ function buildImportTemplateWorkbook({ currencyCode, itemTypeLabel }) {
 
   const instructionsWorksheet = XLSX.utils.aoa_to_sheet([
     ["Campo", "Uso", "Valor esperado"],
-    ["Codigo", "Obligatorio", "Unico dentro del archivo y de la lista"],
-    ["Descripcion", "Opcional", "Texto libre"],
-    ["Precio", "Obligatorio", "Numero mayor o igual a 0"],
+    ["Código", "Obligatorio", "Único dentro del archivo y de la lista"],
+    ["Descripción", "Opcional", "Texto libre"],
+    ["Precio", "Obligatorio", "Número mayor o igual a 0"],
     ["Moneda", "Opcional", currencyCode || "Debe coincidir con la lista"],
     ["Estado", "Opcional", "Activo o Inactivo"],
     ["Tipo", "Opcional", itemTypeLabel || "Debe coincidir con la lista"],
@@ -1001,8 +1001,8 @@ export function useProviderPriceItems({
     try {
       const rows = visibleProviderPriceListItems.map((item) => ({
         ID: item.id,
-        Codigo: item.code || "",
-        Descripcion: item.description || "",
+        Código: item.code || "",
+        Descripción: item.description || "",
         Tipo: getPriceItemTypeLabel(item.item_type),
         Precio: Number(item.price || 0),
         Moneda: item.currency_code || "",
@@ -1107,7 +1107,7 @@ export function useProviderPriceItems({
     const headerIndexes = getImportedHeaderIndexes(rows[0]);
     if (headerIndexes.code === undefined || headerIndexes.price === undefined) {
       throw new Error(
-        "El Excel debe incluir al menos las columnas Codigo y Precio.",
+        "El Excel debe incluir al menos las columnas Código y Precio.",
       );
     }
 
@@ -1138,7 +1138,7 @@ export function useProviderPriceItems({
       }
 
       if (!Number.isFinite(price) || price < 0) {
-        issues.push("El precio no es valido.");
+        issues.push("El precio no es válido.");
       }
 
       if (

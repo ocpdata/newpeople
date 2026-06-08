@@ -231,7 +231,7 @@ export function useAccountInteractions({
       setError(
         getApiErrorMessage(
           err,
-          "No fue posible cargar la interaccion comercial",
+          "No fue posible cargar la interacción comercial",
         ),
       );
     }
@@ -300,7 +300,7 @@ export function useAccountInteractions({
       setError(
         getApiErrorMessage(
           err,
-          "No fue posible guardar la interaccion comercial",
+          "No fue posible guardar la interacción comercial",
         ),
       );
     } finally {
@@ -328,7 +328,7 @@ export function useAccountInteractions({
       );
       setInteractionDocuments(Array.isArray(data) ? data : []);
       await refreshAccountInteractions();
-      setSuccess("Documentos adjuntados a la interaccion comercial");
+      setSuccess("Documentos adjuntados a la interacción comercial");
     } catch (err) {
       setError(
         getApiErrorMessage(err, "No fue posible adjuntar los documentos"),
@@ -349,7 +349,7 @@ export function useAccountInteractions({
       );
       setInteractionDocuments(Array.isArray(data) ? data : []);
       await refreshAccountInteractions();
-      setSuccess("Documento eliminado de la interaccion comercial");
+      setSuccess("Documento eliminado de la interacción comercial");
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible eliminar el documento"));
     } finally {
@@ -403,14 +403,14 @@ export function useAccountInteractions({
       );
       await refreshAccountInteractions();
       setSuccess(
-        data?.message || "Oportunidad creada desde la interaccion comercial",
+        data?.message || "Oportunidad creada desde la interacción comercial",
       );
       await openEditInteractionModal(editingInteractionId);
     } catch (err) {
       setError(
         getApiErrorMessage(
           err,
-          "No fue posible crear la oportunidad desde la interaccion comercial",
+          "No fue posible crear la oportunidad desde la interacción comercial",
         ),
       );
     } finally {
@@ -487,7 +487,7 @@ export function useAccountInteractions({
           setError(
             getApiErrorMessage(
               err,
-              "No fue posible cargar las interacciones comerciales",
+              "No fue posible cargar las interacciónes comerciales",
             ),
           );
         }

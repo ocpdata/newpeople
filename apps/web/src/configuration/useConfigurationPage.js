@@ -99,18 +99,18 @@ const EMPTY_AI_PARAMETERS_CONFIG = {
       capabilityKey: "proposal.executive_summary",
       title: "Resumen ejecutivo",
       description:
-        "Generacion del resumen ejecutivo comercial para propuestas.",
+        "Generación del resumen ejecutivo comercial para propuestas.",
     },
     {
       capabilityKey: "proposal.background",
       title: "Antecedentes",
-      description: "Generacion de la seccion de antecedentes para propuestas.",
+      description: "Generación de la sección de antecedentes para propuestas.",
     },
     {
       capabilityKey: "proposal.generic_section",
-      title: "Seccion generica",
+      title: "Sección genérica",
       description:
-        "Generacion generica de contenido para secciones de propuestas.",
+        "Generación genérica de contenido para secciónes de propuestas.",
     },
   ],
   entries: [
@@ -124,7 +124,7 @@ const EMPTY_AI_PARAMETERS_CONFIG = {
     {
       ...EMPTY_AI_PARAMETER_ENTRY,
       capabilityKey: "proposal.generic_section",
-      title: "Seccion generica",
+      title: "Sección genérica",
       description: "",
     },
   ],
@@ -387,7 +387,7 @@ function validateCompanyProfile(form) {
   }
 
   if (!String(form.stateRegion || "").trim()) {
-    errors.stateRegion = "El estado o region es obligatorio";
+    errors.stateRegion = "El estado o región es obligatorio";
   }
 
   if (!String(form.countryId || "").trim()) {
@@ -400,7 +400,7 @@ function validateCompanyProfile(form) {
 
   const email = String(form.email || "").trim();
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    errors.email = "Escribe un correo institucional valido";
+    errors.email = "Escribe un correo institucional válido";
   }
 
   const website = String(form.website || "").trim();
@@ -477,13 +477,13 @@ function formatDateTime(value) {
   try {
     return new Date(value).toLocaleString("es-MX", {
       year: "numeric",
-      month: "2-digit",
+        description: "Assets institucionales y contenido default por sección",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     });
-  } catch {
-    return String(value);
+        title: "Parámetros por módulo",
+        description: "Reglas específicas por área funcional",
   }
 }
 
@@ -815,7 +815,7 @@ export function useConfigurationPage() {
     }
 
     if (!String(file.type || "").startsWith("image/")) {
-      setError("Selecciona un archivo de imagen valido");
+      setError("Selecciona un archivo de imagen válido");
       return;
     }
 
@@ -1244,7 +1244,7 @@ export function useConfigurationPage() {
       setAiParametersConfig(nextConfig);
       setAiParameterDraft(nextEntry);
       setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
-      setSuccess(response.data?.message || "Parametros IA publicados");
+      setSuccess(response.data?.message || "Parámetros IA publicados");
       await loadAiParameterRevisions(selectedAiCapabilityKey);
       return nextEntry;
     } catch (err) {
@@ -1698,13 +1698,13 @@ export function useConfigurationPage() {
       },
       {
         id: "global",
-        title: "Parametros globales",
+        title: "Parámetros globales",
         description: "Ajustes funcionales comunes a toda la aplicacion",
         dirty: temporaryFeaturesDirty,
       },
       {
         id: "ai_parameters",
-        title: "Parametros IA",
+        title: "Parámetros IA",
         description: "Prompts, timeouts y politicas publicadas por capacidad",
         dirty: aiParametersDirty,
       },
@@ -1717,13 +1717,13 @@ export function useConfigurationPage() {
       {
         id: "proposal_content",
         title: "Propuestas comerciales",
-        description: "Assets institucionales y contenido default por seccion",
+        description: "Assets institucionales y contenido default por sección",
         dirty: false,
       },
       {
         id: "modules",
-        title: "Parametros por modulo",
-        description: "Reglas especificas por area funcional",
+        title: "Parámetros por módulo",
+        description: "Reglas específicas por área funcional",
         dirty: false,
       },
       {

@@ -49,7 +49,7 @@ const DEFAULT_FILTERS = {
 };
 
 const AUDIT_MODULE_OPTIONS = [
-  { value: "", label: "Todos los modulos" },
+  { value: "", label: "Todos los módulos" },
   { value: "auth", label: "Auth" },
   { value: "usuarios", label: "Usuarios" },
   { value: "roles", label: "Roles" },
@@ -61,19 +61,19 @@ const AUDIT_MODULE_OPTIONS = [
 
 const AUDIT_ACTION_OPTIONS = [
   { value: "", label: "Todas las acciones" },
-  { value: "created", label: "Creacion" },
-  { value: "updated", label: "Actualizacion" },
+  { value: "created", label: "Creación" },
+  { value: "updated", label: "Actualización" },
   { value: "status_changed", label: "Cambio de estado" },
   { value: "permissions_updated", label: "Permisos actualizados" },
   { value: "roles_assigned", label: "Roles asignados" },
   { value: "password_reset_sent", label: "Reset enviado" },
   { value: "password_reset_failed", label: "Reset fallido" },
-  { value: "invitation_email_failed", label: "Invitacion fallida" },
+  { value: "invitation_email_failed", label: "Invitación fallida" },
   { value: "register_first", label: "Registro inicial" },
   { value: "login_success", label: "Login exitoso" },
   { value: "login_failed", label: "Login fallido" },
-  { value: "password_set", label: "Contrasena configurada" },
-  { value: "set_password_failed", label: "Contrasena fallida" },
+  { value: "password_set", label: "Contraseña configurada" },
+  { value: "set_password_failed", label: "Contraseña fallida" },
 ];
 
 const AUDIT_ENTITY_OPTIONS = [

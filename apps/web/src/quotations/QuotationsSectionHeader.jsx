@@ -16,7 +16,7 @@ function QuotationsSectionHeader({
         <h4 data-help-id="quotations.title">Cotizaciones</h4>
         <p className="field-hint opportunity-commercial-hint">
           Gestiona versiones, secciones, items y acciones del workflow de la
-          cotizacion.
+          cotización.
         </p>
       </div>
       <div className="opportunity-quotations-toolbar">
@@ -28,7 +28,7 @@ function QuotationsSectionHeader({
             disabled={!isOpportunityActive || busyAction === "create-quotation"}
             onClick={openCreateQuotationModal}
           >
-            + Crear cotizacion
+            + Crear cotización
           </button>
         ) : null}
       </div>

@@ -11,7 +11,7 @@ function getQuotationPrintPageTitle(model) {
   const proposalName = String(model?.header?.proposalName || "").trim();
   return proposalName
     ? `Vista previa - ${proposalName}`
-    : "Vista previa de cotizacion";
+    : "Vista previa de cotización";
 }
 
 export default function QuotationPrintPage() {
@@ -67,9 +67,9 @@ export default function QuotationPrintPage() {
     return (
       <main className="quotation-print-page quotation-print-page-empty">
         <section className="quotation-print-page-status-card">
-          <h1>No fue posible preparar la impresion</h1>
+          <h1>No fue posible preparar la impresión</h1>
           <p>
-            El documento ya no esta disponible. Regresa a la cotizacion y vuelve
+            El documento ya no está disponible. Regresa a la cotización y vuelve
             a intentar.
           </p>
           <div className="quotation-print-page-toolbar">

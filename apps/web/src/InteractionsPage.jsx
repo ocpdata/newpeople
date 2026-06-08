@@ -456,7 +456,7 @@ function getDocumentProcessingSummary(document) {
       })
     : "No aplica";
 
-  return `Extraccion: ${extractionLabel} | Transcripcion: ${transcriptionLabel}`;
+  return `Extracción: ${extractionLabel} | Transcripción: ${transcriptionLabel}`;
 }
 
 function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
@@ -817,7 +817,7 @@ function CreateInteractionModal({
                       <span className="interaction-create-kicker">
                         Texto de referencia
                       </span>
-                      <strong>Agrega mas fuentes de texto al analisis</strong>
+                      <strong>Agrega más fuentes de texto al análisis</strong>
                       <p className="section-helper-text interaction-create-text-card-hint">
                         Convierte correos, minutas o notas en archivos `.txt`
                         para analizarlos junto con el resto de la evidencia.
@@ -844,7 +844,7 @@ function CreateInteractionModal({
                         onClick={handleAddPastedText}
                         disabled={creating || !String(pastedText || "").trim()}
                       >
-                        Agregar texto al analisis
+                        Agregar texto al análisis
                       </button>
                     </div>
                   </div>
@@ -2912,7 +2912,7 @@ function InteractionsPage({ can, currentUser }) {
         const jobId = String(resolvedData?.job?.id || "").trim();
         if (!jobId) {
           throw new Error(
-            "No fue posible obtener el identificador del job de analisis",
+            "No fue posible obtener el identificador del job de análisis",
           );
         }
 
@@ -2931,7 +2931,7 @@ function InteractionsPage({ can, currentUser }) {
             resolvedData = {
               error: {
                 message:
-                  "El analisis sigue tardando mas de 2 minutos. Puedes reintentarlo desde el modal.",
+                  "El análisis sigue tardando mas de 2 minutos. Puedes reintentarlo desde el modal.",
               },
             };
             break;
@@ -3274,11 +3274,11 @@ function InteractionsPage({ can, currentUser }) {
                   </li>
                   <li>
                     <strong>Lead no asignado:</strong> ya hay cuenta y al menos
-                    un contacto, pero aun no tiene vendedor asignado.
+                    un contacto, pero aún no tiene vendedor asignado.
                   </li>
                   <li>
                     <strong>Lead asignado:</strong> ya hay cuenta, contacto y
-                    vendedor, pero aun no tiene oportunidad vinculada o creada.
+                    vendedor, pero aún no tiene oportunidad vinculada o creada.
                   </li>
                   <li>
                     <strong>Lead calificado:</strong> ya tiene cuenta, contacto,

@@ -72,7 +72,7 @@ export default function ToolsPage() {
             Number(stats.groupCount || 0) > 0
               ? `${Number(stats.groupCount)} grupos detectados`
               : item.status === "planned"
-                ? "Disponible mas adelante"
+                ? "Disponible más adelante"
                 : "Sin incidencias activas";
 
           return (

@@ -74,14 +74,14 @@ export default function ProposalTemplatePickerModal({
             ) : null}
             {!loading && !templates.length ? (
               <p className="field-hint">
-                No hay plantillas activas disponibles. Se usara la
+                No hay plantillas activas disponibles. Se usará la
                 predeterminada del sistema si continúas por API.
               </p>
             ) : null}
             {!loading && templates.length ? (
               <p className="proposal-template-picker-caption">
                 Elige la portada y el tono visual de la propuesta. El pricing y
-                la estructura comercial siguen heredandose de la cotizacion
+                la estructura comercial siguen heredándose de la cotización
                 aprobada.
               </p>
             ) : null}
@@ -95,8 +95,8 @@ export default function ProposalTemplatePickerModal({
               <strong>{templates.length}</strong>
               <p>
                 {selectedTemplate
-                  ? `Seleccion actual: ${selectedTemplate.name}`
-                  : "Selecciona una plantilla para habilitar la creacion."}
+                  ? `Selección actual: ${selectedTemplate.name}`
+                  : "Selecciona una plantilla para habilitar la creación."}
               </p>
             </div>
           ) : null}
@@ -139,7 +139,7 @@ export default function ProposalTemplatePickerModal({
                   <div className="proposal-template-card-head">
                     <strong>{template.name}</strong>
                   </div>
-                  <p>{template.description || "Sin descripcion"}</p>
+                  <p>{template.description || "Sin descripción"}</p>
                   <div className="proposal-template-card-meta">
                     {template.isDefault ? (
                       <span className="proposal-chip proposal-chip-soft">

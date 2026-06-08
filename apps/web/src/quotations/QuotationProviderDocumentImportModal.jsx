@@ -431,7 +431,7 @@ function QuotationProviderDocumentImportModal({
             <p>
               {loadingPreview
                 ? previewJobLabel ||
-                  "Espera la respuesta del analisis para continuar."
+                  "Espera la respuesta del análisis para continuar."
                 : "Espera la respuesta para continuar con la aplicación."}
             </p>
           </div>
@@ -449,7 +449,7 @@ function QuotationProviderDocumentImportModal({
             />
           </div>
           <p className="field-hint">
-            La IA propone proveedor, condiciones e items. El usuario confirma
+            La IA propone proveedor, condiciones e ítems. El usuario confirma
             antes de aplicar.
           </p>
         </div>
@@ -458,10 +458,10 @@ function QuotationProviderDocumentImportModal({
       <div className="quotation-provider-import-body">
         <section className="quotation-provider-import-setup-panel">
           <div className="quotation-provider-import-setup-copy">
-            <strong>Configuracion inicial</strong>
+            <strong>Configuración inicial</strong>
             <p>
               Selecciona el documento, confirma el proveedor y luego inicia el
-              analisis asistido por IA.
+              análisis asistido por IA.
             </p>
           </div>
 
@@ -542,7 +542,7 @@ function QuotationProviderDocumentImportModal({
               <span className="quotation-provider-import-action-hint">
                 {loadingPreview
                   ? "Analizando documento..."
-                  : "Iniciar analisis"}
+                  : "Iniciar análisis"}
               </span>
             </div>
           </div>
@@ -550,7 +550,7 @@ function QuotationProviderDocumentImportModal({
 
         {errorMessage ? (
           <div className="quotation-provider-import-warning" role="alert">
-            <strong>No se pudo completar la accion</strong>
+            <strong>No se pudo completar la acción</strong>
             <ul>
               <li>{errorMessage}</li>
             </ul>
@@ -559,7 +559,7 @@ function QuotationProviderDocumentImportModal({
 
         {successMessage ? (
           <div className="quotation-provider-import-success" role="status">
-            <strong>Accion completada</strong>
+            <strong>Acción completada</strong>
             <p>{successMessage}</p>
           </div>
         ) : null}
@@ -576,14 +576,14 @@ function QuotationProviderDocumentImportModal({
         {previewJob ? (
           <div className="quotation-provider-import-job-status">
             <div className="quotation-provider-import-job-status-row">
-              <strong>Estado del analisis: {previewJobStatusLabel}</strong>
+              <strong>Estado del análisis: {previewJobStatusLabel}</strong>
               <span>{Math.max(0, Math.min(100, previewJobPercent))}%</span>
             </div>
             <p>
               {previewJobLabel ||
                 (loadingPreview
                   ? "Analizando documento del proveedor"
-                  : "Analisis preparado")}
+                  : "Análisis preparado")}
             </p>
             {previewJobStatus === "failed" && previewJobErrorMessage ? (
               <p>{previewJobErrorMessage}</p>
@@ -814,7 +814,7 @@ function QuotationProviderDocumentImportModal({
                                             }
                                             disabled={isCreatingMissingItems}
                                           />
-                                          <span>Agregar a descripcion</span>
+                                          <span>Agregar a descripción</span>
                                         </label>
                                       ) : null}
                                     </div>
@@ -844,7 +844,7 @@ function QuotationProviderDocumentImportModal({
               <strong>Condiciones encontradas</strong>
               <p>
                 Marca las condiciones comerciales encontradas que deseas aplicar
-                a la cotizacion.
+                a la cotización.
               </p>
               <div className="quotation-provider-import-terms">
                 <div className="quotation-provider-import-terms-grid">
@@ -883,8 +883,8 @@ function QuotationProviderDocumentImportModal({
             <section className="quotation-provider-import-conditions-section">
               <strong>Clausulas comerciales detectadas</strong>
               <p>
-                Selecciona los terminos o condiciones del proveedor que se
-                anexaran a las notas de la cotizacion en espanol.
+                Selecciona los términos o condiciones del proveedor que se
+                anexarán a las notas de la cotización en español.
               </p>
               {commercialClauses.length ? (
                 <div className="quotation-provider-import-terms">

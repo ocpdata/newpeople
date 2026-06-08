@@ -254,7 +254,7 @@ function CommercialExecutionHelp({ description }) {
       <summary
         className="commercial-execution-help-trigger"
         aria-label="Ayuda sobre ejecucion comercial"
-        title="Ayuda sobre el modulo"
+        title="Ayuda sobre el módulo"
       >
         ?
       </summary>
@@ -370,7 +370,7 @@ export default function ExecutionCommercialPage() {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible guardar el proximo paso",
+          "No fue posible guardar el próximo paso",
         ),
       );
     } finally {
@@ -490,15 +490,15 @@ export default function ExecutionCommercialPage() {
         <header className="commercial-execution-hero">
           <div>
             <span className="commercial-execution-kicker">
-              Modulo principal
+              Módulo principal
             </span>
             <div className="commercial-execution-title-row">
               <h2>Ejecucion Comercial</h2>
-              <CommercialExecutionHelp description="Este modulo ordena la ejecucion diaria del equipo comercial para que cada oportunidad tenga proximo paso, seguimiento, dependencias visibles y riesgos controlados." />
+              <CommercialExecutionHelp description="Este módulo ordena la ejecucion diaria del equipo comercial para que cada oportunidad tenga próximo paso, seguimiento, dependencias visibles y riesgos controlados." />
             </div>
             <p className="section-helper-text">
-              La vista no recibio un tablero valido. Reintenta la carga del
-              modulo.
+              La vista no recibió un tablero valido. Reintenta la carga del
+              módulo.
             </p>
           </div>
           <button
@@ -522,13 +522,13 @@ export default function ExecutionCommercialPage() {
     <section className="panel commercial-execution-page">
       <header className="commercial-execution-hero">
         <div>
-          <span className="commercial-execution-kicker">Modulo principal</span>
+          <span className="commercial-execution-kicker">Módulo principal</span>
           <div className="commercial-execution-title-row">
             <h2>Ejecucion Comercial</h2>
-            <CommercialExecutionHelp description="Este modulo ayuda al vendedor a ejecutar su pipeline con una rutina clara: revisar riesgos, cumplir seguimientos, cerrar proximos pasos y coordinar dependencias sin salir de la misma vista." />
+            <CommercialExecutionHelp description="Este módulo ayuda al vendedor a ejecutar su pipeline con una rutina clara: revisar riesgos, cumplir seguimientos, cerrar próximos pasos y coordinar dependencias sin salir de la misma vista." />
           </div>
           <p className="section-helper-text">
-            Organiza la disciplina diaria del vendedor, obliga proximo paso y
+            Organiza la disciplina diaria del vendedor, obliga próximo paso y
             concentra riesgos, seguimientos y cadencias en una misma vista
             operativa.
           </p>
@@ -563,7 +563,7 @@ export default function ExecutionCommercialPage() {
           tone="is-warn"
         />
         <SummaryCard
-          label="Sin proximo paso"
+          label="Sin próximo paso"
           value={summary.withoutNextStep || 0}
           helper="Oportunidades sin compromiso cerrado"
           tone="is-danger"
@@ -656,7 +656,7 @@ export default function ExecutionCommercialPage() {
                 >
                   <div className="commercial-execution-item-topline">
                     <strong>{item.name}</strong>
-                    <span>{item.daysSinceActivity} dias sin traccion</span>
+                    <span>{item.daysSinceActivity} días sin traccion</span>
                   </div>
                   <p>{item.riskReasons[0] || "Sin detalle"}</p>
                   <p>{item.executionState?.summary || ""}</p>
@@ -716,7 +716,7 @@ export default function ExecutionCommercialPage() {
                   >
                     <div className="commercial-execution-item-topline">
                       <strong>{item.title}</strong>
-                      <span>{item.daysOpen} dias</span>
+                      <span>{item.daysOpen} días</span>
                     </div>
                     <p>{item.accountName || "Sin cuenta"}</p>
                     <p>
@@ -765,8 +765,8 @@ export default function ExecutionCommercialPage() {
                         "Definir siguiente jugada"}
                     </p>
                     <div className="commercial-execution-item-meta-row">
-                      <span>SLA: {item.slaDays} dias</span>
-                      <span>{item.daysSinceActivity} dias sin actividad</span>
+                      <span>SLA: {item.slaDays} días</span>
+                      <span>{item.daysSinceActivity} días sin actividad</span>
                       <span>{formatCurrency(item.amountUsd)}</span>
                     </div>
                   </button>
@@ -869,7 +869,7 @@ export default function ExecutionCommercialPage() {
                     type="submit"
                     disabled={savingNextStep}
                   >
-                    {savingNextStep ? "Guardando..." : "Guardar proximo paso"}
+                    {savingNextStep ? "Guardando..." : "Guardar próximo paso"}
                   </button>
                 </form>
                 <div className="commercial-execution-reasons-panel">
@@ -1176,7 +1176,7 @@ export default function ExecutionCommercialPage() {
                   <p>{item.accountName || "Sin cuenta vinculada"}</p>
                   <p>
                     {item.primaryOpportunityName || "Sin oportunidad principal"}{" "}
-                    · {item.daysOpen} dias abiertos
+                    · {item.daysOpen} días abiertos
                   </p>
                 </article>
               ))}
@@ -1445,7 +1445,7 @@ export default function ExecutionCommercialPage() {
                   Proximo movimiento sugerido:{" "}
                   {item.nextStep?.title ||
                     getRecommendedNextMoveText(item.recommendedNextMove) ||
-                    "Definir proximo paso"}
+                    "Definir próximo paso"}
                 </p>
               </article>
             ))}

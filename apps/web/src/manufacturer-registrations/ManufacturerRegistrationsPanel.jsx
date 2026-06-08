@@ -265,7 +265,7 @@ export default function ManufacturerRegistrationsPanel({
         <div className="manufacturer-registration-empty">
           {isOpportunityClosed
             ? "Los registros de fabricantes solo se muestran mientras la oportunidad permanece abierta."
-            : "Esta oportunidad aun no tiene solicitudes de registro de fabricante."}
+            : "Esta oportunidad aún no tiene solicitudes de registro de fabricante."}
         </div>
       ) : null}
 

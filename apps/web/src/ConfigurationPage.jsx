@@ -1213,7 +1213,7 @@ function WorkspacePlaybookCard({ items, activatingVersionId, onActivate }) {
               <strong>
                 {item.name} {item.version}
               </strong>
-              <p>{item.description || "Sin descripcion"}</p>
+              <p>{item.description || "Sin descripción"}</p>
               <span>
                 {item.stageCount} etapas | {item.criteriaCount} criterios
               </span>
@@ -3668,7 +3668,7 @@ function AiParametersConfigurationPanel({
                 className="configuration-ai-revision-item"
               >
                 <div>
-                  <strong>Revision {revision.revisionNumber}</strong>
+                  <strong>Revisión {revision.revisionNumber}</strong>
                   <span>
                     {formatDateTime(revision.createdAt)} por{" "}
                     {revision.createdByUserName || "sistema"}
@@ -3877,7 +3877,7 @@ export default function ConfigurationPage() {
         complete: Boolean(String(form.website || "").trim()),
       },
       {
-        label: "Descripcion institucional",
+        label: "Descripción institucional",
         description:
           "Contexto interno del perfil de empresa para administradores.",
         complete: Boolean(String(form.description || "").trim()),
@@ -4211,7 +4211,7 @@ export default function ConfigurationPage() {
                     />
                   </div>
                   <div className="field-group configuration-grid-span-full">
-                    <label>Descripcion institucional</label>
+                    <label>Descripción institucional</label>
                     <textarea
                       rows="3"
                       className={getFieldClassName(fieldErrors.description)}
@@ -4219,7 +4219,7 @@ export default function ConfigurationPage() {
                       onChange={(event) =>
                         updateField("description", event.target.value)
                       }
-                      placeholder="Breve descripcion para uso interno o documental"
+                      placeholder="Breve descripción para uso interno o documental"
                     />
                     <InlineFieldError message={fieldErrors.description} />
                   </div>

@@ -43,16 +43,16 @@ const ACTION_TYPE_OPTIONS = [
   { value: "request_information", label: "Solicitar informacion" },
   { value: "coordinate_presales", label: "Coordinar preventa" },
   { value: "send_documentation", label: "Enviar documentacion" },
-  { value: "update_quote", label: "Actualizar cotizacion" },
+  { value: "update_quote", label: "Actualizar cotización" },
   { value: "internal_approval", label: "Gestionar aprobacion interna" },
-  { value: "other_action", label: "Otra accion" },
+  { value: "other_action", label: "Otra acción" },
 ];
 const DEPENDENCY_TYPE_OPTIONS = [
   { value: "presales_support", label: "Preventa" },
   { value: "provider_response", label: "Proveedor" },
   { value: "legal_review", label: "Legal" },
   { value: "commercial_management", label: "Direccion comercial" },
-  { value: "pricing_internal", label: "Cotizacion interna" },
+  { value: "pricing_internal", label: "Cotización interna" },
   { value: "finance_approval", label: "Finanzas" },
   { value: "operations_alignment", label: "Operaciones" },
 ];
@@ -157,8 +157,8 @@ const EMPTY_EMAIL_ATTACHMENT_OPTIONS = {
 };
 
 const EMAIL_ATTACHMENT_LIBRARY_SORT_OPTIONS = [
-  { value: "updated_desc", label: "Mas recientes" },
-  { value: "updated_asc", label: "Mas antiguos" },
+  { value: "updated_desc", label: "Más recientes" },
+  { value: "updated_asc", label: "Más antiguos" },
   { value: "title_asc", label: "Nombre A-Z" },
   { value: "title_desc", label: "Nombre Z-A" },
 ];
@@ -191,7 +191,7 @@ const FUNNEL_STAGE_CATALOG = [
   },
   {
     stageCode: "cotizacion",
-    stageName: "Cotizacion",
+    stageName: "Cotización",
     groupKey: "nonCommitted",
   },
   {
@@ -661,7 +661,7 @@ function getActivityStatusLabel(value) {
 function getActionTypeLabel(value) {
   return (
     ACTION_TYPE_OPTIONS.find((option) => option.value === value)?.label ||
-    "Accion"
+    "Acción"
   );
 }
 
@@ -685,7 +685,7 @@ function getEntryKind(value) {
 }
 
 function getEntryKindLabel(value) {
-  return value === "action" ? "Accion" : "Actividad";
+  return value === "action" ? "Acción" : "Actividad";
 }
 
 function getEntryTypeLabel(entryKind, value) {
@@ -2628,23 +2628,23 @@ function CommercialActivityModal({
       ? "Gestionar dependencias internas"
       : hasEditableActivity
         ? isActionForm
-          ? "Actualizar accion"
+          ? "Actualizar acción"
           : "Actualizar actividad"
         : isActionForm
-          ? "Crear accion"
+          ? "Crear acción"
           : "Crear actividad";
   const helperText = isHistoryView
-    ? "Revisa el historial y crea una nueva actividad o una nueva accion desde esta misma vista."
+    ? "Revisa el historial y crea una nueva actividad o una nueva acción desde esta misma vista."
     : isDependencyView
       ? "Registra los frentes internos que destraban la oportunidad y actualiza su estado sin salir del cockpit."
       : isActionForm
         ? "Define el siguiente paso comercial con enfoque en resultado, fecha y contexto para el equipo."
-        : "Programa una interaccion comercial y manten visible el siguiente paso de la oportunidad.";
+        : "Programa una interacción comercial y mantén visible el siguiente paso de la oportunidad.";
   const entryKindGuidance = (
     <div className="section-helper-text">
-      <strong>Diferencia clave:</strong> una actividad es una interaccion
+      <strong>Diferencia clave:</strong> una actividad es una interacción
       programada con fecha y hora, por ejemplo una llamada o una visita con el
-      cliente. Una accion es un siguiente paso operativo, por ejemplo preparar
+      cliente. Una acción es un siguiente paso operativo, por ejemplo preparar
       una propuesta, enviar un correo o quedar en espera de respuesta del
       cliente.
     </div>
@@ -2745,7 +2745,7 @@ function CommercialActivityModal({
             <div className="commercial-development-activity-list-toolbar">
               <div>
                 <strong>Historial</strong>
-                <p>Selecciona una actividad o accion para verla o editarla.</p>
+                <p>Selecciona una actividad o acción para verla o editarla.</p>
                 {entryKindGuidance}
               </div>
               <div className="commercial-development-inline-row">
@@ -2763,7 +2763,7 @@ function CommercialActivityModal({
                   onClick={onShowCreateAction}
                   disabled={isModalLocked || !canUpdate}
                 >
-                  Nueva accion
+                  Nueva acción
                 </button>
                 <button
                   type="button"
@@ -3110,7 +3110,7 @@ function CommercialActivityModal({
                 <strong>Datos base</strong>
                 <p>
                   {isActionForm
-                    ? "Define el tipo de accion. Las acciones se ejecutan de inmediato."
+                    ? "Define el tipo de acción. Las acciones se ejecutan de inmediato."
                     : "Define el tipo de contacto y cuando debe ocurrir."}
                 </p>
               </div>
@@ -3118,7 +3118,7 @@ function CommercialActivityModal({
               <div className="commercial-development-activity-form-grid">
                 <label className="commercial-development-field">
                   <span>
-                    {isActionForm ? "Tipo de accion" : "Tipo de actividad"}
+                    {isActionForm ? "Tipo de acción" : "Tipo de actividad"}
                   </span>
                   <select
                     value={draft.activityType}
@@ -3564,7 +3564,7 @@ function CommercialEmailDraftModal({
             </h3>
             <p className="section-helper-text">
               {isReadOnly
-                ? "Consulta el contenido enviado y el estado registrado en la accion."
+                ? "Consulta el contenido enviado y el estado registrado en la acción."
                 : "Ajusta el borrador final, guardalo si todavia falta trabajo y confirma el envio cuando quede listo."}
             </p>
             {isGeneratingEmailSuggestion ? (
@@ -3585,7 +3585,7 @@ function CommercialEmailDraftModal({
           <div className="commercial-development-inline-row">
             <span>{safeDraft.accountName}</span>
             <span>
-              Estado de la accion:{" "}
+              Estado de la acción:{" "}
               {getEntryStatusLabel("action", safeDraft.status)}
             </span>
           </div>
@@ -5486,7 +5486,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
     } catch (requestError) {
       const message = getApiErrorMessage(
         requestError,
-        "No fue posible enviar el correo desde la accion.",
+        "No fue posible enviar el correo desde la acción.",
       );
       setEmailDraftError(message);
       setEmailSendFeedback({
@@ -5539,8 +5539,8 @@ export default function CommercialDevelopmentPage({ currentUser }) {
       ) {
         setActivityError(
           executeEmail
-            ? "Completa destinatario, asunto y mensaje base para ejecutar la accion de correo."
-            : "Completa destinatario, asunto y mensaje base para guardar la accion de correo.",
+            ? "Completa destinatario, asunto y mensaje base para ejecutar la acción de correo."
+            : "Completa destinatario, asunto y mensaje base para guardar la acción de correo.",
         );
         return null;
       }
@@ -5638,9 +5638,9 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         getApiErrorMessage(
           requestError,
           executeEmail
-            ? "No fue posible ejecutar la accion."
+            ? "No fue posible ejecutar la acción."
             : activityDraft.entryKind === "action"
-              ? "No fue posible guardar la accion."
+              ? "No fue posible guardar la acción."
               : "No fue posible guardar la actividad.",
         ),
       );
@@ -5712,7 +5712,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
         getApiErrorMessage(
           requestError,
           activityDraft.entryKind === "action"
-            ? "No fue posible marcar la accion como realizada."
+            ? "No fue posible marcar la acción como realizada."
             : "No fue posible marcar la actividad como realizada.",
         ),
       );
@@ -5791,7 +5791,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
           {!canUpdateCommercialDevelopment ? (
             <p className="section-helper-text">
               Acceso en modo lectura: puedes consultar el cockpit, pero no
-              operar actividades ni acciones desde este modulo.
+              operar actividades ni acciones desde este módulo.
             </p>
           ) : null}
         </div>
@@ -6064,7 +6064,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
               <h3>Agenda comercial del trimestre</h3>
               <p>
                 Visualiza actividades por dia, semana o mes y abre seguimiento
-                sin salir del modulo.
+                sin salir del módulo.
               </p>
             </div>
             <span>{formatCalendarRange(calendarFilters)}</span>
@@ -6307,7 +6307,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                   </span>
                   <strong>Nueva actividad</strong>
                   <p>
-                    Elige la oportunidad y crea la siguiente accion para este
+                    Elige la oportunidad y crea la siguiente acción para este
                     dia.
                   </p>
                 </div>
@@ -6542,10 +6542,10 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                         : "Sin actividad programada"}
                     </p>
                     <p>
-                      <strong>Proxima accion:</strong>{" "}
+                      <strong>Próxima acción:</strong>{" "}
                       {item.nextPendingAction
                         ? `${getEntryTypeLabel("action", item.nextPendingAction.activityType)} · ${item.nextPendingAction.dueDate ? formatDate(item.nextPendingAction.dueDate) : "Sin fecha"}`
-                        : "Sin accion pendiente"}
+                        : "Sin acción pendiente"}
                     </p>
                     <p>
                       <strong>Siguiente paso principal:</strong>{" "}
@@ -6556,7 +6556,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                     <p>
                       <strong>Historial:</strong>{" "}
                       {item.activityCount || item.actionCount
-                        ? `${item.activityCount || 0} ${item.activityCount === 1 ? "actividad" : "actividades"} · ${item.actionCount || 0} ${item.actionCount === 1 ? "accion" : "acciones"}`
+                        ? `${item.activityCount || 0} ${item.activityCount === 1 ? "actividad" : "actividades"} · ${item.actionCount || 0} ${item.actionCount === 1 ? "acción" : "acciones"}`
                         : "Sin actividades ni acciones"}
                     </p>
                     {item.nextScheduledActivity ||

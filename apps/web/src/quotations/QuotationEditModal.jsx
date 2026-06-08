@@ -24,11 +24,11 @@ function QuotationEditModal({
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
             <div className="account-modal-title-row">
-              <h3 className="modal-title">Editar cotizacion</h3>
+              <h3 className="modal-title">Editar cotización</h3>
               <ModalInlineHelp helpKey="quotation.edit" />
             </div>
             <p className="field-hint opportunity-modal-subtitle">
-              Actualiza la cotizacion, sus secciones y sus items desde esta
+              Actualiza la cotización, sus secciones y sus ítems desde esta
               ventana.
             </p>
           </div>
@@ -36,10 +36,10 @@ function QuotationEditModal({
             {selectedVersion ? (
               <div
                 className="quotation-edit-modal-meta"
-                aria-label="Resumen de cotizacion"
+                aria-label="Resumen de cotización"
               >
                 <span className="record-id-badge">
-                  Cotizacion {selectedQuotation?.id || "-"}
+                  Cotización {selectedQuotation?.id || "-"}
                 </span>
                 <span className="record-id-badge">
                   Version {selectedVersion.versionNumber}

@@ -273,7 +273,7 @@ function getDocumentSessionCreationErrorMessage(error) {
   }
 
   if (status >= 500) {
-    return "La API respondio con un error al iniciar la sesion documental. Revisa el backend o intenta mas tarde.";
+    return "La API respondió con un error al iniciar la sesión documental. Revisa el backend o intenta más tarde.";
   }
 
   return getApiErrorMessage(
@@ -1625,7 +1625,7 @@ export function useOpportunitiesPage({
           error: {
             code: "poll_timeout",
             message:
-              "La generacion de sugerencias sigue tardando mas de 2 minutos. Puedes reintentar sin cerrar el modal.",
+              "La generación de sugerencias sigue tardando más de 2 minutos. Puedes reintentar sin cerrar el modal.",
           },
         };
       }
@@ -1818,7 +1818,7 @@ export function useOpportunitiesPage({
           error: {
             code: "poll_timeout",
             message:
-              "La validacion sigue tardando mas de 2 minutos. Puedes reintentar sin cerrar el modal.",
+              "La validación sigue tardando más de 2 minutos. Puedes reintentar sin cerrar el modal.",
           },
         };
       }

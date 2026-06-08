@@ -405,7 +405,7 @@ function buildCatalogAdminEditor(entry) {
 function getIntakeStatusLabel(status) {
   switch (String(status || "").trim()) {
     case "analysis_pending":
-      return "Analisis pendiente";
+      return "Análisis pendiente";
     case "pending":
       return "Pendiente";
     case "completed":
@@ -887,7 +887,7 @@ export default function CommercialEnablementPage({ currentUser }) {
         setError(
           getApiErrorMessage(
             requestError,
-            "No fue posible cargar el modulo de biblioteca comercial",
+            "No fue posible cargar el módulo de biblioteca comercial",
           ),
         );
       } finally {
@@ -1194,7 +1194,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       }
       const errorMessage = getApiErrorMessage(
         requestError,
-        "No fue posible ejecutar la accion",
+        "No fue posible ejecutar la acción",
       );
       if (typeof onErrorMessage === "function") {
         onErrorMessage(errorMessage);
@@ -2362,7 +2362,7 @@ export default function CommercialEnablementPage({ currentUser }) {
   const listItems = assetsResult.items || [];
   const publishMode = draft.status === "published";
   const catalogRequirementHint = publishMode
-    ? "Selecciona al menos un fabricante aqui o una solucion en la seccion vecina."
+    ? "Selecciona al menos un fabricante aquí o una solucion en la seccion vecina."
     : "";
   const primaryMetric =
     activeTab === "manage"
@@ -2380,7 +2380,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     {
       label: "Activos totales",
       value: metricValue(analytics.totals.totalAssets),
-      helper: "Todo el inventario del modulo",
+      helper: "Todo el inventario del módulo",
     },
     {
       label: "Publicados",
@@ -2528,7 +2528,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                       Actualizados recientemente
                     </option>
                     <option value="title_asc">Titulo A-Z</option>
-                    <option value="most_used">Mas usados</option>
+                    <option value="most_used">Más usados</option>
                   </select>
                   <select
                     value={filters.status}
@@ -2937,7 +2937,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                   onClick={handleLoadExtractedContent}
                                   disabled={working}
                                 >
-                                  Ver extraccion completa
+                                  Ver extracción completa
                                 </button>
                                 <button
                                   type="button"
@@ -3440,7 +3440,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                     description: event.target.value,
                                   }))
                                 }
-                                placeholder="Descripcion corta"
+                                placeholder="Descripción corta"
                               />
                               <button
                                 type="button"
@@ -3715,7 +3715,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                 event.target.value,
                               )
                             }
-                            placeholder="Descripcion breve"
+                            placeholder="Descripción breve"
                           />
                           <button
                             type="submit"
@@ -3768,7 +3768,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                         event.target.value,
                                       )
                                     }
-                                    placeholder="Descripcion breve"
+                                    placeholder="Descripción breve"
                                   />
                                   <div className="enablement-library-inline-actions">
                                     <button

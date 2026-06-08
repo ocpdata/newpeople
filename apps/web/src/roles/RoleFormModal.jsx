@@ -29,7 +29,7 @@ export default function RoleFormModal({
             />
           </div>
           <div className="field-group" style={{ marginTop: 12 }}>
-            <label>Descripcion</label>
+            <label>Descripción</label>
             <textarea
               value={roleForm.description}
               onChange={(event) =>

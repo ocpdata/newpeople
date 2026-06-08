@@ -414,7 +414,7 @@ export function useAccountsCrud({ currentUser }) {
                 aiReviewStatus: "error",
                 aiReviewError:
                   String(jobError?.message || "").trim() ||
-                  "No fue posible completar la revision IA del posible duplicado",
+                  "No fue posible completar la revisión IA del posible duplicado",
               }
             : current,
         );
@@ -427,7 +427,7 @@ export function useAccountsCrud({ currentUser }) {
                 aiReviewStatus: "error",
                 aiReviewError: getApiErrorMessage(
                   err,
-                  "No fue posible completar la revision IA del posible duplicado",
+                  "No fue posible completar la revisión IA del posible duplicado",
                 ),
               }
             : current,

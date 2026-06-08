@@ -598,7 +598,7 @@ export default function AppShell({
                   to="/settings"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Configuracion
+                  Configuración
                 </GuardedNavLink>
               )}
               {can("herramientas.read") && (
@@ -615,7 +615,7 @@ export default function AppShell({
           {can("audit.read") && (
             <SidebarNavGroup title="Control">
               <GuardedNavLink to="/audit" onBeforeNavigate={confirmRouteChange}>
-                Auditoria
+                Auditoría
               </GuardedNavLink>
             </SidebarNavGroup>
           )}

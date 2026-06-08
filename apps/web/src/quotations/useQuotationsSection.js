@@ -1491,6 +1491,7 @@ function buildPersistedQuotationVersionPayload({
   sectionEdits,
   itemEdits,
   inclusionTypes,
+  bundleCollapseState,
 }) {
   const fallbackInclusionTypeId = inclusionTypes[0]?.id
     ? String(inclusionTypes[0].id)
@@ -1521,6 +1522,10 @@ function buildPersistedQuotationVersionPayload({
         ? null
         : Number(versionForm.exchangeRate),
     quotationNotes: versionForm.quotationNotes || "",
+    bundleCollapseState:
+      bundleCollapseState && typeof bundleCollapseState === "object"
+        ? bundleCollapseState
+        : {},
     sections: (selectedVersion?.sections || []).map((section, sectionIndex) => {
       const sectionDraft = sectionEdits[String(section.id)] || {
         title: section.title || "",
@@ -1582,7 +1587,7 @@ function buildPersistedQuotationVersionSnapshot({
 
 function validatePersistedQuotationVersionPayload(payload) {
   if (!Number.isInteger(payload?.contactId) || payload.contactId <= 0) {
-    return "Selecciona un contacto valido antes de guardar la version.";
+    return "Selecciona un contacto válido antes de guardar la version.";
   }
 
   for (const [sectionIndex, section] of (payload?.sections || []).entries()) {
@@ -1590,20 +1595,20 @@ function validatePersistedQuotationVersionPayload(payload) {
       !Number.isInteger(section?.inclusionTypeId) ||
       section.inclusionTypeId <= 0
     ) {
-      return `La seccion ${sectionIndex + 1} debe tener una inclusion valida.`;
+      return `La sección ${sectionIndex + 1} debe tener una inclusión válida.`;
     }
 
     for (const [itemIndex, item] of (section.items || []).entries()) {
       if (!Number.isInteger(item?.providerId) || item.providerId <= 0) {
-        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener un proveedor valido.`;
+        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener un proveedor válido.`;
       }
 
       if (!String(item?.productCode || "").trim()) {
-        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener un codigo de producto.`;
+        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener un código de producto.`;
       }
 
       if (!String(item?.productDescription || "").trim()) {
-        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener una descripcion.`;
+        return `La fila ${itemIndex + 1} de la seccion ${sectionIndex + 1} debe tener una descripción.`;
       }
 
       if (!(toNumber(item?.quantity) > 0)) {
@@ -2194,7 +2199,7 @@ export function useQuotationsSection({
         setError(
           getApiErrorMessage(
             err,
-            "No fue posible cargar las versiones de la cotizacion",
+            "No fue posible cargar las versiones de la cotización",
           ),
         );
         return [];
@@ -2486,7 +2491,7 @@ export function useQuotationsSection({
     }
 
     return window.confirm(
-      "Tienes cambios sin guardar en la cotizacion actual. Si sales ahora, los cambios locales se perderan. ¿Quieres continuar?",
+      "Tienes cambios sin guardar en la cotización actual. Si sales ahora, los cambios locales se perderán. ¿Quieres continuar?",
     );
   }, []);
 
@@ -2510,7 +2515,7 @@ export function useQuotationsSection({
     setQuotationNavigationGuard("edit-quotation", {
       active: hasEditUnsavedChanges,
       message:
-        "Tienes cambios sin guardar en la cotizacion actual. Si sales ahora, los cambios locales se perderan. ¿Quieres continuar?",
+        "Tienes cambios sin guardar en la cotización actual. Si sales ahora, los cambios locales se perderán. ¿Quieres continuar?",
     });
 
     return () => {
@@ -2616,7 +2621,7 @@ export function useQuotationsSection({
           setError(
             getApiErrorMessage(
               err,
-              "No fue posible cargar el contexto comercial de la cotizacion",
+              "No fue posible cargar el contexto comercial de la cotización",
             ),
           );
           setCreateOpportunities([]);
@@ -2725,7 +2730,7 @@ export function useQuotationsSection({
         setError(
           getApiErrorMessage(
             err,
-            "No fue posible preparar el formulario de cotizacion",
+            "No fue posible preparar el formulario de cotización",
           ),
         );
       });
@@ -2773,7 +2778,7 @@ export function useQuotationsSection({
         <div style="font-family: Arial, sans-serif; padding: 32px; color: #123044;">
           <h1 style="margin: 0 0 12px; font-size: 22px;">Generando vista previa PDF</h1>
           <p style="margin: 0; font-size: 14px; color: #42515c;">
-            Estamos preparando el documento oficial de la cotizacion.
+            Estamos preparando el documento oficial de la cotización.
           </p>
         </div>
       `;
@@ -3034,7 +3039,7 @@ export function useQuotationsSection({
           0,
       );
       if (!versionId) {
-        setError("La cotizacion seleccionada no tiene una version editable.");
+        setError("La cotización seleccionada no tiene una version editable.");
         setOpenQuotationMenuId(null);
         return;
       }
@@ -3050,7 +3055,7 @@ export function useQuotationsSection({
         });
         setShowEditQuotationModal(true);
       } catch (err) {
-        setError(getApiErrorMessage(err, "No fue posible abrir la cotizacion"));
+        setError(getApiErrorMessage(err, "No fue posible abrir la cotización"));
       } finally {
         setBusyAction("");
         setOpenQuotationMenuId(null);
@@ -3073,7 +3078,7 @@ export function useQuotationsSection({
         Number(duplicateTargetAccounts[0]?.id || 0);
 
       if (!sourceVersionId) {
-        setError("Selecciona una version valida para duplicar la cotizacion");
+        setError("Selecciona una versión válida para duplicar la cotización");
         return;
       }
 
@@ -3403,12 +3408,12 @@ export function useQuotationsSection({
         targetOpportunityId,
       });
 
-      setSuccess(data?.message || "Cotizacion duplicada");
+      setSuccess(data?.message || "Cotización duplicada");
       closeDuplicateQuotationModal();
     } catch (err) {
       const message = getApiErrorMessage(
         err,
-        "No fue posible duplicar la cotizacion",
+        "No fue posible duplicar la cotización",
       );
       setDuplicateQuotationModalState((prev) => ({
         ...prev,
@@ -3531,7 +3536,7 @@ export function useQuotationsSection({
           ok: false,
           message: getApiErrorMessage(
             err,
-            "No fue posible conservar la configuracion de IA de los documentos",
+            "No fue posible conservar la configuración de IA de los documentos",
           ),
         };
       }
@@ -3672,7 +3677,7 @@ export function useQuotationsSection({
         closeCreateQuotationModal();
         if (documentUploadResult && !documentUploadResult.ok) {
           setError(
-            `Cotizacion creada, pero ${String(
+            `Cotización creada, pero ${String(
               documentUploadResult.message ||
                 "no fue posible cargar los documentos adjuntos",
             )}`,
@@ -3681,9 +3686,9 @@ export function useQuotationsSection({
         }
         if (documentAiSyncResult && !documentAiSyncResult.ok) {
           setError(
-            `Cotizacion creada, pero ${String(
+            `Cotización creada, pero ${String(
               documentAiSyncResult.message ||
-                "no fue posible conservar la configuracion de IA de los documentos",
+                "no fue posible conservar la configuración de IA de los documentos",
             )}`,
           );
           return;
@@ -3692,12 +3697,12 @@ export function useQuotationsSection({
         if (!openProviderImportAfterCreate) {
           setSuccess(
             documentUploadResult?.ok
-              ? "Cotizacion creada y documentos cargados"
-              : data.message || "Cotizacion creada",
+              ? "Cotización creada y documentos cargados"
+              : data.message || "Cotización creada",
           );
         }
       } catch (err) {
-        setError(getApiErrorMessage(err, "No fue posible crear la cotizacion"));
+        setError(getApiErrorMessage(err, "No fue posible crear la cotización"));
       } finally {
         setBusyAction("");
       }
@@ -4836,7 +4841,7 @@ export function useQuotationsSection({
     }
   }, [refreshQuotations, selectedQuotationId]);
 
-  const persistCurrentVersion = useCallback(async () => {
+  const persistCurrentVersion = useCallback(async (options = {}) => {
     if (!selectedVersionId) {
       return { ok: false, message: "Version no encontrada" };
     }
@@ -4847,6 +4852,7 @@ export function useQuotationsSection({
       sectionEdits,
       itemEdits,
       inclusionTypes: catalogs.inclusionTypes,
+      bundleCollapseState: options.bundleCollapseState,
     });
     const validationMessage = validatePersistedQuotationVersionPayload(payload);
 
@@ -4872,13 +4878,13 @@ export function useQuotationsSection({
     versionForm,
   ]);
 
-  const handleSaveVersion = useCallback(async () => {
+  const handleSaveVersion = useCallback(async (options = {}) => {
     if (!selectedVersionId) return;
     setError("");
     setSuccess("");
     try {
       setBusyAction("save-version");
-      const result = await persistCurrentVersion();
+      const result = await persistCurrentVersion(options);
 
       if (!result.ok) {
         return;
@@ -4902,13 +4908,13 @@ export function useQuotationsSection({
     selectedVersionId,
   ]);
 
-  const handleSaveAsNewVersion = useCallback(async () => {
+  const handleSaveAsNewVersion = useCallback(async (options = {}) => {
     if (!selectedQuotationId) return;
     setError("");
     setSuccess("");
     try {
       setBusyAction("save-as-new-version");
-      const saveResult = await persistCurrentVersion();
+      const saveResult = await persistCurrentVersion(options);
 
       if (!saveResult.ok) {
         return;
@@ -4916,7 +4922,13 @@ export function useQuotationsSection({
 
       const { data } = await api.post(
         `/api/quotations/${selectedQuotationId}/versions`,
-        {},
+        {
+          bundleCollapseState:
+            options.bundleCollapseState &&
+            typeof options.bundleCollapseState === "object"
+              ? options.bundleCollapseState
+              : {},
+        },
       );
       await refreshQuotations({
         preferredQuotationId: selectedQuotationId,
@@ -5297,7 +5309,7 @@ export function useQuotationsSection({
     }
 
     if (!isCreateDraftImport && !selectedVersionId) {
-      setError("Selecciona una version valida para analizar el documento.");
+      setError("Selecciona una versión válida para analizar el documento.");
       return false;
     }
 
@@ -5372,7 +5384,7 @@ export function useQuotationsSection({
         const jobId = String(resolvedData?.job?.id || "").trim();
         if (!jobId) {
           throw new Error(
-            "No fue posible obtener el identificador del job de analisis",
+            "No fue posible obtener el identificador del job de análisis",
           );
         }
 
@@ -5392,7 +5404,7 @@ export function useQuotationsSection({
               error: {
                 code: "poll_timeout",
                 message:
-                  "El analisis del documento sigue tardando mas de 5 minutos. Puedes intentarlo de nuevo desde el modal.",
+                  "El análisis del documento sigue tardando más de 5 minutos. Puedes intentarlo de nuevo desde el modal.",
               },
             };
             break;
@@ -5560,7 +5572,7 @@ export function useQuotationsSection({
       ) {
         setSuggestedMatchRowFeedback(
           "error",
-          "Confirma documento, proveedor y analisis antes de crear el item.",
+          "Confirma documento, proveedor y análisis antes de crear el item.",
         );
         return false;
       }
@@ -5739,7 +5751,7 @@ export function useQuotationsSection({
         !providerDocumentImportState.confirmedProviderId
       ) {
         setError(
-          "Confirma documento, proveedor y analisis antes de crear faltantes.",
+          "Confirma documento, proveedor y análisis antes de crear faltantes.",
         );
         return false;
       }
@@ -5860,7 +5872,7 @@ export function useQuotationsSection({
           !selectedQuotationId ||
           !providerDocumentImportState.selectedDocumentId))
     ) {
-      setError("Confirma documento, proveedor y analisis antes de aplicar.");
+      setError("Confirma documento, proveedor y análisis antes de aplicar.");
       return false;
     }
 
@@ -6044,7 +6056,7 @@ export function useQuotationsSection({
 
         closeProviderDocumentImportModal();
         setSuccess(
-          "Items agregados al borrador de cotizacion. La cotizacion aun no se ha creado.",
+          "Items agregados al borrador de cotización. La cotización aún no se ha creado.",
         );
         return true;
       }
@@ -6204,7 +6216,7 @@ export function useQuotationsSection({
   const handleAction = useCallback(
     async (actionCode, actionOptions = {}) => {
       if (!selectedVersionId) {
-        setError("Selecciona una version antes de ejecutar una accion.");
+        setError("Selecciona una version antes de ejecutar una acción.");
         return;
       }
       if (actionCode === "crear_version") {
@@ -6274,7 +6286,7 @@ export function useQuotationsSection({
           return "";
         }
 
-        return `No se pudo aprobar la cotizacion: ${reasons.join(" | ")}`;
+        return `No se pudo aprobar la cotización: ${reasons.join(" | ")}`;
       };
 
       const buildApprovalRecommendationsMessage = (warnings) => {
@@ -6344,7 +6356,7 @@ export function useQuotationsSection({
           setError(
             getApiErrorMessage(
               err,
-              "No fue posible generar el enlace publico de la cotizacion.",
+              "No fue posible generar el enlace público de la cotización.",
             ),
           );
           return false;
@@ -6352,7 +6364,7 @@ export function useQuotationsSection({
 
         if (!publicQuotationUrl) {
           setError(
-            "No fue posible generar el enlace publico de la cotizacion.",
+            "No fue posible generar el enlace público de la cotización.",
           );
           return false;
         }
@@ -6380,20 +6392,20 @@ export function useQuotationsSection({
 
         const subject = proposalName
           ? reference
-            ? `Cotizacion ${reference} - ${proposalName}`
-            : `Cotizacion - ${proposalName}`
+            ? `Cotización ${reference} - ${proposalName}`
+            : `Cotización - ${proposalName}`
           : reference
-            ? `Cotizacion ${reference}`
-            : "Cotizacion";
+            ? `Cotización ${reference}`
+            : "Cotización";
 
         const greetingLine = recipientName ? `Hola ${recipientName},` : "Hola,";
 
         const bodyLines = [
           greetingLine,
           "",
-          "Te comparto la cotizacion para tu revision.",
+          "Te comparto la cotización para tu revisión.",
           "",
-          "Enlace publico (PDF):",
+          "Enlace público (PDF):",
           publicQuotationUrl,
           "",
           "Resumen:",
@@ -6417,19 +6429,19 @@ export function useQuotationsSection({
 
         if (!opened) {
           setError(
-            "No fue posible abrir el cliente de correo. La cotizacion no se marco como enviada.",
+            "No fue posible abrir el cliente de correo. La cotización no se marcó como enviada.",
           );
           return false;
         }
 
         const confirmationMessage = recipientEmail
-          ? `Se intento abrir el correo para ${recipientEmail}. ¿Confirmas que el correo quedo abierto/preparado para envio?`
-          : "Se intento abrir el correo. ¿Confirmas que el correo quedo abierto/preparado para envio?";
+          ? `Se intentó abrir el correo para ${recipientEmail}. ¿Confirmas que el correo quedó abierto/preparado para envío?`
+          : "Se intentó abrir el correo. ¿Confirmas que el correo quedó abierto/preparado para envío?";
         const confirmedPrepared = window.confirm(confirmationMessage);
 
         if (!confirmedPrepared) {
           setSuccess(
-            "No se marco como enviada porque no se confirmo la preparacion del correo.",
+            "No se marcó como enviada porque no se confirmó la preparación del correo.",
           );
           return false;
         }
@@ -6504,7 +6516,7 @@ export function useQuotationsSection({
               );
               if (!shouldContinue) {
                 setError(
-                  `No se aprobo la cotizacion porque faltan servicios obligatorios (${humanizedMissing}). Agrega esos servicios o confirma la excepcion para continuar.`,
+                  `No se aprobó la cotización porque faltan servicios obligatorios (${humanizedMissing}). Agrega esos servicios o confirma la excepción para continuar.`,
                 );
                 return;
               }
@@ -6574,7 +6586,7 @@ export function useQuotationsSection({
 
               const messageLines = [
                 providerDocumentMissing
-                  ? "No existe documento de proveedor de respaldo para esta cotizacion."
+                  ? "No existe documento de proveedor de respaldo para esta cotización."
                   : "Hay items cotizados sin respaldo en el documento del proveedor.",
               ];
               if (unbackedItems.length) {
@@ -6583,15 +6595,15 @@ export function useQuotationsSection({
                 );
               }
               messageLines.push(
-                "¿Deseas continuar bajo tu responsabilidad? Esta excepcion quedara auditada.",
+                "¿Deseas continuar bajo tu responsabilidad? Esta excepción quedará auditada.",
               );
 
               const shouldContinue = window.confirm(messageLines.join("\n"));
               if (!shouldContinue) {
                 setError(
                   providerDocumentMissing
-                    ? "No se aprobo la cotizacion porque no existe documento de proveedor de respaldo."
-                    : "No se aprobo la cotizacion porque existen items sin respaldo en el documento del proveedor.",
+                    ? "No se aprobó la cotización porque no existe documento de proveedor de respaldo."
+                    : "No se aprobó la cotización porque existen items sin respaldo en el documento del proveedor.",
                 );
                 return;
               }
@@ -6638,12 +6650,12 @@ export function useQuotationsSection({
             buildApprovalRecommendationsMessage(data?.validation?.warnings),
           );
         }
-        setSuccess(data.message || "Accion ejecutada");
+        setSuccess(data.message || "Acción ejecutada");
       } catch (err) {
         const approvalPolicyMessage = buildApprovalPolicyErrorMessage(err);
         setError(
           approvalPolicyMessage ||
-            getApiErrorMessage(err, "No fue posible ejecutar la accion"),
+            getApiErrorMessage(err, "No fue posible ejecutar la acción"),
         );
       } finally {
         setBusyAction("");

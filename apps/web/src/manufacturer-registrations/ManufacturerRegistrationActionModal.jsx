@@ -170,7 +170,7 @@ export default function ManufacturerRegistrationActionModal({
               {item?.providerName
                 ? `Fabricante: ${item.providerName}`
                 : mode === "create"
-                  ? "La solicitud quedara pendiente de aprobacion en el modulo global."
+                  ? "La solicitud quedará pendiente de aprobación en el módulo global."
                   : ""}
             </p>
           </div>

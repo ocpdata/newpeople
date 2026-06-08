@@ -62,7 +62,7 @@ export function HelpDrawer() {
           Buscar
           <input
             type="text"
-            placeholder="Buscar guias de este modulo"
+            placeholder="Buscar guías de este módulo"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

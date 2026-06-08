@@ -145,7 +145,7 @@ function formatGatewayTimeoutMessage(error, data) {
     (normalizedBody.includes("gateway timeout") ||
       normalizedBody.includes("requested url was rejected"))
   ) {
-    return "La solicitud no alcanzo a completarse porque un proxy intermedio rechazo o interrumpio la respuesta de la API. Intenta nuevamente en unos momentos.";
+    return "La solicitud no alcanzó a completarse porque un proxy intermedio rechazó o interrumpió la respuesta de la API. Intenta nuevamente en unos momentos.";
   }
 
   return "";
@@ -166,12 +166,12 @@ export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) {
     if (String(error?.message || "").trim() === "Network Error") {
-      return "No se recibio respuesta del servidor. La conexion pudo haberse interrumpido o algun proxy/API corto la solicitud antes de responder.";
+      return "No se recibió respuesta del servidor. La conexión pudo haberse interrumpido o algún proxy/API cortó la solicitud antes de responder.";
     }
 
     if (error?.code === "ECONNABORTED") {
       return String(
-        error?.message || "La solicitud excedio el tiempo de espera",
+        error?.message || "La solicitud excedió el tiempo de espera",
       );
     }
 

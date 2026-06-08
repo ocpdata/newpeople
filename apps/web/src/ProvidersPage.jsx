@@ -450,7 +450,7 @@ function ProvidersPage({ currentUser }) {
                 className="sort-header-btn"
                 onClick={() => toggleProviderSort("pais")}
               >
-                Pais <span>{getProviderSortArrow("pais")}</span>
+                País <span>{getProviderSortArrow("pais")}</span>
               </button>
             </th>
             <th>

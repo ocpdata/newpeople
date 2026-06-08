@@ -56,11 +56,11 @@ function QuotationPrintDocument({ model }) {
         <div className="quotation-print-metadata-grid">
           <div className="quotation-print-info-card">
             <strong>
-              Cotizacion: {model.header.quotationNumber || ""}
+              Cotización: {model.header.quotationNumber || ""}
             </strong>
           </div>
           <div className="quotation-print-info-card">
-            <strong>Version: {model.header.versionNumber || ""}</strong>
+            <strong>Versión: {model.header.versionNumber || ""}</strong>
           </div>
           <div className="quotation-print-info-card">
             <strong>Fecha: {model.header.quotationDate || ""}</strong>
@@ -116,8 +116,8 @@ function QuotationPrintDocument({ model }) {
               <thead>
                 <tr>
                   <th>Item</th>
-                  <th>Codigo</th>
-                  <th>Descripcion</th>
+                  <th>Código</th>
+                  <th>Descripción</th>
                   <th>Cantidad</th>
                   <th>Precio unitario</th>
                   <th>Precio total</th>

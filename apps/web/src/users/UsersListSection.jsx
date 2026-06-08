@@ -230,7 +230,7 @@ export default function UsersListSection({
                             openUserActionConfirmation(user, "reset-password")
                           }
                         >
-                          Reiniciar contrasena
+                          Reiniciar contraseña
                         </button>
                       </div>
                     )}

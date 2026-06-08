@@ -21,7 +21,13 @@ import {
 } from "./quotationsUtils";
 import {
   QuotationCommercialConditionsCard,
+  QuotationFinancingCard,
   QuotationInternalNotesField,
+  buildQuotationFinancingForm,
+  buildQuotationFinancingPreview,
+  QUOTATION_FINANCING_PAYMENT_TERMS_CODE,
+  removeQuotationFinancingNotesBlock,
+  upsertQuotationFinancingNotesBlock,
 } from "./QuotationCommercialFields";
 import QuotationProductPickerModal from "./QuotationProductPickerModal";
 import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
@@ -195,7 +201,7 @@ function OriginalListPriceInput({ ariaLabel, value, onChange, onBlur }) {
   );
 }
 
-function InclusionIcon({ code }) {
+function InclusiónIcon({ code }) {
   if (code === "no_incluida") {
     return (
       <svg
@@ -458,7 +464,7 @@ const ITEM_TABLE_COLUMNS = [
   },
   {
     key: "productDescription",
-    label: "Descripcion",
+    label: "Descripción",
     defaultWidth: 220,
     minWidth: 140,
     resizable: true,
@@ -630,6 +636,9 @@ function QuotationCreateModal({
   const [commercialConditions, setCommercialConditions] = useState(() =>
     buildQuotationCommercialConditionsForm(),
   );
+  const [financingForm, setFinancingForm] = useState(() =>
+    buildQuotationFinancingForm(),
+  );
   useEffect(() => {
     if (!createProviderDocumentImportAppliedToken) {
       return;
@@ -779,6 +788,25 @@ function QuotationCreateModal({
       summaryVatMode,
     ],
   );
+  const createQuotationFinalTotal =
+    createQuotationSummary.summaryVatMode === "total"
+      ? createQuotationSummary.totalWithVatAmount
+      : createQuotationSummary.discountedTotalAmount;
+  const financingPreview = useMemo(
+    () =>
+      buildQuotationFinancingPreview({
+        financingForm,
+        totalAmount: createQuotationFinalTotal,
+        currencyCode: commercialConditions.currencyCode,
+        summaryVatMode,
+      }),
+    [
+      commercialConditions.currencyCode,
+      createQuotationFinalTotal,
+      financingForm,
+      summaryVatMode,
+    ],
+  );
 
   const [accountQuery, setAccountQuery] = useState("");
   const [itemTableColumnWidths, setItemTableColumnWidths] = useState(() =>
@@ -897,6 +925,15 @@ function QuotationCreateModal({
     }));
   }
 
+  function handleFinancingFieldChange(field, value) {
+    setFinancingForm((currentValue) =>
+      buildQuotationFinancingForm({
+        ...currentValue,
+        [field]: value,
+      }),
+    );
+  }
+
   function isEditableBundleOriginType(originType) {
     return originType === "manual_bundle" || originType === "price_list_bundle";
   }
@@ -973,7 +1010,7 @@ function QuotationCreateModal({
       return {
         ok: false,
         message:
-          "Selecciona exactamente un bundle existente y una o mas filas independientes.",
+          "Selecciona exactamente un bundle existente y una o más filas independientes.",
       };
     }
 
@@ -1024,7 +1061,7 @@ function QuotationCreateModal({
       return {
         ok: false,
         message:
-          "Selecciona uno o mas componentes de un bundle para quitarlos del grupo.",
+          "Selecciona uno o más componentes de un bundle para quitarlos del grupo.",
       };
     }
 
@@ -1085,6 +1122,54 @@ function QuotationCreateModal({
 
     return { ok: true, message: "" };
   }
+  useEffect(() => {
+    if (!financingForm.enabled) {
+      setCommercialConditions((prev) => {
+        const nextNotes = removeQuotationFinancingNotesBlock(
+          prev.quotationNotes,
+        );
+
+        if (nextNotes === String(prev.quotationNotes || "")) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          quotationNotes: nextNotes,
+        };
+      });
+      return;
+    }
+
+    if (!financingPreview.isValid || !financingPreview.noteBlock) {
+      return;
+    }
+
+    setCommercialConditions((prev) => {
+      const nextNotes = upsertQuotationFinancingNotesBlock(
+        prev.quotationNotes,
+        financingPreview.noteBlock,
+      );
+      const nextPaymentTerms = QUOTATION_FINANCING_PAYMENT_TERMS_CODE;
+
+      if (
+        nextNotes === String(prev.quotationNotes || "") &&
+        nextPaymentTerms === String(prev.paymentTerms || "")
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        paymentTerms: nextPaymentTerms,
+        quotationNotes: nextNotes,
+      };
+    });
+  }, [
+    financingForm.enabled,
+    financingPreview.isValid,
+    financingPreview.noteBlock,
+  ]);
 
   useEffect(() => {
     setCollapsedBundleIdsBySection((prev) => {
@@ -1140,7 +1225,7 @@ function QuotationCreateModal({
     );
   }, [accountQuery, accounts]);
 
-  function getInclusionTypeMeta(inclusionTypeId) {
+  function getInclusiónTypeMeta(inclusionTypeId) {
     return (
       catalogs.inclusionTypes.find(
         (type) => String(type.id) === String(inclusionTypeId),
@@ -2090,6 +2175,7 @@ function QuotationCreateModal({
         summaryVatMode,
         internalNotes,
         commercialConditions,
+        financingForm,
         pendingDocuments: pendingDocuments.map((document) => ({
           name: document.originalFileName,
           size: document.byteSize,
@@ -2103,6 +2189,7 @@ function QuotationCreateModal({
       createCommercialContextConfirmed,
       createQuotationForm,
       effectiveCreateSectionDrafts,
+      financingForm,
       internalNotes,
       pendingDocuments,
       selectedAccountId,
@@ -2143,7 +2230,7 @@ function QuotationCreateModal({
     setQuotationNavigationGuard("create-quotation", {
       active: hasUnsavedChanges,
       message:
-        "Tienes cambios sin guardar en la nueva cotizacion. Si sales ahora, los cambios locales se perderan. ¿Quieres continuar?",
+        "Tienes cambios sin guardar en la nueva cotización. Si sales ahora, los cambios locales se perderán. ¿Quieres continuar?",
     });
 
     return () => {
@@ -2156,7 +2243,7 @@ function QuotationCreateModal({
       hasUnsavedChanges &&
       typeof window !== "undefined" &&
       !window.confirm(
-        "Tienes cambios sin guardar en la nueva cotizacion. Si sales ahora, los cambios locales se perderan. ¿Quieres continuar?",
+        "Tienes cambios sin guardar en la nueva cotización. Si sales ahora, los cambios locales se perderán. ¿Quieres continuar?",
       )
     ) {
       return;
@@ -2175,12 +2262,12 @@ function QuotationCreateModal({
           <div className="modal-header">
             <div className="opportunity-modal-header-copy">
               <div className="account-modal-title-row">
-                <h3 className="modal-title">Crear cotizacion</h3>
+                <h3 className="modal-title">Crear cotización</h3>
                 <ModalInlineHelp helpKey="quotation.create" />
               </div>
               <p className="field-hint opportunity-modal-subtitle">
                 Selecciona el contexto comercial y completa los datos para
-                registrar la cotizacion.
+                registrar la cotización.
               </p>
             </div>
             <div className="account-modal-header-actions">
@@ -2304,8 +2391,8 @@ function QuotationCreateModal({
                       createCommercialContextConfirmed ||
                       !canConfirmCreateCommercialContext
                     }
-                    aria-label="Ingresar datos de la cotizacion"
-                    title="Ingresar datos de la cotizacion"
+                    aria-label="Ingresar datos de la cotización"
+                    title="Ingresar datos de la cotización"
                     onClick={handleConfirmCreateCommercialContext}
                   >
                     <svg
@@ -2328,7 +2415,7 @@ function QuotationCreateModal({
               {createCommercialContextConfirmed ? (
                 <p className="field-hint quotation-create-step-hint">
                   El contexto comercial quedo confirmado y ya no se puede
-                  modificar en esta cotizacion.
+                  modificar en esta cotización.
                 </p>
               ) : null}
               {!selectedAccountId ? (
@@ -2367,12 +2454,12 @@ function QuotationCreateModal({
                       <div className="quotation-proposal-badges">
                         <span
                           className="record-id-badge"
-                          title="ID de la cotizacion"
+                          title="ID de la cotización"
                         >
                           <span className="record-id-icon" aria-hidden="true">
                             #
                           </span>
-                          Cotizacion {draftQuotationIdLabel}
+                          Cotización {draftQuotationIdLabel}
                         </span>
                         <span
                           className="record-id-badge"
@@ -2391,7 +2478,7 @@ function QuotationCreateModal({
                   </div>
                   <div className="grid-form account-grid-main">
                     <div className="field-group">
-                      <label>Nombre de la cotizacion</label>
+                      <label>Nombre de la cotización</label>
                       <input
                         value={createQuotationForm.proposalName}
                         onChange={(event) =>
@@ -2403,7 +2490,7 @@ function QuotationCreateModal({
                       />
                     </div>
                     <div className="field-group">
-                      <label>Fecha de cotizacion</label>
+                      <label>Fecha de cotización</label>
                       <input
                         type="date"
                         value={createQuotationForm.quotationDate}
@@ -2463,7 +2550,7 @@ function QuotationCreateModal({
                   <div className="quotation-section-toolbar">
                     <div>
                       <div className="quotation-help-title-row">
-                        <h4>Secciones de la cotizacion</h4>
+                        <h4>Secciónes de la cotización</h4>
                         <ModalInlineHelp helpKey="quotation.sections.toolbar" />
                       </div>
                     </div>
@@ -2471,7 +2558,7 @@ function QuotationCreateModal({
                       <div className="quotation-action-group">
                         <div className="quotation-icon-actions">
                           <QuotationIconButton
-                            title="Crear seccion nueva"
+                            title="Crear sección nueva"
                             onClick={handleAddCreateSectionDraft}
                           >
                             <PlusIcon />
@@ -2875,13 +2962,13 @@ function QuotationCreateModal({
                                 </div>
                                 <div className="quotation-action-group">
                                   <span className="quotation-action-group-label">
-                                    Seccion
+                                    Sección
                                   </span>
                                   <div className="quotation-icon-actions quotation-icon-actions-section">
                                     <div
                                       className="quotation-inline-icon-group"
                                       role="group"
-                                      aria-label="Inclusion de la seccion"
+                                      aria-label="Inclusión de la seccion"
                                     >
                                       {catalogs.inclusionTypes.map((type) => {
                                         const isSelected =
@@ -2904,13 +2991,13 @@ function QuotationCreateModal({
                                               )
                                             }
                                           >
-                                            <InclusionIcon code={type.code} />
+                                            <InclusiónIcon code={type.code} />
                                           </button>
                                         );
                                       })}
                                     </div>
                                     <QuotationIconButton
-                                      title="Subir seccion"
+                                      title="Subir sección"
                                       disabled={index === 0}
                                       onClick={() =>
                                         handleMoveCreateSectionDraft(index, -1)
@@ -2919,7 +3006,7 @@ function QuotationCreateModal({
                                       <UpIcon />
                                     </QuotationIconButton>
                                     <QuotationIconButton
-                                      title="Bajar seccion"
+                                      title="Bajar sección"
                                       disabled={
                                         index === createSectionDrafts.length - 1
                                       }
@@ -2930,7 +3017,7 @@ function QuotationCreateModal({
                                       <DownIcon />
                                     </QuotationIconButton>
                                     <QuotationIconButton
-                                      title="Eliminar seccion"
+                                      title="Eliminar sección"
                                       danger
                                       onClick={() =>
                                         handleRemoveCreateSectionDraft(index)
@@ -2948,9 +3035,9 @@ function QuotationCreateModal({
                                 <input
                                   value={section.title}
                                   placeholder={
-                                    getInclusionTypeMeta(
+                                    getInclusiónTypeMeta(
                                       section.inclusionTypeId,
-                                    )?.name || "Titulo de la seccion"
+                                    )?.name || "Título de la sección"
                                   }
                                   onChange={(event) =>
                                     handleUpdateCreateSectionDraft(
@@ -3019,11 +3106,11 @@ function QuotationCreateModal({
                                     </div>
                                     <div className="quotation-sale-adjustment-detail-wide">
                                       <span className="quotation-sale-adjustment-label">
-                                        Descripcion
+                                        Descripción
                                       </span>
                                       <strong>
                                         {selectedRowItem.productDescription ||
-                                          "Sin descripcion"}
+                                          "Sin descripción"}
                                       </strong>
                                     </div>
                                   </div>
@@ -3217,7 +3304,7 @@ function QuotationCreateModal({
                                       </p>
                                       <p className="field-hint quotation-sale-adjustment-context">
                                         No cambia: precio de lista, cantidad,
-                                        importacion y las demas variables no
+                                        importación y las demás variables no
                                         seleccionadas.
                                       </p>
                                     </div>
@@ -3225,7 +3312,7 @@ function QuotationCreateModal({
                                     <div className="quotation-sale-adjustment-preview quotation-sale-adjustment-preview-empty">
                                       <p className="field-hint">
                                         {saleAdjustmentPreview?.message ||
-                                          "Ingresa un precio de venta total valido para ver la vista previa."}
+                                          "Ingresa un precio de venta total válido para ver la vista previa."}
                                       </p>
                                     </div>
                                   )}
@@ -3328,7 +3415,7 @@ function QuotationCreateModal({
                                               </strong>
                                               <span className="quotation-manual-bundle-option-description">
                                                 {item.productDescription ||
-                                                  "Sin descripcion"}
+                                                  "Sin descripción"}
                                               </span>
                                             </span>
                                           </label>
@@ -3354,7 +3441,7 @@ function QuotationCreateModal({
                                             </strong>
                                             <span>
                                               {item.productDescription ||
-                                                "Sin descripcion"}
+                                                "Sin descripción"}
                                             </span>
                                           </li>
                                         ))}
@@ -3870,7 +3957,7 @@ function QuotationCreateModal({
                                   <tfoot>
                                     <tr>
                                       <td colSpan={11}>
-                                        Totales de la seccion
+                                        Totales de la sección
                                       </td>
                                       <td>
                                         {formatQuotationAmount(
@@ -3895,7 +3982,7 @@ function QuotationCreateModal({
                     </div>
                   ) : (
                     <p className="field-hint quotation-create-step-hint">
-                      Aun no agregaste secciones iniciales.
+                      Aún no agregaste secciones iniciales.
                     </p>
                   )}
                 </section>
@@ -3906,7 +3993,7 @@ function QuotationCreateModal({
                       <h4>Resumen</h4>
                       <p className="field-hint">
                         Consolidado actual de costo, venta y margen de la
-                        cotizacion en construccion.
+                        cotización en construcción.
                       </p>
                     </div>
                   </div>
@@ -4056,8 +4143,8 @@ function QuotationCreateModal({
                         />
                         <p className="field-hint quotation-summary-discount-hint">
                           {summaryDiscountMode === "percentage"
-                            ? "Se aplica sobre el valor total de venta de la cotizacion."
-                            : "Se aplica como monto directo sobre el valor total de venta de la cotizacion."}
+                            ? "Se aplica sobre el valor total de venta de la cotización."
+                            : "Se aplica como monto directo sobre el valor total de venta de la cotización."}
                         </p>
                       </div>
 
@@ -4110,6 +4197,26 @@ function QuotationCreateModal({
                   </div>
                 </section>
 
+                <section className="account-form-section opportunity-sales-management-section quotation-financing-section">
+                  <div className="quotation-proposal-section-header">
+                    <div>
+                      <h4>Financiamiento</h4>
+                      <p className="field-hint">
+                        Define cuota inicial, TEA y periodos sobre el total
+                        final de la cotización.
+                      </p>
+                    </div>
+                  </div>
+                  <QuotationFinancingCard
+                    idPrefix="quotation"
+                    currencyCode={commercialConditions.currencyCode}
+                    totalAmount={createQuotationFinalTotal}
+                    financingForm={financingForm}
+                    financingPreview={financingPreview}
+                    onFieldChange={handleFinancingFieldChange}
+                  />
+                </section>
+
                 <section className="account-form-section opportunity-sales-management-section quotation-commercial-conditions-section">
                   <div className="quotation-proposal-section-header">
                     <div>
@@ -4135,7 +4242,7 @@ function QuotationCreateModal({
                       </div>
                       <p className="field-hint quotation-documents-hint">
                         Adjunta y configura los documentos de soporte para esta
-                        cotizacion antes de crearla.
+                        cotización antes de crearla.
                       </p>
                     </div>
                     <div className="quotation-documents-toolbar">
@@ -4159,8 +4266,8 @@ function QuotationCreateModal({
                           type="button"
                           className={`btn-secondary quotation-documents-view-button quotation-documents-icon-button${documentViewMode === "all" ? " is-active" : ""}`}
                           onClick={() => setDocumentViewMode("all")}
-                          title="Mostrar documentos de todas las versiones de esta cotizacion"
-                          aria-label="Mostrar documentos de todas las versiones de esta cotizacion"
+                          title="Mostrar documentos de todas las versiones de esta cotización"
+                          aria-label="Mostrar documentos de todas las versiones de esta cotización"
                         >
                           <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M8 4.75h8.8L21.25 9.2V19A1.25 1.25 0 0 1 20 20.25H8A1.25 1.25 0 0 1 6.75 19V6A1.25 1.25 0 0 1 8 4.75Zm8.5 1.9V9.5h2.85Z" />
@@ -4180,7 +4287,7 @@ function QuotationCreateModal({
                         className={`quotation-documents-dropzone${isPendingDocumentsDragActive ? " is-drag-active" : ""}${isPendingDocumentsInputDisabled ? " is-disabled" : ""}`}
                         role="button"
                         tabIndex={isPendingDocumentsInputDisabled ? -1 : 0}
-                        aria-label="Arrastra y suelta documentos o haz clic para adjuntarlos a la cotizacion"
+                        aria-label="Arrastra y suelta documentos o haz clic para adjuntarlos a la cotización"
                         aria-disabled={isPendingDocumentsInputDisabled}
                         onClick={handlePendingDocumentsDropZoneClick}
                         onKeyDown={handlePendingDocumentsDropZoneKeyDown}
@@ -4199,7 +4306,7 @@ function QuotationCreateModal({
                           {isPendingDocumentsDragActive
                             ? "Suelta los documentos aqui"
                             : isPendingDocumentsInputDisabled
-                              ? "Creando cotizacion..."
+                              ? "Creando cotización..."
                               : "Arrastra documentos aqui o haz clic"}
                         </span>
                       </div>
@@ -4210,13 +4317,13 @@ function QuotationCreateModal({
                         onClick={handleOpenProviderImportFromCreate}
                         title={
                           canOpenProviderImportFromCreate
-                            ? "Crear la cotizacion y abrir importacion desde documento con IA"
-                            : "Adjunta al menos un documento habilitado para IA y completa la cotizacion para abrir la importacion"
+                            ? "Crear la cotización y abrir importación desde documento con IA"
+                            : "Adjunta al menos un documento habilitado para IA y completa la cotización para abrir la importación"
                         }
                         aria-label={
                           canOpenProviderImportFromCreate
-                            ? "Crear la cotizacion y abrir importacion desde documento con IA"
-                            : "Adjunta al menos un documento habilitado para IA y completa la cotizacion para abrir la importacion"
+                            ? "Crear la cotización y abrir importación desde documento con IA"
+                            : "Adjunta al menos un documento habilitado para IA y completa la cotización para abrir la importación"
                         }
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -4279,13 +4386,13 @@ function QuotationCreateModal({
                               }
                               title={
                                 document.aiEnabled === false
-                                  ? "Permitir nuevamente este documento para analisis con IA"
-                                  : "Excluir este documento del analisis con IA"
+                                  ? "Permitir nuevamente este documento para análisis con IA"
+                                  : "Excluir este documento del análisis con IA"
                               }
                               aria-label={
                                 document.aiEnabled === false
-                                  ? "Permitir nuevamente este documento para analisis con IA"
-                                  : "Excluir este documento del analisis con IA"
+                                  ? "Permitir nuevamente este documento para análisis con IA"
+                                  : "Excluir este documento del análisis con IA"
                               }
                             >
                               {document.aiEnabled === false ? (
@@ -4320,8 +4427,8 @@ function QuotationCreateModal({
                   ) : (
                     <div className="quotation-documents-empty">
                       {documentViewMode === "all"
-                        ? "Esta cotizacion aun no tiene documentos adjuntos."
-                        : "Esta version aun no tiene documentos adjuntos."}
+                        ? "Esta cotización aún no tiene documentos adjuntos."
+                        : "Esta versión aún no tiene documentos adjuntos."}
                     </div>
                   )}
                 </section>
@@ -4349,7 +4456,7 @@ function QuotationCreateModal({
                   busyAction === "create-quotation" || !canSubmitCreateQuotation
                 }
               >
-                Crear cotizacion
+                Crear cotización
               </button>
             </div>
           </form>

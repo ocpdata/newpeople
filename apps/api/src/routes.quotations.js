@@ -131,6 +131,10 @@ const versionPayloadSchema = z.object({
   currencyCode: z.string().trim().min(1).max(20).optional().nullable(),
   exchangeRate: z.number().positive().optional().nullable(),
   quotationNotes: z.string().trim().max(50000).optional().nullable(),
+  bundleCollapseState: z
+    .record(z.string(), z.array(z.string().trim().min(1).max(120)))
+    .optional()
+    .nullable(),
 });
 
 const versionUpdateSchema = versionPayloadSchema;
@@ -1567,6 +1571,12 @@ async function ensureQuotationVersionsSchema() {
         `ALTER TABLE quotation_versions
          ADD COLUMN quotation_notes LONGTEXT NULL
          AFTER exchange_rate`,
+      );
+      await ensureQuotationVersionsColumn(
+        "bundle_collapse_state_json",
+        `ALTER TABLE quotation_versions
+         ADD COLUMN bundle_collapse_state_json LONGTEXT NULL
+         AFTER quotation_notes`,
       );
       await ensureQuotationVersionsDecimalScale(
         "summary_discount_value",
@@ -6583,6 +6593,7 @@ async function getAccessibleQuotationVersion({ user, versionId }) {
           qv.internal_notes,
             qv.delivery_time, qv.quotation_validity, qv.warranty_term,
             qv.payment_terms, qv.currency_code, qv.exchange_rate, qv.quotation_notes,
+            qv.bundle_collapse_state_json,
             qv.created_at, qv.updated_at,
             qv.created_by_user_id, qv.updated_by_user_id,
             q.latest_version_id, q.opportunity_id,
@@ -6956,6 +6967,7 @@ async function getQuotationVersionSummaryRows(quotationId) {
             qv.currency_code,
             qv.exchange_rate,
             qv.quotation_notes,
+            qv.bundle_collapse_state_json,
             lp.id AS proposal_id,
             lp.status_code AS proposal_status_code,
             qas.code AS activation_status_code,
@@ -7003,6 +7015,24 @@ function safeParseJsonArray(value) {
   } catch {
     return null;
   }
+}
+
+function safeParseBundleCollapseState(value) {
+  const parsedValue = safeParseJsonObject(value);
+  if (!parsedValue || Array.isArray(parsedValue)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsedValue).map(([sectionId, bundleIds]) => [
+      String(sectionId),
+      Array.isArray(bundleIds)
+        ? bundleIds
+            .map((bundleId) => String(bundleId || "").trim())
+            .filter(Boolean)
+        : [],
+    ]),
+  );
 }
 
 function sanitizeProposalContent(content) {
@@ -11010,9 +11040,9 @@ router.post(
            status_id, activation_status_id, summary_discount_mode, summary_discount_value,
            summary_distribution_mode, summary_vat_mode, summary_vat_pct, internal_notes,
            delivery_time, quotation_validity, warranty_term, payment_terms,
-           currency_code, exchange_rate, quotation_notes,
+           currency_code, exchange_rate, quotation_notes, bundle_collapse_state_json,
            created_at, updated_at, created_by_user_id, updated_by_user_id)
-         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           quotationId,
           contactId,
@@ -11034,6 +11064,7 @@ router.post(
           currencyCode,
           exchangeRate,
           quotationNotes,
+          null,
           now,
           now,
           Number(req.user.id),
@@ -11181,6 +11212,9 @@ router.get(
         exchangeRate:
           version.exchange_rate == null ? null : Number(version.exchange_rate),
         quotationNotes: version.quotation_notes || "",
+        bundleCollapseState: safeParseBundleCollapseState(
+          version.bundle_collapse_state_json,
+        ),
         proposalId: version.proposal_id ? Number(version.proposal_id) : null,
         hasProposal: Boolean(version.proposal_id),
         proposalStatusCode: version.proposal_status_code
@@ -12450,9 +12484,9 @@ router.post(
            status_id, activation_status_id, summary_discount_mode, summary_discount_value,
            summary_distribution_mode, summary_vat_mode, summary_vat_pct, internal_notes,
            delivery_time, quotation_validity, warranty_term, payment_terms,
-           currency_code, exchange_rate, quotation_notes,
+           currency_code, exchange_rate, quotation_notes, bundle_collapse_state_json,
            created_at, updated_at, created_by_user_id, updated_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           quotationId,
           newVersionNumber,
@@ -12495,6 +12529,9 @@ router.post(
               : Number(latestVersion.exchange_rate)
             : Number(parsed.data.exchangeRate),
           parsed.data.quotationNotes ?? latestVersion.quotation_notes ?? "",
+          parsed.data.bundleCollapseState == null
+            ? latestVersion.bundle_collapse_state_json ?? null
+            : JSON.stringify(parsed.data.bundleCollapseState),
           now,
           now,
           Number(req.user.id),
@@ -12641,6 +12678,9 @@ router.get(
       exchangeRate:
         version.exchange_rate == null ? null : Number(version.exchange_rate),
       quotationNotes: version.quotation_notes || "",
+      bundleCollapseState: safeParseBundleCollapseState(
+        version.bundle_collapse_state_json,
+      ),
       createdAt: version.created_at,
       updatedAt: version.updated_at,
       createdByUserId: Number(version.created_by_user_id),
@@ -12774,9 +12814,9 @@ router.post(
            status_id, activation_status_id, summary_discount_mode, summary_discount_value,
            summary_distribution_mode, summary_vat_mode, summary_vat_pct, internal_notes,
            delivery_time, quotation_validity, warranty_term, payment_terms,
-           currency_code, exchange_rate, quotation_notes,
+           currency_code, exchange_rate, quotation_notes, bundle_collapse_state_json,
            created_at, updated_at, created_by_user_id, updated_by_user_id)
-         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           duplicatedQuotationId,
           targetContactId,
@@ -12804,6 +12844,7 @@ router.post(
             ? null
             : Number(sourceVersion.exchange_rate),
           sourceVersion.quotation_notes || "",
+          sourceVersion.bundle_collapse_state_json ?? null,
           now,
           now,
           Number(req.user.id),
@@ -12938,7 +12979,7 @@ router.put(
            activation_status_id = ?, summary_discount_mode = ?, summary_discount_value = ?,
            summary_distribution_mode = ?, summary_vat_mode = ?, summary_vat_pct = ?, internal_notes = ?,
            delivery_time = ?, quotation_validity = ?, warranty_term = ?, payment_terms = ?,
-           currency_code = ?, exchange_rate = ?, quotation_notes = ?,
+           currency_code = ?, exchange_rate = ?, quotation_notes = ?, bundle_collapse_state_json = ?,
            updated_at = ?, updated_by_user_id = ?
        WHERE id = ?`,
       [
@@ -12976,6 +13017,9 @@ router.put(
             : Number(version.exchange_rate)
           : Number(parsed.data.exchangeRate),
         parsed.data.quotationNotes ?? version.quotation_notes ?? "",
+        parsed.data.bundleCollapseState == null
+          ? version.bundle_collapse_state_json ?? null
+          : JSON.stringify(parsed.data.bundleCollapseState),
         now,
         Number(req.user.id),
         versionId,
@@ -13119,7 +13163,7 @@ router.put(
              activation_status_id = ?, summary_discount_mode = ?, summary_discount_value = ?,
              summary_distribution_mode = ?, summary_vat_mode = ?, summary_vat_pct = ?, internal_notes = ?,
              delivery_time = ?, quotation_validity = ?, warranty_term = ?, payment_terms = ?,
-             currency_code = ?, exchange_rate = ?, quotation_notes = ?,
+             currency_code = ?, exchange_rate = ?, quotation_notes = ?, bundle_collapse_state_json = ?,
              updated_at = ?, updated_by_user_id = ?
          WHERE id = ?`,
           [
@@ -13157,6 +13201,9 @@ router.put(
                 : Number(version.exchange_rate)
               : Number(parsed.data.exchangeRate),
             parsed.data.quotationNotes ?? version.quotation_notes ?? "",
+            parsed.data.bundleCollapseState == null
+              ? version.bundle_collapse_state_json ?? null
+              : JSON.stringify(parsed.data.bundleCollapseState),
             now,
             Number(req.user.id),
             versionId,
@@ -13377,6 +13424,9 @@ router.put(
           ? null
           : Number(refreshedVersion.exchange_rate),
       quotationNotes: refreshedVersion.quotation_notes || "",
+      bundleCollapseState: safeParseBundleCollapseState(
+        refreshedVersion.bundle_collapse_state_json,
+      ),
       createdAt: refreshedVersion.created_at,
       updatedAt: refreshedVersion.updated_at,
       createdByUserId: Number(refreshedVersion.created_by_user_id),

@@ -4,7 +4,7 @@ export default function Dashboard() {
       <h2>Dashboard</h2>
       <p>
         Base del CRM creada con usuarios, roles, permisos, cuentas,
-        oportunidades, contactos, paises y monedas.
+        oportunidades, contactos, países y monedas.
       </p>
       <div className="cards">
         <div className="card">

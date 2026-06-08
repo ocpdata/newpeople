@@ -4,11 +4,11 @@ export const HELP_ARTICLES = [
     routeKey: "dashboard",
     title: "Leer el dashboard sin perder foco",
     summary:
-      "Usa esta vista para detectar prioridades del dia antes de entrar a los modulos operativos.",
+      "Usa esta vista para detectar prioridades del día antes de entrar a los módulos operativos.",
     details: [
-      "Revisa primero indicadores con mayor desviacion o alertas activas.",
-      "Toma una decision de seguimiento y luego navega al modulo correspondiente.",
-      "Evita ejecutar cambios desde aqui: tratala como tablero de lectura.",
+      "Revisa primero indicadores con mayor desviación o alertas activas.",
+      "Toma una decisión de seguimiento y luego navega al módulo correspondiente.",
+      "Evita ejecutar cambios desde aquí: trátala como tablero de lectura.",
     ],
     tags: ["dashboard", "prioridades", "resumen"],
   },
@@ -19,9 +19,9 @@ export const HELP_ARTICLES = [
     summary:
       "Usa Crear cuenta, completa los datos base y guarda para habilitar su ciclo comercial.",
     details: [
-      "Captura nombre comercial y datos de identificacion de forma consistente.",
-      "Asigna responsables y contexto para que el equipo ubique la cuenta rapido.",
-      "Guarda y valida que quede en estado activo antes de relacionar oportunidades.",
+      "Captura nombre comercial y datos de identificación de forma consistente.",
+      "Asigna responsables y contexto para que el equipo ubique la cuenta rápido.",
+      "Guarda y valida que quede en estado activo antes de relaciónar oportunidades.",
     ],
     tags: ["cuentas", "crear", "alta"],
   },
@@ -30,11 +30,11 @@ export const HELP_ARTICLES = [
     routeKey: "accounts",
     title: "Editar una cuenta existente",
     summary:
-      "Abre acciones de la cuenta para actualizar responsables, datos de contacto y contexto comercial.",
+      "Abre acciónes de la cuenta para actualizar responsables, datos de contacto y contexto comercial.",
     details: [
       "Actualiza responsables cuando cambie cobertura o ownership comercial.",
       "Depura datos de contacto para evitar duplicados en prospectos y oportunidades.",
-      "Usa notas y campos de contexto para dejar trazabilidad util al equipo.",
+      "Usa notas y campos de contexto para dejar trazabilidad útil al equipo.",
     ],
     tags: ["cuentas", "editar", "actualizar"],
   },
@@ -43,13 +43,13 @@ export const HELP_ARTICLES = [
     routeKey: "contacts",
     title: "Crear y clasificar contactos",
     summary:
-      "Registra contactos con poder de decision y nivel de influencia para mejorar el targeting comercial.",
+      "Registra contactos con poder de decisión y nivel de influencia para mejorar el targeting comercial.",
     details: [
-      "Completa correo, telefono y cargo para acelerar seguimiento multicanal.",
-      "Asigna poder de decision y relacion con nosotros segun contexto real.",
+      "Completa correo, teléfono y cargo para acelerar seguimiento multicanal.",
+      "Asigna poder de decisión y relación con nosotros según contexto real.",
       "Relaciona cada contacto con su cuenta principal para evitar huella suelta.",
     ],
-    tags: ["contactos", "crear", "clasificacion"],
+    tags: ["contactos", "crear", "clasificación"],
   },
   {
     id: "contacts-hygiene",
@@ -58,7 +58,7 @@ export const HELP_ARTICLES = [
     summary:
       "Mantener la calidad de datos en contactos reduce errores al cotizar y al mapear decisores.",
     details: [
-      "Busca duplicados por correo, telefono o nombre dentro de la misma cuenta.",
+      "Busca duplicados por correo, teléfono o nombre dentro de la misma cuenta.",
       "Estandariza nomenclatura de cargos para mejorar filtros y reportes.",
       "Desactiva o corrige registros incompletos para no contaminar el pipeline.",
     ],
@@ -69,13 +69,13 @@ export const HELP_ARTICLES = [
     routeKey: "interactions",
     title: "Registrar leads y seguimiento",
     summary:
-      "Captura cada interaccion relevante para sostener continuidad comercial entre equipos.",
+      "Captura cada interacción relevante para sostener continuidad comercial entre equipos.",
     details: [
-      "Registra origen, contexto y siguiente accion inmediatamente despues del contacto.",
-      "Vincula evidencia documental cuando aplique para soportar decisiones futuras.",
+      "Registra origen, contexto y siguiente acción inmedíatamente después del contacto.",
+      "Vincula evidencia documental cuando aplique para soportar decisiónes futuras.",
       "Promueve a oportunidad solo cuando haya claridad de necesidad y potencial real.",
     ],
-    tags: ["leads", "interacciones", "seguimiento"],
+    tags: ["leads", "interacciónes", "seguimiento"],
   },
   {
     id: "opportunities-flow",
@@ -84,8 +84,8 @@ export const HELP_ARTICLES = [
     summary:
       "Filtra por estado, abre una oportunidad y avanza etapas registrando evidencias y siguientes pasos.",
     details: [
-      "Usa filtros por estado para trabajar primero lo mas cercano a cierre.",
-      "Mantem actualizadas respuestas de etapa para no frenar avance por validaciones.",
+      "Usa filtros por estado para trabajar primero lo más cercano a cierre.",
+      "Mantén actualizadas respuestas de etapa para no frenar avance por validaciones.",
       "Documenta razones cuando una oportunidad no puede avanzar o se desactiva.",
     ],
     tags: ["oportunidades", "etapas", "seguimiento"],
@@ -97,22 +97,22 @@ export const HELP_ARTICLES = [
     summary:
       "Construye una cola operativa clara con monto, probabilidad y fecha objetivo de cierre.",
     details: [
-      "Ordena por fecha de cierre y esfuerzo pendiente para decidir en que trabajar hoy.",
-      "Combina estado comercial y activacion para separar riesgo real de ruido.",
-      "Agenda siguiente paso con responsables explicitos para reducir estancamiento.",
+      "Ordena por fecha de cierre y esfuerzo pendiente para decidir en qué trabajar hoy.",
+      "Combina estado comercial y activación para separar riesgo real de ruido.",
+      "Agenda siguiente paso con responsables explícitos para reducir estancamiento.",
     ],
     tags: ["oportunidades", "prioridad", "pipeline"],
   },
   {
     id: "proposals-edit",
     routeKey: "proposals",
-    title: "Editar una propuesta por secciones",
+    title: "Editar una propuesta por secciónes",
     summary:
-      "Abre acciones, entra al editor y guarda componente por componente para evitar perder cambios.",
+      "Abre acciónes, entra al editor y guarda componente por componente para evitar perder cambios.",
     details: [
       "Trabaja por componentes y guarda al finalizar cada bloque de contenido.",
       "Usa sugerencias de IA como borrador y valida consistencia comercial antes de aplicar.",
-      "Mantem imagenes y activos alineados a la narrativa del cliente objetivo.",
+      "Mantén imágenes y activos alíneados a la narrativa del cliente objetivo.",
     ],
     tags: ["propuestas", "edicion", "guardado"],
   },
@@ -123,76 +123,76 @@ export const HELP_ARTICLES = [
     summary:
       "Antes de compartir, verifica coherencia de mensajes, cifras y evidencias institucionales.",
     details: [
-      "Valida encabezados, parrafos e imagenes para evitar secciones incompletas.",
-      "Revisa pricing heredado y contexto de cotizacion vinculada.",
-      "Genera vista de impresion solo cuando el contenido este confirmado.",
+      "Valida encabezados, párrafos e imágenes para evitar secciónes incompletas.",
+      "Revisa pricing heredado y contexto de cotización vinculada.",
+      "Genera vista de impresión solo cuando el contenido esté confirmado.",
     ],
-    tags: ["propuestas", "publicacion", "revision"],
+    tags: ["propuestas", "publicación", "revisión"],
   },
   {
     id: "quotations-create",
     routeKey: "quotations",
-    title: "Crear cotizacion y generar propuesta",
+    title: "Crear cotización y generar propuesta",
     summary:
-      "Crea una cotizacion desde la oportunidad y usa la accion de propuesta cuando la version este lista.",
+      "Crea una cotización desde la oportunidad y usa la acción de propuesta cuando la versión esté lista.",
     details: [
-      "Define datos base de version y captura items por seccion con precision.",
-      "Usa workflow de estados para separar borrador operativo de version aprobada.",
-      "Genera propuesta solo desde versiones en estado compatible.",
+      "Define datos base de versión y captura ítems por sección con precisión.",
+      "Usa workflow de estados para separar borrador operativo de versión aprobada.",
+      "Genera propuesta solo desde versiónes en estado compatible.",
     ],
-    tags: ["cotizaciones", "propuestas", "versiones"],
+    tags: ["cotizaciónes", "propuestas", "versiónes"],
   },
   {
     id: "quotations-governance",
     routeKey: "quotations",
-    title: "Controlar calidad de cotizaciones",
+    title: "Controlar calidad de cotizaciónes",
     summary:
-      "Mantem versionado limpio y evita retrabajo con reglas claras de edicion y aprobacion.",
+      "Mantén versiónado limpio y evita retrabajo con reglas claras de edición y aprobación.",
     details: [
-      "Duplica versiones solo cuando exista un cambio sustantivo de oferta.",
-      "Documenta notas internas y condiciones comerciales para auditoria posterior.",
+      "Duplica versiónes solo cuando exista un cambio sustantivo de oferta.",
+      "Documenta notas internas y condiciones comerciales para auditoría posterior.",
       "Antes de aprobar, revisa importes, impuestos y descuentos en conjunto.",
     ],
-    tags: ["cotizaciones", "aprobacion", "control"],
+    tags: ["cotizaciónes", "aprobacion", "control"],
   },
   {
     id: "tracking-overview",
     routeKey: "commercial-tracking",
     title: "Leer el cockpit comercial",
     summary:
-      "Ajusta filtros de semana/vendedor/linea y usa tabs para revisar resumen, abiertas y forecast.",
+      "Ajusta filtros de semana/vendedor/línea y usa tabs para revisar resumen, abiertas y forecast.",
     details: [
       "En resumen identifica variaciones semanales y focos de riesgo por etapa.",
-      "En abiertas revisa volumen pendiente y oportunidades que requieren accion.",
-      "En forecast compara escenario esperado contra ejecucion real para calibrar plan.",
+      "En abiertas revisa volumen pendiente y oportunidades que requieren acción.",
+      "En forecast compara escenario esperado contra ejecución real para calibrar plan.",
     ],
     tags: ["cockpit", "seguimiento", "forecast"],
   },
   {
     id: "planning-commissions",
     routeKey: "commercial-planning",
-    title: "Configurar planeacion y comisiones",
+    title: "Configurar planeación y comisiónes",
     summary:
-      "Define metas y reglas de comision para alinear ejecucion comercial y rentabilidad.",
+      "Define metas y reglas de comisión para alínear ejecución comercial y rentabilidad.",
     details: [
-      "Configura cuotas trimestrales por responsable y valida cobertura del periodo.",
+      "Configura cuotas trimestrales por responsable y valida cobertura del período.",
       "Revisa umbrales de margen y cumplimiento antes de publicar esquema.",
-      "Monitorea desvio entre planeado y ejecutado para ajustar prioridades.",
+      "Monitorea desvío entre planeado y ejecutado para ajustar prioridades.",
     ],
-    tags: ["planeacion", "comisiones", "metas"],
+    tags: ["planeacion", "comisiónes", "metas"],
   },
   {
     id: "development-workspace",
     routeKey: "commercial-development",
     title: "Operar desarrollo comercial",
     summary:
-      "Usa este espacio para coordinar acciones, dependencias y avance operativo del pipeline.",
+      "Usa este espacio para coordinar acciónes, dependencias y avance operativo del pipeline.",
     details: [
       "Registra proximo paso con fechas y responsables claros.",
       "Vincula dependencias para evitar bloqueos entre equipos.",
-      "Actualiza evidencias cuando cambie el estado de ejecucion.",
+      "Actualiza evidencias cuando cambie el estado de ejecución.",
     ],
-    tags: ["desarrollo", "ejecucion", "pipeline"],
+    tags: ["desarrollo", "ejecución", "pipeline"],
   },
   {
     id: "enablement-library",
@@ -202,7 +202,7 @@ export const HELP_ARTICLES = [
       "Centraliza activos comerciales y controla su vigencia para ventas y propuestas.",
     details: [
       "Clasifica activos por tipo y uso para encontrarlos con rapidez.",
-      "Mantem gobierno de versiones para evitar materiales obsoletos.",
+      "Mantén gobierno de versiónes para evitar materiales obsoletos.",
       "Revisa cobertura de activos por etapa del proceso comercial.",
     ],
     tags: ["biblioteca", "activos", "enablement"],
@@ -212,10 +212,10 @@ export const HELP_ARTICLES = [
     routeKey: "contact-mapping",
     title: "Mapear red de contactos",
     summary:
-      "Visualiza relaciones y niveles de influencia para mejorar estrategia de acceso a cuentas.",
+      "Visualiza relaciónes y niveles de influencia para mejorar estrategia de acceso a cuentas.",
     details: [
       "Identifica decisores finales y posibles vetos en cada cuenta.",
-      "Ajusta plan de acercamiento por fortaleza de relacion.",
+      "Ajusta plan de acercamiento por fortaleza de relación.",
       "Confirma cobertura de contactos por unidad de negocio.",
     ],
     tags: ["mapeo", "influencia", "decisores"],
@@ -225,10 +225,10 @@ export const HELP_ARTICLES = [
     routeKey: "providers",
     title: "Administrar proveedores y listas",
     summary:
-      "Mantem catalogos de proveedores y precios consistentes para cotizar sin fricciones.",
+      "Mantén catálogos de proveedores y precios consistentes para cotizar sin fricciones.",
     details: [
-      "Verifica vigencia de listas y codigos antes de cotizar.",
-      "Evita duplicados de price code y estandariza descripciones.",
+      "Verifica vigencia de listas y códigos antes de cotizar.",
+      "Evita duplicados de price code y estandariza descripciónes.",
       "Usa estructura de componentes cuando aplique a bundles o grupos.",
     ],
     tags: ["proveedores", "precios", "catalogo"],
@@ -251,24 +251,24 @@ export const HELP_ARTICLES = [
     routeKey: "users",
     title: "Administrar usuarios",
     summary:
-      "Crea y mantiene usuarios con datos vigentes para asegurar trazabilidad de acciones.",
+      "Crea y mantiene usuarios con datos vigentes para asegurar trazabilidad de acciónes.",
     details: [
       "Verifica correo y rol funcional al crear o actualizar usuarios.",
       "Desactiva accesos obsoletos para reducir riesgo operativo.",
-      "Confirma que el owner comercial tenga permisos minimos necesarios.",
+      "Confirma que el owner comercial tenga permisos mínimos necesarios.",
     ],
-    tags: ["usuarios", "accesos", "administracion"],
+    tags: ["usuarios", "accesos", "administración"],
   },
   {
     id: "roles-governance",
     routeKey: "roles",
-    title: "Disenar roles y permisos",
+    title: "Diseñar roles y permisos",
     summary:
       "Define roles por responsabilidad real para equilibrar seguridad y velocidad operativa.",
     details: [
-      "Asigna permisos por modulo evitando privilegios excesivos.",
-      "Versiona cambios importantes de roles para auditoria.",
-      "Prueba rutas criticas con un usuario de cada rol clave.",
+      "Asigna permisos por módulo evitando privilegios excesivos.",
+      "Versiona cambios importantes de roles para auditoría.",
+      "Prueba rutas críticas con un usuario de cada rol clave.",
     ],
     tags: ["roles", "permisos", "seguridad"],
   },
@@ -279,34 +279,34 @@ export const HELP_ARTICLES = [
     summary:
       "Administra preguntas y reglas de etapa para que la validacion operacional sea consistente.",
     details: [
-      "Mantem preguntas obligatorias alineadas al proceso vigente.",
+      "Mantén preguntas obligatorias alíneadas al proceso vigente.",
       "Evita cambios abruptos sin validar impacto en oportunidades activas.",
       "Documenta criterios de respuesta para uso uniforme del equipo.",
     ],
-    tags: ["proceso", "preguntas", "configuracion"],
+    tags: ["proceso", "preguntas", "configuración"],
   },
   {
     id: "settings-governance",
     routeKey: "settings",
-    title: "Administrar configuracion del sistema",
+    title: "Administrar configuración del sistema",
     summary:
       "Centraliza parametros globales y aplica cambios de forma controlada.",
     details: [
-      "Revisa impacto antes de modificar catalogos o banderas globales.",
-      "Coordina cambios sensibles fuera de horario operativo critico.",
-      "Valida permisos y resultados despues de cada ajuste.",
+      "Revisa impacto antes de modificar catálogos o banderas globales.",
+      "Coordina cambios sensibles fuera de horario operativo crítico.",
+      "Valida permisos y resultados después de cada ajuste.",
     ],
-    tags: ["configuracion", "sistema", "gobierno"],
+    tags: ["configuración", "sistema", "gobierno"],
   },
   {
     id: "tools-operations",
     routeKey: "tools",
     title: "Usar herramientas administrativas",
     summary:
-      "Ejecuta utilidades de mantenimiento con criterio operativo y trazabilidad.",
+      "Ejecuta útilidades de mantenimiento con criterio operativo y trazabilidad.",
     details: [
       "Confirma entorno y alcance antes de ejecutar una herramienta.",
-      "Documenta resultado de acciones que alteren datos o catálogos.",
+      "Documenta resultado de acciónes que alteren datos o catálogos.",
       "Evita correr procesos destructivos sin respaldo o validacion previa.",
     ],
     tags: ["herramientas", "mantenimiento", "operacion"],
@@ -316,24 +316,24 @@ export const HELP_ARTICLES = [
     routeKey: "audit",
     title: "Auditar cambios del sistema",
     summary:
-      "Consulta eventos para reconstruir decisiones, cambios y responsables.",
+      "Consulta eventos para reconstruir decisiónes, cambios y responsables.",
     details: [
-      "Filtra por modulo y periodo para enfocar investigacion.",
-      "Correlaciona eventos con usuarios y registros afectados.",
+      "Filtra por módulo y período para enfocar investigación.",
+      "Correlacióna eventos con usuarios y registros afectados.",
       "Exporta evidencia cuando se requiera seguimiento formal.",
     ],
-    tags: ["auditoria", "trazabilidad", "control"],
+    tags: ["auditoría", "trazabilidad", "control"],
   },
   {
     id: "general-navigation",
     routeKey: "general",
-    title: "Navegacion y buenas practicas",
+    title: "Navegación y buenas practicas",
     summary:
-      "Si un modulo no tiene ayuda especifica, usa esta guia base para trabajar de forma segura.",
+      "Si un módulo no tiene ayuda especifica, usa esta guia base para trabajar de forma segura.",
     details: [
       "Confirma permisos y contexto antes de crear o editar registros.",
-      "Guarda cambios de forma incremental para reducir perdida de informacion.",
-      "Usa filtros y busqueda para operar sobre lotes pequeños y precisos.",
+      "Guarda cambios de forma incremental para reducir pérdida de información.",
+      "Usa filtros y búsqueda para operar sobre lotes pequeños y precisos.",
     ],
     tags: ["general", "navegacion", "practicas"],
   },
@@ -343,61 +343,61 @@ export const HELP_TOURS = [
   {
     id: "tour-proposals-basic",
     routeKey: "proposals",
-    title: "Tour rapido de Propuestas",
+    title: "Tour rápido de Propuestas",
     steps: [
       {
         id: "proposals-title",
         target: '[data-help-id="proposals.title"]',
-        title: "Modulo de propuestas",
+        title: "Módulo de propuestas",
         content:
-          "Desde aqui gestionas propuestas por cliente y abres el editor estructurado.",
+          "Desde aquí gestionas propuestas por cliente y abres el editor estructurado.",
       },
       {
         id: "proposals-actions",
         target: '[data-help-id="proposals.actions"]',
         title: "Acciones",
-        content: "Usa este menu para abrir una propuesta en modo edicion.",
+        content: "Usa este menú para abrir una propuesta en modo edicion.",
       },
       {
         id: "proposals-save",
         target: '[data-help-id="proposals.save-component"]',
-        title: "Guardar seccion",
+        title: "Guardar sección",
         content:
-          "Guarda cada componente despues de editar para confirmar cambios.",
+          "Guarda cada componente después de editar para confirmar cambios.",
       },
     ],
   },
   {
     id: "tour-quotations-basic",
     routeKey: "quotations",
-    title: "Tour rapido de Cotizaciones",
+    title: "Tour rápido de Cotizaciones",
     steps: [
       {
         id: "quotations-title",
         target: '[data-help-id="quotations.title"]',
-        title: "Modulo de cotizaciones",
+        title: "Módulo de cotizaciónes",
         content:
-          "Aqui controlas versiones, estados y estructura de la cotizacion.",
+          "Aquí controlas versiónes, estados y estructura de la cotización.",
       },
       {
         id: "quotations-create",
         target: '[data-help-id="quotations.create"]',
-        title: "Crear cotizacion",
+        title: "Crear cotización",
         content:
-          "Crea una nueva version para iniciar o iterar el proceso comercial.",
+          "Crea una nueva versión para iniciar o iterar el proceso comercial.",
       },
       {
         id: "quotations-actions",
         target: '[data-help-id="quotations.actions"]',
-        title: "Menu de acciones",
-        content: "Abre opciones de version y acceso rapido a propuesta.",
+        title: "Menu de acciónes",
+        content: "Abre opciones de versión y acceso rápido a propuesta.",
       },
     ],
   },
   {
     id: "tour-opportunities-basic",
     routeKey: "opportunities",
-    title: "Tour rapido de Oportunidades",
+    title: "Tour rápido de Oportunidades",
     steps: [
       {
         id: "opportunities-title",
@@ -416,35 +416,35 @@ export const HELP_TOURS = [
         id: "opportunities-filters",
         target: '[data-help-id="opportunities.filters"]',
         title: "Filtros",
-        content: "Usa filtros y busqueda para enfocarte en lo prioritario.",
+        content: "Usa filtros y búsqueda para enfocarte en lo prioritario.",
       },
     ],
   },
   {
     id: "tour-tracking-basic",
     routeKey: "commercial-tracking",
-    title: "Tour rapido de Seguimiento",
+    title: "Tour rápido de Seguimiento",
     steps: [
       {
         id: "tracking-title",
         target: '[data-help-id="tracking.title"]',
         title: "Cockpit comercial",
         content:
-          "Este modulo concentra visibilidad del pipeline y rendimiento semanal.",
+          "Este módulo concentra visibilidad del pipeline y rendimiento semanal.",
       },
       {
         id: "tracking-toolbar",
         target: '[data-help-id="tracking.toolbar"]',
         title: "Filtros principales",
         content:
-          "Semana, vendedor y linea ajustan todas las metricas de la vista.",
+          "Semana, vendedor y línea ajustan todas las métricas de la vista.",
       },
       {
         id: "tracking-tabs",
         target: '[data-help-id="tracking.tabs"]',
-        title: "Tabs de analisis",
+        title: "Tabs de análisis",
         content:
-          "Alterna entre resumen, abiertas, periodo y forecast segun la necesidad.",
+          "Alterna entre resumen, abiertas, período y forecast según la necesidad.",
       },
     ],
   },
@@ -455,14 +455,14 @@ export const HELP_MODAL_CATALOG = {
     ariaLabel: "Ayuda sobre el modal de crear cuenta",
     title: "Ayuda sobre crear cuenta",
     purpose:
-      "Usalo para registrar una cuenta nueva con sus datos principales y contexto comercial inicial.",
+      "Úsalo para registrar una cuenta nueva con sus datos principales y contexto comercial inicial.",
     usage:
       "Completa nombre, tipo, sector y responsables para dejar la cuenta lista para seguimiento.",
     sections: [
       {
         title: "Datos principales",
         purpose:
-          "Define la identidad comercial de la cuenta y su clasificacion base.",
+          "Define la identidad comercial de la cuenta y su clasificación base.",
         actions: [
           "Captura el nombre oficial/comercial y valida formato antes de guardar.",
           "Selecciona tipo de cuenta, sector y fuente de origen cuando aplique.",
@@ -470,22 +470,22 @@ export const HELP_MODAL_CATALOG = {
         ],
       },
       {
-        title: "Ubicacion y contacto",
+        title: "Ubicación y contacto",
         purpose:
           "Deja ubicacion y canales de contacto listos para operacion y seguimiento.",
         actions: [
-          "Completa pais, estado, ciudad y direccion con datos verificables.",
-          "Agrega telefono y correo institucional para facilitar contacto temprano.",
-          "Asegura consistencia geografica si la cuenta opera en varias sedes.",
+          "Completa país, estado, ciudad y direccion con datos verificables.",
+          "Agrega teléfono y correo institucional para facilitar contacto temprano.",
+          "Asegura consistencia geográfica si la cuenta opera en varias sedes.",
         ],
       },
       {
-        title: "Descripcion de la empresa",
+        title: "Descripción de la empresa",
         purpose:
           "Resume a que se dedica la cuenta y su contexto comercial relevante.",
         actions: [
           "Redacta giro, capacidades y necesidades de negocio observadas.",
-          "Usa texto concreto; evita descripciones ambiguas o vacias.",
+          "Usa texto concreto; evita descripciónes ambiguas o vacías.",
           "Si usas sugerencias IA, revisa y corrige antes de guardar.",
         ],
       },
@@ -500,8 +500,8 @@ export const HELP_MODAL_CATALOG = {
       },
     ],
     modalActions: [
-      "Boton Ayuda: abre esta guia contextual del modal.",
-      "Boton Cerrar (X): cierra el modal; si hay procesos en curso puede bloquearse.",
+      "Botón Ayuda: abre esta guia contextual del modal.",
+      "Botón Cerrar (X): cierra el modal; si hay procesos en curso puede bloquearse.",
       "Crear cuenta: valida campos obligatorios y registra la cuenta.",
       "Confirmaciones: pueden aparecer para formato de nombre o posibles duplicados.",
     ],
@@ -512,35 +512,35 @@ export const HELP_MODAL_CATALOG = {
     purpose:
       "Este modal permite mantener actualizada la cuenta sin romper continuidad operativa.",
     usage:
-      "Revisa responsables, estado de activacion y datos clave antes de guardar cambios.",
+      "Revisa responsables, estado de activación y datos clave antes de guardar cambios.",
     sections: [
       {
         title: "Datos principales",
         purpose:
-          "Mantiene vigente la informacion central de la cuenta durante su ciclo comercial.",
+          "Mantiene vigente la información central de la cuenta durante su ciclo comercial.",
         actions: [
-          "Actualiza nombre y clasificacion solo cuando haya cambios reales.",
+          "Actualiza nombre y clasificación solo cuando haya cambios reales.",
           "Conserva consistencia con registros ya vinculados (contactos/oportunidades).",
-          "Evita cambios innecesarios que compliquen trazabilidad historica.",
+          "Evita cambios innecesarios que compliquen trazabilidad histórica.",
         ],
       },
       {
-        title: "Ubicacion y contacto",
+        title: "Ubicación y contacto",
         purpose:
-          "Corrige datos de localizacion y canales para mejorar operacion diaria.",
+          "Corrige datos de localizacion y canales para mejorar operacion díaria.",
         actions: [
-          "Ajusta direccion, telefonos y correos obsoletos.",
+          "Ajusta direccion, teléfonos y correos obsoletos.",
           "Verifica datos antes de guardar para evitar rebotes de contacto.",
-          "Mantem formato uniforme entre cuentas del mismo grupo empresarial.",
+          "Mantén formato uniforme entre cuentas del mismo grupo empresarial.",
         ],
       },
       {
-        title: "Descripcion de la empresa",
+        title: "Descripción de la empresa",
         purpose:
-          "Refina el contexto de negocio con informacion nueva o mas precisa.",
+          "Refina el contexto de negocio con información nueva o más precisa.",
         actions: [
           "Incorpora cambios de portafolio, industria o prioridades del cliente.",
-          "Retira informacion desactualizada para no sesgar decisiones.",
+          "Retira información desactualizada para no sesgar decisiónes.",
           "Valida coherencia de la narrativa antes de guardar.",
         ],
       },
@@ -549,15 +549,15 @@ export const HELP_MODAL_CATALOG = {
         purpose:
           "Permite reasignar cobertura cuando cambia el equipo o la estrategia.",
         actions: [
-          "Agrega/quita propietarios segun responsabilidad actual.",
+          "Agrega/quita propietarios según responsabilidad actual.",
           "No dejes la cuenta sin propietarios activos.",
           "Confirma que los nuevos responsables conozcan el contexto de la cuenta.",
         ],
       },
       {
-        title: "Auditoria de la cuenta",
+        title: "Auditoría de la cuenta",
         purpose:
-          "Muestra historial basico de creacion/actualizacion para trazabilidad.",
+          "Muestra historial basico de creación/actualizacion para trazabilidad.",
         actions: [
           "Revisa fechas y usuario editor cuando necesites validar cambios recientes.",
           "Usa este bloque como referencia, no como campo editable.",
@@ -565,8 +565,8 @@ export const HELP_MODAL_CATALOG = {
       },
     ],
     modalActions: [
-      "Boton Ayuda: abre esta guia contextual para edicion.",
-      "Estado/ID en cabecera: referencia rapida para confirmar que editas el registro correcto.",
+      "Botón Ayuda: abre esta guia contextual para edicion.",
+      "Estado/ID en cabecera: referencia rápida para confirmar que editas el registro correcto.",
       "Guardar cambios: persiste ajustes del formulario actual.",
       "Cerrar (X): sale del modal; verifica cambios pendientes antes de cerrar.",
     ],
@@ -575,16 +575,16 @@ export const HELP_MODAL_CATALOG = {
     ariaLabel: "Ayuda sobre el modal de crear contacto",
     title: "Ayuda sobre crear contacto",
     purpose:
-      "Sirve para registrar un contacto y dejarlo utilizable en oportunidades y cotizaciones.",
+      "Sirve para registrar un contacto y dejarlo útilizable en oportunidades y cotizaciónes.",
     usage:
-      "Captura datos principales, clasificacion comercial y valida cuenta asociada antes de guardar.",
+      "Captura datos principales, clasificación comercial y valida cuenta asociada antes de guardar.",
     sections: [
       {
         title: "Datos principales",
         purpose: "Identifica al contacto y su vinculacion base con la cuenta.",
         actions: [
           "Captura nombre y apellidos completos.",
-          "Selecciona la cuenta correcta para evitar registros huerfanos.",
+          "Selecciona la cuenta correcta para evitar registros huérfanos.",
           "Registra cargo y area para dar contexto al equipo comercial.",
         ],
       },
@@ -593,17 +593,17 @@ export const HELP_MODAL_CATALOG = {
         purpose:
           "Clasifica influencia y prioridad del contacto en el proceso de compra.",
         actions: [
-          "Define poder de decision y fortaleza de relacion.",
+          "Define poder de decisión y fortaleza de relación.",
           "Asigna responsable interno cuando aplique.",
-          "Ajusta estatus segun vigencia real del contacto.",
+          "Ajusta estatus según vigencia real del contacto.",
         ],
       },
       {
-        title: "Ubicacion y canales",
+        title: "Ubicación y canales",
         purpose: "Deja listos los medios de contacto operativos.",
         actions: [
-          "Completa correo y telefono con formato valido.",
-          "Agrega ciudad/pais si se usa segmentacion territorial.",
+          "Completa correo y teléfono con formato válido.",
+          "Agrega ciudad/país si se usa segmentacion territorial.",
           "Corrige datos incompletos antes de guardar.",
         ],
       },
@@ -612,20 +612,20 @@ export const HELP_MODAL_CATALOG = {
       "Ayuda: abre esta guia contextual del modal.",
       "Cerrar (X): sale del modal; si estas guardando puede bloquearse.",
       "Guardar contacto: valida campos requeridos y crea el registro.",
-      "Revision de duplicados: si aparece, revisa coincidencias antes de confirmar.",
+      "Revisión de duplicados: si aparece, revisa coincidencias antes de confirmar.",
     ],
   },
   "contact.edit": {
     ariaLabel: "Ayuda sobre el modal de editar contacto",
     title: "Ayuda sobre editar contacto",
     purpose:
-      "Este modal se usa para actualizar informacion del contacto y su relacion comercial.",
+      "Este modal se usa para actualizar información del contacto y su relación comercial.",
     usage:
-      "Ajusta datos de contacto, cuenta asociada y clasificacion sin perder consistencia.",
+      "Ajusta datos de contacto, cuenta asociada y clasificación sin perder consistencia.",
     sections: [
       {
         title: "Datos principales",
-        purpose: "Mantiene vigente la identidad y afiliacion del contacto.",
+        purpose: "Mantiene vigente la identidad y afiliación del contacto.",
         actions: [
           "Corrige nombre/cargo cuando cambien oficialmente.",
           "Verifica que la cuenta asociada siga siendo correcta.",
@@ -634,15 +634,15 @@ export const HELP_MODAL_CATALOG = {
       },
       {
         title: "Datos comerciales",
-        purpose: "Actualiza el rol del contacto en decisiones de compra.",
+        purpose: "Actualiza el rol del contacto en decisiónes de compra.",
         actions: [
-          "Recalibra influencia, relacion y prioridad comercial.",
-          "Ajusta estatus de activacion segun uso real.",
+          "Recalibra influencia, relación y prioridad comercial.",
+          "Ajusta estatus de activación según uso real.",
           "Confirma consistencia con oportunidades activas.",
         ],
       },
       {
-        title: "Auditoria",
+        title: "Auditoría",
         purpose: "Aporta trazabilidad de modificaciones recientes.",
         actions: [
           "Revisa fecha y usuario editor para validar cambios.",
@@ -663,20 +663,20 @@ export const HELP_MODAL_CATALOG = {
     purpose:
       "Sirve para registrar una oportunidad nueva con contexto comercial y responsables.",
     usage:
-      "Empieza por cuenta, contacto y linea de negocio; agrega evidencia para mejorar el borrador.",
+      "Empieza por cuenta, contacto y línea de negocio; agrega evidencia para mejorar el borrador.",
     sections: [
       {
         title: "Datos principales",
         purpose: "Define la oportunidad, su cuenta y contexto inicial.",
         actions: [
-          "Selecciona cuenta, contacto y linea de negocio.",
+          "Selecciona cuenta, contacto y línea de negocio.",
           "Captura nombre de oportunidad y monto estimado inicial.",
           "Establece fecha objetivo de cierre realista.",
         ],
       },
       {
         title: "Contexto comercial",
-        purpose: "Fija responsables y clasificacion para seguimiento.",
+        purpose: "Fija responsables y clasificación para seguimiento.",
         actions: [
           "Asigna vendedor y pre-venta cuando aplique.",
           "Confirma etapa/estado inicial coherente.",
@@ -685,7 +685,7 @@ export const HELP_MODAL_CATALOG = {
       },
       {
         title: "Documentos y evidencia",
-        purpose: "Aporta soporte documental para el analisis y avance.",
+        purpose: "Aporta soporte documental para el análisis y avance.",
         actions: [
           "Sube documentos relevantes del cliente o requerimiento.",
           "Revisa sugerencias automáticas antes de aplicarlas.",
@@ -694,44 +694,44 @@ export const HELP_MODAL_CATALOG = {
       },
     ],
     modalActions: [
-      "Ayuda: abre la guia contextual de creacion.",
+      "Ayuda: abre la guia contextual de creación.",
       "Cerrar (X): cancela el alta de oportunidad.",
       "Guardar/Crear oportunidad: valida obligatorios y registra el borrador.",
-      "Validaciones: el sistema puede bloquear avance si falta informacion critica.",
+      "Validaciones: el sistema puede bloquear avance si falta información crítica.",
     ],
   },
   "opportunity.edit": {
     ariaLabel: "Ayuda sobre el modal de editar oportunidad",
     title: "Ayuda sobre editar oportunidad",
     purpose:
-      "Este modal te permite mantener la oportunidad alineada al avance real del proceso.",
+      "Este modal te permite mantener la oportunidad alíneada al avance real del proceso.",
     usage:
       "Actualiza etapa, estado comercial, responsables y evidencia para evitar bloqueos.",
     sections: [
       {
         title: "Cabecera de estado",
-        purpose: "Muestra referencia rapida de ID, etapa y estatus actuales.",
+        purpose: "Muestra referencia rápida de ID, etapa y estatus actuales.",
         actions: [
           "Verifica que editas la oportunidad correcta.",
-          "Usa badges para confirmar estado de activacion/comercial.",
+          "Usa badges para confirmar estado de activación/comercial.",
         ],
       },
       {
         title: "Datos y contexto",
-        purpose: "Ajusta informacion base conforme evoluciona el caso.",
+        purpose: "Ajusta información base conforme evoluciona el caso.",
         actions: [
           "Actualiza monto, fechas y responsables.",
-          "Mantem consistencia con la etapa comercial vigente.",
-          "Documenta cambios que impacten pronostico.",
+          "Mantén consistencia con la etapa comercial vigente.",
+          "Documenta cambios que impacten pronóstico.",
         ],
       },
       {
         title: "Workspace y documentos",
         purpose:
-          "Gestiona respuestas de etapa, acciones y evidencia operativa.",
+          "Gestiona respuestas de etapa, acciónes y evidencia operativa.",
         actions: [
           "Responde preguntas obligatorias para permitir avances.",
-          "Sube o depura evidencia segun progreso.",
+          "Sube o depura evidencia según progreso.",
           "Revisa paneles de fabricante si aplica al caso.",
         ],
       },
@@ -744,123 +744,123 @@ export const HELP_MODAL_CATALOG = {
     ],
   },
   "quotation.create": {
-    ariaLabel: "Ayuda sobre el modal de crear cotizacion",
-    title: "Ayuda sobre crear cotizacion",
+    ariaLabel: "Ayuda sobre el modal de crear cotización",
+    title: "Ayuda sobre crear cotización",
     purpose:
-      "Se usa para crear una cotizacion nueva desde el contexto comercial correcto.",
+      "Se usa para crear una cotización nueva desde el contexto comercial correcto.",
     usage:
-      "Define cuenta, oportunidad y contacto; luego estructura secciones e items antes de crear.",
+      "Define cuenta, oportunidad y contacto; luego estructura secciónes e ítems antes de crear.",
     sections: [
       {
         title: "Contexto comercial",
         purpose:
-          "Ancla la cotizacion a cuenta, oportunidad y contacto validos.",
+          "Ancla la cotización a cuenta, oportunidad y contacto válidos.",
         actions: [
           "Selecciona cuenta y oportunidad antes de editar detalle.",
           "Confirma contacto principal para salida comercial.",
-          "Bloquea el contexto cuando estes seguro de la seleccion.",
+          "Bloquea el contexto cuando estes seguro de la selección.",
         ],
       },
       {
-        title: "Secciones e items",
-        purpose: "Construye el contenido economico de la cotizacion.",
+        title: "Secciones e ítems",
+        purpose: "Construye el contenido economico de la cotización.",
         actions: [
-          "Agrega secciones por alcance (productos/servicios).",
-          "Carga items, cantidades, precios y ajustes de venta.",
-          "Usa acciones de fila para duplicar/mover/ordenar.",
+          "Agrega secciónes por alcance (productos/servicios).",
+          "Carga ítems, cantidades, precios y ajustes de venta.",
+          "Usa acciónes de fila para duplicar/mover/ordenar.",
         ],
       },
       {
         title: "Resumen y condiciones",
         purpose: "Consolida descuentos, impuestos y condiciones comerciales.",
         actions: [
-          "Define modo de descuento y distribucion.",
+          "Define modo de descuento y distribución.",
           "Configura IVA y valida totales finales.",
-          "Completa notas internas y condiciones para auditoria.",
+          "Completa notas internas y condiciones para auditoría.",
         ],
       },
     ],
     modalActions: [
       "Ayuda: abre esta guia contextual.",
-      "Cerrar (X): si hay cambios sin guardar, pide confirmacion.",
-      "Crear cotizacion: valida estructura y registra version inicial.",
+      "Cerrar (X): si hay cambios sin guardar, pide confirmación.",
+      "Crear cotización: valida estructura y registra versión inicial.",
       "Importar documentos: puede precargar datos comerciales complementarios.",
     ],
   },
   "quotation.edit": {
-    ariaLabel: "Ayuda sobre el modal de editar cotizacion",
-    title: "Ayuda sobre editar cotizacion",
+    ariaLabel: "Ayuda sobre el modal de editar cotización",
+    title: "Ayuda sobre editar cotización",
     purpose:
-      "Permite ajustar una cotizacion existente manteniendo coherencia entre versiones.",
+      "Permite ajustar una cotización existente manteniendo coherencia entre versiónes.",
     usage:
-      "Revisa estado, secciones e items y guarda cuando el impacto comercial este validado.",
+      "Revisa estado, secciónes e ítems y guarda cuando el impacto comercial este validado.",
     sections: [
       {
         title: "Cabecera y metadatos",
-        purpose: "Muestra cotizacion, version y estado para control operativo.",
+        purpose: "Muestra cotización, versión y estado para control operativo.",
         actions: [
-          "Verifica numero de cotizacion y version activa.",
-          "Confirma si editas version mayor o historica.",
+          "Verifica número de cotización y versión activa.",
+          "Confirma si editas versión mayor o histórica.",
           "Usa estado para decidir si procede editar.",
         ],
       },
       {
         title: "Editor de contenido",
-        purpose: "Permite modificar secciones, items y condiciones.",
+        purpose: "Permite modificar secciónes, ítems y condiciones.",
         actions: [
           "Ajusta cantidades, precios y descuentos con criterio comercial.",
-          "Mantem notas internas y condiciones actualizadas.",
+          "Mantén notas internas y condiciones actualizadas.",
           "Revisa impacto total antes de guardar.",
         ],
       },
     ],
     modalActions: [
       "Ayuda: abre esta guia de edicion.",
-      "Cerrar (X): sale del editor de cotizacion.",
-      "Acciones del editor: guardar cambios por seccion/version.",
-      "Estados del workflow: condicionan acciones disponibles.",
+      "Cerrar (X): sale del editor de cotización.",
+      "Acciones del editor: guardar cambios por sección/versión.",
+      "Estados del workflow: condicionan acciónes disponibles.",
     ],
   },
   "quotation.sections.toolbar": {
-    ariaLabel: "Ayuda de iconos en secciones de la cotizacion",
-    title: "Iconos de secciones de la cotizacion",
+    ariaLabel: "Ayuda de iconos en secciónes de la cotización",
+    title: "Iconos de secciónes de la cotización",
     purpose:
-      "Explica para que sirve cada icono del toolbar de secciones y filas.",
+      "Explica para que sirve cada icono del toolbar de secciónes y filas.",
     usage:
-      "Selecciona filas cuando aplique; varios iconos se habilitan solo con filas seleccionadas.",
+      "Selecciona filas cuando aplique; varios iconos se habilitan solo con filas selecciónadas.",
     sections: [
       {
-        title: "Toolbar superior de secciones",
-        purpose: "Controla la estructura general de la cotizacion.",
+        title: "Toolbar superior de secciónes",
+        purpose: "Controla la estructura general de la cotización.",
         actions: [
-          "Icono + (Crear seccion nueva): agrega una seccion vacia.",
-          "Usalo para separar alcance por bloques (productos, servicios, etc.).",
+          "Icono + (Crear sección nueva): agrega una sección vacia.",
+          "Úsalo para separar alcance por bloques (productos, servicios, etc.).",
         ],
       },
       {
         title: "Grupo Fila",
-        purpose: "Opera sobre filas de items dentro de una seccion.",
+        purpose: "Opera sobre filas de ítems dentro de una sección.",
         actions: [
           "Icono +: agregar fila.",
-          "Icono papelera: eliminar filas seleccionadas.",
-          "Icono flecha arriba: subir filas seleccionadas.",
-          "Icono flecha abajo: bajar filas seleccionadas.",
-          "Icono duplicar: clonar filas seleccionadas.",
-          "Icono copiar: copiar filas seleccionadas.",
+          "Icono papelera: eliminar filas selecciónadas.",
+          "Icono flecha arriba: subir filas selecciónadas.",
+          "Icono flecha abajo: bajar filas selecciónadas.",
+          "Icono duplicar: clonar filas selecciónadas.",
+          "Icono copiar: copiar filas selecciónadas.",
           "Icono pegar: pegar filas copiadas.",
-          "Icono resaltar ON: marcar filas seleccionadas.",
-          "Icono resaltar OFF: quitar resaltado de filas seleccionadas.",
-          "Icono ajuste de venta: recalcular precio de venta de una sola fila seleccionada.",
+          "Icono resaltar ON: marcar filas selecciónadas.",
+          "Icono resaltar OFF: quitar resaltado de filas selecciónadas.",
+          "Icono ajuste de venta: recalcular precio de venta de una sola fila selecciónada.",
         ],
       },
       {
-        title: "Grupo Seccion",
-        purpose: "Gestiona la seccion completa.",
+        title: "Grupo Sección",
+        purpose: "Gestiona la sección completa.",
         actions: [
-          "Icono flecha arriba: mover seccion hacia arriba.",
-          "Icono flecha abajo: mover seccion hacia abajo.",
-          "Icono duplicar: duplicar seccion completa.",
-          "Icono papelera: eliminar seccion.",
+          "Icono flecha arriba: mover sección hacia arriba.",
+          "Icono flecha abajo: mover sección hacia abajo.",
+          "Icono duplicar: duplicar sección completa.",
+          "Icono papelera: eliminar sección.",
         ],
       },
       {
@@ -868,33 +868,33 @@ export const HELP_MODAL_CATALOG = {
         purpose:
           "Agrupa filas en bundles manuales y administra sus componentes.",
         actions: [
-          "Icono crear bundle manual: crea un bundle con las filas seleccionadas.",
+          "Icono crear bundle manual: crea un bundle con las filas selecciónadas.",
           "Icono bundle desde plantilla: crea el bundle usando un padre nuevo basado en plantilla.",
-          "Icono adjuntar al bundle: agrega filas seleccionadas a un bundle manual existente.",
-          "Icono quitar del bundle: separa componentes seleccionados de su bundle manual.",
-          "Regla clave: selecciona filas compatibles; no se permiten bundles/componentes no editables en operaciones de agrupacion.",
+          "Icono adjuntar al bundle: agrega filas selecciónadas a un bundle manual existente.",
+          "Icono quitar del bundle: separa componentes selecciónados de su bundle manual.",
+          "Regla clave: seleccióna filas compatibles; no se permiten bundles/componentes no editables en operaciones de agrupacion.",
         ],
       },
     ],
     modalActions: [
-      "Tip: si un icono aparece deshabilitado, revisa si falta seleccionar filas o si la accion no aplica al contexto.",
-      "Para bundle, sigue las validaciones de seleccion mostradas bajo la tabla cuando una accion no este disponible.",
+      "Tip: si un icono aparece deshabilitado, revisa si falta selecciónar filas o si la acción no aplica al contexto.",
+      "Para bundle, sigue las validaciones de selección mostradas bajo la tabla cuando una acción no este disponible.",
     ],
   },
   "quotation.documentation.toolbar": {
     ariaLabel: "Ayuda de iconos en documentacion",
     title: "Iconos de documentacion",
     purpose:
-      "Describe el toolbar de Documentacion y como usar cada icono/accion.",
+      "Describe el toolbar de Documentacion y como usar cada icono/acción.",
     usage:
-      "Adjunta documentos primero y luego decide cuales participan en analisis IA.",
+      "Adjunta documentos primero y luego decide cuales participan en análisis IA.",
     sections: [
       {
         title: "Vista de documentos",
         purpose: "Alterna el alcance de documentos visibles.",
         actions: [
-          "Icono documento simple: ver solo adjuntos de la version actual en borrador.",
-          "Icono documentos apilados: ver adjuntos de todas las versiones de la cotizacion.",
+          "Icono documento simple: ver solo adjuntos de la versión actual en borrador.",
+          "Icono documentos apilados: ver adjuntos de todas las versiónes de la cotización.",
         ],
       },
       {
@@ -902,47 +902,47 @@ export const HELP_MODAL_CATALOG = {
         purpose: "Permite adjuntar evidencia y abrir flujo asistido con IA.",
         actions: [
           "Icono documento con + (dropzone): arrastra/suelta o haz clic para adjuntar archivos.",
-          "Boton importacion IA: crea la cotizacion y abre importacion desde documento con IA (requiere documentos elegibles).",
+          "Botón importacion IA: crea la cotización y abre importacion desde documento con IA (requiere documentos elegibles).",
         ],
       },
       {
         title: "Acciones por documento",
         purpose: "Controla el comportamiento de cada archivo adjunto.",
         actions: [
-          "Icono etiqueta/estado IA: excluir o volver a permitir el documento para analisis IA.",
+          "Icono etiqueta/estado IA: excluir o volver a permitir el documento para análisis IA.",
           "Icono descarga: descargar el archivo al equipo local.",
         ],
       },
     ],
     modalActions: [
-      "Recomendacion: deja habilitados para IA solo los archivos utiles para sugerencias de contenido y pricing.",
+      "Recomendacion: deja habilitados para IA solo los archivos útiles para sugerencias de contenido y pricing.",
     ],
   },
   "quotation.provider-document-import": {
-    ariaLabel: "Ayuda del modal crear items desde documento con IA",
-    title: "Ayuda sobre crear items desde documento con IA",
+    ariaLabel: "Ayuda del modal crear ítems desde documento con IA",
+    title: "Ayuda sobre crear ítems desde documento con IA",
     purpose:
-      "Guia detallada del flujo para analizar un documento, resolver coincidencias y aplicar items a la cotizacion.",
+      "Guia detallada del flujo para analizar un documento, resolver coincidencias y aplicar ítems a la cotización.",
     usage:
       "Sigue el orden: configurar contexto, analizar, resolver pendientes, crear faltantes y aplicar resultados.",
     sections: [
       {
-        title: "1) Configuracion inicial",
+        title: "1) Configuración inicial",
         purpose:
-          "Define el contexto minimo para que la IA pueda extraer y proponer items de forma util.",
+          "Define el contexto minimo para que la IA pueda extraer y proponer ítems de forma útil.",
         actions: [
-          "Documento: selecciona un archivo habilitado para IA; sin documento no se activa Analizar.",
-          "Proveedor confirmado: define sobre que proveedor se evaluan coincidencias y creacion de faltantes.",
-          "Boton Analizar documento (icono IA): inicia la extraccion de proveedor sugerido, condiciones e items.",
-          "Overlay de bloqueo: durante analisis o creacion de faltantes el modal se bloquea para evitar acciones inconsistentes.",
+          "Documento: seleccióna un archivo habilitado para IA; sin documento no se activa Analizar.",
+          "Proveedor confirmado: define sobre que proveedor se evaluan coincidencias y creación de faltantes.",
+          "Botón Analizar documento (icono IA): inicia la extracción de proveedor sugerido, condiciones e ítems.",
+          "Overlay de bloqueo: durante análisis o creación de faltantes el modal se bloquea para evitar acciónes inconsistentes.",
         ],
       },
       {
-        title: "2) Estado del analisis",
+        title: "2) Estado del análisis",
         purpose:
           "Permite saber si el job IA sigue en progreso, termino o fallo.",
         actions: [
-          "Estado del analisis: muestra etiqueta normalizada (pendiente, en ejecucion, completado, fallido, etc.).",
+          "Estado del análisis: muestra etiqueta normalizada (pendiente, en ejecución, completado, fallido, etc.).",
           "Porcentaje de avance: referencia visual de progreso del job.",
           "Mensaje de job/error: si falla, revisa el detalle antes de reintentar.",
         ],
@@ -952,62 +952,62 @@ export const HELP_MODAL_CATALOG = {
         purpose: "Valida que las sugerencias aplicaran en el lugar correcto.",
         actions: [
           "Proveedor sugerido: referencia detectada por IA para contraste con proveedor confirmado.",
-          "Seccion destino: bloque donde se agregaran items al aplicar.",
-          "Lista activa: confirma disponibilidad de lista de precios para crear o vincular items.",
-          "Advertencia de reutilizacion: muestra importaciones previas para evitar duplicaciones innecesarias.",
+          "Sección destino: bloque donde se agregaran ítems al aplicar.",
+          "Lista activa: confirma disponibilidad de lista de precios para crear o vincular ítems.",
+          "Advertencia de reútilización: muestra importaciones previas para evitar duplicaciones innecesarias.",
         ],
       },
       {
-        title: "4) Tabla de items identificados",
+        title: "4) Tabla de ítems identificados",
         purpose:
-          "Es el tablero principal para decidir que se crea, que se vincula y que requiere correccion.",
+          "Es el tablero principal para decidir que se crea, que se vincula y que requiere corrección.",
         actions: [
-          "Columna Crear (faltantes): marca checkbox para preparar creacion masiva de items faltantes.",
-          "Boton + por fila (faltante o sugerencia): crea item individual en lista activa.",
+          "Columna Crear (faltantes): marca checkbox para preparar creación másiva de ítems faltantes.",
+          "Botón + por fila (faltante o sugerencia): crea item individual en lista activa.",
           "Estado: distingue existente confirmado, coincidencia sugerida, faltante listo o faltante con bloqueo.",
-          "Advertencias: cada warning explica riesgos de calidad de datos (codigo, unidad, descripcion, etc.).",
-          "Agregar a descripcion: en advertencias transferibles, copia el warning a la descripcion del item para trazabilidad.",
+          "Advertencias: cada warning explica riesgos de calidad de datos (codigo, unidad, descripción, etc.).",
+          "Agregar a descripción: en advertencias transferibles, copia el warning a la descripción del item para trazabilidad.",
         ],
       },
       {
         title: "5) Resolver coincidencias sugeridas",
         purpose:
-          "Obliga a confirmar ambiguedades antes de aplicar para no crear duplicados.",
+          "Obliga a confirmar ambigüedades antes de aplicar para no crear duplicados.",
         actions: [
-          "Selector de candidato (si hay multiples): elige el item existente correcto en lista activa.",
-          "Boton Usar existente (check): vincula la fila al item ya existente.",
-          "Boton Crear nuevo (+): crea un item nuevo cuando la sugerencia no corresponde.",
-          "Feedback por fila: confirma si quedo reutilizado, creado o con error de resolucion.",
+          "Selector de candidato (si hay múltiples): elige el item existente correcto en lista activa.",
+          "Botón Usar existente (check): vincula la fila al item ya existente.",
+          "Botón Crear nuevo (+): crea un item nuevo cuando la sugerencia no corresponde.",
+          "Feedback por fila: confirma si quedo reútilizado, creado o con error de resolución.",
           "Regla de workflow: mientras existan coincidencias sugeridas sin resolver, no se habilita aplicar.",
         ],
       },
       {
         title: "6) Condiciones y clausulas",
         purpose:
-          "Controla que texto comercial detectado por IA se transfiera a la cotizacion solo cuando conviene.",
+          "Controla que texto comercial detectado por IA se transfiera a la cotización solo cuando conviene.",
         actions: [
           "Condiciones encontradas (Entrega, Validez, Garantia, Pago, Moneda): marca solo las que quieras aplicar.",
-          "Clausulas comerciales detectadas: selecciona por clausula segun categoria y confianza (alta/media/baja).",
+          "Clausulas comerciales detectadas: seleccióna por clausula según categoria y confianza (alta/medía/baja).",
           "Evidencia: revisa source snippet para validar que la clausula realmente corresponde al documento.",
           "Buenas practicas: evita transferir clausulas genericas o contradictorias con politica comercial vigente.",
         ],
       },
       {
-        title: "7) Botones finales y etapas",
+        title: "7) Botónes finales y etapas",
         purpose:
           "Completa el flujo en dos pasos cuando hay faltantes y en un paso cuando todo ya esta resuelto.",
         actions: [
           "Cancelar (X): cierra la ventana sin aplicar cambios en la edicion actual.",
-          "Boton principal en etapa 'crear faltantes': crea en lista activa los items marcados en checkbox.",
-          "Boton principal en etapa final: agrega items confirmados a la edicion actual (persisten al guardar version).",
-          "Bloqueos del boton principal: proveedor no confirmado, sin lista activa, coincidencias pendientes o seleccion insuficiente.",
+          "Botón principal en etapa 'crear faltantes': crea en lista activa los ítems marcados en checkbox.",
+          "Botón principal en etapa final: agrega ítems confirmados a la edicion actual (persisten al guardar versión).",
+          "Bloqueos del boton principal: proveedor no confirmado, sin lista activa, coincidencias pendientes o selección insuficiente.",
         ],
       },
     ],
     modalActions: [
       "Orden recomendado: Documento + Proveedor -> Analizar -> Resolver sugeridas -> Crear faltantes -> Aplicar.",
       "Si el flujo se bloquea, revisa los mensajes de workflow al pie del modal: indican exactamente que falta para continuar.",
-      "Usa creacion individual (+ por fila) cuando necesites control fino; usa creacion masiva cuando la seleccion ya este validada.",
+      "Usa creación individual (+ por fila) cuando necesites control fino; usa creación másiva cuando la selección ya este validada.",
     ],
   },
   "proposal.create": {
@@ -1016,70 +1016,70 @@ export const HELP_MODAL_CATALOG = {
     purpose:
       "Este modal ayuda a elegir la plantilla base antes de generar la propuesta.",
     usage:
-      "Selecciona una plantilla alineada al caso del cliente y confirma para crear.",
+      "Selecciona una plantilla alíneada al caso del cliente y confirma para crear.",
     sections: [
       {
         title: "Plantillas disponibles",
         purpose: "Permite elegir estilo y narrativa base de la propuesta.",
         actions: [
-          "Compara nombre, descripcion y estilo de portada.",
-          "Selecciona plantilla segun audiencia y caso comercial.",
-          "Valida que exista una seleccion antes de continuar.",
+          "Compara nombre, descripción y estilo de portada.",
+          "Selecciona plantilla según audiencia y caso comercial.",
+          "Valida que exista una selección antes de continuar.",
         ],
       },
       {
-        title: "Resumen de seleccion",
+        title: "Resumen de selección",
         purpose: "Confirma la plantilla elegida antes de crear.",
         actions: [
           "Revisa nombre final de plantilla en pie del modal.",
-          "Si no coincide con el objetivo, cambia seleccion.",
+          "Si no coincide con el objetivo, cambia selección.",
         ],
       },
     ],
     modalActions: [
       "Ayuda: abre esta guia contextual.",
       "Cancelar/Cerrar: vuelve al flujo anterior sin crear propuesta.",
-      "Continuar: crea la propuesta con la plantilla seleccionada.",
+      "Continuar: crea la propuesta con la plantilla selecciónada.",
     ],
   },
   "proposal.edit": {
     ariaLabel: "Ayuda sobre el modal de editar propuesta",
     title: "Ayuda sobre editar propuesta",
     purpose:
-      "Permite editar la propuesta por secciones sin perder contexto comercial.",
+      "Permite editar la propuesta por secciónes sin perder contexto comercial.",
     usage:
       "Trabaja componente por componente, valida sugerencias y guarda de forma incremental.",
     sections: [
       {
         title: "Cabecera del editor",
-        purpose: "Muestra estado, cliente y contexto de cotizacion vinculada.",
+        purpose: "Muestra estado, cliente y contexto de cotización vinculada.",
         actions: [
-          "Confirma propuesta y version comercial antes de editar.",
-          "Usa chips de estado/plantilla como referencia rapida.",
+          "Confirma propuesta y versión comercial antes de editar.",
+          "Usa chips de estado/plantilla como referencia rápida.",
         ],
       },
       {
         title: "Componentes de contenido",
         purpose: "Permite construir narrativa final por bloques.",
         actions: [
-          "Edita headings, parrafos, listas e imagenes por seccion.",
-          "Aplica sugerencias IA con revision humana previa.",
-          "Guarda cada componente para evitar perdida de cambios.",
+          "Edita headings, párrafos, listas e imágenes por sección.",
+          "Aplica sugerencias IA con revisión humana previa.",
+          "Guarda cada componente para evitar pérdida de cambios.",
         ],
       },
       {
         title: "Metadatos y salida",
-        purpose: "Controla estado editorial y preparación de previsualizacion.",
+        purpose: "Controla estado editorial y preparación de previsualización.",
         actions: [
-          "Ajusta titulo/estado segun avance real.",
-          "Abre previsualizacion solo cuando el contenido este validado.",
+          "Ajusta título/estado según avance real.",
+          "Abre previsualización solo cuando el contenido este validado.",
         ],
       },
     ],
     modalActions: [
       "Ayuda: abre esta guia de edicion.",
       "Cerrar (X): avisa si hay cambios sin guardar.",
-      "Guardar seccion: persiste avances por componente.",
+      "Guardar sección: persiste avances por componente.",
       "Previsualizar: revisa salida final antes de compartir.",
     ],
   },
@@ -1093,7 +1093,7 @@ export const HELP_MODAL_CATALOG = {
     sections: [
       {
         title: "Carga de evidencia",
-        purpose: "Recopila archivos de entrada para analisis del lead.",
+        purpose: "Recopila archivos de entrada para análisis del lead.",
         actions: [
           "Sube documentos relevantes (PDF, Office, correo, imagen, audio).",
           "Verifica cantidad y tipo de archivo antes de crear.",
@@ -1110,7 +1110,7 @@ export const HELP_MODAL_CATALOG = {
       },
       {
         title: "Vista previa de insumos",
-        purpose: "Confirma lo que se enviará al analisis.",
+        purpose: "Confirma lo que se enviará al análisis.",
         actions: [
           "Revisa archivos y texto cargado antes de enviar.",
           "Asegura que no falte evidencia minima.",
@@ -1119,8 +1119,8 @@ export const HELP_MODAL_CATALOG = {
     ],
     modalActions: [
       "Ayuda: abre esta guia contextual.",
-      "Cerrar: cancela creacion del lead.",
-      "Crear lead: inicia analisis y genera sugerencias relacionadas.",
+      "Cerrar: cancela creación del lead.",
+      "Crear lead: inicia análisis y genera sugerencias relaciónadas.",
       "Overlay de proceso: espera a que termine antes de cerrar.",
     ],
   },
@@ -1128,15 +1128,15 @@ export const HELP_MODAL_CATALOG = {
     ariaLabel: "Ayuda sobre el modal de editar lead",
     title: "Ayuda sobre editar lead",
     purpose:
-      "Se usa para revisar y ajustar el analisis del lead antes de resolverlo.",
+      "Se usa para revisar y ajustar el análisis del lead antes de resolverlo.",
     usage:
-      "Valida sinopsis y sugerencias de relacion comercial antes de guardar cambios.",
+      "Valida sinopsis y sugerencias de relación comercial antes de guardar cambios.",
     sections: [
       {
         title: "Resumen del lead",
         purpose: "Muestra estado actual y contexto temporal del registro.",
         actions: [
-          "Revisa estatus del analisis y fecha de creacion.",
+          "Revisa estatus del análisis y fecha de creación.",
           "Usa reanalizar cuando cambie la evidencia disponible.",
         ],
       },
@@ -1145,14 +1145,14 @@ export const HELP_MODAL_CATALOG = {
         purpose:
           "Permite confirmar o corregir cuenta, contacto y oportunidad sugeridos.",
         actions: [
-          "Valida coincidencias sugeridas contra informacion real.",
-          "Crea o vincula registros segun corresponda.",
+          "Valida coincidencias sugeridas contra información real.",
+          "Crea o vincula registros según corresponda.",
           "Evita duplicados antes de resolver definitivamente.",
         ],
       },
       {
         title: "Documentos adicionales",
-        purpose: "Permite enriquecer el analisis con nueva evidencia.",
+        purpose: "Permite enriquecer el análisis con nueva evidencia.",
         actions: [
           "Adjunta archivos extra si faltaba contexto.",
           "Reanaliza para refrescar sinopsis y recomendaciones.",
@@ -1160,10 +1160,10 @@ export const HELP_MODAL_CATALOG = {
       },
     ],
     modalActions: [
-      "Ayuda: abre esta guia para edicion/resolucion.",
-      "Reanalizar: actualiza sugerencias segun evidencia vigente.",
-      "Guardar/Resolver: aplica cambios y materializa registros relacionados.",
-      "Cerrar: sale del modal sin resolver si aun falta revision.",
+      "Ayuda: abre esta guia para edicion/resolución.",
+      "Reanalizar: actualiza sugerencias según evidencia vigente.",
+      "Guardar/Resolver: aplica cambios y materializa registros relaciónados.",
+      "Cerrar: sale del modal sin resolver si aún falta revisión.",
     ],
   },
 };

@@ -2660,7 +2660,7 @@ function ProposalEditorModal({
                     {proposal.templateName || "Sin plantilla"}
                   </span>
                   <span className="proposal-studio-version">
-                    Cotizacion #{proposal.quotationId} · v
+                    Cotización #{proposal.quotationId} · v
                     {proposal.quotationVersionNumber}
                   </span>
                 </div>
@@ -3776,7 +3776,7 @@ export default function ProposalsPage() {
           setError(
             getApiErrorMessage(
               err,
-              "No fue posible crear la propuesta desde la cotizacion",
+              "No fue posible crear la propuesta desde la cotización",
             ),
           );
         }
@@ -4549,7 +4549,7 @@ export default function ProposalsPage() {
 
           {!loadingList && proposals.length === 0 ? (
             <p className="field-hint">
-              Aun no hay propuestas. Crea la primera desde cotizaciones.
+              Aún no hay propuestas. Crea la primera desde cotizaciones.
             </p>
           ) : null}
 
@@ -4564,11 +4564,11 @@ export default function ProposalsPage() {
           <table>
             <thead>
               <tr>
-                <th>Titulo</th>
+                <th>Título</th>
                 <th>Cuenta</th>
                 <th>Contacto</th>
                 <th>Estado</th>
-                <th>Cotizacion</th>
+                <th>Cotización</th>
                 <th>Actualizada</th>
                 <th>Acciones</th>
               </tr>
@@ -4622,8 +4622,10 @@ export default function ProposalsPage() {
                             ⋮
                           </button>
                           {openProposalMenuId === proposal.id ? (
-                            <div className="user-kebab-menu proposal-actions-menu">
+                            <div
+                              className="user-kebab-menu proposal-actions-menu"
                               data-help-id="proposals.save-component"
+                            >
                               <button
                                 type="button"
                                 onClick={() =>

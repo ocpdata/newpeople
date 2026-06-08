@@ -136,7 +136,7 @@ export default function ProviderPriceListItemsSection({
                       className="provider-price-list-sort-btn"
                       onClick={() => togglePriceItemSort("codigo")}
                     >
-                      Codigo <span>{getPriceItemSortArrow("codigo")}</span>
+                      Código <span>{getPriceItemSortArrow("codigo")}</span>
                     </button>
                   </th>
                   <th>
@@ -145,7 +145,7 @@ export default function ProviderPriceListItemsSection({
                       className="provider-price-list-sort-btn"
                       onClick={() => togglePriceItemSort("descripcion")}
                     >
-                      Descripcion <span>{getPriceItemSortArrow("descripcion")}</span>
+                      Descripción <span>{getPriceItemSortArrow("descripcion")}</span>
                     </button>
                   </th>
                   <th>
