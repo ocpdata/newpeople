@@ -16,7 +16,7 @@ const STAGE_SLA_DAYS = {
   validacion_valor: 5,
 };
 
-const NEXT_STEP_ACTION_TYPES = ["next_step", "follow_up", "waiting_customer"];
+const NEXT_STEP_ACTION_TYPES = ["next_step", "follow_up", "call", "waiting_customer"];
 
 function userHasPermission(user, permission) {
   return user?.permissionSet?.has(permission);

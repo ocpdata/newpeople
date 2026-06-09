@@ -29,6 +29,12 @@ export const config = {
     passwordSetupTokenMinutes: Number(
       process.env.APP_PASSWORD_SETUP_TOKEN_MINUTES || 1440,
     ),
+    businessTimezone:
+      process.env.APP_BUSINESS_TIMEZONE || "America/Mexico_City",
+    calendarSlaDays: Number(process.env.APP_CALENDAR_SLA_DAYS || 5),
+    calendarReminderLeadMinutes: Number(
+      process.env.APP_CALENDAR_REMINDER_LEAD_MINUTES || 60,
+    ),
   },
   mail: {
     host: process.env.SMTP_HOST || "",

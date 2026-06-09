@@ -27,6 +27,7 @@ const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
 const CommercialDevelopmentPage = lazy(
   () => import("./CommercialDevelopmentPage"),
 );
+const CalendarPage = lazy(() => import("./CalendarPage"));
 const CommercialTrackingPage = lazy(() => import("./CommercialTrackingPage"));
 const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
@@ -183,6 +184,11 @@ export default function AppShell({
     canReadOpportunities;
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
+  const canAccessCommercialCalendar =
+    (can("calendario_comercial.read") ||
+      can("calendario_comercial.update") ||
+      can("calendario_comercial.read_all")) &&
+    canReadOpportunities;
   const canAccessProcessCommercialConfig =
     can("proceso_comercial_config.read") ||
     can("proceso_comercial_config.update");
@@ -316,7 +322,20 @@ export default function AppShell({
           path="/commercial-development"
           element={
             canAccessCommercialDevelopment ? (
-              <CommercialDevelopmentPage currentUser={currentUser} />
+              <CommercialDevelopmentPage
+                currentUser={currentUser}
+                canAccessCommercialCalendar={canAccessCommercialCalendar}
+              />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/calendar"
+          element={
+            canAccessCommercialCalendar ? (
+              <CalendarPage currentUser={currentUser} />
             ) : (
               <Navigate to="/" />
             )
@@ -492,6 +511,7 @@ export default function AppShell({
           )}
 
           {(canAccessCommercialDevelopment ||
+            canAccessCommercialCalendar ||
             canAccessCommercialTracking ||
             canAccessCommercialPlanning ||
             canAccessCommercialEnablement ||
@@ -513,12 +533,12 @@ export default function AppShell({
                   Planeación Comercial
                 </GuardedNavLink>
               ) : null}
-              {canAccessCommercialDevelopment ? (
+              {canAccessCommercialCalendar ? (
                 <GuardedNavLink
-                  to="/commercial-development"
+                  to="/calendar"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Desarrollo Comercial
+                  Calendario
                 </GuardedNavLink>
               ) : null}
               {canReadContacts ? (

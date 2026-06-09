@@ -3804,7 +3804,10 @@ function CommercialEmailDraftModal({
   );
 }
 
-export default function CommercialDevelopmentPage({ currentUser }) {
+export default function CommercialDevelopmentPage({
+  currentUser,
+  canAccessCommercialCalendar = false,
+}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissionSet = useMemo(
@@ -3813,6 +3816,9 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   );
   const canUpdateCommercialDevelopment =
     permissionSet.has("desarrollo_comercial.update") &&
+    permissionSet.has("oportunidades.update");
+  const canUpdateCommercialCalendar =
+    permissionSet.has("calendario_comercial.update") &&
     permissionSet.has("oportunidades.update");
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -4600,8 +4606,16 @@ export default function CommercialDevelopmentPage({ currentUser }) {
   }, [currentPeriod?.quarter, currentPeriod?.year]);
 
   useEffect(() => {
+    if (!canAccessCommercialCalendar) {
+      setCalendarData(null);
+      setCalendarLoading(false);
+      setCalendarError(
+        "No tienes permisos para ver el calendario comercial de actividades.",
+      );
+      return;
+    }
     loadCalendar();
-  }, [loadCalendar]);
+  }, [canAccessCommercialCalendar, loadCalendar]);
 
   const gapClosingView = useMemo(() => {
     const activeGapAmount = Number(quota.gapAmount || 0);
@@ -6058,6 +6072,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
           </div>
         </section>
 
+        {canAccessCommercialCalendar ? (
         <section className="commercial-development-spotlight commercial-development-calendar-panel">
           <div className="commercial-development-section-header commercial-development-calendar-header">
             <div>
@@ -6331,7 +6346,11 @@ export default function CommercialDevelopmentPage({ currentUser }) {
                   type="button"
                   className="btn-primary"
                   onClick={handleCreateCalendarActivity}
-                  disabled={!calendarOpportunityId || !selectedDayData?.date}
+                  disabled={
+                    !canUpdateCommercialCalendar ||
+                    !calendarOpportunityId ||
+                    !selectedDayData?.date
+                  }
                 >
                   Nueva actividad en este dia
                 </button>
@@ -6381,6 +6400,7 @@ export default function CommercialDevelopmentPage({ currentUser }) {
             </aside>
           </div>
         </section>
+        ) : null}
       </div>
 
       <section className="commercial-development-spotlight">

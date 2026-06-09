@@ -203,7 +203,10 @@ export default function OpportunityWorkspacePanel({
     confidence: "medium",
     evidenceExcerpt: "",
   });
-  const [isStrategyExpanded, setIsStrategyExpanded] = useState(false);
+  const [isWorkspaceExpanded, setIsWorkspaceExpanded] = useState(true);
+  const [isWeaknessPanelExpanded, setIsWeaknessPanelExpanded] = useState(true);
+  const [isStrategyPanelExpanded, setIsStrategyPanelExpanded] = useState(true);
+  const [isStrategyStepsExpanded, setIsStrategyStepsExpanded] = useState(false);
 
   const workspace = commercialContext?.workspace || null;
   const stages = Array.isArray(workspace?.stages) ? workspace.stages : [];
@@ -253,7 +256,7 @@ export default function OpportunityWorkspacePanel({
       "Completa o actualiza informacion comercial para regenerar la estrategia.",
     steps: [],
   };
-  const visibleStrategySteps = isStrategyExpanded
+  const visibleStrategySteps = isStrategyStepsExpanded
     ? recommendedStrategy.steps
     : recommendedStrategy.steps.slice(0, STRATEGY_VISIBLE_STEPS);
   const hiddenStrategyStepsCount = Math.max(
@@ -343,6 +346,27 @@ export default function OpportunityWorkspacePanel({
     return null;
   }
 
+  function renderCollapseButton({
+    isExpanded,
+    onToggle,
+    expandLabel,
+    collapseLabel,
+    controlsId,
+  }) {
+    return (
+      <button
+        type="button"
+        className="opportunity-workspace-collapse-button"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls={controlsId}
+      >
+        <span>{isExpanded ? collapseLabel : expandLabel}</span>
+        <span aria-hidden="true">{isExpanded ? "−" : "+"}</span>
+      </button>
+    );
+  }
+
   return (
     <section className="opportunity-workspace-shell">
       <div className="opportunity-workspace-header">
@@ -353,19 +377,33 @@ export default function OpportunityWorkspacePanel({
             brechas y riesgos visibles de la oportunidad.
           </p>
         </div>
-        <div className="opportunity-workspace-playbook-meta">
-          <span className="record-id-badge">
-            {workspace.playbook?.name || "Playbook"}
-          </span>
-          <span className="record-id-badge">
-            {workspace.playbook?.version || "v1"} |{" "}
-            {workspace.playbook?.stageCount || 0} etapas |{" "}
-            {workspace.playbook?.criteriaCount || 0} criterios
-          </span>
+        <div className="opportunity-workspace-header-actions">
+          <div className="opportunity-workspace-playbook-meta">
+            <span className="record-id-badge">
+              {workspace.playbook?.name || "Playbook"}
+            </span>
+            <span className="record-id-badge">
+              {workspace.playbook?.version || "v1"} |{" "}
+              {workspace.playbook?.stageCount || 0} etapas |{" "}
+              {workspace.playbook?.criteriaCount || 0} criterios
+            </span>
+          </div>
+          {renderCollapseButton({
+            isExpanded: isWorkspaceExpanded,
+            onToggle: () => setIsWorkspaceExpanded((value) => !value),
+            expandLabel: "Expandir workspace",
+            collapseLabel: "Contraer workspace",
+            controlsId: "opportunity-workspace-content",
+          })}
         </div>
       </div>
 
-      <div className="opportunity-workspace-overview">
+      {isWorkspaceExpanded ? (
+        <>
+          <div
+            id="opportunity-workspace-content"
+            className="opportunity-workspace-overview"
+          >
         <section className="opportunity-workspace-panel">
           <div className="opportunity-workspace-panel-header">
             <div>
@@ -450,55 +488,68 @@ export default function OpportunityWorkspacePanel({
             ))}
           </div>
         ) : null}
-      </div>
+          </div>
 
-      <section className="opportunity-workspace-panel">
-        <div className="opportunity-workspace-panel-header">
-          <h6>Panel Scorecard</h6>
-          <span
-            className={`record-id-badge ${getToneClass(workspace.scorecard?.overallTone)}`}
-          >
-            Solidez global {workspace.summary?.health?.overallLabel || "-"}
-          </span>
-        </div>
-        <div className="opportunity-workspace-scorecard-grid">
-          {scorecardItems.map((item) => (
-            <article
-              key={item.key}
-              className={`opportunity-workspace-scorecard-card ${getToneClass(item.tone)}`}
-            >
-              <strong>{item.label}</strong>
-              <span>Estado: {item.statusLabel}</span>
-              <span>
-                Senales cubiertas: {item.checkedCount || 0}/
-                {item.totalCount || 0}
+          <section className="opportunity-workspace-panel">
+            <div className="opportunity-workspace-panel-header">
+              <h6>Panel Scorecard</h6>
+              <span
+                className={`record-id-badge ${getToneClass(workspace.scorecard?.overallTone)}`}
+              >
+                Solidez global {workspace.summary?.health?.overallLabel || "-"}
               </span>
-              <p>{item.summary}</p>
-              <div className="opportunity-workspace-audit-checklist">
-                {(item.checklist || []).map((entry) => (
-                  <div
-                    key={`${item.key}:${entry.key}`}
-                    className={`opportunity-workspace-audit-checklist-item ${
-                      entry.checked ? "is-checked" : "is-unchecked"
-                    }`}
-                  >
-                    <strong>{entry.checked ? "Cubierto" : "Falta"}</strong>
-                    <span>{entry.label}</span>
+            </div>
+            <div className="opportunity-workspace-scorecard-grid">
+              {scorecardItems.map((item) => (
+                <article
+                  key={item.key}
+                  className={`opportunity-workspace-scorecard-card ${getToneClass(item.tone)}`}
+                >
+                  <strong>{item.label}</strong>
+                  <span>Estado: {item.statusLabel}</span>
+                  <span>
+                    Senales cubiertas: {item.checkedCount || 0}/
+                    {item.totalCount || 0}
+                  </span>
+                  <p>{item.summary}</p>
+                  <div className="opportunity-workspace-audit-checklist">
+                    {(item.checklist || []).map((entry) => (
+                      <div
+                        key={`${item.key}:${entry.key}`}
+                        className={`opportunity-workspace-audit-checklist-item ${
+                          entry.checked ? "is-checked" : "is-unchecked"
+                        }`}
+                      >
+                        <strong>{entry.checked ? "Cubierto" : "Falta"}</strong>
+                        <span>{entry.label}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+                </article>
+              ))}
+            </div>
+          </section>
 
-      <section className="opportunity-workspace-panel opportunity-workspace-weakness-panel">
+          <section className="opportunity-workspace-panel opportunity-workspace-weakness-panel">
         <div className="opportunity-workspace-panel-header">
-          <h6>Panel Debilidades y Riesgos</h6>
-          <span className="field-hint">Manual y auto detectadas</span>
+          <div>
+            <h6>Panel Debilidades y Riesgos</h6>
+            <span className="field-hint">Manual y auto detectadas</span>
+          </div>
+          {renderCollapseButton({
+            isExpanded: isWeaknessPanelExpanded,
+            onToggle: () => setIsWeaknessPanelExpanded((value) => !value),
+            expandLabel: "Expandir panel",
+            collapseLabel: "Contraer panel",
+            controlsId: "opportunity-workspace-weakness-content",
+          })}
         </div>
 
-        <div className="opportunity-workspace-side-list opportunity-workspace-weakness-grid">
+            {isWeaknessPanelExpanded ? (
+              <div
+                id="opportunity-workspace-weakness-content"
+                className="opportunity-workspace-side-list opportunity-workspace-weakness-grid"
+              >
           {weaknesses.map((item) => {
             const draft = weaknessDrafts[item.id] || {
               status: item.status,
@@ -645,15 +696,29 @@ export default function OpportunityWorkspacePanel({
               </article>
             );
           })}
-        </div>
-      </section>
+              </div>
+            ) : null}
+          </section>
 
-      <section className="opportunity-workspace-panel">
+          <section className="opportunity-workspace-panel">
         <div className="opportunity-workspace-panel-header">
-          <h6>Estrategia recomendada</h6>
-          <span className="field-hint">Ruta sugerida hasta la venta</span>
+          <div>
+            <h6>Estrategia recomendada</h6>
+            <span className="field-hint">Ruta sugerida hasta la venta</span>
+          </div>
+          {renderCollapseButton({
+            isExpanded: isStrategyPanelExpanded,
+            onToggle: () => setIsStrategyPanelExpanded((value) => !value),
+            expandLabel: "Expandir estrategia",
+            collapseLabel: "Contraer estrategia",
+            controlsId: "opportunity-workspace-strategy-content",
+          })}
         </div>
-        <div className="opportunity-workspace-strategy-layout">
+            {isStrategyPanelExpanded ? (
+              <div
+                id="opportunity-workspace-strategy-content"
+                className="opportunity-workspace-strategy-layout"
+              >
           <article className="opportunity-workspace-side-card opportunity-workspace-strategy-hero">
             <div className="opportunity-workspace-side-card-header">
               <div className="opportunity-workspace-strategy-heading">
@@ -758,18 +823,21 @@ export default function OpportunityWorkspacePanel({
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={() => setIsStrategyExpanded((value) => !value)}
+                onClick={() => setIsStrategyStepsExpanded((value) => !value)}
               >
-                {isStrategyExpanded
+                {isStrategyStepsExpanded
                   ? "Ver menos prioridades"
                   : `Ver ${hiddenStrategyStepsCount} prioridades mas`}
               </button>
             </div>
           ) : null}
-        </div>
-      </section>
+              </div>
+            ) : null}
+          </section>
 
-      <div className="opportunity-workspace-layout"></div>
+          <div className="opportunity-workspace-layout"></div>
+        </>
+      ) : null}
     </section>
   );
 }

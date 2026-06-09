@@ -4,7 +4,7 @@ import { es } from "date-fns/locale";
 import ModalInlineHelp from "../help/ModalInlineHelp";
 import ManufacturerRegistrationsPanel from "../manufacturer-registrations/ManufacturerRegistrationsPanel";
 import OpportunityDocumentsPanel from "./OpportunityDocumentsPanel";
-import OpportunityWorkspacePanel from "./OpportunityWorkspacePanel";
+import OpportunityDevelopmentPanel from "./OpportunityDevelopmentPanel";
 
 function withCurrentCatalogOption(options, currentValue, labelKey = "name") {
   if (!currentValue) return options;
@@ -1012,16 +1012,21 @@ function OpportunityFormModal({
                       </p>
                     )}
 
-                    <OpportunityWorkspacePanel
-                      opportunityId={editingOpportunityId}
-                      commercialContext={commercialContext}
-                      catalogs={catalogs}
-                      isReadOnly={isSelectedCommercialStageReadOnly}
-                      isCommercialFlowClosed={isCommercialFlowClosed}
-                      onRefresh={refreshOpportunityCommercialView}
-                    />
                   </section>
                 )}
+
+                {editingOpportunityId ? (
+                  <OpportunityDevelopmentPanel
+                    editingOpportunityId={editingOpportunityId}
+                    form={form}
+                    commercialContext={commercialContext}
+                    opportunityDocuments={opportunityDocuments}
+                    currentCommercialStage={currentCommercialStage}
+                    loadingCommercialStageView={loadingCommercialStageView}
+                    isCommercialFlowClosed={isCommercialFlowClosed}
+                    refreshCommercialContext={refreshOpportunityCommercialView}
+                  />
+                ) : null}
 
                 {editingOpportunityId ? (
                   <ManufacturerRegistrationsPanel

@@ -13,6 +13,7 @@ const TAB_OPTIONS = [
 const NEXT_STEP_TYPE_OPTIONS = [
   { value: "next_step", label: "Mover yo" },
   { value: "follow_up", label: "Seguimiento" },
+  { value: "call", label: "Llamada" },
   { value: "waiting_customer", label: "Esperando cliente" },
 ];
 

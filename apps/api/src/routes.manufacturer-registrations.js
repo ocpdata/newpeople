@@ -687,7 +687,6 @@ router.put(
 
 router.post(
   "/opportunities/:opportunityId/manufacturer-registrations/:registrationId/approve",
-  requirePermission("oportunidades.update"),
   requireAnyPermission([MANAGE_PERMISSION]),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);
@@ -782,7 +781,6 @@ router.post(
 
 router.post(
   "/opportunities/:opportunityId/manufacturer-registrations/:registrationId/reject",
-  requirePermission("oportunidades.update"),
   requireAnyPermission([MANAGE_PERMISSION]),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);
@@ -845,7 +843,6 @@ router.post(
 
 router.post(
   "/opportunities/:opportunityId/manufacturer-registrations/:registrationId/renew",
-  requirePermission("oportunidades.update"),
   requireAnyPermission([MANAGE_PERMISSION]),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);
@@ -969,7 +966,6 @@ router.post(
 
 router.post(
   "/opportunities/:opportunityId/manufacturer-registrations/:registrationId/reopen",
-  requirePermission("oportunidades.update"),
   requireAnyPermission([MANAGE_PERMISSION]),
   async (req, res) => {
     const opportunityId = Number(req.params.opportunityId);

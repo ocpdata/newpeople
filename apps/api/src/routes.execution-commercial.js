@@ -80,6 +80,7 @@ const COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
 const NEXT_STEP_ACTION_TYPES = new Set([
   "next_step",
   "follow_up",
+  "call",
   "waiting_customer",
 ]);
 
@@ -146,6 +147,22 @@ const COMMERCIAL_ACTION_OPEN_STATUSES = new Set([
   "in_progress",
   "blocked",
 ]);
+
+const CALENDAR_COMPLETED_ACTIVITY_STATUSES = new Set(["done"]);
+const BUSINESS_TIMEZONE =
+  String(config.app?.businessTimezone || "America/Mexico_City").trim() ||
+  "America/Mexico_City";
+const CALENDAR_MIN_SLA_DAYS = 1;
+const CALENDAR_MAX_SLA_DAYS = 30;
+const CALENDAR_DEFAULT_SLA_DAYS = Math.min(
+  CALENDAR_MAX_SLA_DAYS,
+  Math.max(CALENDAR_MIN_SLA_DAYS, Number(config.app?.calendarSlaDays || 5)),
+);
+const CALENDAR_DEFAULT_REMINDER_LEAD_MINUTES = Math.max(
+  0,
+  Number(config.app?.calendarReminderLeadMinutes || 60),
+);
+const CALENDAR_ALERT_LOOKBACK_DAYS = 45;
 
 const DEPENDENCY_TYPE_LABELS = {
   presales_support: "Preventa",
@@ -229,6 +246,71 @@ function toIsoDate(value) {
     return null;
   }
   return parsed.toISOString().slice(0, 10);
+}
+
+function formatDateInTimeZone(dateValue, timeZone) {
+  const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(parsed);
+}
+
+function getTimeZoneOffsetMinutes(dateValue, timeZone) {
+  const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return 0;
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(parsed);
+  const lookup = {};
+  parts.forEach((part) => {
+    if (part.type !== "literal") {
+      lookup[part.type] = part.value;
+    }
+  });
+
+  const asUtc = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second),
+  );
+  return (asUtc - parsed.getTime()) / 60000;
+}
+
+function toTimeZoneStartOfDayUtc(dateText, timeZone) {
+  const parsed = parseDateOnly(dateText);
+  if (!parsed) return null;
+
+  const year = parsed.getUTCFullYear();
+  const month = parsed.getUTCMonth();
+  const day = parsed.getUTCDate();
+  const utcMidnightMs = Date.UTC(year, month, day, 0, 0, 0);
+  let offsetMinutes = getTimeZoneOffsetMinutes(utcMidnightMs, timeZone);
+  let resultMs = utcMidnightMs - offsetMinutes * 60000;
+
+  const normalizedOffset = getTimeZoneOffsetMinutes(resultMs, timeZone);
+  if (normalizedOffset !== offsetMinutes) {
+    offsetMinutes = normalizedOffset;
+    resultMs = utcMidnightMs - offsetMinutes * 60000;
+  }
+
+  return new Date(resultMs);
 }
 
 function buildContactDisplayName(contact) {
@@ -322,8 +404,10 @@ function getCalendarRange(view, requestedDate) {
   const normalizedView = ["day", "week", "month"].includes(view)
     ? view
     : "week";
-  const anchor =
-    parseDateOnly(requestedDate) || parseDateOnly(toIsoDate(new Date()));
+  const anchorDateText =
+    parseDateOnly(requestedDate)?.toISOString().slice(0, 10) ||
+    formatDateInTimeZone(new Date(), BUSINESS_TIMEZONE);
+  const anchor = parseDateOnly(anchorDateText);
 
   let start = anchor;
   let end = anchor;
@@ -347,8 +431,11 @@ function getCalendarRange(view, requestedDate) {
     selectedDate: toIsoDate(anchor),
     startDate: toIsoDate(start),
     endDate: toIsoDate(end),
-    startDateTime: start,
-    endExclusiveDateTime: addUtcDays(end, 1),
+    startDateTime: toTimeZoneStartOfDayUtc(toIsoDate(start), BUSINESS_TIMEZONE),
+    endExclusiveDateTime: toTimeZoneStartOfDayUtc(
+      toIsoDate(addUtcDays(end, 1)),
+      BUSINESS_TIMEZONE,
+    ),
   };
 }
 
@@ -362,6 +449,28 @@ function listDateRangeDays(startDate, endDate) {
     dates.push(toIsoDate(cursor));
   }
   return dates;
+}
+
+function resolveCalendarSlaDays(rawValue) {
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed)) {
+    return CALENDAR_DEFAULT_SLA_DAYS;
+  }
+  return Math.min(CALENDAR_MAX_SLA_DAYS, Math.max(CALENDAR_MIN_SLA_DAYS, parsed));
+}
+
+function getTimeZoneDayWindow(dateText, timeZone = BUSINESS_TIMEZONE) {
+  const start = toTimeZoneStartOfDayUtc(dateText, timeZone);
+  if (!start) {
+    return { start: null, end: null };
+  }
+
+  const parsed = parseDateOnly(dateText);
+  const nextDateText = toIsoDate(addUtcDays(parsed, 1));
+  return {
+    start,
+    end: toTimeZoneStartOfDayUtc(nextDateText, timeZone),
+  };
 }
 
 function isDateWithinQuarter(value, year, quarter) {
@@ -739,11 +848,30 @@ function extractResponseOutputText(data) {
   if (directOutputText) return directOutputText;
 
   const outputEntries = Array.isArray(data?.output) ? data.output : [];
+  const readPartText = (part) => {
+    if (!part || typeof part !== "object") return "";
+
+    const directText = String(part?.text || "").trim();
+    if (directText) return directText;
+
+    const nestedText = String(part?.text?.value || "").trim();
+    if (nestedText) return nestedText;
+
+    const nestedOutputText = String(part?.output_text || "").trim();
+    if (nestedOutputText) return nestedOutputText;
+
+    return "";
+  };
+
   return (
     outputEntries
       .flatMap((entry) => (Array.isArray(entry?.content) ? entry.content : []))
-      .filter((part) => part?.type === "output_text")
-      .map((part) => String(part?.text || "").trim())
+      .filter((part) =>
+        ["output_text", "text", "message_text"].includes(
+          String(part?.type || "").toLowerCase(),
+        ),
+      )
+      .map(readPartText)
       .find(Boolean) || ""
   );
 }
@@ -764,6 +892,143 @@ function extractJsonObject(value) {
       return null;
     }
   }
+}
+
+function extractJsonValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const objectStart = text.indexOf("{");
+    const objectEnd = text.lastIndexOf("}");
+    if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+      try {
+        return JSON.parse(text.slice(objectStart, objectEnd + 1));
+      } catch {
+        // Continue to array extraction fallback.
+      }
+    }
+
+    const arrayStart = text.indexOf("[");
+    const arrayEnd = text.lastIndexOf("]");
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      try {
+        return JSON.parse(text.slice(arrayStart, arrayEnd + 1));
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+}
+
+function normalizeNarrativeInsightsPayload(parsedPayload) {
+  if (!parsedPayload) return [];
+
+  let candidates = [];
+  if (Array.isArray(parsedPayload)) {
+    candidates = parsedPayload;
+  } else if (Array.isArray(parsedPayload?.insights)) {
+    candidates = parsedPayload.insights;
+  } else if (Array.isArray(parsedPayload?.opportunities)) {
+    candidates = parsedPayload.opportunities;
+  } else if (typeof parsedPayload === "object") {
+    candidates = [parsedPayload];
+  }
+
+  return candidates
+    .map((item) => {
+      const opportunityId = Number(
+        item?.opportunityId ?? item?.opportunity_id ?? item?.id,
+      );
+      if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+        return null;
+      }
+
+      const statusSummary = String(
+        item?.aiStatusSummary ??
+          item?.statusSummary ??
+          item?.summary ??
+          item?.status ??
+          "",
+      ).trim();
+      const nextStepRecommendation = String(
+        item?.aiNextStepRecommendation ??
+          item?.nextStepRecommendation ??
+          item?.nextStep ??
+          item?.recommendation ??
+          "",
+      ).trim();
+
+      if (!statusSummary && !nextStepRecommendation) {
+        return null;
+      }
+
+      return {
+        opportunityId,
+        aiStatusSummary: statusSummary,
+        aiNextStepRecommendation: nextStepRecommendation,
+      };
+    })
+    .filter(Boolean);
+}
+
+function deriveSingleNarrativeFromText(outputText, opportunityId) {
+  const safeOpportunityId = Number(opportunityId || 0);
+  if (!Number.isInteger(safeOpportunityId) || safeOpportunityId <= 0) {
+    return null;
+  }
+
+  const cleaned = String(outputText || "")
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  if (!cleaned) return null;
+
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+
+  const textWithoutLabels = cleaned
+    .replace(/(?:aiStatusSummary|statusSummary|resumen|estado)\s*[:=]/gi, "")
+    .replace(
+      /(?:aiNextStepRecommendation|nextStepRecommendation|siguiente\s*paso|recomendacion)\s*[:=]/gi,
+      "",
+    )
+    .trim();
+
+  const sentenceParts = textWithoutLabels
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+
+  const statusSummary = String(
+    lines[0] || sentenceParts[0] || "",
+  ).trim();
+  const nextStepRecommendation = String(
+    lines[1] || sentenceParts[1] || lines[0] || "",
+  ).trim();
+
+  if (!statusSummary && !nextStepRecommendation) {
+    return null;
+  }
+
+  return {
+    opportunityId: safeOpportunityId,
+    aiStatusSummary: statusSummary,
+    aiNextStepRecommendation: nextStepRecommendation,
+  };
+}
+
+function truncateText(value, maxLength = 280) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
 }
 
 function buildOpportunityNarrativeFallback(item) {
@@ -834,56 +1099,69 @@ async function requestOpportunityNarrativesWithAi(
         content: JSON.stringify({
           opportunities: items.map((item) => ({
             opportunityId: item.id,
-            name: item.name,
-            accountName: item.accountName,
+            name: truncateText(item.name, 120),
+            accountName: truncateText(item.accountName, 120),
             amountUsd: Number(item.amountUsd || 0),
             stageName: item.stageName,
             stageCode: item.stageCode,
             executionState: item.executionState,
             riskLevel: item.riskLevel,
-            riskReasons: item.riskReasons,
+            riskReasons: Array.isArray(item.riskReasons)
+              ? item.riskReasons.slice(0, 5).map((reason) => truncateText(reason, 180))
+              : [],
             daysSinceActivity: Number(item.daysSinceActivity || 0),
             slaDays: Number(item.slaDays || 0),
             currentStageValidated: Boolean(item.currentStageValidated),
-            workspaceSummary: item.workspaceSummary || null,
+            workspaceSummary:
+              typeof item.workspaceSummary === "string"
+                ? truncateText(item.workspaceSummary, 900)
+                : null,
             scorecardOverallTone: item.scorecardOverallTone || "neutral",
-            scorecardItems: (item.scorecardItems || []).map(
+            scorecardItems: (item.scorecardItems || []).slice(0, 6).map(
               (scorecardItem) => ({
-                label: scorecardItem.label,
+                label: truncateText(scorecardItem.label, 80),
                 tone: scorecardItem.tone,
-                statusLabel: scorecardItem.statusLabel,
-                summary: scorecardItem.summary,
+                statusLabel: truncateText(scorecardItem.statusLabel, 80),
+                summary: truncateText(scorecardItem.summary, 180),
               }),
             ),
-            openWeaknesses: (item.openWeaknesses || []).map((weakness) => ({
-              title: weakness.title,
+            openWeaknesses: (item.openWeaknesses || []).slice(0, 6).map((weakness) => ({
+              title: truncateText(weakness.title, 120),
               severity: weakness.severity,
-              detail: weakness.detail,
+              detail: truncateText(weakness.detail, 220),
             })),
             nextStep: item.nextStep
               ? {
-                  title: item.nextStep.title || "",
+                  title: truncateText(item.nextStep.title, 120),
                   actionType: item.nextStep.actionType || "",
                   dueDate: item.nextStep.dueDate || null,
                   isOverdue: Boolean(item.nextStep.isOverdue),
-                  successCriteria: item.nextStep.successCriteria || "",
+                  successCriteria: truncateText(
+                    item.nextStep.successCriteria,
+                    220,
+                  ),
                 }
               : null,
-            dependencies: (item.dependencies || []).map((dependency) => ({
-              title: dependency.title,
-              dependencyLabel: dependency.dependencyLabel,
+            dependencies: (item.dependencies || []).slice(0, 6).map((dependency) => ({
+              title: truncateText(dependency.title, 120),
+              dependencyLabel: truncateText(dependency.dependencyLabel, 80),
               status: dependency.status,
               isOverdue: Boolean(dependency.isOverdue),
             })),
             closeDate: item.closeDate || null,
-            recommendedHeading: item.recommendedHeading || "",
-            recommendedRoute: item.recommendedRoute || "",
-            recommendedFinalObjective: item.recommendedFinalObjective || "",
-            recommendedStrategySteps: (item.recommendedStrategySteps || []).map(
+            recommendedHeading: truncateText(item.recommendedHeading, 160),
+            recommendedRoute: truncateText(item.recommendedRoute, 160),
+            recommendedFinalObjective: truncateText(
+              item.recommendedFinalObjective,
+              180,
+            ),
+            recommendedStrategySteps: (item.recommendedStrategySteps || [])
+              .slice(0, 5)
+              .map(
               (step) => ({
-                priorityLabel: step.priorityLabel,
-                title: step.title,
-                text: step.text,
+                priorityLabel: truncateText(step.priorityLabel, 40),
+                title: truncateText(step.title, 120),
+                text: truncateText(step.text, 220),
               }),
             ),
             recommendedNextMove: getRecommendedNextMove(
@@ -928,7 +1206,7 @@ async function requestOpportunityNarrativesWithAi(
     await recordAiUsageFromOpenAiResponse({
       internalRequestId:
         aiUsageContext?.internalRequestId ||
-        `commercial_opportunity_narrative:${Date.now()}:${Math.random()}`,
+        `cn_${Date.now().toString(36)}_${randomUUID().replace(/-/g, "").slice(0, 10)}`,
       userId: aiUsageUserId,
       featureCode:
         aiUsageContext?.featureCode ||
@@ -941,12 +1219,36 @@ async function requestOpportunityNarrativesWithAi(
     });
   }
 
-  const parsed = extractJsonObject(extractResponseOutputText(data));
-  const insights = Array.isArray(parsed?.insights) ? parsed.insights : [];
+  const responseOutputText = extractResponseOutputText(data);
+  const parsed = extractJsonValue(responseOutputText);
+  const insights = normalizeNarrativeInsightsPayload(parsed);
+  if (
+    items.length === 1 &&
+    insights.length > 0 &&
+    !insights.some(
+      (insight) => Number(insight.opportunityId) === Number(items[0]?.id),
+    )
+  ) {
+    insights[0].opportunityId = Number(items[0]?.id || 0);
+  }
+  if (!insights.length && items.length === 1) {
+    const derivedInsight = deriveSingleNarrativeFromText(
+      responseOutputText,
+      items[0]?.id,
+    );
+    if (derivedInsight) {
+      insights.push(derivedInsight);
+    }
+  }
+
+  if (!insights.length) {
+    throw new Error(
+      "OpenAI narrative response did not include parseable insights",
+    );
+  }
 
   return new Map(
     insights
-      .filter((item) => Number.isInteger(Number(item?.opportunityId)))
       .map((item) => [
         Number(item.opportunityId),
         {
@@ -1278,7 +1580,7 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
           featureCode: "commercial_development.opportunity_narrative",
           jobType: "commercial_narrative",
           jobId: Number(opportunityId),
-          internalRequestId: `commercial_opportunity_narrative:${Number(opportunityId)}:${Date.now()}`,
+          internalRequestId: `cn_${Number(opportunityId)}_${Date.now().toString(36)}_${randomUUID().replace(/-/g, "").slice(0, 6)}`,
           startedAt: new Date().toISOString(),
         },
       },
@@ -1301,7 +1603,11 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
         generatedAt: new Date().toISOString(),
       },
     };
-  } catch {
+  } catch (error) {
+    console.error(
+      "Commercial narrative OpenAI fallback:",
+      error?.message || error,
+    );
     return {
       snapshot: executionContext.snapshot,
       fallback: executionContext.fallback,
@@ -1340,10 +1646,23 @@ async function createOrReuseCommercialNarrativeJob({
   );
 
   if (reusableRows.length) {
-    return {
-      wasReused: true,
-      response: buildCommercialNarrativeJobResponse(reusableRows[0]),
-    };
+    const reusableRow = reusableRows[0];
+    const reusableResult = parseCommercialNarrativeJson(
+      reusableRow.result_json,
+      null,
+    );
+    const reusableSource = String(
+      reusableResult?.aiNarrativeSource || "",
+    ).trim().toLowerCase();
+    const shouldBypassReuse =
+      reusableRow.status === "completed" && reusableSource === "fallback";
+
+    if (!shouldBypassReuse) {
+      return {
+        wasReused: true,
+        response: buildCommercialNarrativeJobResponse(reusableRow),
+      };
+    }
   }
 
   const publicId = buildCommercialNarrativeJobPublicId();
@@ -1865,6 +2184,105 @@ function userHasPermission(user, permission) {
 
 function hasGlobalOpportunityScope(user) {
   return userHasPermission(user, "oportunidades.read_all");
+}
+
+function hasCalendarGlobalScope(user) {
+  return userHasPermission(user, "calendario_comercial.read_all");
+}
+
+function isPendingCommercialActivityStatus(status) {
+  return COMMERCIAL_ACTIVITY_OPEN_STATUSES.has(String(status || ""));
+}
+
+function getCalendarActivityStatuses(includeCompleted) {
+  const pendingStatuses = Array.from(COMMERCIAL_ACTIVITY_OPEN_STATUSES);
+  if (!includeCompleted) {
+    return pendingStatuses;
+  }
+  return [
+    ...pendingStatuses,
+    ...Array.from(CALENDAR_COMPLETED_ACTIVITY_STATUSES),
+  ];
+}
+
+function resolveCalendarSellerScope(user, requestedSellerUserId) {
+  const parsed = Number(requestedSellerUserId || 0);
+  if (!hasCalendarGlobalScope(user)) {
+    return Number(user.id);
+  }
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return null;
+}
+
+function getCalendarTrafficLight({
+  isOverdue,
+  isToday,
+  isUpcoming,
+  isBlocked,
+  hasOverdueDependency,
+}) {
+  if (isOverdue || isBlocked || hasOverdueDependency) return "red";
+  if (isToday || isUpcoming) return "amber";
+  return "green";
+}
+
+function computeCalendarRiskScore({
+  isOverdue,
+  isToday,
+  isUpcoming,
+  isBlocked,
+  hasOverdueDependency,
+  isSilenceRisk,
+}) {
+  let score = 0;
+  if (isOverdue) score += 60;
+  if (isBlocked) score += 20;
+  if (hasOverdueDependency) score += 20;
+  if (isSilenceRisk) score += 15;
+  if (isToday) score += 20;
+  if (isUpcoming) score += 10;
+  return Math.min(100, score);
+}
+
+function sortAlertsByRisk(left, right) {
+  const riskDelta = Number(right.riskScore || 0) - Number(left.riskScore || 0);
+  if (riskDelta !== 0) return riskDelta;
+  const leftDate = left.scheduledAt
+    ? new Date(left.scheduledAt).getTime()
+    : Number.MAX_SAFE_INTEGER;
+  const rightDate = right.scheduledAt
+    ? new Date(right.scheduledAt).getTime()
+    : Number.MAX_SAFE_INTEGER;
+  if (leftDate !== rightDate) return leftDate - rightDate;
+  return String(left.title || "").localeCompare(String(right.title || ""), "es");
+}
+
+async function listCalendarSellerOptions(user) {
+  if (!hasCalendarGlobalScope(user)) {
+    return [
+      {
+        id: Number(user.id),
+        fullName: user.full_name || "Mi calendario",
+      },
+    ];
+  }
+
+  const rows = await query(
+    `SELECT DISTINCT u.id, u.full_name
+     FROM users u
+     INNER JOIN user_roles ur ON ur.user_id = u.id
+     INNER JOIN roles r ON r.id = ur.role_id
+     WHERE u.status = 'active'
+       AND LOWER(TRIM(r.name)) = 'vendedor'
+     ORDER BY u.full_name ASC, u.id ASC`,
+  ).catch(() => []);
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    fullName: row.full_name || `Vendedor ${row.id}`,
+  }));
 }
 
 function hasInteractionReadPermission(user) {
@@ -4353,10 +4771,12 @@ async function listCommercialCalendarActivities({
   view,
   date,
   includeCompleted,
+  sellerUserId = null,
   year = null,
   quarter = null,
 }) {
   const range = getCalendarRange(view, date);
+  const allowedStatuses = getCalendarActivityStatuses(includeCompleted);
   const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
   const params = [];
   const ownershipJoin = buildOwnershipJoin(user, params);
@@ -4364,14 +4784,17 @@ async function listCommercialCalendarActivities({
     `a.scheduled_at >= ?`,
     `a.scheduled_at < ?`,
     `a.action_type IN (${actionTypes.map(() => "?").join(", ")})`,
-    includeCompleted
-      ? `a.status IN ('pending', 'in_progress', 'blocked', 'done')`
-      : `a.status IN ('pending', 'in_progress', 'blocked')`,
+    `a.status IN (${allowedStatuses.map(() => "?").join(", ")})`,
     `ocs.code NOT IN ('ganada', 'perdida', 'cancelada')`,
     `oas.code = 'activada'`,
   ];
 
-  params.push(range.startDateTime, range.endExclusiveDateTime, ...actionTypes);
+  params.push(
+    range.startDateTime,
+    range.endExclusiveDateTime,
+    ...actionTypes,
+    ...allowedStatuses,
+  );
 
   if (year !== null && quarter !== null) {
     const quarterRange = getQuarterDateRange(year, quarter);
@@ -4379,17 +4802,24 @@ async function listCommercialCalendarActivities({
     params.push(quarterRange.startDate, quarterRange.endDate);
   }
 
-  if (!hasGlobalOpportunityScope(user)) {
+  if (Number.isInteger(Number(sellerUserId)) && Number(sellerUserId) > 0) {
+    where.push(`o.seller_user_id = ?`);
+    params.push(Number(sellerUserId));
+  }
+
+  if (!hasCalendarGlobalScope(user)) {
     where.push(`(ao_scope.user_id IS NOT NULL OR o.created_by = ?)`);
     params.push(Number(user.id));
   }
 
   const rows = await query(
-    `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
+        `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
             a.scheduled_at, a.is_primary_next_step,
             o.name AS opportunity_name, o.close_date, o.amount_usd,
+          o.seller_user_id,
             ac.name AS account_name,
-            oss.name AS stage_name
+          oss.name AS stage_name,
+          su.full_name AS seller_user_name
      FROM opportunity_workspace_actions a
      INNER JOIN opportunities o ON o.id = a.opportunity_id
      ${ownershipJoin}
@@ -4397,6 +4827,7 @@ async function listCommercialCalendarActivities({
      INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
      INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+         LEFT JOIN users su ON su.id = o.seller_user_id
      WHERE ${where.join(" AND ")}
      ORDER BY a.scheduled_at ASC, a.is_primary_next_step DESC, o.amount_usd DESC, o.name ASC`,
     params,
@@ -4410,11 +4841,14 @@ async function listCommercialCalendarActivities({
     activityType: row.action_type,
     status: row.status,
     scheduledAt: row.scheduled_at,
-    scheduledDate: toIsoDate(row.scheduled_at),
+    scheduledDate: formatDateInTimeZone(row.scheduled_at, BUSINESS_TIMEZONE),
     title: row.title || "",
     note: row.notes || "",
     isPrimaryNextStep: Boolean(row.is_primary_next_step),
     stageName: row.stage_name || "",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "Sin vendedor",
     closeDate: row.close_date,
     amountUsd: Number(row.amount_usd || 0),
   }));
@@ -4431,7 +4865,7 @@ async function listCommercialCalendarActivities({
   const summary = items.reduce(
     (accumulator, item) => {
       accumulator.total += 1;
-      if (item.status === "pending") accumulator.pending += 1;
+      if (isPendingCommercialActivityStatus(item.status)) accumulator.pending += 1;
       if (item.status === "in_progress") accumulator.inProgress += 1;
       if (item.status === "blocked") accumulator.blocked += 1;
       if (item.status === "done") accumulator.done += 1;
@@ -4462,6 +4896,248 @@ async function listCommercialCalendarActivities({
       count: (groupedItems.get(day) || []).length,
       items: groupedItems.get(day) || [],
     })),
+  };
+}
+
+async function listCalendarAlertActivities({ user, sellerUserId, now, next24h }) {
+  const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
+  const allowedStatuses = Array.from(COMMERCIAL_ACTIVITY_OPEN_STATUSES);
+  const params = [];
+  const ownershipJoin = buildOwnershipJoin(user, params);
+  const where = [
+    `a.scheduled_at >= ?`,
+    `a.scheduled_at < ?`,
+    `a.action_type IN (${actionTypes.map(() => "?").join(", ")})`,
+    `a.status IN (${allowedStatuses.map(() => "?").join(", ")})`,
+    `ocs.code NOT IN ('ganada', 'perdida', 'cancelada')`,
+    `oas.code = 'activada'`,
+  ];
+
+  const lookbackStart = new Date(
+    now.getTime() - CALENDAR_ALERT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+  params.push(lookbackStart, next24h, ...actionTypes, ...allowedStatuses);
+
+  if (Number.isInteger(Number(sellerUserId)) && Number(sellerUserId) > 0) {
+    where.push(`o.seller_user_id = ?`);
+    params.push(Number(sellerUserId));
+  }
+
+  if (!hasCalendarGlobalScope(user)) {
+    where.push(`(ao_scope.user_id IS NOT NULL OR o.created_by = ?)`);
+    params.push(Number(user.id));
+  }
+
+  const rows = await query(
+    `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
+            a.scheduled_at,
+            o.name AS opportunity_name, o.seller_user_id,
+            ac.name AS account_name,
+            su.full_name AS seller_user_name
+     FROM opportunity_workspace_actions a
+     INNER JOIN opportunities o ON o.id = a.opportunity_id
+     ${ownershipJoin}
+     INNER JOIN accounts ac ON ac.id = o.account_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     LEFT JOIN users su ON su.id = o.seller_user_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY a.scheduled_at ASC, o.name ASC`,
+    params,
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    opportunityId: Number(row.opportunity_id),
+    opportunityName: row.opportunity_name || "",
+    accountName: row.account_name || "",
+    activityType: row.action_type || "other",
+    status: row.status || "pending",
+    scheduledAt: row.scheduled_at,
+    scheduledDate: formatDateInTimeZone(row.scheduled_at, BUSINESS_TIMEZONE),
+    title: row.title || "",
+    note: row.notes || "",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "Sin vendedor",
+  }));
+}
+
+async function buildCommercialCalendarInsights({ user, sellerUserId, slaDays }) {
+  const now = new Date();
+  const nowMs = now.getTime();
+  const todayDate = formatDateInTimeZone(now, BUSINESS_TIMEZONE);
+  const todayWindow = getTimeZoneDayWindow(todayDate, BUSINESS_TIMEZONE);
+  const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  const alertItems = await listCalendarAlertActivities({
+    user,
+    sellerUserId,
+    now,
+    next24h,
+  });
+  const opportunityIds = Array.from(
+    new Set(alertItems.map((item) => item.opportunityId).filter(Boolean)),
+  );
+  const [dependencyRows, lastActivityByOpportunity] = await Promise.all([
+    listOpenDependencies(opportunityIds),
+    listLastActivityByOpportunity(opportunityIds),
+  ]);
+
+  const dependenciesByOpportunity = dependencyRows.reduce((accumulator, row) => {
+    const key = Number(row.opportunity_id || 0);
+    if (!key) return accumulator;
+    const current = accumulator.get(key) || [];
+    current.push({
+      id: Number(row.id),
+      title: row.title || "Dependencia",
+      dependencyType: row.dependency_type || "other",
+      dependencyLabel: getDependencyTypeLabel(row.dependency_type),
+      dueDate: row.due_date || null,
+      isOverdue: Boolean(row.due_date && getDiffDays(row.due_date) > 0),
+    });
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  const prioritized = alertItems
+    .map((item) => {
+      const scheduledAtMs = item.scheduledAt
+        ? new Date(item.scheduledAt).getTime()
+        : Number.NaN;
+      const isOverdue = Number.isFinite(scheduledAtMs) && scheduledAtMs < nowMs;
+      const isToday =
+        Number.isFinite(scheduledAtMs) &&
+        todayWindow.start &&
+        todayWindow.end &&
+        scheduledAtMs >= todayWindow.start.getTime() &&
+        scheduledAtMs < todayWindow.end.getTime();
+      const isUpcoming =
+        Number.isFinite(scheduledAtMs) &&
+        scheduledAtMs >= nowMs &&
+        scheduledAtMs < next24h.getTime();
+      const deps = dependenciesByOpportunity.get(item.opportunityId) || [];
+      const hasOverdueDependency = deps.some((dependency) => dependency.isOverdue);
+      const lastActivityAt = lastActivityByOpportunity.get(item.opportunityId) || null;
+      const daysWithoutActivity = lastActivityAt ? getDiffDays(lastActivityAt, now) : 0;
+      const isSilenceRisk = daysWithoutActivity > slaDays;
+      const isBlocked = String(item.status || "") === "blocked";
+
+      const trafficLight = getCalendarTrafficLight({
+        isOverdue,
+        isToday,
+        isUpcoming,
+        isBlocked,
+        hasOverdueDependency,
+      });
+      const riskScore = computeCalendarRiskScore({
+        isOverdue,
+        isToday,
+        isUpcoming,
+        isBlocked,
+        hasOverdueDependency,
+        isSilenceRisk,
+      });
+
+      return {
+        ...item,
+        riskScore,
+        trafficLight,
+        flags: {
+          isOverdue,
+          isToday,
+          isUpcoming,
+          isBlocked,
+          hasOverdueDependency,
+          isSilenceRisk,
+        },
+        daysWithoutActivity,
+        dependencies: deps,
+      };
+    })
+    .sort(sortAlertsByRisk);
+
+  const myDay = prioritized.filter((item) => item.flags.isToday);
+  const dependencyLinked = prioritized.filter(
+    (item) => item.flags.hasOverdueDependency,
+  );
+  const silence = prioritized
+    .filter((item) => item.flags.isSilenceRisk)
+    .sort((left, right) => right.daysWithoutActivity - left.daysWithoutActivity)
+    .slice(0, 12);
+
+  const reminders = prioritized.slice(0, 10).map((item) => {
+    const scheduledAtMs = item.scheduledAt
+      ? new Date(item.scheduledAt).getTime()
+      : nowMs;
+    const reminderAtMs = Math.max(
+      nowMs,
+      scheduledAtMs - CALENDAR_DEFAULT_REMINDER_LEAD_MINUTES * 60 * 1000,
+    );
+    return {
+      activityId: item.id,
+      title: item.title || "Actividad",
+      opportunityName: item.opportunityName,
+      remindAt: new Date(reminderAtMs).toISOString(),
+      channel: "in_app",
+      priority: item.riskScore >= 70 ? "high" : item.riskScore >= 40 ? "medium" : "low",
+      message:
+        item.riskScore >= 70
+          ? "Atencion inmediata recomendada"
+          : "Recordatorio operativo automatico",
+    };
+  });
+
+  const byTrafficLight = prioritized.reduce(
+    (accumulator, item) => {
+      const tone = item.trafficLight || "green";
+      accumulator[tone] = (accumulator[tone] || 0) + 1;
+      return accumulator;
+    },
+    { red: 0, amber: 0, green: 0 },
+  );
+
+  const bySeller = prioritized.reduce((accumulator, item) => {
+    if (!item.sellerUserId) return accumulator;
+    const key = Number(item.sellerUserId);
+    const current = accumulator.get(key) || {
+      sellerUserId: key,
+      sellerUserName: item.sellerUserName || `Vendedor ${key}`,
+      total: 0,
+      overdue: 0,
+      highRisk: 0,
+    };
+    current.total += 1;
+    if (item.flags.isOverdue) current.overdue += 1;
+    if (item.riskScore >= 70) current.highRisk += 1;
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  return {
+    timezone: BUSINESS_TIMEZONE,
+    myDay,
+    alerts: {
+      prioritized,
+      byTrafficLight,
+      dependencyLinked,
+      silence,
+      reminders,
+      counters: {
+        total: prioritized.length,
+        overdue: prioritized.filter((item) => item.flags.isOverdue).length,
+        today: prioritized.filter((item) => item.flags.isToday).length,
+        upcoming: prioritized.filter((item) => item.flags.isUpcoming).length,
+        blocked: prioritized.filter((item) => item.flags.isBlocked).length,
+        highRisk: prioritized.filter((item) => item.riskScore >= 70).length,
+      },
+    },
+    indicators: {
+      byTrafficLight,
+      bySeller: Array.from(bySeller.values()).sort(
+        (left, right) => right.highRisk - left.highRisk,
+      ),
+    },
   };
 }
 
@@ -4959,8 +5635,8 @@ router.get(
 router.get(
   "/calendar",
   requireAnyPermission([
-    "desarrollo_comercial.read",
-    "desarrollo_comercial.update",
+    "calendario_comercial.read",
+    "calendario_comercial.update",
   ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
@@ -4972,22 +5648,107 @@ router.get(
     const date = String(req.query?.date || "").trim();
     const includeCompleted =
       String(req.query?.includeCompleted || "false") === "true";
+    const slaDays = resolveCalendarSlaDays(req.query?.slaDays);
+    const sellerUserId = resolveCalendarSellerScope(
+      req.user,
+      req.query?.sellerUserId,
+    );
     const hasQuarterFilter =
       req.query?.year !== undefined || req.query?.quarter !== undefined;
     const quarterSelection = hasQuarterFilter
       ? resolveQuarterSelection(req.query)
       : { year: null, quarter: null };
 
-    const payload = await listCommercialCalendarActivities({
-      user: req.user,
-      view,
-      date,
-      includeCompleted,
-      year: quarterSelection.year,
-      quarter: quarterSelection.quarter,
-    });
+    const [calendarData, sellerOptions, insights] = await Promise.all([
+      listCommercialCalendarActivities({
+        user: req.user,
+        view,
+        date,
+        includeCompleted,
+        sellerUserId,
+        year: quarterSelection.year,
+        quarter: quarterSelection.quarter,
+      }),
+      listCalendarSellerOptions(req.user),
+      buildCommercialCalendarInsights({
+        user: req.user,
+        sellerUserId,
+        slaDays,
+      }),
+    ]);
 
-    return res.json(payload);
+    return res.json({
+      ...calendarData,
+      sellerScope: hasCalendarGlobalScope(req.user) ? "all" : "self",
+      selectedSellerUserId: sellerUserId,
+      sellers: sellerOptions,
+      slaConfig: {
+        days: slaDays,
+        minDays: CALENDAR_MIN_SLA_DAYS,
+        maxDays: CALENDAR_MAX_SLA_DAYS,
+      },
+      businessTimezone: BUSINESS_TIMEZONE,
+      myDay: insights.myDay,
+      alerts: insights.alerts,
+      indicators: insights.indicators,
+    });
+  },
+);
+
+router.get(
+  "/opportunities/:id/ai-narrative/latest",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const latestNarratives = await listLatestCommercialNarrativesByOpportunity([
+      opportunityId,
+    ]);
+    const latest = latestNarratives.get(opportunityId) || null;
+    if (latest) {
+      return res.json({
+        found: true,
+        ...latest,
+      });
+    }
+
+    const narrativeItem = await buildExecutionNarrativeItem({
+      user: req.user,
+      opportunity,
+    });
+    const fallback = narrativeItem
+      ? buildOpportunityNarrativeFallback(narrativeItem)
+      : {
+          aiStatusSummary: "Sin lectura operativa disponible.",
+          aiNextStepRecommendation:
+            "Completa datos clave para generar una estrategia accionable.",
+          aiNarrativeSource: "fallback",
+        };
+
+    return res.json({
+      found: false,
+      aiStatusSummary: String(fallback.aiStatusSummary || "").trim(),
+      aiNextStepRecommendation: String(
+        fallback.aiNextStepRecommendation || "",
+      ).trim(),
+      aiNarrativeSource: String(fallback.aiNarrativeSource || "fallback").trim(),
+      aiNarrativeGeneratedAt: null,
+    });
   },
 );
 
@@ -5012,13 +5773,23 @@ router.post(
         requestedByUserId: Number(req.user.id),
         user: req.user,
       });
+      let responsePayload = result.response;
       if (!result.wasReused) {
         queueCommercialNarrativeProcessing();
+        await processPendingCommercialNarrativeJobs({ limit: 1 });
+
+        const refreshedJob = await getCommercialNarrativeJob({
+          publicId: String(result.response?.job?.id || "").trim(),
+          opportunityId,
+        });
+        if (refreshedJob) {
+          responsePayload = refreshedJob;
+        }
       }
 
       return res
-        .status(result.response?.result ? 200 : 202)
-        .json(result.response);
+        .status(responsePayload?.result ? 200 : 202)
+        .json(responsePayload);
     } catch (error) {
       return res.status(error?.status || 500).json({
         message:
@@ -5065,6 +5836,37 @@ router.get(
 );
 
 router.post(
+  "/opportunities/:id/ai-narrative/direct",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    try {
+      const execution = await executeCommercialOpportunityNarrative({
+        user: req.user,
+        opportunityId,
+      });
+      return res.json({
+        result: execution?.result || null,
+      });
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar la narrativa IA de forma directa",
+      });
+    }
+  },
+);
+
+router.post(
   "/opportunities/:id/ai-narrative",
   requireAnyPermission([
     "desarrollo_comercial.read",
@@ -5083,12 +5885,22 @@ router.post(
         opportunityId,
         requestedByUserId: Number(req.user.id),
       });
+      let responsePayload = result.response;
       if (!result.wasReused) {
         queueCommercialNarrativeProcessing();
+        await processPendingCommercialNarrativeJobs({ limit: 1 });
+
+        const refreshedJob = await getCommercialNarrativeJob({
+          publicId: String(result.response?.job?.id || "").trim(),
+          opportunityId,
+        });
+        if (refreshedJob) {
+          responsePayload = refreshedJob;
+        }
       }
       return res
-        .status(result.response?.result ? 200 : 202)
-        .json(result.response);
+        .status(responsePayload?.result ? 200 : 202)
+        .json(responsePayload);
     } catch (error) {
       return res.status(error?.status || 500).json({
         message:
