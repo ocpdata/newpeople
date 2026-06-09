@@ -151,6 +151,7 @@ function OpportunityDocumentsPanel({
   const [pastedTextName, setPastedTextName] = useState("");
   const [pastedTextValue, setPastedTextValue] = useState("");
   const [isUploadDragActive, setIsUploadDragActive] = useState(false);
+  const [isSectionExpanded, setIsSectionExpanded] = useState(false);
   const uploadInputRef = useRef(null);
   const uploadDragDepthRef = useRef(0);
 
@@ -428,7 +429,7 @@ function OpportunityDocumentsPanel({
   return (
     <section className="account-form-section opportunity-documents-section">
       <div className="opportunity-documents-section-header">
-        <div>
+        <div className="opportunity-collapsible-section-copy">
           <h4>
             {isCreateMode
               ? "Documentos de referencia"
@@ -440,8 +441,22 @@ function OpportunityDocumentsPanel({
               : "Consulta y agrega documentos ya vinculados a la oportunidad para conservar evidencia comercial reutilizable."}
           </p>
         </div>
+        <button
+          type="button"
+          className="opportunity-workspace-collapse-button"
+          onClick={() => setIsSectionExpanded((current) => !current)}
+          aria-expanded={isSectionExpanded}
+          aria-controls="opportunity-documents-section-body"
+        >
+          <span aria-hidden="true">{isSectionExpanded ? "▾" : "▸"}</span>
+          {isSectionExpanded ? "Colapsar" : "Expandir"}
+        </button>
       </div>
 
+      <div
+        id="opportunity-documents-section-body"
+        hidden={!isSectionExpanded}
+      >
       <div
         className={`opportunity-documents-toolbar-card${
           documentCount ? " has-documents" : " is-empty"
@@ -821,6 +836,7 @@ function OpportunityDocumentsPanel({
           </div>
         </div>
       ) : null}
+      </div>
 
       {previewDocument ? (
         <div className="modal-overlay" onClick={() => setPreviewDocument(null)}>

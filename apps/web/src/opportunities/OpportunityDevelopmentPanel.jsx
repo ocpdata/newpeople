@@ -226,6 +226,8 @@ export default function OpportunityDevelopmentPanel({
   });
   const [savingExecutionUpdate, setSavingExecutionUpdate] = useState(false);
   const [executionItemModalError, setExecutionItemModalError] = useState("");
+  const [isDevelopmentExpanded, setIsDevelopmentExpanded] = useState(false);
+  const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
 
   function applyAiNarrativePayload(payload) {
     if (!payload) return;
@@ -736,6 +738,11 @@ export default function OpportunityDevelopmentPanel({
     };
   }, [editingOpportunityId, executionRefreshToken]);
 
+  useEffect(() => {
+    setIsDevelopmentExpanded(false);
+    setIsExecutionExpanded(false);
+  }, [editingOpportunityId]);
+
   async function refreshExecutionSection() {
     if (typeof refreshCommercialContext === "function") {
       await refreshCommercialContext();
@@ -1103,28 +1110,44 @@ export default function OpportunityDevelopmentPanel({
 
   return (
     <section className="account-form-section opportunity-development-section">
-      <div className="opportunity-development-header">
-        <div>
+      <div className="opportunity-development-header opportunity-collapsible-section-header">
+        <div className="opportunity-collapsible-section-copy">
           <h4>Desarrollo de la oportunidad</h4>
           <p className="field-hint">
             Estrategia guiada y pasos concretos para mover la oportunidad con
             evidencia real.
           </p>
         </div>
-        <span
-          className={`record-id-badge status-${aiHeaderBadge.tone}`}
-          title={aiHeaderBadgeTooltip}
-          aria-label={aiHeaderBadgeTooltip}
-        >
-          {aiHeaderBadge.label}
-        </span>
+        <div className="opportunity-collapsible-section-actions">
+          <span
+            className={`record-id-badge status-${aiHeaderBadge.tone}`}
+            title={aiHeaderBadgeTooltip}
+            aria-label={aiHeaderBadgeTooltip}
+          >
+            {aiHeaderBadge.label}
+          </span>
+          <button
+            type="button"
+            className="opportunity-workspace-collapse-button"
+            onClick={() => setIsDevelopmentExpanded((current) => !current)}
+            aria-expanded={isDevelopmentExpanded}
+            aria-controls="opportunity-development-section-body"
+          >
+            <span aria-hidden="true">{isDevelopmentExpanded ? "▾" : "▸"}</span>
+            {isDevelopmentExpanded ? "Colapsar" : "Expandir"}
+          </button>
+        </div>
       </div>
 
-      {sourceError ? (
+      {sourceError && isDevelopmentExpanded ? (
         <p className="field-hint opportunity-development-warning">{sourceError}</p>
       ) : null}
 
-      <article className="opportunity-development-card is-highlight">
+      <article
+        id="opportunity-development-section-body"
+        className="opportunity-development-card is-highlight"
+        hidden={!isDevelopmentExpanded}
+      >
           <div className="opportunity-development-card-header">
             <h5>Siguiente mejor paso</h5>
             <button
@@ -1307,13 +1330,29 @@ export default function OpportunityDevelopmentPanel({
               Registra y da seguimiento sin salir de la oportunidad.
             </span>
           </div>
-          <div className="opportunity-development-execution-summary">
-            <span className="record-id-badge">Acciones {executionSummary.actions}</span>
-            <span className="record-id-badge">Actividades {executionSummary.activities}</span>
-            <span className="record-id-badge">Dependencias {executionSummary.dependencies}</span>
+          <div className="opportunity-collapsible-section-actions">
+            <div className="opportunity-development-execution-summary">
+              <span className="record-id-badge">Acciones {executionSummary.actions}</span>
+              <span className="record-id-badge">Actividades {executionSummary.activities}</span>
+              <span className="record-id-badge">Dependencias {executionSummary.dependencies}</span>
+            </div>
+            <button
+              type="button"
+              className="opportunity-workspace-collapse-button"
+              onClick={() => setIsExecutionExpanded((current) => !current)}
+              aria-expanded={isExecutionExpanded}
+              aria-controls="opportunity-execution-section-body"
+            >
+              <span aria-hidden="true">{isExecutionExpanded ? "▾" : "▸"}</span>
+              {isExecutionExpanded ? "Colapsar" : "Expandir"}
+            </button>
           </div>
         </div>
 
+        <div
+          id="opportunity-execution-section-body"
+          hidden={!isExecutionExpanded}
+        >
         <div className="opportunity-development-execution-section-header">
           <h6>Registrar</h6>
           <span className="field-hint">Tres entradas rapidas para mantener orden operativo.</span>
@@ -1664,6 +1703,7 @@ export default function OpportunityDevelopmentPanel({
               <p className="field-hint">Aun no hay dependencias registradas.</p>
             )}
           </div>
+        </div>
         </div>
       </article>
 

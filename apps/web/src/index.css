@@ -14408,6 +14408,19 @@ td {
   margin-bottom: 8px;
 }
 
+.opportunity-collapsible-section-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.opportunity-collapsible-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .opportunity-commercial-section h4 {
   margin-bottom: 4px;
   font-size: 11px;

@@ -237,6 +237,12 @@ function OpportunityFormModal({
     form.presalesUserId,
     "full_name",
   );
+  const [isCommercialSectionExpanded, setIsCommercialSectionExpanded] =
+    useState(Boolean(editingOpportunityId));
+
+  useEffect(() => {
+    setIsCommercialSectionExpanded(Boolean(editingOpportunityId));
+  }, [editingOpportunityId, isOpen]);
 
   function handleClose() {
     if (
@@ -618,7 +624,7 @@ function OpportunityFormModal({
                 {editingOpportunityId && commercialContext && (
                   <section className="account-form-section opportunity-commercial-section">
                     <div className="opportunity-commercial-section-header">
-                      <div>
+                      <div className="opportunity-collapsible-section-copy">
                         <h4>Proceso comercial</h4>
                         <p className="field-hint opportunity-commercial-hint">
                           Haz clic en una etapa para revisar sus preguntas. Solo
@@ -626,34 +632,54 @@ function OpportunityFormModal({
                           oportunidad o cerrar el proceso comercial.
                         </p>
                       </div>
-                      <div className="opportunity-commercial-badges">
-                        {!isCommercialFlowClosed ? (
-                          <span className="record-id-badge">
-                            Etapa actual: {currentCommercialStage?.name || "-"}
-                          </span>
-                        ) : null}
+                      <div className="opportunity-collapsible-section-actions">
+                        <div className="opportunity-commercial-badges">
+                          {!isCommercialFlowClosed ? (
+                            <span className="record-id-badge">
+                              Etapa actual: {currentCommercialStage?.name || "-"}
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className={`${getCommercialStatusIconBadgeClass(
+                              commercialContext.commercialStatus?.name,
+                            )} commercial-status-badge-button${
+                              canOpenCommercialStatusReason ? " is-clickable" : ""
+                            }`}
+                            onClick={openCommercialStatusReasonModal}
+                            disabled={!canOpenCommercialStatusReason}
+                            title={
+                              canOpenCommercialStatusReason
+                                ? "Ver motivo del estado comercial"
+                                : "Estado comercial"
+                            }
+                          >
+                            <span className="status-dot" aria-hidden="true" />
+                            {commercialContext.commercialStatus?.name ||
+                              "Sin estado comercial"}
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          className={`${getCommercialStatusIconBadgeClass(
-                            commercialContext.commercialStatus?.name,
-                          )} commercial-status-badge-button${
-                            canOpenCommercialStatusReason ? " is-clickable" : ""
-                          }`}
-                          onClick={openCommercialStatusReasonModal}
-                          disabled={!canOpenCommercialStatusReason}
-                          title={
-                            canOpenCommercialStatusReason
-                              ? "Ver motivo del estado comercial"
-                              : "Estado comercial"
+                          className="opportunity-workspace-collapse-button"
+                          onClick={() =>
+                            setIsCommercialSectionExpanded((current) => !current)
                           }
+                          aria-expanded={isCommercialSectionExpanded}
+                          aria-controls="opportunity-commercial-section-body"
                         >
-                          <span className="status-dot" aria-hidden="true" />
-                          {commercialContext.commercialStatus?.name ||
-                            "Sin estado comercial"}
+                          <span aria-hidden="true">
+                            {isCommercialSectionExpanded ? "▾" : "▸"}
+                          </span>
+                          {isCommercialSectionExpanded ? "Colapsar" : "Expandir"}
                         </button>
                       </div>
                     </div>
 
+                    <div
+                      id="opportunity-commercial-section-body"
+                      hidden={!isCommercialSectionExpanded}
+                    >
                     <div
                       className="opportunity-stage-stepper"
                       role="tablist"
@@ -1011,6 +1037,7 @@ function OpportunityFormModal({
                         Esta etapa no tiene preguntas activas configuradas.
                       </p>
                     )}
+                    </div>
 
                   </section>
                 )}
