@@ -130,6 +130,7 @@ const COMMERCIAL_ACTION_STATUSES = new Set([
 const COMMERCIAL_NARRATIVE_JOB_LEASE_SECONDS = 30;
 const COMMERCIAL_NARRATIVE_JOB_RESULT_TTL_MINUTES = 15;
 const COMMERCIAL_NARRATIVE_JOB_POLL_AFTER_MS = 3000;
+const AI_NARRATIVE_MAX_ANSWER_CHARS = 1500;
 
 let commercialNarrativeWorkerQueued = false;
 let commercialNarrativeWorkerStarted = false;
@@ -356,6 +357,56 @@ async function listContactsByAccountIds(accountIds) {
     accumulator.set(accountId, current);
     return accumulator;
   }, new Map());
+}
+
+async function listNarrativeStageAnswers({ opportunityId, salesStageId }) {
+  const normalizedOpportunityId = Number(opportunityId || 0);
+  const normalizedSalesStageId = Number(salesStageId || 0);
+  if (
+    !Number.isInteger(normalizedOpportunityId) ||
+    normalizedOpportunityId <= 0 ||
+    !Number.isInteger(normalizedSalesStageId) ||
+    normalizedSalesStageId <= 0
+  ) {
+    return [];
+  }
+
+  const rows = await query(
+    `SELECT q.code,
+            q.prompt,
+            q.is_required,
+            a.answer_value,
+            a.answered_at
+     FROM opportunity_stage_questions q
+     LEFT JOIN opportunity_stage_question_answers a
+       ON a.id = (
+         SELECT a2.id
+         FROM opportunity_stage_question_answers a2
+         WHERE a2.opportunity_id = ?
+           AND a2.sales_stage_id = ?
+           AND a2.question_id = q.id
+         ORDER BY a2.id DESC
+         LIMIT 1
+       )
+     WHERE q.sales_stage_id = ?
+       AND q.is_active = 1
+     ORDER BY q.display_order, q.id`,
+    [
+      normalizedOpportunityId,
+      normalizedSalesStageId,
+      normalizedSalesStageId,
+    ],
+  ).catch(() => []);
+
+  return rows.map((row) => ({
+    salesStageId: normalizedSalesStageId,
+    salesStageName: "",
+    questionCode: String(row.code || "").trim(),
+    questionPrompt: String(row.prompt || "").trim(),
+    answerValue: String(row.answer_value || "").trim(),
+    isRequired: Boolean(row.is_required),
+    answeredAt: row.answered_at || null,
+  }));
 }
 
 function resolveQuarterSelection(input) {
@@ -962,15 +1013,33 @@ function normalizeNarrativeInsightsPayload(parsedPayload) {
           item?.recommendation ??
           "",
       ).trim();
+      const recommendedAction = normalizeNarrativeRecommendedAction(
+        item?.aiRecommendedAction ??
+          item?.recommendedAction ??
+          item?.actionRecommendation ??
+          null,
+      );
+      const aiContract = normalizeNarrativeContract(
+        item?.aiContract ?? item?.contract ?? null,
+      );
+      const normalizedRecommendation =
+        nextStepRecommendation ||
+        aiContract?.nextBestStepText ||
+        formatNarrativeRecommendedActionText(recommendedAction);
 
-      if (!statusSummary && !nextStepRecommendation) {
+      const normalizedStatusSummary =
+        statusSummary || aiContract?.descriptionSituationText || "";
+
+      if (!normalizedStatusSummary && !normalizedRecommendation && !aiContract) {
         return null;
       }
 
       return {
         opportunityId,
-        aiStatusSummary: statusSummary,
-        aiNextStepRecommendation: nextStepRecommendation,
+        aiStatusSummary: normalizedStatusSummary,
+        aiNextStepRecommendation: normalizedRecommendation,
+        aiRecommendedAction: recommendedAction,
+        aiContract,
       };
     })
     .filter(Boolean);
@@ -1031,6 +1100,192 @@ function truncateText(value, maxLength = 280) {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
 }
 
+function toNarrativeAnswer(value) {
+  return truncateText(value, AI_NARRATIVE_MAX_ANSWER_CHARS);
+}
+
+function normalizeNarrativeContract(contract, fallback = null) {
+  const source = contract && typeof contract === "object" ? contract : {};
+  const fallbackSource =
+    fallback && typeof fallback === "object" ? fallback : {};
+
+  const normalized = {
+    descriptionSituationText: toNarrativeAnswer(
+      source?.descriptionSituationText ||
+        fallbackSource?.descriptionSituationText ||
+        source?.descriptionSituation ||
+        source?.descriptionSituationText ||
+        source?.commercialSituation ||
+        source?.aiStatusSummary ||
+        "",
+    ),
+    salesStrategyText: toNarrativeAnswer(
+      source?.salesStrategyText ||
+        fallbackSource?.salesStrategyText ||
+        source?.salesStrategy ||
+        source?.strategyToWin ||
+        "",
+    ),
+    nextBestStepText: toNarrativeAnswer(
+      source?.nextBestStepText ||
+        fallbackSource?.nextBestStepText ||
+        source?.nextBestStep ||
+        source?.exactStep ||
+        source?.aiNextStepRecommendation ||
+        "",
+    ),
+    alternativeStepText: toNarrativeAnswer(
+      source?.alternativeStepText ||
+        fallbackSource?.alternativeStepText ||
+        source?.alternativeStep ||
+        source?.fallbackStep ||
+        "",
+    ),
+  };
+
+  const hasAnyValue = Object.values(normalized).some((value) =>
+    Boolean(String(value || "").trim()),
+  );
+
+  return hasAnyValue
+    ? {
+        ...normalized,
+        constraints: {
+          maxCharsPerAnswer: AI_NARRATIVE_MAX_ANSWER_CHARS,
+        },
+      }
+    : null;
+}
+
+function normalizeNarrativeRecommendedAction(action) {
+  if (!action || typeof action !== "object") return null;
+
+  const normalized = {
+    action: String(action.action || action.what || "").trim(),
+    ownerTarget: String(action.ownerTarget || action.who || "").trim(),
+    dueWindow: String(action.dueWindow || action.when || "").trim(),
+    evidenceExpected: String(
+      action.evidenceExpected || action.expectedEvidence || "",
+    ).trim(),
+    messageDraft: String(action.messageDraft || action.script || "").trim(),
+  };
+
+  return Object.values(normalized).some(Boolean) ? normalized : null;
+}
+
+function formatNarrativeRecommendedActionText(action) {
+  if (!action || typeof action !== "object") return "";
+
+  const parts = [
+    action.action ? `Accion: ${action.action}.` : "",
+    action.ownerTarget ? `Con: ${action.ownerTarget}.` : "",
+    action.dueWindow ? `Cuando: ${action.dueWindow}.` : "",
+    action.evidenceExpected
+      ? `Evidencia esperada: ${action.evidenceExpected}.`
+      : "",
+  ].filter(Boolean);
+
+  const base = parts.join(" ").trim();
+  if (!base) {
+    return action.messageDraft || "";
+  }
+
+  return action.messageDraft ? `${base} Mensaje sugerido: ${action.messageDraft}` : base;
+}
+
+function buildFallbackRecommendedAction(item) {
+  const nextStep = item?.nextStep || null;
+  const primaryRisk =
+    Array.isArray(item?.riskReasons) && item.riskReasons.length
+      ? String(item.riskReasons[0] || "").trim()
+      : "";
+  const dueWindow = nextStep?.dueDate
+    ? `Antes del ${nextStep.dueDate}`
+    : item?.daysSinceActivity > item?.slaDays
+      ? "En las proximas 24 horas"
+      : "En los proximos 2 dias habiles";
+
+  return normalizeNarrativeRecommendedAction({
+    action:
+      nextStep?.title ||
+      "Asegurar un siguiente paso concreto con el cliente y criterio de avance",
+    ownerTarget: nextStep?.ownerUserName || "sponsor y decisor de compra",
+    dueWindow,
+    evidenceExpected:
+      nextStep?.successCriteria ||
+      "Compromiso de fecha, responsable cliente y condicion de decision",
+    messageDraft: primaryRisk
+      ? `Detectamos ${primaryRisk.toLowerCase()}. Propongo acordar hoy un siguiente paso con fecha y responsables para no perder traccion.`
+      : "Propongo cerrar hoy un siguiente paso con fecha, responsables y criterio de exito para mantener el avance comercial.",
+  });
+}
+
+function buildFallbackNarrativeContract(item, recommendedAction) {
+  const stageLabel = item?.stageName || "Sin etapa";
+  const customerNeed = Array.isArray(item?.riskReasons) && item.riskReasons.length
+    ? `Resolver ${String(item.riskReasons[0] || "").toLowerCase()} para habilitar la compra.`
+    : "Confirmar necesidad prioritaria y criterio de decision del cliente.";
+  const timeline = item?.closeDate
+    ? `Objetivo comercial: ${toIsoDate(item.closeDate) || "sin fecha valida"}.`
+    : "No hay fecha de cierre confirmada en CRM.";
+  const actionsTaken = (item?.lastMilestones || [])
+    .slice(0, 3)
+    .map((milestone) => String(milestone?.title || "").trim())
+    .filter(Boolean)
+    .join("; ");
+  const recentDocuments = (item?.documentHighlights || [])
+    .slice(0, 3)
+    .map((document) => String(document?.fileName || "").trim())
+    .filter(Boolean)
+    .join("; ");
+  const stageAnswerEvidence = (item?.stageAnswers || [])
+    .filter((answer) => String(answer?.answerValue || "").trim())
+    .slice(0, 4)
+    .map(
+      (answer) =>
+        `${String(answer?.questionPrompt || answer?.questionCode || "").trim()}: ${String(answer?.answerValue || "").trim()}`,
+    )
+    .filter(Boolean)
+    .join("; ");
+  const quotationEvidence = (item?.quotationSignals || [])
+    .slice(0, 3)
+    .map((quotation) => {
+      const proposalName = String(quotation?.proposalName || "").trim();
+      const statusName = String(quotation?.statusName || "").trim();
+      if (!proposalName && !statusName) return "";
+      return `${proposalName || "Cotizacion"}${statusName ? ` (${statusName})` : ""}`;
+    })
+    .filter(Boolean)
+    .join("; ");
+  const contactEvidence = (item?.accountContacts || [])
+    .slice(0, 3)
+    .map((contact) => {
+      const fullName = String(contact?.fullName || "").trim();
+      const positionTitle = String(contact?.positionTitle || "").trim();
+      if (!fullName && !positionTitle) return "";
+      return `${fullName || "Contacto"}${positionTitle ? ` (${positionTitle})` : ""}`;
+    })
+    .filter(Boolean)
+    .join("; ");
+  const openDependencies = (item?.dependencyExecution || [])
+    .slice(0, 3)
+    .map((dependency) => String(dependency?.title || "").trim())
+    .filter(Boolean)
+    .join("; ");
+  const recommendedSteps = (item?.recommendedStrategySteps || [])
+    .slice(0, 3)
+    .map((step) => String(step?.text || step?.title || "").trim())
+    .filter(Boolean)
+    .join("; ");
+
+  return normalizeNarrativeContract({
+    descriptionSituationText: `La oportunidad se encuentra en la etapa ${stageLabel} y hoy el cliente parece buscar una solucion que le permita avanzar en su necesidad prioritaria. ${customerNeed} ${item?.executionState?.summary || "Comercialmente la oportunidad sigue abierta, pero necesita mayor claridad de decisor, urgencia y condicion de avance."} ${timeline} ${actionsTaken ? `Hasta ahora el equipo comercial ha trabajado en los siguientes hitos: ${actionsTaken}.` : "Hasta ahora la evidencia comercial registrada sigue siendo parcial y debe consolidarse mejor para sostener una venta consultiva."} ${recentDocuments ? `En documentacion reciente destacan: ${recentDocuments}.` : "No hay suficiente documentacion reciente para reforzar la narrativa comercial."} ${stageAnswerEvidence ? `Las respuestas de etapa muestran esta evidencia relevante: ${stageAnswerEvidence}.` : "Las respuestas de etapa no aportan aun suficiente contexto estructurado."} ${quotationEvidence ? `En cotizaciones existe la siguiente señal de avance: ${quotationEvidence}.` : "No hay una señal fuerte de cotizacion que ayude a ordenar la conversacion de cierre."} ${contactEvidence ? `Los contactos relacionados son: ${contactEvidence}.` : "Aun falta consolidar claramente los contactos que influyen en la decision."}`,
+    salesStrategyText: `${item?.recommendedHeading || "La estrategia comercial debe ayudar al vendedor a transformar interes en una decision concreta del cliente."} ${item?.recommendedRoute || "Para lograrlo, debe seguir la disciplina de la etapa actual y conectar cada accion con una evidencia comercial verificable en CRM."} ${recommendedSteps ? `La secuencia recomendada es: ${recommendedSteps}.` : "La secuencia recomendada debe comenzar por validar necesidad, decisor, prioridad de compra y siguiente hito con fecha."} ${item?.recommendedFinalObjective || "Cada accion debe producir un resultado visible: aclarar que busca el cliente, por que lo necesita, quien decide, bajo que criterio compraria y cuando puede ejecutar o comprar la solucion."} ${openDependencies ? `Ademas, hay dependencias que no pueden ignorarse: ${openDependencies}. La estrategia del vendedor debe destrabarlas o gestionarlas en paralelo para que no bloqueen el avance comercial.` : "No hay dependencias abiertas dominantes, por lo que el foco debe ponerse en calidad de conversacion comercial y compromiso del cliente."} ${Array.isArray(item?.riskReasons) && item.riskReasons.length ? `El principal riesgo hoy es ${item.riskReasons[0].toLowerCase()}; por eso la estrategia no debe ser solo de seguimiento, sino de conduccion activa con resultados concretos por accion.` : "El mayor riesgo es caer en seguimiento pasivo; la estrategia debe mantener conduccion activa y resultados concretos por accion."}`,
+    nextBestStepText: `${recommendedAction?.action || "El siguiente paso debe ser una accion concreta con el cliente."} ${recommendedAction?.dueWindow ? `Debe ejecutarse ${recommendedAction.dueWindow.toLowerCase()} y no dejarse como un seguimiento abierto.` : "Debe ejecutarse de inmediato y no dejarse como un seguimiento abierto."} ${recommendedAction?.evidenceExpected || "El resultado esperado debe ser evidencia verificable de avance y decision."} Este paso es el mas adecuado porque ayuda a convertir la situacion actual en una definicion operativa: quien decide, que valida el cliente, cual es el criterio de compra y cual es la fecha del siguiente hito. El vendedor debe salir de esta accion con un compromiso concreto, una respuesta observable del cliente y registro suficiente en CRM para sostener el siguiente movimiento comercial.`,
+    alternativeStepText: "Si el mejor paso no puede ejecutarse o el cliente no responde en el plazo previsto, debe activarse una alternativa de rescate comercial. Esa alternativa consiste en escalar con un resumen ejecutivo que recuerde el valor de la solucion, el riesgo de no decidir, el estado actual de la oportunidad y una fecha alternativa de decision o revision. El objetivo del paso alternativo no es solo insistir, sino recuperar traccion, provocar una definicion del cliente y evitar que la oportunidad quede en seguimiento difuso. El vendedor debe usar este paso para obtener una respuesta formal, redefinir alcance si hace falta y decidir rapidamente si conviene retomar el plan principal o replantear la estrategia comercial.",
+  });
+}
+
 function buildOpportunityNarrativeFallback(item) {
   const stageLabel = item.stageName || "Sin etapa";
   const executionSummary =
@@ -1055,6 +1310,8 @@ function buildOpportunityNarrativeFallback(item) {
   const nextStepRecommendation = item.recommendedNextMove
     ? getRecommendedNextMove(item.recommendedNextMove)
     : buildDevelopmentRecommendation(item);
+  const recommendedAction = buildFallbackRecommendedAction(item);
+  const aiContract = buildFallbackNarrativeContract(item, recommendedAction);
 
   const blockedScorecards = (item.scorecardItems || [])
     .filter((scorecardItem) => scorecardItem?.tone === "red")
@@ -1068,7 +1325,11 @@ function buildOpportunityNarrativeFallback(item) {
 
   return {
     aiStatusSummary: statusSummary.trim(),
-    aiNextStepRecommendation: String(nextStepRecommendation || "").trim(),
+    aiNextStepRecommendation: String(
+      nextStepRecommendation || formatNarrativeRecommendedActionText(recommendedAction),
+    ).trim(),
+    aiRecommendedAction: recommendedAction,
+    aiContract,
     aiNarrativeSource: "fallback",
   };
 }
@@ -1092,7 +1353,7 @@ async function requestOpportunityNarrativesWithAi(
       {
         role: "system",
         content:
-          "Analiza oportunidades comerciales CRM y responde solo con JSON válido. No inventes datos ni hechos no presentes en la entrada. Debes producir dos textos breves por oportunidad para ayudar al vendedor: un estado realista y una recomendación concreta del siguiente paso. Razona según este proceso de venta B2B: contacto inicial, identificación de oportunidad, desarrollo, cotización, demostración, negociación y waiting. Usa la etapa actual, el estado de ejecución, el scorecard comercial, las debilidades abiertas, la inactividad, las dependencias, el siguiente paso vigente y la estrategia recomendada. El estado debe explicar qué está pasando de verdad en la oportunidad y cuál es la traba comercial principal. La recomendación debe decir qué hacer ahora para mover la oportunidad, no repetir frases vacías como 'dar seguimiento' o 'avanzar etapa'. Prioriza cerrar brechas reales de urgencia, presupuesto, decisores, no decisión, bloqueo interno, ausencia de conducción o falta de validación de etapa. Si la oportunidad está en negociación o waiting, enfócate en decisión, cierre y protección del deal. Si está en desarrollo, cotización o demostración, enfócate en cómo conseguir la siguiente señal de compra. Si falta información, dilo con honestidad pero sigue dando la mejor recomendación posible basada en la evidencia estructurada. Limita cada texto a máximo 320 caracteres.",
+          "Analiza oportunidades comerciales CRM y responde solo con JSON valido. No inventes datos ni hechos no presentes en la entrada. Debes producir por oportunidad exactamente 4 textos narrativos dentro de aiContract: descriptionSituationText, salesStrategyText, nextBestStepText y alternativeStepText. Cada texto debe ser un solo parrafo corrido, sin bullets ni subtitulos internos, y con maximo 1500 caracteres. Debes escribirlos como una explicacion util para un vendedor comercial: clara, detallada, concreta, orientada a accion y basada en evidencia. No seas telegráfico. Explica el contexto, la logica comercial y el por que de cada recomendacion. Debes usar toda la evidencia entregada: documentacion de oportunidad, acciones, actividades, dependencias, respuestas a preguntas de etapa, cotizaciones, cuenta, contactos y estado de etapa. Razona segun proceso B2B: contacto inicial, identificacion de oportunidad, desarrollo, cotizacion, demostracion, negociacion y waiting. Si falta informacion, indicalo de forma explicita dentro del texto correspondiente. En salesStrategyText y nextBestStepText describe resultados concretos que el vendedor debe obtener. En alternativeStepText explica cuando usarlo y que decision o respuesta debe buscar. Ademas entrega un resumen corto en aiStatusSummary y aiNextStepRecommendation consistente con aiContract, y una aiRecommendedAction ejecutable.",
       },
       {
         role: "user",
@@ -1125,7 +1386,7 @@ async function requestOpportunityNarrativesWithAi(
                 summary: truncateText(scorecardItem.summary, 180),
               }),
             ),
-            openWeaknesses: (item.openWeaknesses || []).slice(0, 6).map((weakness) => ({
+            openWeaknesses: (item.openWeaknesses || []).slice(0, 10).map((weakness) => ({
               title: truncateText(weakness.title, 120),
               severity: weakness.severity,
               detail: truncateText(weakness.detail, 220),
@@ -1136,18 +1397,137 @@ async function requestOpportunityNarrativesWithAi(
                   actionType: item.nextStep.actionType || "",
                   dueDate: item.nextStep.dueDate || null,
                   isOverdue: Boolean(item.nextStep.isOverdue),
+                  ownerUserName: truncateText(item.nextStep.ownerUserName, 80),
                   successCriteria: truncateText(
                     item.nextStep.successCriteria,
                     220,
                   ),
                 }
               : null,
-            dependencies: (item.dependencies || []).slice(0, 6).map((dependency) => ({
+            nextStepQuality: item.nextStepQuality
+              ? {
+                  score: Number(item.nextStepQuality.score || 0),
+                  label: item.nextStepQuality.label || "",
+                  signals: Array.isArray(item.nextStepQuality.signals)
+                    ? item.nextStepQuality.signals
+                        .slice(0, 4)
+                        .map((signal) => truncateText(signal, 120))
+                    : [],
+                  gaps: Array.isArray(item.nextStepQuality.gaps)
+                    ? item.nextStepQuality.gaps
+                        .slice(0, 4)
+                        .map((gap) => truncateText(gap, 140))
+                    : [],
+                }
+              : null,
+            dependencies: (item.dependencies || []).slice(0, 12).map((dependency) => ({
               title: truncateText(dependency.title, 120),
               dependencyLabel: truncateText(dependency.dependencyLabel, 80),
               status: dependency.status,
               isOverdue: Boolean(dependency.isOverdue),
             })),
+            dependencyExecution: (item.dependencyExecution || [])
+              .slice(0, 12)
+              .map((dependency) => ({
+                title: truncateText(dependency.title, 120),
+                dependencyLabel: truncateText(dependency.dependencyLabel, 80),
+                status: dependency.status,
+                ownerUserName: truncateText(dependency.ownerUserName, 80),
+                dueDate: dependency.dueDate || null,
+                isOverdue: Boolean(dependency.isOverdue),
+                expectedOutcome: truncateText(dependency.expectedOutcome, 180),
+              })),
+            lastMilestones: (item.lastMilestones || []).slice(0, 10).map((milestone) => ({
+              type: milestone.type || "",
+              title: truncateText(milestone.title, 120),
+              status: milestone.status || "",
+              happenedAt: milestone.happenedAt || null,
+              summary: truncateText(milestone.summary, 180),
+            })),
+            recentActivities: (item.recentActivities || [])
+              .slice(0, 12)
+              .map((activity) => ({
+                title: truncateText(activity.title, 140),
+                actionType: activity.actionType || "",
+                status: activity.status || "",
+                happenedAt:
+                  activity.happenedAt ||
+                  activity.scheduledAt ||
+                  activity.updatedAt ||
+                  activity.createdAt ||
+                  null,
+                summary: truncateText(activity.summary || activity.note || "", 220),
+              })),
+            recentTimeline: (item.recentTimeline || [])
+              .slice(0, 15)
+              .map((timelineItem) => ({
+                entryKind: timelineItem.entryKind || "",
+                title: truncateText(timelineItem.title, 140),
+                actionType: timelineItem.actionType || "",
+                status: timelineItem.status || "",
+                happenedAt:
+                  timelineItem.happenedAt ||
+                  timelineItem.scheduledAt ||
+                  timelineItem.updatedAt ||
+                  timelineItem.createdAt ||
+                  null,
+              })),
+            stageAnswers: (item.stageAnswers || []).slice(0, 20).map((answer) => ({
+              salesStageName: truncateText(answer.salesStageName, 80),
+              questionCode: truncateText(answer.questionCode, 80),
+              questionPrompt: truncateText(answer.questionPrompt, 220),
+              answerValue: truncateText(answer.answerValue, 320),
+              isRequired: Boolean(answer.isRequired),
+              answeredAt: answer.answeredAt || null,
+            })),
+            activityCount: Number(item.activityCount || 0),
+            actionCount: Number(item.actionCount || 0),
+            decisionStageGap: item.decisionStageGap
+              ? {
+                  primaryGap: truncateText(item.decisionStageGap.primaryGap, 80),
+                  secondaryGaps: Array.isArray(item.decisionStageGap.secondaryGaps)
+                    ? item.decisionStageGap.secondaryGaps
+                        .slice(0, 3)
+                        .map((gap) => truncateText(gap, 80))
+                    : [],
+                  guidance: truncateText(item.decisionStageGap.guidance, 180),
+                }
+              : null,
+            documentActivity: item.documentActivity
+              ? {
+                  lastDocumentAt: item.documentActivity.lastDocumentAt || null,
+                  documentCount: Number(item.documentActivity.documentCount || 0),
+                  docsLast7d: Number(item.documentActivity.docsLast7d || 0),
+                }
+              : null,
+            documentReadiness: item.documentReadiness
+              ? {
+                  reviewReady: Number(item.documentReadiness.reviewReady || 0),
+                  processing: Number(item.documentReadiness.processing || 0),
+                  failed: Number(item.documentReadiness.failed || 0),
+                }
+              : null,
+            documentHighlights: (item.documentHighlights || [])
+              .slice(0, 10)
+              .map((document) => ({
+                fileName: truncateText(document.fileName, 120),
+                createdAt: document.createdAt || null,
+                processingStatus: String(document.processingStatus || "").trim(),
+                summary: truncateText(document.summary, 220),
+              })),
+            accountContacts: (item.accountContacts || []).slice(0, 12).map((contact) => ({
+              fullName: truncateText(contact.fullName, 100),
+              positionTitle: truncateText(contact.positionTitle, 100),
+              email: truncateText(contact.email, 120),
+            })),
+            quotationSignals: (item.quotationSignals || [])
+              .slice(0, 12)
+              .map((quotation) => ({
+                proposalName: truncateText(quotation.proposalName, 140),
+                statusName: truncateText(quotation.statusName, 80),
+                quotationDate: quotation.quotationDate || null,
+                versionNumber: Number(quotation.versionNumber || 0),
+              })),
             closeDate: item.closeDate || null,
             recommendedHeading: truncateText(item.recommendedHeading, 160),
             recommendedRoute: truncateText(item.recommendedRoute, 160),
@@ -1175,6 +1555,19 @@ async function requestOpportunityNarrativesWithAi(
                 opportunityId: 0,
                 aiStatusSummary: "string",
                 aiNextStepRecommendation: "string",
+                aiContract: {
+                  descriptionSituationText: "string (max 1500)",
+                  salesStrategyText: "string (max 1500)",
+                  nextBestStepText: "string (max 1500)",
+                  alternativeStepText: "string (max 1500)",
+                },
+                aiRecommendedAction: {
+                  action: "string",
+                  ownerTarget: "string",
+                  dueWindow: "string",
+                  evidenceExpected: "string",
+                  messageDraft: "string",
+                },
               },
             ],
           },
@@ -1247,18 +1640,38 @@ async function requestOpportunityNarrativesWithAi(
     );
   }
 
+  const itemByOpportunityId = new Map(
+    items
+      .map((item) => [Number(item?.id || 0), item])
+      .filter(
+        ([opportunityId]) =>
+          Number.isInteger(opportunityId) && opportunityId > 0,
+      ),
+  );
+
   return new Map(
     insights
-      .map((item) => [
-        Number(item.opportunityId),
-        {
+      .map((item) => {
+        const opportunityId = Number(item.opportunityId);
+        const strengthenedNarrative = strengthenNarrativeWithEvidence(
+          itemByOpportunityId.get(opportunityId),
+          {
           aiStatusSummary: String(item.aiStatusSummary || "").trim(),
           aiNextStepRecommendation: String(
             item.aiNextStepRecommendation || "",
           ).trim(),
+          aiRecommendedAction: item.aiRecommendedAction || null,
+          aiContract: item.aiContract || null,
           aiNarrativeSource: "openai",
-        },
-      ]),
+          },
+        );
+
+        return [opportunityId, strengthenedNarrative];
+      })
+      .filter(
+        ([opportunityId]) =>
+          Number.isInteger(opportunityId) && opportunityId > 0,
+      ),
   );
 }
 
@@ -1282,6 +1695,9 @@ async function enrichOpportunityNarratives(items) {
         aiStatusSummary: aiInsight.aiStatusSummary || item.aiStatusSummary,
         aiNextStepRecommendation:
           aiInsight.aiNextStepRecommendation || item.aiNextStepRecommendation,
+        aiRecommendedAction:
+          aiInsight.aiRecommendedAction || item.aiRecommendedAction || null,
+        aiContract: aiInsight.aiContract || item.aiContract || null,
         aiNarrativeSource: aiInsight.aiNarrativeSource,
       };
     });
@@ -1322,6 +1738,46 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
   const activitySummary = buildCommercialActivitySummary(
     workspace.actions || [],
   );
+  const [
+    documentSignals,
+    quotationVersions,
+    accountContactsByAccountId,
+    stageAnswers,
+  ] =
+    await Promise.all([
+      listOpportunityDocumentSignals(opportunityId),
+      listCommercialQuotationVersionsForEmail({ opportunityId }).catch(() => []),
+      listContactsByAccountIds([Number(opportunity?.account_id || 0)]).catch(
+        () => new Map(),
+      ),
+      listNarrativeStageAnswers({
+        opportunityId,
+        salesStageId: Number(opportunity?.sales_stage_id || 0),
+      }).catch(() => []),
+    ]);
+  const accountContacts = (
+    accountContactsByAccountId.get(Number(opportunity?.account_id || 0)) || []
+  )
+    .slice(0, 12)
+    .map((contact) => ({
+      id: Number(contact.id || 0),
+      fullName: String(contact.fullName || "").trim(),
+      positionTitle: String(contact.positionTitle || "").trim(),
+      email: String(contact.email || "").trim(),
+    }));
+  const quotationSignals = (Array.isArray(quotationVersions)
+    ? quotationVersions
+    : []
+  )
+    .slice(0, 12)
+    .map((quotationVersion) => ({
+      quotationId: Number(quotationVersion.quotationId || 0),
+      quotationVersionId: Number(quotationVersion.quotationVersionId || 0),
+      proposalName: String(quotationVersion.proposalName || "").trim(),
+      statusName: String(quotationVersion.statusName || "").trim(),
+      quotationDate: quotationVersion.quotationDate || null,
+      versionNumber: Number(quotationVersion.versionNumber || 0),
+    }));
   const lastActivityAt =
     lastActivityByOpportunity.get(opportunityId) ||
     (opportunity?.updated_at ? new Date(opportunity.updated_at) : null) ||
@@ -1334,6 +1790,22 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     dependencies,
     daysSinceActivity,
     slaDays,
+  });
+  const nextStepQuality = buildNextStepQualitySummary({
+    nextStep: mappedNextStep,
+    dependencies,
+    daysSinceActivity,
+    slaDays,
+  });
+  const decisionStageGap = inferDecisionStageGap({
+    scorecardItems: workspace.scorecard?.items || [],
+    riskReasons: risk.reasons,
+    dependencies,
+  });
+  const lastMilestones = buildNarrativeMilestones({
+    activitySummary,
+    dependencies,
+    nextStep: mappedNextStep,
   });
   const executionState = deriveExecutionState({
     nextStep: mappedNextStep,
@@ -1390,6 +1862,23 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     riskReasons: risk.reasons,
     executionState,
     dependencies,
+    dependencyExecution: dependencies,
+    nextStepQuality,
+    decisionStageGap,
+    lastMilestones,
+    documentActivity: {
+      lastDocumentAt: documentSignals.lastDocumentAt,
+      documentCount: Number(documentSignals.documentCount || 0),
+      docsLast7d: Number(documentSignals.docsLast7d || 0),
+    },
+    documentReadiness: {
+      reviewReady: Number(documentSignals.processingStatusCounts.reviewReady || 0),
+      processing: Number(documentSignals.processingStatusCounts.processing || 0),
+      failed: Number(documentSignals.processingStatusCounts.failed || 0),
+    },
+    documentHighlights: Array.isArray(documentSignals.highlights)
+      ? documentSignals.highlights
+      : [],
     decisionRiskTone:
       workspace.scorecard?.signals?.decisionRisk?.tone || "neutral",
     nextStep: mappedNextStep,
@@ -1400,6 +1889,12 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     recentTimeline: activitySummary.recentTimeline,
     activityCount: activitySummary.activityCount,
     actionCount: activitySummary.actionCount,
+    accountContacts,
+    quotationSignals,
+    stageAnswers: (Array.isArray(stageAnswers) ? stageAnswers : []).map((answer) => ({
+      ...answer,
+      salesStageName: opportunity?.sales_stage_name || "",
+    })),
   };
 }
 
@@ -1453,7 +1948,212 @@ function buildCommercialNarrativeSnapshot(item) {
     riskReasons: Array.isArray(item?.riskReasons) ? item.riskReasons : [],
     executionState: item?.executionState || null,
     dependencies: Array.isArray(item?.dependencies) ? item.dependencies : [],
+    dependencyExecution: Array.isArray(item?.dependencyExecution)
+      ? item.dependencyExecution
+      : [],
+    nextStepQuality:
+      item?.nextStepQuality && typeof item.nextStepQuality === "object"
+        ? item.nextStepQuality
+        : null,
+    decisionStageGap:
+      item?.decisionStageGap && typeof item.decisionStageGap === "object"
+        ? item.decisionStageGap
+        : null,
+    lastMilestones: Array.isArray(item?.lastMilestones)
+      ? item.lastMilestones
+      : [],
+    documentActivity:
+      item?.documentActivity && typeof item.documentActivity === "object"
+        ? item.documentActivity
+        : null,
+    documentReadiness:
+      item?.documentReadiness && typeof item.documentReadiness === "object"
+        ? item.documentReadiness
+        : null,
+    documentHighlights: Array.isArray(item?.documentHighlights)
+      ? item.documentHighlights
+      : [],
+    accountContacts: Array.isArray(item?.accountContacts)
+      ? item.accountContacts
+      : [],
+    quotationSignals: Array.isArray(item?.quotationSignals)
+      ? item.quotationSignals
+      : [],
+    stageAnswers: Array.isArray(item?.stageAnswers) ? item.stageAnswers : [],
     nextStep: item?.nextStep || null,
+  };
+}
+
+function normalizeNarrativeComparisonText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function buildNarrativeDocumentAnchor(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const highlights = Array.isArray(item.documentHighlights)
+    ? item.documentHighlights
+    : [];
+  const topDocument = highlights.find((document) =>
+    String(document?.fileName || "").trim(),
+  );
+  if (!topDocument) {
+    return null;
+  }
+
+  return {
+    fileName: truncateText(topDocument.fileName, 96),
+    createdAt: toIsoDate(topDocument.createdAt),
+    summary: truncateText(topDocument.summary, 140),
+  };
+}
+
+function textContainsNarrativeAnchor(text, anchor) {
+  if (!anchor || !anchor.fileName) {
+    return false;
+  }
+
+  const normalizedText = normalizeNarrativeComparisonText(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  const normalizedFileName = normalizeNarrativeComparisonText(anchor.fileName)
+    .replace(/\.[a-z0-9]+$/i, "")
+    .trim();
+  const fileTokens = normalizedFileName
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4)
+    .slice(0, 6);
+
+  if (
+    fileTokens.some((token) => normalizedText.includes(token)) ||
+    /documento|archivo|propuesta|revision/.test(normalizedText)
+  ) {
+    return true;
+  }
+
+  if (anchor.createdAt && normalizedText.includes(anchor.createdAt)) {
+    return true;
+  }
+
+  return false;
+}
+
+function strengthenNarrativeWithEvidence(item, narrative) {
+  const baselineNarrative =
+    narrative && typeof narrative === "object" ? narrative : {};
+  const normalizedContract = normalizeNarrativeContract(
+    baselineNarrative.aiContract,
+  );
+
+  if (!item || typeof item !== "object") {
+    return {
+      ...baselineNarrative,
+      aiStatusSummary: String(
+        baselineNarrative.aiStatusSummary ||
+          normalizedContract?.descriptionSituationText ||
+          "",
+      ).trim(),
+      aiNextStepRecommendation: String(
+        baselineNarrative.aiNextStepRecommendation ||
+          normalizedContract?.nextBestStepText ||
+          "",
+      ).trim(),
+      aiRecommendedAction: normalizeNarrativeRecommendedAction(
+        baselineNarrative.aiRecommendedAction,
+      ),
+      aiContract: normalizedContract,
+    };
+  }
+
+  let aiStatusSummary = String(baselineNarrative.aiStatusSummary || "").trim();
+  let aiNextStepRecommendation = String(
+    baselineNarrative.aiNextStepRecommendation || "",
+  ).trim();
+  let aiRecommendedAction = normalizeNarrativeRecommendedAction(
+    baselineNarrative.aiRecommendedAction,
+  );
+
+  const documentCount = Number(item?.documentActivity?.documentCount || 0);
+  const documentAnchor = buildNarrativeDocumentAnchor(item);
+  if (documentCount > 0 && documentAnchor) {
+    if (!textContainsNarrativeAnchor(aiStatusSummary, documentAnchor)) {
+      const evidenceLabel = `Evidencia reciente: \"${documentAnchor.fileName}\"${
+        documentAnchor.createdAt ? ` (${documentAnchor.createdAt})` : ""
+      }.`;
+      aiStatusSummary = truncateText(
+        [aiStatusSummary, evidenceLabel].filter(Boolean).join(" ").trim(),
+        320,
+      );
+    }
+
+    if (!textContainsNarrativeAnchor(aiNextStepRecommendation, documentAnchor)) {
+      const recommendationAnchor = documentAnchor.summary
+        ? "Usar ese documento para cerrar validacion tecnica y economica con decisor."
+        : "Usar ese documento como base de la sesion de decision con el cliente.";
+      aiNextStepRecommendation = truncateText(
+        [aiNextStepRecommendation, recommendationAnchor]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+        320,
+      );
+    }
+
+    if (aiRecommendedAction) {
+      const expectedEvidence = String(
+        aiRecommendedAction.evidenceExpected || "",
+      ).trim();
+      if (!textContainsNarrativeAnchor(expectedEvidence, documentAnchor)) {
+        aiRecommendedAction = normalizeNarrativeRecommendedAction({
+          ...aiRecommendedAction,
+          evidenceExpected: truncateText(
+            `${
+              expectedEvidence ? `${expectedEvidence}. ` : ""
+            }Acta de revision del documento \"${documentAnchor.fileName}\", decisor confirmado y fecha de cierre acordada.`,
+            220,
+          ),
+        });
+      }
+    }
+  }
+
+  if (!aiRecommendedAction) {
+    aiRecommendedAction = buildFallbackRecommendedAction(item);
+  }
+
+  if (!aiStatusSummary) {
+    aiStatusSummary = String(
+      normalizedContract?.descriptionSituationText ||
+        item.aiStatusSummary ||
+        "",
+    ).trim();
+  }
+  if (!aiNextStepRecommendation) {
+    aiNextStepRecommendation = String(
+      normalizedContract?.nextBestStepText ||
+        item.aiNextStepRecommendation ||
+        "",
+    ).trim();
+  }
+
+  const aiContract = normalizeNarrativeContract(
+    baselineNarrative.aiContract,
+    buildFallbackNarrativeContract(item, aiRecommendedAction),
+  );
+
+  return {
+    ...baselineNarrative,
+    aiStatusSummary,
+    aiNextStepRecommendation,
+    aiRecommendedAction,
+    aiContract,
   };
 }
 
@@ -1464,6 +2164,10 @@ function hashCommercialNarrativeSnapshot(snapshot) {
 function buildCommercialNarrativeJobResponse(row) {
   const fallback = parseCommercialNarrativeJson(row.fallback_json, null);
   const result = parseCommercialNarrativeJson(row.result_json, null);
+  const sourceSnapshot = parseCommercialNarrativeJson(
+    row.source_snapshot_json,
+    null,
+  );
   const isExpired =
     row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
   const status =
@@ -1485,8 +2189,15 @@ function buildCommercialNarrativeJobResponse(row) {
   };
 
   if (status === "completed" && result) {
+    const strengthenedResult = strengthenNarrativeWithEvidence(
+      sourceSnapshot && typeof sourceSnapshot === "object"
+        ? sourceSnapshot
+        : fallback,
+      result,
+    );
     response.result = {
       ...result,
+      ...strengthenedResult,
       generatedAt:
         result?.generatedAt ||
         row.finished_at ||
@@ -1597,6 +2308,12 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
         aiNextStepRecommendation:
           aiNarrative?.aiNextStepRecommendation ||
           executionContext.fallback.aiNextStepRecommendation,
+        aiRecommendedAction:
+          aiNarrative?.aiRecommendedAction ||
+          executionContext.fallback.aiRecommendedAction ||
+          null,
+        aiContract:
+          aiNarrative?.aiContract || executionContext.fallback.aiContract || null,
         aiNarrativeSource:
           aiNarrative?.aiNarrativeSource ||
           executionContext.fallback.aiNarrativeSource,
@@ -1624,6 +2341,7 @@ async function createOrReuseCommercialNarrativeJob({
   opportunityId,
   requestedByUserId,
   user,
+  forceRegenerate = false,
 }) {
   const executionContext = await buildCommercialNarrativeExecutionContext({
     user,
@@ -1632,7 +2350,9 @@ async function createOrReuseCommercialNarrativeJob({
   const fingerprint = hashCommercialNarrativeSnapshot(
     executionContext.snapshot,
   );
-  const reusableRows = await query(
+  const reusableRows = forceRegenerate
+    ? []
+    : await query(
     `SELECT *
      FROM commercial_opportunity_narrative_jobs
      WHERE opportunity_id = ?
@@ -2503,6 +3223,86 @@ async function listOpenDependencies(opportunityIds) {
   );
 }
 
+async function listOpportunityDocumentSignals(opportunityId) {
+  const normalizedOpportunityId = Number(opportunityId || 0);
+  if (!Number.isInteger(normalizedOpportunityId) || normalizedOpportunityId <= 0) {
+    return {
+      lastDocumentAt: null,
+      documentCount: 0,
+      docsLast7d: 0,
+      processingStatusCounts: {
+        reviewReady: 0,
+        processing: 0,
+        failed: 0,
+      },
+      highlights: [],
+    };
+  }
+
+  const rows = await query(
+    `SELECT d.id,
+            d.original_file_name,
+            d.processing_status,
+            d.created_at,
+            dc.content_summary
+     FROM opportunity_document_links odl
+     INNER JOIN documents d ON d.id = odl.document_id
+     LEFT JOIN document_contents dc ON dc.document_id = d.id
+     WHERE odl.opportunity_id = ?
+       AND d.is_deleted = 0
+     ORDER BY d.created_at DESC, d.id DESC
+     LIMIT 40`,
+    [normalizedOpportunityId],
+  ).catch(() => []);
+
+  const lastDocumentAt = rows[0]?.created_at || null;
+  const now = new Date();
+  const docsLast7d = rows.filter((row) => {
+    const createdAt = row?.created_at ? new Date(row.created_at) : null;
+    if (!createdAt || Number.isNaN(createdAt.getTime())) {
+      return false;
+    }
+    return now.getTime() - createdAt.getTime() <= 7 * 24 * 60 * 60 * 1000;
+  }).length;
+
+  const processingStatusCounts = rows.reduce(
+    (accumulator, row) => {
+      const status = String(row?.processing_status || "").trim();
+      if (status === "review_ready") {
+        accumulator.reviewReady += 1;
+      } else if (["uploaded", "retry_pending", "processing"].includes(status)) {
+        accumulator.processing += 1;
+      } else if (status === "failed") {
+        accumulator.failed += 1;
+      }
+      return accumulator;
+    },
+    {
+      reviewReady: 0,
+      processing: 0,
+      failed: 0,
+    },
+  );
+
+  const highlights = rows
+    .slice(0, 4)
+    .map((row) => ({
+      fileName: String(row?.original_file_name || "").trim(),
+      createdAt: row?.created_at || null,
+      processingStatus: String(row?.processing_status || "").trim(),
+      summary: truncateText(row?.content_summary || "", 220),
+    }))
+    .filter((item) => item.fileName || item.summary);
+
+  return {
+    lastDocumentAt,
+    documentCount: rows.length,
+    docsLast7d,
+    processingStatusCounts,
+    highlights,
+  };
+}
+
 async function listLatestCommercialNarrativesByOpportunity(opportunityIds) {
   if (!opportunityIds.length) {
     return new Map();
@@ -2512,6 +3312,7 @@ async function listLatestCommercialNarrativesByOpportunity(opportunityIds) {
   const rows = await query(
     `SELECT j.opportunity_id,
             j.result_json,
+            j.source_snapshot_json,
             j.finished_at,
             j.updated_at,
             j.created_at
@@ -2542,16 +3343,28 @@ async function listLatestCommercialNarrativesByOpportunity(opportunityIds) {
     }
 
     const result = parseCommercialNarrativeJson(row.result_json, null);
+    const snapshot = parseCommercialNarrativeJson(
+      row.source_snapshot_json,
+      null,
+    );
     if (!result || typeof result !== "object") {
       continue;
     }
 
+    const strengthenedResult = strengthenNarrativeWithEvidence(snapshot, result);
+
     narrativeByOpportunity.set(opportunityId, {
-      aiStatusSummary: String(result.aiStatusSummary || "").trim(),
+      aiStatusSummary: String(strengthenedResult.aiStatusSummary || "").trim(),
       aiNextStepRecommendation: String(
-        result.aiNextStepRecommendation || "",
+        strengthenedResult.aiNextStepRecommendation || "",
       ).trim(),
-      aiNarrativeSource: String(result.aiNarrativeSource || "openai").trim(),
+      aiRecommendedAction: normalizeNarrativeRecommendedAction(
+        strengthenedResult.aiRecommendedAction,
+      ),
+      aiContract: normalizeNarrativeContract(strengthenedResult.aiContract),
+      aiNarrativeSource: String(
+        strengthenedResult.aiNarrativeSource || "openai",
+      ).trim(),
       aiNarrativeGeneratedAt:
         result.generatedAt ||
         row.finished_at ||
@@ -2594,7 +3407,14 @@ async function listLastActivityByOpportunity(opportunityIds) {
   const actionTypes = Array.from(NEXT_STEP_ACTION_TYPES);
   const actionTypePlaceholders = actionTypes.map(() => "?").join(", ");
 
-  const [actionRows, dependencyRows, answerRows, auditRows, interactionRows] =
+  const [
+    actionRows,
+    dependencyRows,
+    answerRows,
+    auditRows,
+    interactionRows,
+    documentRows,
+  ] =
     await Promise.all([
       query(
         `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
@@ -2643,6 +3463,16 @@ async function listLastActivityByOpportunity(opportunityIds) {
        GROUP BY related.opportunity_id`,
         [...opportunityIds, ...opportunityIds],
       ).catch(() => []),
+      query(
+        `SELECT odl.opportunity_id,
+                MAX(COALESCE(odl.created_at, d.updated_at, d.created_at)) AS last_activity_at
+         FROM opportunity_document_links odl
+         INNER JOIN documents d ON d.id = odl.document_id
+         WHERE odl.opportunity_id IN (${placeholders})
+           AND d.is_deleted = 0
+         GROUP BY odl.opportunity_id`,
+        opportunityIds,
+      ).catch(() => []),
     ]);
 
   const activityByOpportunity = new Map();
@@ -2652,6 +3482,7 @@ async function listLastActivityByOpportunity(opportunityIds) {
     ...answerRows,
     ...auditRows,
     ...interactionRows,
+    ...documentRows,
   ]) {
     setLatestActivityTimestamp(
       activityByOpportunity,
@@ -2824,6 +3655,191 @@ function buildCommercialActivitySummary(actions) {
     recentTimeline,
   };
 }
+
+function buildNextStepQualitySummary({
+  nextStep,
+  dependencies,
+  daysSinceActivity,
+  slaDays,
+}) {
+  const signals = [];
+  const gaps = [];
+  let score = 0;
+
+  if (!nextStep) {
+    gaps.push("No hay siguiente paso operativo vigente");
+  } else {
+    score += 40;
+    signals.push("Existe siguiente paso activo");
+
+    if (nextStep.dueDate) {
+      score += 14;
+      signals.push("Incluye fecha compromiso");
+    } else {
+      gaps.push("Falta fecha concreta del siguiente paso");
+    }
+
+    if (nextStep.successCriteria) {
+      score += 14;
+      signals.push("Incluye criterio de exito");
+    } else {
+      gaps.push("Falta criterio de exito verificable");
+    }
+
+    if (nextStep.ownerUserId) {
+      score += 10;
+      signals.push("Tiene responsable asignado");
+    } else {
+      gaps.push("Falta responsable explicito del siguiente paso");
+    }
+
+    if (nextStep.isOverdue) {
+      gaps.push("El siguiente paso esta vencido");
+      score -= 12;
+    } else {
+      score += 8;
+      signals.push("El siguiente paso no esta vencido");
+    }
+  }
+
+  if (daysSinceActivity <= slaDays) {
+    score += 8;
+    signals.push("Actividad reciente dentro del SLA");
+  } else {
+    gaps.push(`Inactividad sobre SLA (${daysSinceActivity} dias)`);
+  }
+
+  const overdueDependencies = (dependencies || []).filter(
+    (dependency) => dependency?.isOverdue,
+  ).length;
+  if (overdueDependencies > 0) {
+    score -= Math.min(14, overdueDependencies * 5);
+    gaps.push(`${overdueDependencies} dependencia(s) vencida(s)`);
+  }
+
+  const boundedScore = Math.max(0, Math.min(100, Math.round(score)));
+  const label =
+    boundedScore >= 75
+      ? "strong"
+      : boundedScore >= 50
+        ? "workable"
+        : boundedScore >= 30
+          ? "fragile"
+          : "critical";
+
+  return {
+    score: boundedScore,
+    label,
+    signals: signals.slice(0, 4),
+    gaps: gaps.slice(0, 4),
+  };
+}
+
+function inferDecisionStageGap({ scorecardItems, riskReasons, dependencies }) {
+  const redLabels = (Array.isArray(scorecardItems) ? scorecardItems : [])
+    .filter((item) => String(item?.tone || "").toLowerCase() === "red")
+    .map((item) => String(item?.label || "").toLowerCase());
+  const riskText = (Array.isArray(riskReasons) ? riskReasons : [])
+    .map((reason) => String(reason || "").toLowerCase())
+    .join(" ");
+  const openDependencyCount = (Array.isArray(dependencies) ? dependencies : [])
+    .filter((dependency) => ["open", "blocked"].includes(dependency?.status))
+    .length;
+
+  const candidates = [
+    {
+      key: "budget_alignment",
+      matches:
+        redLabels.some((label) => label.includes("presupuesto")) ||
+        /presupuesto|inversion|precio|costo|roi/.test(riskText),
+      guidance: "Validar viabilidad economica, rango y condicion de decision",
+    },
+    {
+      key: "decision_access",
+      matches:
+        redLabels.some((label) => label.includes("decisor")) ||
+        /decisor|sponsor|aprobador|compra/.test(riskText),
+      guidance: "Asegurar acceso al sponsor y decisor economico",
+    },
+    {
+      key: "urgency_strength",
+      matches:
+        redLabels.some((label) => label.includes("urgencia")) ||
+        /urgencia|no decision|sin prioridad|enfri/.test(riskText),
+      guidance: "Construir urgencia y costo de no actuar",
+    },
+    {
+      key: "execution_blockers",
+      matches:
+        openDependencyCount > 0 || /bloqueo|dependenc|intern/.test(riskText),
+      guidance: "Destrabar dependencias internas que frenan el avance",
+    },
+  ];
+
+  const active = candidates.filter((candidate) => candidate.matches);
+  const primary = active[0]?.key || "next_step_quality";
+  const secondary = active.slice(1).map((candidate) => candidate.key);
+  const guidance =
+    active[0]?.guidance ||
+    "Asegurar siguiente paso claro con decisor, fecha y evidencia de avance";
+
+  return {
+    primaryGap: primary,
+    secondaryGaps: secondary.slice(0, 3),
+    guidance,
+  };
+}
+
+function buildNarrativeMilestones({ activitySummary, dependencies, nextStep }) {
+  const timelineMilestones = (activitySummary?.recentTimeline || [])
+    .slice(0, 3)
+    .map((entry) => ({
+      type: entry.entryKind || "activity",
+      title: String(entry.title || "Actividad reciente"),
+      status: String(entry.status || "pending"),
+      happenedAt:
+        entry.scheduledAt || entry.dueDate || entry.updatedAt || entry.createdAt || null,
+      summary:
+        String(entry.successCriteria || "").trim() ||
+        String(entry.note || "").trim() ||
+        "Sin resumen operativo",
+    }));
+
+  const dependencyMilestones = (dependencies || [])
+    .filter((dependency) => dependency?.isOverdue)
+    .slice(0, 2)
+    .map((dependency) => ({
+      type: "dependency",
+      title: dependency.title || "Dependencia vencida",
+      status: dependency.status || "open",
+      happenedAt: dependency.dueDate || dependency.updatedAt || null,
+      summary:
+        dependency.expectedOutcome ||
+        `${dependency.dependencyLabel || "Dependencia"} pendiente`,
+    }));
+
+  const nextStepMilestone = nextStep
+    ? [
+        {
+          type: "next_step",
+          title: nextStep.title || "Siguiente paso",
+          status: nextStep.status || "pending",
+          happenedAt: nextStep.dueDate || nextStep.scheduledAt || null,
+          summary:
+            nextStep.successCriteria ||
+            "Sin criterio de exito documentado",
+        },
+      ]
+    : [];
+
+  return [...nextStepMilestone, ...timelineMilestones, ...dependencyMilestones]
+    .slice(0, 5)
+    .map((milestone) => ({
+      ...milestone,
+      happenedAt: milestone.happenedAt || null,
+    }));
+}
+
 const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
 
 function mapDependencyRow(row) {
@@ -5737,6 +6753,7 @@ router.get(
           aiStatusSummary: "Sin lectura operativa disponible.",
           aiNextStepRecommendation:
             "Completa datos clave para generar una estrategia accionable.",
+          aiRecommendedAction: null,
           aiNarrativeSource: "fallback",
         };
 
@@ -5746,6 +6763,8 @@ router.get(
       aiNextStepRecommendation: String(
         fallback.aiNextStepRecommendation || "",
       ).trim(),
+      aiRecommendedAction: fallback.aiRecommendedAction || null,
+      aiContract: fallback.aiContract || null,
       aiNarrativeSource: String(fallback.aiNarrativeSource || "fallback").trim(),
       aiNarrativeGeneratedAt: null,
     });
@@ -5768,10 +6787,12 @@ router.post(
     await ensureCommercialNarrativeJobSchema();
 
     try {
+      const forceRegenerate = Boolean(req.body?.forceRegenerate);
       const result = await createOrReuseCommercialNarrativeJob({
         opportunityId,
         requestedByUserId: Number(req.user.id),
         user: req.user,
+        forceRegenerate,
       });
       let responsePayload = result.response;
       if (!result.wasReused) {
@@ -5880,10 +6901,12 @@ router.post(
     }
 
     try {
+      const forceRegenerate = Boolean(req.body?.forceRegenerate);
       const result = await createOrReuseCommercialNarrativeJob({
         user: req.user,
         opportunityId,
         requestedByUserId: Number(req.user.id),
+        forceRegenerate,
       });
       let responsePayload = result.response;
       if (!result.wasReused) {

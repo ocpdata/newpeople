@@ -80,6 +80,29 @@ function formatNarrativeTimestamp(value) {
   });
 }
 
+function parseActivityTimestamp(value) {
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return Number.NaN;
+  }
+  return parsed.getTime();
+}
+
+function formatActivityTimestamp(value) {
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return "Sin actividad reciente";
+  }
+
+  return parsed.toLocaleString("es-MX", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function InsightAiIcon() {
   return (
     <svg viewBox="0 0 24 24" role="img" aria-hidden="true" focusable="false">
@@ -192,12 +215,12 @@ export default function OpportunityDevelopmentPanel({
   const [aiNarrative, setAiNarrative] = useState({
     statusSummary: "",
     nextStepRecommendation: "",
+    contract: null,
     source: "",
     generatedAt: null,
   });
   const [loadingAiNarrative, setLoadingAiNarrative] = useState(false);
   const [aiJobStatus, setAiJobStatus] = useState("pending");
-  const [showAiDetail, setShowAiDetail] = useState(false);
   const [activityDraft, setActivityDraft] = useState({
     activityType: "call",
     objective: "",
@@ -234,6 +257,10 @@ export default function OpportunityDevelopmentPanel({
     setAiNarrative({
       statusSummary: normalizeText(payload.aiStatusSummary),
       nextStepRecommendation: normalizeText(payload.aiNextStepRecommendation),
+      contract:
+        payload?.aiContract && typeof payload.aiContract === "object"
+          ? payload.aiContract
+          : null,
       source: normalizeText(payload.aiNarrativeSource) || "fallback",
       generatedAt:
         payload.generatedAt || payload.aiNarrativeGeneratedAt || null,
@@ -350,14 +377,37 @@ export default function OpportunityDevelopmentPanel({
   }, [documentsCount, missingRequiredAnswers, contactsCount, quotationsCount]);
 
   const aiCommercialBlueprint = useMemo(() => {
+    const narrativeContract =
+      aiNarrative.contract && typeof aiNarrative.contract === "object"
+        ? aiNarrative.contract
+        : {};
+    const descriptionSituation =
+      narrativeContract.descriptionSituation &&
+      typeof narrativeContract.descriptionSituation === "object"
+        ? narrativeContract.descriptionSituation
+        : {};
+    const salesStrategy =
+      narrativeContract.salesStrategy &&
+      typeof narrativeContract.salesStrategy === "object"
+        ? narrativeContract.salesStrategy
+        : {};
+    const nextBestStep =
+      narrativeContract.nextBestStep &&
+      typeof narrativeContract.nextBestStep === "object"
+        ? narrativeContract.nextBestStep
+        : {};
+    const alternativeStep =
+      narrativeContract.alternativeStep &&
+      typeof narrativeContract.alternativeStep === "object"
+        ? narrativeContract.alternativeStep
+        : {};
     const opportunityName =
       normalizeText(form?.name) || "Oportunidad comercial";
     const accountName = normalizeText(form?.accountName) || "Cuenta no definida";
     const sellerName =
       normalizeText(form?.sellerUserName) ||
       normalizeText(form?.sellerName) ||
-      normalizeText(form?.ownerName) ||
-      "Vendedor responsable";
+      "Sin vendedor asignado";
     const amountLabel = normalizeText(form?.amountUsd)
       ? `${normalizeText(form?.amountUsd)} USD`
       : "Importe pendiente";
@@ -371,19 +421,52 @@ export default function OpportunityDevelopmentPanel({
       commercialContext?.salesStage?.name ||
       "Sin etapa";
     const bloqueoPrincipal =
+      normalizeText(descriptionSituation.commercialSituation) ||
       normalizeText(aiNarrative.statusSummary) ||
       "No hay lectura operativa suficiente para explicar el bloqueo principal.";
     const accion72 =
+      normalizeText(nextBestStep.exactStep) ||
       normalizeText(aiNarrative.nextStepRecommendation) ||
       "Programar una conversacion ejecutiva con decisor para acordar siguiente hito de compra.";
     const resultadoEsperado =
+      normalizeText(nextBestStep.expectedResult) ||
       normalizeText(aiNarrative.nextStepRecommendation) ||
       "Asegurar un compromiso verificable del cliente para mover la oportunidad.";
     const canal = interactionsCount > 0 ? "Reunion" : "Llamada";
     const evidenciaCierre =
       "Nota de interaccion, compromiso del cliente y fecha del siguiente hito registrados en CRM.";
     const criterioBinario =
+      normalizeText(nextBestStep.successCriteria) ||
       "Si/No: existe compromiso confirmado con decisor y fecha definida.";
+    const activityCandidates = [
+      ...interactions.map((item) =>
+        parseActivityTimestamp(
+          item?.updatedAt || item?.createdAt || item?.occurredAt || item?.date,
+        ),
+      ),
+      ...opportunityDocuments.map((document) =>
+        parseActivityTimestamp(document?.createdAt || document?.updatedAt),
+      ),
+    ].filter(Number.isFinite);
+    const latestActivityMs = activityCandidates.length
+      ? Math.max(...activityCandidates)
+      : Number.NaN;
+    const latestActivityDate = Number.isFinite(latestActivityMs)
+      ? new Date(latestActivityMs)
+      : null;
+    const daysWithoutMovement = latestActivityDate
+      ? Math.max(
+          0,
+          Math.floor((Date.now() - latestActivityDate.getTime()) / 86400000),
+        )
+      : 15;
+    const latestActivityLabel = latestActivityDate
+      ? formatActivityTimestamp(latestActivityDate)
+      : "Sin actividad reciente";
+    const hasRecentEvidence =
+      interactionsCount > 0 ||
+      documentsCount > 0 ||
+      Number.isFinite(latestActivityMs);
 
     const messageTarget =
       accountName === "Cuenta no definida"
@@ -392,10 +475,20 @@ export default function OpportunityDevelopmentPanel({
     const mensajeSugerido = `Hola, para avanzar esta oportunidad con ${messageTarget} propongo una sesion de 30 minutos para validar criterios de decision, alcance final y fecha de cierre. El objetivo es salir con un compromiso concreto y proximo paso calendarizado.`;
 
     const miniObjetivoEtapa =
-      checkpoint.stageLabel === "Aun no lista"
+      normalizeText(salesStrategy.stageAdvanceCriteria) ||
+      (checkpoint.stageLabel === "Aun no lista"
         ? "Eliminar bloqueadores criticos y recuperar conduccion comercial de la etapa actual."
-        : "Convertir interes en compromiso comercial verificable de la etapa actual.";
-    const planB72 =
+        : "Convertir interes en compromiso comercial verificable de la etapa actual.");
+    const planB72 = normalizeText(
+      [
+        normalizeText(alternativeStep.fallbackStep),
+        normalizeText(alternativeStep.trigger)
+          ? `Trigger: ${normalizeText(alternativeStep.trigger)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    ) ||
       "Si no hay respuesta en 72 horas, escalar con resumen ejecutivo, nueva propuesta de valor y fecha alternativa de decision.";
 
     const confidence =
@@ -412,7 +505,7 @@ export default function OpportunityDevelopmentPanel({
       {
         id: "q2",
         text: "Se sustenta en evidencia reciente y verificable",
-        ok: Boolean(normalizeText(aiNarrative.statusSummary) && interactionsCount > 0),
+        ok: Boolean(normalizeText(aiNarrative.statusSummary) && hasRecentEvidence),
       },
       {
         id: "q3",
@@ -466,7 +559,7 @@ export default function OpportunityDevelopmentPanel({
         opportunityName,
         stageLabel,
         semaforoLabel,
-        daysWithoutMovement: `${interactionsCount ? 0 : 15}`,
+        daysWithoutMovement: `${daysWithoutMovement}`,
         bloqueoPrincipal,
         accion72,
         sellerName,
@@ -489,23 +582,36 @@ export default function OpportunityDevelopmentPanel({
         amountLabel,
         closeDateLabel,
         commercialStatus: checkpoint.stageLabel,
-        latestActivity: interactionsCount
-          ? `${interactionsCount} interaccion(es) registradas`
-          : "Sin interacciones recientes",
-        daysWithoutMovement: `${interactionsCount ? 0 : 15}`,
+        latestActivity: latestActivityLabel,
+        daysWithoutMovement: `${daysWithoutMovement}`,
+        situationCustomerGoal:
+          normalizeText(descriptionSituation.customerGoal) ||
+          "No se detallo explicitamente que busca el cliente.",
+        situationWhyNeedNow:
+          normalizeText(descriptionSituation.whyNeedNow) ||
+          "No se detallo explicitamente por que lo necesita ahora.",
+        situationTargetTimeline:
+          normalizeText(descriptionSituation.targetTimeline) ||
+          "No se detallo explicitamente el horizonte de compra/implementacion.",
+        situationWhatWeHaveDone:
+          normalizeText(descriptionSituation.whatWeHaveDone) ||
+          "No se detallo explicitamente lo ejecutado hasta ahora.",
         bloqueoPrincipal,
         evidencia1: bloqueoPrincipal,
         evidencia2:
+          normalizeText(descriptionSituation.whatWeHaveDone) ||
           normalizeText(aiNarrative.nextStepRecommendation) ||
           "No existe recomendacion puntual cargada.",
         evidencia3:
+          normalizeText(descriptionSituation.targetTimeline) ||
           riskItems[0]?.mitigation ||
           "Sin mitigacion registrada en este momento.",
         confidence,
         missingData:
-          contactsCount > 0
+          normalizeText(descriptionSituation.whyNeedNow) ||
+          (contactsCount > 0
             ? "Falta consolidar evidencia de decision economica final."
-            : "Falta definir contacto decisor principal.",
+            : "Falta definir contacto decisor principal."),
         accion72,
         resultadoEsperado,
         commitmentLabel,
@@ -514,13 +620,33 @@ export default function OpportunityDevelopmentPanel({
         evidenciaCierre,
         criterioBinario,
         miniObjetivoEtapa,
-        estrategia: "Asegurar compromiso de decision con valor de negocio explicito y fecha cerrada.",
+        estrategia:
+          normalizeText(salesStrategy.strategyToWin) ||
+          "Asegurar compromiso de decision con valor de negocio explicito y fecha cerrada.",
+        strategyByStage:
+          normalizeText(salesStrategy.stageAlignedActions) ||
+          "Sin detalle por etapa.",
+        strategyExpectedResults:
+          normalizeText(salesStrategy.expectedResultsByAction) ||
+          "Sin resultados esperados por accion.",
+        strategyRisksMitigation:
+          normalizeText(salesStrategy.strategyRisksAndMitigation) ||
+          "Sin riesgos y mitigaciones detallados.",
+        strategyAdvanceCriteria:
+          normalizeText(salesStrategy.stageAdvanceCriteria) ||
+          "Sin criterio explicito de avance de etapa.",
+        nextWhyThisStep:
+          normalizeText(nextBestStep.whyThisStep) ||
+          "No se indico explicitamente por que este es el mejor paso.",
         day0: accion72,
         day2:
+          normalizeText(salesStrategy.stageAlignedActions) ||
           "Enviar resumen ejecutivo de acuerdos, riesgos y responsables de siguiente hito.",
         day5:
+          normalizeText(salesStrategy.expectedResultsByAction) ||
           "Validar avance con decisor economico y remover objecion principal pendiente.",
         day10:
+          normalizeText(salesStrategy.strategyRisksAndMitigation) ||
           "Cerrar decision o redefinir alcance/comercial para evitar estancamiento.",
         valueLever:
           "Impacto de negocio y costo de no decidir en el periodo objetivo.",
@@ -549,7 +675,17 @@ export default function OpportunityDevelopmentPanel({
         risk2Impact: "Medio",
         risk2Mitigation: riskItems[1]?.mitigation || "Escalar decision con resumen ejecutivo y evidencia.",
         planB72,
+        alternativeTrigger:
+          normalizeText(alternativeStep.trigger) ||
+          "No se definio trigger explicito para activar plan alterno.",
+        alternativeExpectedResult:
+          normalizeText(alternativeStep.expectedResult) ||
+          "No se definio resultado esperado del paso alternativo.",
+        alternativeReturnCriteria:
+          normalizeText(alternativeStep.returnCriteria) ||
+          "No se definio criterio de retorno al plan principal.",
         planBRejected:
+          normalizeText(alternativeStep.returnCriteria) ||
           "Reformular propuesta por valor y fases para reducir friccion de aprobacion.",
         disqualificationSignal:
           "Sin decisor, sin siguiente paso y sin respuesta despues de dos ciclos ejecutivos.",
@@ -568,6 +704,7 @@ export default function OpportunityDevelopmentPanel({
       },
     };
   }, [
+    aiNarrative.contract,
     aiNarrative.statusSummary,
     aiNarrative.nextStepRecommendation,
     aiNarrative.source,
@@ -582,7 +719,9 @@ export default function OpportunityDevelopmentPanel({
     form?.ownerName,
     form?.sellerName,
     form?.sellerUserName,
+    interactions,
     interactionsCount,
+    opportunityDocuments,
     riskItems,
   ]);
 
@@ -961,7 +1100,7 @@ export default function OpportunityDevelopmentPanel({
     try {
       const response = await api.post(
         `/api/commercial-development/opportunities/${editingOpportunityId}/ai-narrative/jobs`,
-        {},
+        { forceRegenerate: true },
         { timeout: AI_NARRATIVE_TIMEOUT_MS },
       );
 
@@ -1071,11 +1210,11 @@ export default function OpportunityDevelopmentPanel({
       setAiNarrative({
         statusSummary: "",
         nextStepRecommendation: "",
+        contract: null,
         source: "",
         generatedAt: null,
       });
       setAiJobStatus("pending");
-      setShowAiDetail(false);
       return;
     }
     loadPersistedAiNarrative(editingOpportunityId).catch((error) => {
@@ -1093,6 +1232,24 @@ export default function OpportunityDevelopmentPanel({
   const aiUpdatedLabel = formatNarrativeTimestamp(aiNarrative.generatedAt);
   const aiJobStatusLabel = getJobStatusLabel(aiJobStatus);
   const aiJobStatusTone = getJobStatusTone(aiJobStatus);
+  const aiContract =
+    aiNarrative.contract && typeof aiNarrative.contract === "object"
+      ? aiNarrative.contract
+      : {};
+  const descriptionSituationText =
+    normalizeText(aiContract.descriptionSituationText) ||
+    normalizeText(aiNarrative.statusSummary) ||
+    "No fue posible construir la narrativa de situacion actual.";
+  const salesStrategyText =
+    normalizeText(aiContract.salesStrategyText) ||
+    "No fue posible construir la estrategia comercial.";
+  const nextBestStepText =
+    normalizeText(aiContract.nextBestStepText) ||
+    normalizeText(aiNarrative.nextStepRecommendation) ||
+    "No fue posible construir el siguiente mejor paso.";
+  const alternativeStepText =
+    normalizeText(aiContract.alternativeStepText) ||
+    "No fue posible construir el paso alternativo.";
   const aiQualityScore = Number(aiCommercialBlueprint?.short?.qualityScore || 0);
   const aiSourceNormalized = normalizeText(aiNarrative.source).toLowerCase();
   const aiHeaderBadge =
@@ -1168,158 +1325,24 @@ export default function OpportunityDevelopmentPanel({
               Estado del job: {aiJobStatusLabel}
             </span>
           </div>
-          <div className="opportunity-development-ai-short">
-            <p>
-              <strong>Etapa:</strong> {aiCommercialBlueprint.short.stageLabel}
-            </p>
-            <p>
-              <strong>Prioridad comercial:</strong> {aiCommercialBlueprint.short.semaforoLabel}
-            </p>
-            <p>
-              <strong>Dias sin movimiento:</strong> {aiCommercialBlueprint.short.daysWithoutMovement}
-            </p>
-            <p>
-              <strong>Bloqueo principal:</strong> {aiCommercialBlueprint.short.bloqueoPrincipal}
-            </p>
-            <p>
-              <strong>Accion en 72 horas:</strong> {aiCommercialBlueprint.short.accion72}
-            </p>
-            <p>
-              <strong>Responsable:</strong> {aiCommercialBlueprint.short.sellerName}
-            </p>
-            <p>
-              <strong>Compromiso:</strong> {aiCommercialBlueprint.short.commitmentLabel}
-            </p>
-            <p>
-              <strong>Canal:</strong> {aiCommercialBlueprint.short.canal}
-            </p>
-            <p>
-              <strong>Mensaje sugerido al cliente:</strong> {aiCommercialBlueprint.short.mensajeSugerido}
-            </p>
-            <p>
-              <strong>Resultado esperado:</strong> {aiCommercialBlueprint.short.resultadoEsperado}
-            </p>
-            <p>
-              <strong>Criterio de exito:</strong> {aiCommercialBlueprint.short.criterioBinario}
-            </p>
-            <p>
-              <strong>Evidencia en CRM:</strong> {aiCommercialBlueprint.short.evidenciaCierre}
-            </p>
-            <p>
-              <strong>Objetivo de etapa:</strong> {aiCommercialBlueprint.short.miniObjetivoEtapa}
-            </p>
-            <p>
-              <strong>Plan B (si no responde en 72h):</strong> {aiCommercialBlueprint.short.planB72}
-            </p>
-            <p>
-              <strong>Calidad de recomendacion:</strong> {aiCommercialBlueprint.short.qualityScore}/8
-            </p>
-            <p>
-              <strong>Estado:</strong> {aiCommercialBlueprint.short.qualityStatus}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="opportunity-development-ai-detail-toggle"
-            onClick={() => setShowAiDetail((current) => !current)}
-          >
-            {showAiDetail ? "Ocultar detalle" : "Ver detalle"}
-          </button>
-          {showAiDetail ? (
-            <div className="opportunity-development-ai-detail">
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Resumen ejecutivo de la oportunidad</h6>
-                <p><strong>Oportunidad:</strong> {aiCommercialBlueprint.detail.opportunityName}</p>
-                <p><strong>Cuenta:</strong> {aiCommercialBlueprint.detail.accountName}</p>
-                <p><strong>Vendedor responsable:</strong> {aiCommercialBlueprint.detail.sellerName}</p>
-                <p><strong>Etapa actual:</strong> {aiCommercialBlueprint.detail.stageLabel}</p>
-                <p><strong>Monto estimado:</strong> {aiCommercialBlueprint.detail.amountLabel}</p>
-                <p><strong>Fecha objetivo de cierre:</strong> {aiCommercialBlueprint.detail.closeDateLabel}</p>
-                <p><strong>Estado comercial actual:</strong> {aiCommercialBlueprint.detail.commercialStatus}</p>
-                <p><strong>Ultima actividad registrada:</strong> {aiCommercialBlueprint.detail.latestActivity}</p>
-                <p><strong>Dias sin movimiento:</strong> {aiCommercialBlueprint.detail.daysWithoutMovement}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Diagnostico principal</h6>
-                <p><strong>Bloqueo principal:</strong> {aiCommercialBlueprint.detail.bloqueoPrincipal}</p>
-                <p><strong>Evidencia comercial relevante 1:</strong> {aiCommercialBlueprint.detail.evidencia1}</p>
-                <p><strong>Evidencia comercial relevante 2:</strong> {aiCommercialBlueprint.detail.evidencia2}</p>
-                <p><strong>Evidencia comercial relevante 3:</strong> {aiCommercialBlueprint.detail.evidencia3}</p>
-                <p><strong>Nivel de confianza del diagnostico:</strong> {aiCommercialBlueprint.detail.confidence}</p>
-                <p><strong>Dato critico faltante para elevar precision:</strong> {aiCommercialBlueprint.detail.missingData}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Plan de ejecucion inmediato (24-72 horas)</h6>
-                <p><strong>Accion exacta:</strong> {aiCommercialBlueprint.detail.accion72}</p>
-                <p><strong>Resultado esperado:</strong> {aiCommercialBlueprint.detail.resultadoEsperado}</p>
-                <p><strong>Responsable:</strong> {aiCommercialBlueprint.detail.sellerName}</p>
-                <p><strong>Fecha y hora compromiso:</strong> {aiCommercialBlueprint.detail.commitmentLabel}</p>
-                <p><strong>Canal de ejecucion:</strong> {aiCommercialBlueprint.detail.canal}</p>
-                <p><strong>Mensaje sugerido listo para usar:</strong> {aiCommercialBlueprint.detail.mensajeSugerido}</p>
-                <p><strong>Entregable obligatorio en CRM:</strong> {aiCommercialBlueprint.detail.evidenciaCierre}</p>
-                <p><strong>Criterio de exito binario:</strong> {aiCommercialBlueprint.detail.criterioBinario}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Estrategia de avance comercial (7-14 dias)</h6>
-                <p><strong>Objetivo de etapa:</strong> {aiCommercialBlueprint.detail.miniObjetivoEtapa}</p>
-                <p><strong>Estrategia seleccionada:</strong> {aiCommercialBlueprint.detail.estrategia}</p>
-                <p><strong>Dia 0:</strong> {aiCommercialBlueprint.detail.day0}</p>
-                <p><strong>Dia 2:</strong> {aiCommercialBlueprint.detail.day2}</p>
-                <p><strong>Dia 5:</strong> {aiCommercialBlueprint.detail.day5}</p>
-                <p><strong>Dia 10:</strong> {aiCommercialBlueprint.detail.day10}</p>
-                <p><strong>Palanca de valor principal:</strong> {aiCommercialBlueprint.detail.valueLever}</p>
-                <p><strong>Objecion mas probable:</strong> {aiCommercialBlueprint.detail.mainObjection}</p>
-                <p><strong>Respuesta comercial recomendada:</strong> {aiCommercialBlueprint.detail.objectionResponse}</p>
-                <p><strong>Sponsor:</strong> {aiCommercialBlueprint.detail.sponsor}</p>
-                <p><strong>Decisor economico:</strong> {aiCommercialBlueprint.detail.economicDecider}</p>
-                <p><strong>Compras/Legal:</strong> {aiCommercialBlueprint.detail.legalProcurement}</p>
-                <p><strong>Influenciador tecnico:</strong> {aiCommercialBlueprint.detail.technicalInfluencer}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Riesgos criticos y mitigacion</h6>
-                <p><strong>Riesgo 1:</strong> {aiCommercialBlueprint.detail.risk1}</p>
-                <p><strong>Probabilidad:</strong> {aiCommercialBlueprint.detail.risk1Probability} <strong>Impacto:</strong> {aiCommercialBlueprint.detail.risk1Impact}</p>
-                <p><strong>Mitigacion:</strong> {aiCommercialBlueprint.detail.risk1Mitigation}</p>
-                <p><strong>Riesgo 2:</strong> {aiCommercialBlueprint.detail.risk2}</p>
-                <p><strong>Probabilidad:</strong> {aiCommercialBlueprint.detail.risk2Probability} <strong>Impacto:</strong> {aiCommercialBlueprint.detail.risk2Impact}</p>
-                <p><strong>Mitigacion:</strong> {aiCommercialBlueprint.detail.risk2Mitigation}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Escenarios alternos y disciplina comercial</h6>
-                <p><strong>Plan B si no hay respuesta en 72 horas:</strong> {aiCommercialBlueprint.detail.planB72}</p>
-                <p><strong>Plan B si rechazan propuesta:</strong> {aiCommercialBlueprint.detail.planBRejected}</p>
-                <p><strong>Señal de pausa o descalificacion:</strong> {aiCommercialBlueprint.detail.disqualificationSignal}</p>
-                <p><strong>Fecha limite de decision interna:</strong> {aiCommercialBlueprint.detail.internalDeadline}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Control de ejecucion comercial</h6>
-                <p><strong>Indicador de actividad:</strong> {aiCommercialBlueprint.detail.activityKpi}</p>
-                <p><strong>Indicador de avance de decision:</strong> {aiCommercialBlueprint.detail.decisionKpi}</p>
-                <p><strong>Indicador de calidad de interaccion:</strong> {aiCommercialBlueprint.detail.qualityKpi}</p>
-                <p><strong>Semaforo semanal:</strong> {aiCommercialBlueprint.detail.weeklyTrafficLight}</p>
-                <p><strong>Proxima revision ejecutiva:</strong> {aiCommercialBlueprint.detail.nextReview}</p>
-              </div>
-
-              <div className="opportunity-development-ai-detail-block">
-                <h6>Control de calidad de la recomendacion</h6>
-                <ul className="opportunity-development-ai-quality-list">
-                  {aiCommercialBlueprint.detail.qualityChecks.map((check, index) => (
-                    <li key={check.id}>
-                      {index + 1}. {check.text}: {check.ok ? "Si" : "No"}
-                    </li>
-                  ))}
-                </ul>
-                <p><strong>Puntaje final:</strong> {aiCommercialBlueprint.detail.qualityScore}/8</p>
-                <p><strong>Regla de publicacion:</strong> {aiCommercialBlueprint.detail.qualityStatus === "Publicable" ? "Publicable" : "Menor a 6/8, requiere ajuste antes de publicar"}</p>
-              </div>
+          <div className="opportunity-development-ai-detail">
+            <div className="opportunity-development-ai-detail-block">
+              <h6>Descripcion y situacion actual de la oportunidad</h6>
+              <p>{descriptionSituationText}</p>
             </div>
-          ) : null}
+            <div className="opportunity-development-ai-detail-block">
+              <h6>Estrategia para lograr la venta</h6>
+              <p>{salesStrategyText}</p>
+            </div>
+            <div className="opportunity-development-ai-detail-block">
+              <h6>Siguiente mejor paso</h6>
+              <p>{nextBestStepText}</p>
+            </div>
+            <div className="opportunity-development-ai-detail-block">
+              <h6>Paso alternativo</h6>
+              <p>{alternativeStepText}</p>
+            </div>
+          </div>
       </article>
 
       <article className="opportunity-development-card opportunity-development-execution-card">
