@@ -14346,7 +14346,7 @@ td {
   gap: 8px;
 }
 
-.opportunity-documents-apply-icon-button.account-modal-close-button {
+.account-modal-close-button {
   width: 36px;
   height: 36px;
   padding: 0;
@@ -14356,9 +14356,7 @@ td {
   background: #fff4f3;
 }
 
-.opportunity-documents-apply-icon-button.account-modal-close-button:hover:not(
-    :disabled
-  ) {
+.account-modal-close-button:hover:not(:disabled) {
   color: #8f1d13;
   border-color: #e2a09a;
   background: #ffe8e6;
@@ -15254,6 +15252,24 @@ td {
 .opportunity-documents-apply-icon-button:hover:not(:disabled) {
   border-color: #a8c3e2;
   background: #f4f8fd;
+}
+
+.opportunity-documents-apply-icon-button.account-modal-close-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 24px;
+  color: #b42318;
+  border-color: #efc2be;
+  background: #fff4f3;
+}
+
+.opportunity-documents-apply-icon-button.account-modal-close-button:hover:not(
+    :disabled
+  ) {
+  color: #8f1d13;
+  border-color: #e2a09a;
+  background: #ffe8e6;
 }
 
 .opportunity-documents-apply-icon-button:disabled {
@@ -17581,6 +17597,336 @@ td {
 .opportunity-development-execution-submit {
   min-height: 34px;
   padding: 0 12px;
+}
+
+.opportunity-operation-email-modal {
+  max-width: 1520px;
+  width: min(1520px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+}
+
+.opportunity-operation-email-google-status {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.opportunity-operation-email-form-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #315474;
+  font-weight: 600;
+}
+
+.opportunity-operation-email-form-grid .is-span-2 {
+  grid-column: 1 / -1;
+}
+
+.opportunity-operation-email-ai-instructions {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d7e5f3;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.opportunity-operation-email-ai-instructions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #315474;
+  font-weight: 600;
+}
+
+.opportunity-operation-email-ai-icon-button {
+  min-width: 132px;
+  height: 32px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-ai-icon-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-ai-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-ai-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.opportunity-operation-email-ai-icon-button span {
+  line-height: 1;
+}
+
+.opportunity-operation-email-ai-suggestion {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.opportunity-operation-email-ai-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.opportunity-operation-email-ai-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #315474;
+  font-weight: 600;
+}
+
+.opportunity-operation-email-ai-suggestion-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #315474;
+  font-weight: 600;
+}
+
+.opportunity-operation-email-ai-copy-button {
+  min-width: 142px;
+  height: 32px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-ai-copy-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-ai-copy-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-ai-copy-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.opportunity-operation-email-ai-copy-button span {
+  line-height: 1;
+}
+
+.opportunity-operation-email-ai-suggestion textarea {
+  min-height: 118px;
+  resize: vertical;
+  background: #fff;
+}
+
+.opportunity-operation-email-ai-suggestion-subject {
+  margin: 0;
+}
+
+.opportunity-operation-email-form-grid input,
+.opportunity-operation-email-form-grid textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.opportunity-operation-email-hint-placeholder {
+  visibility: hidden;
+}
+
+.opportunity-operation-email-library-picker {
+  border: 1px solid #d7e5f3;
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.opportunity-operation-email-library-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opportunity-operation-email-library-search {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #315474;
+  font-weight: 600;
+}
+
+.opportunity-operation-email-library-options {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-library-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  border: 1px solid #dbe7f4;
+  border-radius: 8px;
+  background: #f9fcff;
+  padding: 6px 8px;
+}
+
+.opportunity-operation-email-library-option.is-selected {
+  border-color: #8eb7df;
+  background: #eef6ff;
+}
+
+.opportunity-operation-email-library-option input {
+  margin-top: 2px;
+}
+
+.opportunity-operation-email-library-option small {
+  display: block;
+  color: #5f7287;
+}
+
+.opportunity-operation-email-attachments {
+  border: 1px solid #d7e5f3;
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.opportunity-operation-email-attachments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opportunity-operation-email-attachments-subsections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.opportunity-operation-email-attachments-subsection {
+  border: 1px solid #dbe7f4;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  background: #f9fcff;
+}
+
+.opportunity-operation-email-subsection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opportunity-operation-email-library-tools {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.opportunity-operation-email-file-input {
+  display: none;
+}
+
+.opportunity-operation-email-attachments-list {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-attachment-item {
+  border: 1px solid #e2ebf4;
+  border-radius: 8px;
+  background: #f9fcff;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opportunity-operation-email-attachment-item small {
+  display: block;
+  color: #5f7287;
+}
+
+@media (max-width: 720px) {
+  .opportunity-operation-email-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .opportunity-operation-email-attachments-subsections {
+    grid-template-columns: 1fr;
+  }
 }
 
 .opportunity-development-execution-history ul {

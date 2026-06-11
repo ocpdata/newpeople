@@ -95,6 +95,11 @@ export function validateConfig() {
         "GOOGLE_REDIRECT_URI debe ser URL absoluta cuando AUTH_GOOGLE_ENABLED=true",
       );
     }
+    if (!isValidAbsoluteUrl(config.auth.google.mailRedirectUri)) {
+      errors.push(
+        "GOOGLE_MAIL_REDIRECT_URI debe ser URL absoluta cuando AUTH_GOOGLE_ENABLED=true",
+      );
+    }
   }
 
   if (mode === "production") {

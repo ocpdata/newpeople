@@ -74,48 +74,6 @@ const PROVIDER_DOCUMENT_IMPORT_NON_TRANSFERABLE_WARNING_PATTERNS = [
   /bloquead|blocking|cannot\s+create/i,
 ];
 
-function buildMailtoDraftUrl({ to = "", subject = "", body = "" } = {}) {
-  const recipient = String(to || "").trim();
-  const encodedRecipient = encodeURIComponent(recipient);
-  const queryParts = [];
-
-  if (subject) {
-    queryParts.push(`subject=${encodeURIComponent(String(subject))}`);
-  }
-  if (body) {
-    queryParts.push(`body=${encodeURIComponent(String(body))}`);
-  }
-
-  const queryString = queryParts.join("&");
-  if (!queryString) {
-    return `mailto:${encodedRecipient}`;
-  }
-
-  return `mailto:${encodedRecipient}?${queryString}`;
-}
-
-function openMailtoDraft(url) {
-  if (typeof window === "undefined" || !url) {
-    return false;
-  }
-
-  try {
-    const popup = window.open(url, "_blank", "noopener,noreferrer");
-    if (popup) {
-      return true;
-    }
-  } catch {
-    // Continue with location fallback.
-  }
-
-  try {
-    window.location.href = url;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function buildProviderDocumentImportCommercialTermsSelection() {
   return {
     deliveryTime: true,
@@ -1267,7 +1225,11 @@ function appendProviderDocumentImportNoteLines(baseNotes, noteLines = []) {
 }
 
 function formatProviderDocumentImportCommercialClauseCategoryLabel(category) {
-  switch (String(category || "").trim().toLowerCase()) {
+  switch (
+    String(category || "")
+      .trim()
+      .toLowerCase()
+  ) {
     case "payment":
       return "Pago";
     case "delivery":
@@ -1295,9 +1257,10 @@ function buildProviderDocumentImportCommercialClauseNoteLines(clauses = []) {
     if (!text) {
       return;
     }
-    const categoryLabel = formatProviderDocumentImportCommercialClauseCategoryLabel(
-      clause?.category,
-    );
+    const categoryLabel =
+      formatProviderDocumentImportCommercialClauseCategoryLabel(
+        clause?.category,
+      );
     const title = String(clause?.titleEs || "").trim();
     const textLine = title
       ? `${categoryLabel} - ${title}: ${text}`
@@ -4841,108 +4804,118 @@ export function useQuotationsSection({
     }
   }, [refreshQuotations, selectedQuotationId]);
 
-  const persistCurrentVersion = useCallback(async (options = {}) => {
-    if (!selectedVersionId) {
-      return { ok: false, message: "Version no encontrada" };
-    }
+  const persistCurrentVersion = useCallback(
+    async (options = {}) => {
+      if (!selectedVersionId) {
+        return { ok: false, message: "Version no encontrada" };
+      }
 
-    const payload = buildPersistedQuotationVersionPayload({
-      selectedVersion,
-      versionForm,
-      sectionEdits,
+      const payload = buildPersistedQuotationVersionPayload({
+        selectedVersion,
+        versionForm,
+        sectionEdits,
+        itemEdits,
+        inclusionTypes: catalogs.inclusionTypes,
+        bundleCollapseState: options.bundleCollapseState,
+      });
+      const validationMessage =
+        validatePersistedQuotationVersionPayload(payload);
+
+      if (validationMessage) {
+        setError(validationMessage);
+        return { ok: false, message: validationMessage };
+      }
+
+      const { data } = await api.put(
+        `/api/quotation-versions/${selectedVersionId}/full`,
+        payload,
+      );
+      applyLoadedVersionState(data, catalogs.providers);
+      return { ok: true, data };
+    },
+    [
+      applyLoadedVersionState,
+      catalogs.inclusionTypes,
+      catalogs.providers,
       itemEdits,
-      inclusionTypes: catalogs.inclusionTypes,
-      bundleCollapseState: options.bundleCollapseState,
-    });
-    const validationMessage = validatePersistedQuotationVersionPayload(payload);
+      sectionEdits,
+      selectedVersion,
+      selectedVersionId,
+      versionForm,
+    ],
+  );
 
-    if (validationMessage) {
-      setError(validationMessage);
-      return { ok: false, message: validationMessage };
-    }
+  const handleSaveVersion = useCallback(
+    async (options = {}) => {
+      if (!selectedVersionId) return;
+      setError("");
+      setSuccess("");
+      try {
+        setBusyAction("save-version");
+        const result = await persistCurrentVersion(options);
 
-    const { data } = await api.put(
-      `/api/quotation-versions/${selectedVersionId}/full`,
-      payload,
-    );
-    applyLoadedVersionState(data, catalogs.providers);
-    return { ok: true, data };
-  }, [
-    applyLoadedVersionState,
-    catalogs.inclusionTypes,
-    catalogs.providers,
-    itemEdits,
-    sectionEdits,
-    selectedVersion,
-    selectedVersionId,
-    versionForm,
-  ]);
+        if (!result.ok) {
+          return;
+        }
 
-  const handleSaveVersion = useCallback(async (options = {}) => {
-    if (!selectedVersionId) return;
-    setError("");
-    setSuccess("");
-    try {
-      setBusyAction("save-version");
-      const result = await persistCurrentVersion(options);
+        await refreshQuotations({
+          preferredQuotationId: selectedQuotationId,
+          preferredVersionId: selectedVersionId,
+        });
 
-      if (!result.ok) {
-        return;
+        setSuccess(result.data?.message || "Version actualizada");
+      } catch (err) {
+        setError(getApiErrorMessage(err, "No fue posible guardar la version"));
+      } finally {
+        setBusyAction("");
       }
+    },
+    [
+      persistCurrentVersion,
+      refreshQuotations,
+      selectedQuotationId,
+      selectedVersionId,
+    ],
+  );
 
-      await refreshQuotations({
-        preferredQuotationId: selectedQuotationId,
-        preferredVersionId: selectedVersionId,
-      });
+  const handleSaveAsNewVersion = useCallback(
+    async (options = {}) => {
+      if (!selectedQuotationId) return;
+      setError("");
+      setSuccess("");
+      try {
+        setBusyAction("save-as-new-version");
+        const saveResult = await persistCurrentVersion(options);
 
-      setSuccess(result.data?.message || "Version actualizada");
-    } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible guardar la version"));
-    } finally {
-      setBusyAction("");
-    }
-  }, [
-    persistCurrentVersion,
-    refreshQuotations,
-    selectedQuotationId,
-    selectedVersionId,
-  ]);
+        if (!saveResult.ok) {
+          return;
+        }
 
-  const handleSaveAsNewVersion = useCallback(async (options = {}) => {
-    if (!selectedQuotationId) return;
-    setError("");
-    setSuccess("");
-    try {
-      setBusyAction("save-as-new-version");
-      const saveResult = await persistCurrentVersion(options);
-
-      if (!saveResult.ok) {
-        return;
+        const { data } = await api.post(
+          `/api/quotations/${selectedQuotationId}/versions`,
+          {
+            bundleCollapseState:
+              options.bundleCollapseState &&
+              typeof options.bundleCollapseState === "object"
+                ? options.bundleCollapseState
+                : {},
+          },
+        );
+        await refreshQuotations({
+          preferredQuotationId: selectedQuotationId,
+          preferredVersionId: data.id,
+        });
+        setSuccess(data.message || "Version creada");
+      } catch (err) {
+        setError(
+          getApiErrorMessage(err, "No fue posible guardar como nueva version"),
+        );
+      } finally {
+        setBusyAction("");
       }
-
-      const { data } = await api.post(
-        `/api/quotations/${selectedQuotationId}/versions`,
-        {
-          bundleCollapseState:
-            options.bundleCollapseState &&
-            typeof options.bundleCollapseState === "object"
-              ? options.bundleCollapseState
-              : {},
-        },
-      );
-      await refreshQuotations({
-        preferredQuotationId: selectedQuotationId,
-        preferredVersionId: data.id,
-      });
-      setSuccess(data.message || "Version creada");
-    } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible guardar como nueva version"),
-      );
-    } finally {
-      setBusyAction("");
-    }
-  }, [persistCurrentVersion, refreshQuotations, selectedQuotationId]);
+    },
+    [persistCurrentVersion, refreshQuotations, selectedQuotationId],
+  );
 
   const handleUploadQuotationDocuments = useCallback(
     async (files) => {
@@ -5424,12 +5397,9 @@ export function useQuotationsSection({
             ? `/api/quotation-create/provider-document-import/preview/jobs/${jobId}`
             : `/api/quotation-versions/${selectedVersionId}/provider-document-import/preview/jobs/${jobId}`;
 
-          const pollResponse = await api.get(
-            pollUrl,
-            {
-              timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
-            },
-          );
+          const pollResponse = await api.get(pollUrl, {
+            timeout: PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS,
+          });
           resolvedData = pollResponse.data;
 
           setProviderDocumentImportState((current) => ({
@@ -6217,11 +6187,23 @@ export function useQuotationsSection({
     async (actionCode, actionOptions = {}) => {
       if (!selectedVersionId) {
         setError("Selecciona una version antes de ejecutar una acción.");
-        return;
+        return {
+          ok: false,
+          message: "Selecciona una version antes de ejecutar una acción.",
+        };
       }
       if (actionCode === "crear_version") {
         await handleCreateVersion();
-        return;
+        return { ok: true };
+      }
+      if (actionCode === "enviar" && !actionOptions?.confirmedEmailSent) {
+        const message =
+          "Debes enviar la cotizacion por Google antes de marcarla como enviada.";
+        setError(message);
+        return {
+          ok: false,
+          message,
+        };
       }
 
       const normalizedApprovalMode = String(
@@ -6328,127 +6310,6 @@ export function useQuotationsSection({
         return recommendations;
       };
 
-      const prepareSendConfirmation = async () => {
-        if (actionCode !== "enviar") {
-          return true;
-        }
-
-        const normalizedPayload = normalizeQuotationPdfPayload(
-          actionOptions?.quotationPrintModel,
-        );
-        if (!normalizedPayload) {
-          setError(
-            "No fue posible preparar el documento para compartir en el correo.",
-          );
-          return false;
-        }
-
-        let publicQuotationUrl = "";
-        try {
-          const response = await api.post(
-            `/api/quotation-versions/${selectedVersionId}/public-share-link`,
-            {
-              pdfPayload: normalizedPayload,
-            },
-          );
-          publicQuotationUrl = String(response?.data?.url || "").trim();
-        } catch (err) {
-          setError(
-            getApiErrorMessage(
-              err,
-              "No fue posible generar el enlace público de la cotización.",
-            ),
-          );
-          return false;
-        }
-
-        if (!publicQuotationUrl) {
-          setError(
-            "No fue posible generar el enlace público de la cotización.",
-          );
-          return false;
-        }
-
-        const contactId = Number(versionForm?.contactId || 0);
-        const selectedContact = Array.isArray(editContactOptions)
-          ? editContactOptions.find(
-              (contact) => Number(contact?.id || 0) === contactId,
-            )
-          : null;
-        const recipientEmail = String(selectedContact?.email || "").trim();
-        const recipientName = String(
-          selectedContact?.full_name || selectedContact?.fullName || "",
-        ).trim();
-
-        const proposalName = String(versionForm?.proposalName || "").trim();
-        const quotationId = Number(selectedQuotation?.id || 0);
-        const versionNumber = Number(selectedVersion?.versionNumber || 0);
-        const reference = [
-          quotationId > 0 ? `#${quotationId}` : "",
-          versionNumber > 0 ? `V${versionNumber}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-
-        const subject = proposalName
-          ? reference
-            ? `Cotización ${reference} - ${proposalName}`
-            : `Cotización - ${proposalName}`
-          : reference
-            ? `Cotización ${reference}`
-            : "Cotización";
-
-        const greetingLine = recipientName ? `Hola ${recipientName},` : "Hola,";
-
-        const bodyLines = [
-          greetingLine,
-          "",
-          "Te comparto la cotización para tu revisión.",
-          "",
-          "Enlace público (PDF):",
-          publicQuotationUrl,
-          "",
-          "Resumen:",
-        ];
-
-        if (reference) {
-          bodyLines.push(`- Referencia: ${reference}`);
-        }
-        if (proposalName) {
-          bodyLines.push(`- Propuesta: ${proposalName}`);
-        }
-
-        bodyLines.push("", "Quedo atento a tus comentarios.", "", "Saludos.");
-
-        const mailtoUrl = buildMailtoDraftUrl({
-          to: recipientEmail,
-          subject,
-          body: bodyLines.join("\n"),
-        });
-        const opened = openMailtoDraft(mailtoUrl);
-
-        if (!opened) {
-          setError(
-            "No fue posible abrir el cliente de correo. La cotización no se marcó como enviada.",
-          );
-          return false;
-        }
-
-        const confirmationMessage = recipientEmail
-          ? `Se intentó abrir el correo para ${recipientEmail}. ¿Confirmas que el correo quedó abierto/preparado para envío?`
-          : "Se intentó abrir el correo. ¿Confirmas que el correo quedó abierto/preparado para envío?";
-        const confirmedPrepared = window.confirm(confirmationMessage);
-
-        if (!confirmedPrepared) {
-          setSuccess(
-            "No se marcó como enviada porque no se confirmó la preparación del correo.",
-          );
-          return false;
-        }
-
-        return true;
-      };
-
       setBusyAction(busyActionCode);
       setError("");
       setSuccess("");
@@ -6483,10 +6344,6 @@ export function useQuotationsSection({
 
         let response;
         let approvalContextOverrides = {};
-
-        if (!(await prepareSendConfirmation())) {
-          return;
-        }
 
         while (!response) {
           try {
@@ -6651,27 +6508,31 @@ export function useQuotationsSection({
           );
         }
         setSuccess(data.message || "Acción ejecutada");
+        return {
+          ok: true,
+          message: String(data?.message || "Acción ejecutada"),
+          data,
+        };
       } catch (err) {
         const approvalPolicyMessage = buildApprovalPolicyErrorMessage(err);
-        setError(
+        const message =
           approvalPolicyMessage ||
-            getApiErrorMessage(err, "No fue posible ejecutar la acción"),
-        );
+          getApiErrorMessage(err, "No fue posible ejecutar la acción");
+        setError(message);
+        return {
+          ok: false,
+          message,
+          error: err,
+        };
       } finally {
         setBusyAction("");
       }
     },
     [
-      editContactOptions,
       handleCreateVersion,
       refreshQuotations,
-      selectedQuotation?.id,
       selectedQuotationId,
-      selectedVersion?.versionNumber,
       selectedVersionId,
-      versionForm,
-      versionForm?.contactId,
-      versionForm?.proposalName,
     ],
   );
 

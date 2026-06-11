@@ -136,19 +136,135 @@
 }
 
 .proposal-email-modal {
-  width: min(860px, calc(100vw - 28px));
+  max-width: none;
+  width: min(50vw, calc(100vw - 28px));
   max-height: calc(100vh - 30px);
   overflow: auto;
 }
 
 .proposal-email-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid #d9e0ea;
   margin-bottom: 14px;
+}
+
+.proposal-email-modal-header-main {
+  min-width: 0;
+}
+
+.proposal-email-icon-button {
+  appearance: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  line-height: 0;
+  border-radius: 10px;
+  border: 1px solid #c6d3e2;
+  background: #f2f7fd;
+  color: #1f4e78;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.proposal-email-icon-button:hover {
+  transform: translateY(-1px);
+  border-color: #9eb7d0;
+  background: #e9f2fc;
+  color: #153f66;
+}
+
+.proposal-email-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.proposal-email-icon-button svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.proposal-email-close-button {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-color: #efc2be;
+  background: #fff4f3;
+  color: #b42318;
+}
+
+.proposal-email-close-button:hover {
+  border-color: #e2a09a;
+  background: #ffe8e6;
+  color: #8f1d13;
+}
+
+.proposal-print-preview-icon-button.account-modal-close-button {
+  width: 36px;
+  height: 36px;
+  border-color: #efc2be;
+  background: #fff4f3;
+  color: #b42318;
+}
+
+.proposal-print-preview-icon-button.account-modal-close-button:hover {
+  border-color: #e2a09a;
+  background: #ffe8e6;
+  color: #8f1d13;
+}
+
+.proposal-email-add-attachment-button {
+  flex: 0 0 auto;
+}
+
+.proposal-email-send-button {
+  border-color: #99d0b7;
+  background: #e8f7ef;
+  color: #1b6c4a;
+}
+
+.proposal-email-send-button:hover {
+  border-color: #80bf9f;
+  background: #dbf1e5;
+  color: #14563a;
 }
 
 .proposal-email-modal-notice {
   margin: 0 0 14px;
   color: #0f6f52;
+  font-size: 0.92rem;
+}
+
+.proposal-email-google-status {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #d6dfeb;
+  border-radius: 10px;
+  background: #f7fbff;
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-email-google-status-ok {
+  margin: 0;
+  color: #165d45;
+  font-size: 0.92rem;
+}
+
+.proposal-email-google-status-warning {
+  margin: 0;
+  color: #8b5a05;
   font-size: 0.92rem;
 }
 
@@ -160,6 +276,13 @@
 .proposal-email-field {
   display: grid;
   gap: 6px;
+}
+
+.proposal-email-message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .proposal-email-field input,
@@ -271,6 +394,59 @@
 
 .proposal-email-actions {
   margin-top: 16px;
+  justify-content: flex-end;
+}
+
+.proposal-email-result-overlay {
+  z-index: 1700;
+}
+
+.proposal-email-result-modal {
+  width: min(420px, calc(100vw - 28px));
+  padding: 22px 22px 18px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.proposal-email-result-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.proposal-email-result-icon svg {
+  width: 30px;
+  height: 30px;
+  display: block;
+  fill: currentColor;
+}
+
+.proposal-email-result-modal p {
+  margin: 0;
+  color: #33475b;
+}
+
+.proposal-email-result-actions {
+  margin-top: 6px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  grid-template-columns: none;
+}
+
+.proposal-email-result-icon.is-success {
+  background: #e9f8f0;
+  color: #1f7a53;
+}
+
+.proposal-email-result-icon.is-error {
+  background: #fff2ef;
+  color: #b24739;
 }
 
 .proposal-print-sheet {

@@ -907,7 +907,7 @@ router.get(
       allowGlobal: hasGlobalOpportunityReadScope,
     });
     const rows = await query(
-      `SELECT c.id, c.account_id,
+      `SELECT c.id, c.account_id, c.email,
               CONCAT(c.first_name, ' ', c.last_name) AS full_name
        FROM contacts c
        INNER JOIN accounts a ON a.id = c.account_id

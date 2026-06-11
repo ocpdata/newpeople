@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
@@ -292,6 +293,12 @@ function normalizeProposalDetail(proposal) {
   if (!proposal || typeof proposal !== "object") return proposal;
   return {
     ...proposal,
+    contactEmail: String(
+      proposal.contactEmail ||
+        proposal.contact_email ||
+        proposal.contact?.email ||
+        "",
+    ).trim(),
     components: Array.isArray(proposal.components)
       ? proposal.components.map(normalizeProposalComponent).filter(Boolean)
       : [],
@@ -939,6 +946,8 @@ function buildProposalPrintModel(
     updatedAtLabel: formatDateTime(selectedProposal.updatedAt),
     accountName: selectedProposal.accountName || "Sin cuenta",
     contactName: selectedProposal.contactName || "Sin contacto",
+    contactEmail:
+      selectedProposal.contactEmail || selectedProposal.contact?.email || "",
     quotationId: selectedProposal.quotationId || "-",
     quotationVersionNumber: selectedProposal.quotationVersionNumber || "-",
     sections,
@@ -3076,9 +3085,22 @@ export default function ProposalsPage() {
   });
   const [proposalEmailError, setProposalEmailError] = useState("");
   const [proposalEmailNotice, setProposalEmailNotice] = useState("");
-  const [isConfirmingProposalEmailSend, setIsConfirmingProposalEmailSend] =
-    useState(false);
+  const [proposalEmailSendResult, setProposalEmailSendResult] = useState({
+    isOpen: false,
+    type: "success",
+    message: "",
+  });
   const [sendingProposalEmail, setSendingProposalEmail] = useState(false);
+  const [suggestingProposalEmail, setSuggestingProposalEmail] = useState(false);
+  const [proposalGoogleMailStatus, setProposalGoogleMailStatus] = useState({
+    loading: false,
+    connected: false,
+    canSend: false,
+    missingScope: false,
+    needsReconnect: false,
+    googleEmail: "",
+    startUrl: "/api/auth/google-mail/start",
+  });
   const [companyBranding, setCompanyBranding] = useState(null);
   const [metadataDraft, setMetadataDraft] = useState({
     title: "",
@@ -3173,6 +3195,10 @@ export default function ProposalsPage() {
 
   const selectedProposalId =
     Number(searchParams.get("proposalId") || 0) || null;
+  const googleMailConnectState =
+    String(searchParams.get("googleMailConnect") || "").trim() || null;
+  const shouldReopenProposalEmailAfterGoogle =
+    String(searchParams.get("reopenProposalEmail") || "").trim() === "1";
   const createFromVersionId =
     Number(searchParams.get("createFromVersionId") || 0) || null;
   const sourceProposalId =
@@ -3737,6 +3763,44 @@ export default function ProposalsPage() {
       cancelled = true;
     };
   }, [selectedProposalId]);
+
+  useEffect(() => {
+    if (!googleMailConnectState) {
+      return;
+    }
+
+    const shouldReopenModalNow =
+      googleMailConnectState === "success" &&
+      shouldReopenProposalEmailAfterGoogle;
+    if (shouldReopenModalNow && selectedProposalId && !selectedProposal?.id) {
+      return;
+    }
+
+    if (googleMailConnectState === "success") {
+      setSuccess("Cuenta de Google conectada para envio de propuestas.");
+      if (shouldReopenModalNow && selectedProposal?.id) {
+        void handleOpenProposalEmailComposer();
+      }
+    } else if (googleMailConnectState === "denied") {
+      setError("Cancelaste la conexion de Google para envio de propuestas.");
+    } else {
+      setError(
+        "No fue posible completar la conexion de Google para enviar propuestas.",
+      );
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("googleMailConnect");
+    nextParams.delete("reopenProposalEmail");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    googleMailConnectState,
+    shouldReopenProposalEmailAfterGoogle,
+    searchParams,
+    selectedProposalId,
+    selectedProposal?.id,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (openProposalMenuId === null) return undefined;
@@ -4356,10 +4420,18 @@ export default function ProposalsPage() {
         previewSource.proposal?.contactName ||
         "",
     ).trim();
+    const proposalRecipientEmail = String(
+      nextPreviewModel?.contactEmail ||
+        previewSource.proposal?.contactEmail ||
+        previewSource.proposal?.contact?.email ||
+        previewSource.proposal?.quotationContactEmail ||
+        previewSource.proposal?.email ||
+        "",
+    ).trim();
     const greeting = contactName ? `Estimado/a ${contactName},` : "Buen dia,";
 
     setProposalEmailDraft({
-      to: "",
+      to: proposalRecipientEmail,
       cc: "",
       subject: `${proposalTitle} - ${accountName}`,
       messageBody: `${greeting}\n\nComparto la propuesta para su revision. Quedo atento a sus comentarios y a los siguientes pasos para avanzar con el proyecto.\n\nSaludos cordiales,`,
@@ -4367,7 +4439,11 @@ export default function ProposalsPage() {
     });
     setProposalEmailError("");
     setProposalEmailNotice("");
-    setIsConfirmingProposalEmailSend(false);
+    setProposalEmailSendResult({
+      isOpen: false,
+      type: "success",
+      message: "",
+    });
     setIsProposalEmailModalOpen(true);
   }
 
@@ -4393,7 +4469,13 @@ export default function ProposalsPage() {
       };
     }
 
+    const googleStatus = await loadProposalGoogleMailStatus({ silent: true });
     openProposalEmailModalWithDefaults(previewSource);
+    if (!googleStatus?.canSend) {
+      setProposalEmailNotice(
+        "Conecta Google para habilitar el envio de propuestas.",
+      );
+    }
   }
 
   function handleCloseProposalEmailModal() {
@@ -4401,7 +4483,31 @@ export default function ProposalsPage() {
     setIsProposalEmailModalOpen(false);
     setProposalEmailError("");
     setProposalEmailNotice("");
-    setIsConfirmingProposalEmailSend(false);
+  }
+
+  function openProposalEmailSendResult(type, message) {
+    setProposalEmailSendResult({
+      isOpen: true,
+      type: type === "error" ? "error" : "success",
+      message: String(message || "").trim(),
+    });
+  }
+
+  function handleAcknowledgeProposalEmailSendResult() {
+    const resultType = proposalEmailSendResult.type;
+    setProposalEmailSendResult({
+      isOpen: false,
+      type: "success",
+      message: "",
+    });
+
+    if (resultType === "success") {
+      setIsProposalEmailModalOpen(false);
+      setIsPreviewOpen(true);
+      return;
+    }
+
+    setIsProposalEmailModalOpen(true);
   }
 
   function handleProposalEmailFieldChange(field, value) {
@@ -4411,6 +4517,156 @@ export default function ProposalsPage() {
     }));
     setProposalEmailError("");
     setProposalEmailNotice("");
+  }
+
+  async function handleSuggestProposalEmailWithAi() {
+    if (!selectedProposal?.id) {
+      setProposalEmailError(
+        "No hay una propuesta seleccionada para generar sugerencia IA.",
+      );
+      return;
+    }
+
+    setSuggestingProposalEmail(true);
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+
+    try {
+      const tone = "formal";
+      const length = String(proposalEmailDraft.messageBody || "").trim()
+        ? "medio"
+        : "corto";
+
+      const { data } = await api.post("/api/proposals/email-suggestions", {
+        proposalId: Number(selectedProposal.id),
+        tone,
+        length,
+        objective: "presentar",
+        includePricing: true,
+        includeNextStep: true,
+        recipientNameOverride: "",
+        draftContext: {
+          mode: String(proposalEmailDraft.messageBody || "").trim()
+            ? "mejorar"
+            : "crear",
+          currentSubject: String(proposalEmailDraft.subject || "").trim(),
+          currentMessageBody: String(
+            proposalEmailDraft.messageBody || "",
+          ).trim(),
+        },
+      });
+
+      const suggestedSubject = String(data?.suggestion?.subject || "").trim();
+      const suggestedBody = String(data?.suggestion?.messageBody || "").trim();
+      if (!suggestedSubject || !suggestedBody) {
+        setProposalEmailError(
+          "La IA no devolvio una sugerencia valida para el correo.",
+        );
+        return;
+      }
+
+      setProposalEmailDraft((current) => ({
+        ...current,
+        subject: suggestedSubject,
+        messageBody: suggestedBody,
+      }));
+      setProposalEmailNotice("Borrador actualizado con sugerencia IA.");
+    } catch (err) {
+      setProposalEmailError(
+        getApiErrorMessage(
+          err,
+          "No fue posible generar la sugerencia IA para el correo.",
+        ),
+      );
+    } finally {
+      setSuggestingProposalEmail(false);
+    }
+  }
+
+  async function loadProposalGoogleMailStatus({ silent = false } = {}) {
+    setProposalGoogleMailStatus((current) => ({
+      ...current,
+      loading: true,
+    }));
+
+    try {
+      const { data } = await api.get("/api/auth/google-mail/status");
+      const nextStatus = {
+        loading: false,
+        connected: Boolean(data?.connected),
+        canSend: Boolean(data?.canSend),
+        missingScope: Boolean(data?.missingScope),
+        needsReconnect: Boolean(data?.needsReconnect),
+        googleEmail: String(data?.googleEmail || ""),
+        startUrl: String(data?.startUrl || "/api/auth/google-mail/start"),
+      };
+      setProposalGoogleMailStatus(nextStatus);
+
+      if (!silent && !nextStatus.canSend) {
+        setProposalEmailNotice(
+          "Debes conectar tu cuenta de Google para enviar esta propuesta.",
+        );
+      }
+
+      return nextStatus;
+    } catch (err) {
+      setProposalGoogleMailStatus({
+        loading: false,
+        connected: false,
+        canSend: false,
+        missingScope: false,
+        needsReconnect: false,
+        googleEmail: "",
+        startUrl: "/api/auth/google-mail/start",
+      });
+
+      if (!silent) {
+        setProposalEmailError(
+          getApiErrorMessage(
+            err,
+            "No fue posible validar la conexion de Google para enviar propuestas.",
+          ),
+        );
+      }
+
+      return null;
+    }
+  }
+
+  async function handleConnectProposalGoogleMail() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const connectUrl =
+      proposalGoogleMailStatus.startUrl || "/api/auth/google-mail/start";
+    const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.delete("googleMailConnect");
+    currentUrl.searchParams.set("reopenProposalEmail", "1");
+    const returnTo = currentUrl.toString();
+    try {
+      const { data } = await api.get(connectUrl, {
+        params: {
+          returnTo,
+          mode: "json",
+        },
+      });
+
+      const oauthUrl = String(data?.url || "").trim();
+      if (!oauthUrl) {
+        setProposalEmailError("No fue posible iniciar la conexion con Google.");
+        return;
+      }
+
+      window.location.assign(oauthUrl);
+    } catch (err) {
+      setProposalEmailError(
+        getApiErrorMessage(
+          err,
+          "No fue posible iniciar la conexion con Google.",
+        ),
+      );
+    }
   }
 
   function handleAddProposalEmailAttachments(files) {
@@ -4473,26 +4729,56 @@ export default function ProposalsPage() {
     const messageBody = String(proposalEmailDraft.messageBody || "").trim();
 
     if (!to) {
-      setProposalEmailError("Completa el destinatario principal.");
+      openProposalEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque falta el destinatario principal.",
+      );
       return;
     }
     if (!subject) {
-      setProposalEmailError("Completa el asunto del correo.");
+      openProposalEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque falta el asunto.",
+      );
       return;
     }
     if (!messageBody) {
-      setProposalEmailError("Completa el mensaje base del correo.");
+      openProposalEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque el mensaje esta vacio.",
+      );
       return;
     }
 
-    if (!isConfirmingProposalEmailSend) {
-      setIsConfirmingProposalEmailSend(true);
-      setProposalEmailError("");
-      setProposalEmailNotice("");
+    if (!proposalGoogleMailStatus.canSend) {
+      openProposalEmailSendResult(
+        "error",
+        "Debes conectar Google antes de enviar propuestas por correo.",
+      );
       return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Se enviara este correo ahora a ${to}. ¿Deseas continuar?`,
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     if (!selectedProposal) return;
+
+    const latestGoogleStatus = await loadProposalGoogleMailStatus({
+      silent: true,
+    });
+    if (!latestGoogleStatus?.canSend) {
+      openProposalEmailSendResult(
+        "error",
+        "Tu conexion de Google no esta lista. Reconecta e intenta de nuevo.",
+      );
+      return;
+    }
 
     setSendingProposalEmail(true);
     setProposalEmailError("");
@@ -4501,7 +4787,8 @@ export default function ProposalsPage() {
     try {
       const previewSource = await resolvePreviewSource();
       if (!previewSource) {
-        setProposalEmailError(
+        openProposalEmailSendResult(
+          "error",
           "No fue posible preparar la propuesta para enviarla por correo.",
         );
         return;
@@ -4514,7 +4801,8 @@ export default function ProposalsPage() {
         companyBranding,
       );
       if (!nextPreviewModel) {
-        setProposalEmailError(
+        openProposalEmailSendResult(
+          "error",
           "No fue posible construir el documento previo de propuesta.",
         );
         return;
@@ -4525,8 +4813,9 @@ export default function ProposalsPage() {
         previewSource.proposal,
       );
       if (!pdfPayload) {
-        setProposalEmailError(
-          "No fue posible construir el payload PDF para envio.",
+        openProposalEmailSendResult(
+          "error",
+          "No fue posible construir el documento PDF para el envio.",
         );
         return;
       }
@@ -4536,6 +4825,7 @@ export default function ProposalsPage() {
       formData.append("cc", String(proposalEmailDraft.cc || "").trim());
       formData.append("subject", subject);
       formData.append("messageBody", messageBody);
+      formData.append("sendMode", "google_user");
       formData.append("pdfPayload", JSON.stringify(pdfPayload));
 
       (proposalEmailDraft.attachments || []).forEach((entry, index) => {
@@ -4546,25 +4836,38 @@ export default function ProposalsPage() {
 
       await api.post("/api/proposals/send-email", formData);
 
-      setProposalEmailNotice("Correo enviado correctamente.");
-      setSuccess("Correo de propuesta enviado correctamente");
+      setProposalEmailNotice("");
       setIsProposalEmailModalOpen(false);
-      setIsConfirmingProposalEmailSend(false);
-    } catch (err) {
-      setProposalEmailError(
-        getApiErrorMessage(err, "No fue posible enviar el correo de propuesta"),
+      openProposalEmailSendResult(
+        "success",
+        `Correo enviado correctamente a ${to}.`,
       );
-      setIsConfirmingProposalEmailSend(false);
+    } catch (err) {
+      const reason = String(err?.response?.data?.reason || "").toLowerCase();
+      if (reason === "google_reconnect_required") {
+        openProposalEmailSendResult(
+          "error",
+          "La conexion con Google expiro o fue revocada. Reconecta para continuar.",
+        );
+        await loadProposalGoogleMailStatus({ silent: true });
+      } else if (reason === "google_scope_missing") {
+        openProposalEmailSendResult(
+          "error",
+          "La conexion de Google no incluye permiso de envio. Reconecta y acepta el permiso solicitado.",
+        );
+        await loadProposalGoogleMailStatus({ silent: true });
+      } else {
+        openProposalEmailSendResult(
+          "error",
+          getApiErrorMessage(
+            err,
+            "No fue posible enviar el correo de propuesta",
+          ),
+        );
+      }
     } finally {
       setSendingProposalEmail(false);
     }
-  }
-
-  function handleCancelConfirmProposalEmailSend() {
-    if (sendingProposalEmail) return;
-    setIsConfirmingProposalEmailSend(false);
-    setProposalEmailError("");
-    setProposalEmailNotice("");
   }
 
   async function handleOpenPdfPreview() {
@@ -5097,16 +5400,57 @@ export default function ProposalsPage() {
         isOpen={isProposalEmailModalOpen}
         draft={proposalEmailDraft}
         sending={sendingProposalEmail}
+        suggesting={suggestingProposalEmail}
         error={proposalEmailError}
         notice={proposalEmailNotice}
-        isConfirmingSend={isConfirmingProposalEmailSend}
         onClose={handleCloseProposalEmailModal}
         onChangeField={handleProposalEmailFieldChange}
         onAddAttachments={handleAddProposalEmailAttachments}
         onRemoveAttachment={handleRemoveProposalEmailAttachment}
         onRequestSend={handleRequestSendProposalEmail}
-        onCancelConfirm={handleCancelConfirmProposalEmailSend}
+        onSuggestWithAi={handleSuggestProposalEmailWithAi}
+        googleMailStatus={proposalGoogleMailStatus}
+        onConnectGoogleMail={handleConnectProposalGoogleMail}
       />
+
+      {proposalEmailSendResult.isOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="modal-overlay modal-overlay-elevated proposal-email-result-overlay">
+              <div className="modal-dialog proposal-email-result-modal">
+                <div
+                  className={`proposal-email-result-icon is-${proposalEmailSendResult.type}`}
+                  aria-hidden="true"
+                >
+                  {proposalEmailSendResult.type === "success" ? (
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 2.75a9.25 9.25 0 1 1 0 18.5 9.25 9.25 0 0 1 0-18.5Zm4.14 6.84a.75.75 0 0 0-1.08-1.04l-4.2 4.36-1.92-1.92a.75.75 0 1 0-1.06 1.06l2.46 2.47a.75.75 0 0 0 1.08-.01l4.72-4.92Z" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 2.75a9.25 9.25 0 1 1 0 18.5 9.25 9.25 0 0 1 0-18.5Zm0 5.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V9a.75.75 0 0 0-.75-.75Zm0 8.25a.94.94 0 1 0 0-1.88.94.94 0 0 0 0 1.88Z" />
+                    </svg>
+                  )}
+                </div>
+                <h3 className="modal-title">
+                  {proposalEmailSendResult.type === "success"
+                    ? "Correo enviado"
+                    : "No se pudo enviar el correo"}
+                </h3>
+                <p>{proposalEmailSendResult.message}</p>
+                <div className="modal-buttons proposal-email-result-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleAcknowledgeProposalEmailSendResult}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

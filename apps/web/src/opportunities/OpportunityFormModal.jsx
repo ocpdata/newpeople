@@ -223,6 +223,21 @@ function OpportunityFormModal({
     form.contactId,
     "full_name",
   );
+  const selectedOpportunityContact = currentContactOptions.find(
+    (contact) => Number(contact?.id || 0) === Number(form.contactId || 0),
+  );
+
+  // Fallback to find contact in full catalog if not found in filtered options
+  const resolvedSelectedContact =
+    selectedOpportunityContact ||
+    (catalogs?.contacts || []).find(
+      (contact) => Number(contact?.id || 0) === Number(form.contactId || 0),
+    );
+  const selectedOpportunityContactEmail = String(
+    resolvedSelectedContact?.email ||
+      resolvedSelectedContact?.emailAddress ||
+      "",
+  ).trim();
   const businessLineOptions = withCurrentCatalogOption(
     catalogs.businessLines,
     form.businessLineId,
@@ -636,7 +651,8 @@ function OpportunityFormModal({
                         <div className="opportunity-commercial-badges">
                           {!isCommercialFlowClosed ? (
                             <span className="record-id-badge">
-                              Etapa actual: {currentCommercialStage?.name || "-"}
+                              Etapa actual:{" "}
+                              {currentCommercialStage?.name || "-"}
                             </span>
                           ) : null}
                           <button
@@ -644,7 +660,9 @@ function OpportunityFormModal({
                             className={`${getCommercialStatusIconBadgeClass(
                               commercialContext.commercialStatus?.name,
                             )} commercial-status-badge-button${
-                              canOpenCommercialStatusReason ? " is-clickable" : ""
+                              canOpenCommercialStatusReason
+                                ? " is-clickable"
+                                : ""
                             }`}
                             onClick={openCommercialStatusReasonModal}
                             disabled={!canOpenCommercialStatusReason}
@@ -663,7 +681,9 @@ function OpportunityFormModal({
                           type="button"
                           className="opportunity-workspace-collapse-button"
                           onClick={() =>
-                            setIsCommercialSectionExpanded((current) => !current)
+                            setIsCommercialSectionExpanded(
+                              (current) => !current,
+                            )
                           }
                           aria-expanded={isCommercialSectionExpanded}
                           aria-controls="opportunity-commercial-section-body"
@@ -671,7 +691,9 @@ function OpportunityFormModal({
                           <span aria-hidden="true">
                             {isCommercialSectionExpanded ? "▾" : "▸"}
                           </span>
-                          {isCommercialSectionExpanded ? "Colapsar" : "Expandir"}
+                          {isCommercialSectionExpanded
+                            ? "Colapsar"
+                            : "Expandir"}
                         </button>
                       </div>
                     </div>
@@ -680,365 +702,377 @@ function OpportunityFormModal({
                       id="opportunity-commercial-section-body"
                       hidden={!isCommercialSectionExpanded}
                     >
-                    <div
-                      className="opportunity-stage-stepper"
-                      role="tablist"
-                      aria-label="Etapas del proceso comercial"
-                    >
-                      {commercialContext.stages.map((stage) => {
-                        const isSelected =
-                          String(stage.id) ===
-                          String(selectedCommercialStageId);
-                        const normalizedStageName = stage.name
-                          .normalize("NFD")
-                          .replace(/[\u0300-\u036f]/g, "")
-                          .toLowerCase();
-                        const stepperStageName =
-                          normalizedStageName === "contacto inicial"
-                            ? "Contacto"
-                            : normalizedStageName ===
-                                "identificacion de la oportunidad"
-                              ? "Identificacion"
-                              : stage.name;
-                        const className = [
-                          "opportunity-stage-step",
-                          isSelected ? "is-selected" : "",
-                          stage.isCurrent ? "is-current" : "",
-                          stage.isPast ? "is-past" : "",
-                          stage.isFuture ? "is-future" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ");
-
-                        return (
-                          <button
-                            key={stage.id}
-                            type="button"
-                            className={className}
-                            onClick={() =>
-                              handleCommercialStageSelect(stage.id)
-                            }
-                            aria-label={stage.name}
-                            aria-pressed={isSelected}
-                            disabled={loadingCommercialStageView && isSelected}
-                          >
-                            <span className="opportunity-stage-step-line" />
-                            <span className="opportunity-stage-step-circle-wrap">
-                              <span className="opportunity-stage-step-order">
-                                {stage.order}
-                              </span>
-                            </span>
-                            <span className="opportunity-stage-step-content">
-                              <strong>{stepperStageName}</strong>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {loadingCommercialStageView ? (
-                      <p className="field-hint opportunity-commercial-hint">
-                        Cargando etapa seleccionada...
-                      </p>
-                    ) : null}
-
-                    {hasPendingStageChange ? (
-                      <p className="field-hint opportunity-stage-readonly-banner">
-                        Hay un cambio de etapa pendiente hacia{" "}
-                        {currentCommercialStage?.name ||
-                          "la etapa seleccionada"}
-                        . Presiona Guardar cambios para grabarlo o cierra el
-                        modal para descartarlo.
-                      </p>
-                    ) : null}
-
-                    {hasPendingCommercialClose ? (
-                      <p className="field-hint opportunity-stage-readonly-banner">
-                        Hay un cierre comercial pendiente como{" "}
-                        {pendingCommercialCloseStatusName ||
-                          "estado seleccionado"}
-                        . Presiona Guardar cambios para grabarlo o cierra el
-                        modal para descartarlo.
-                      </p>
-                    ) : null}
-
-                    {isSelectedCommercialStageReadOnly ? (
-                      <p className="field-hint opportunity-stage-readonly-banner">
-                        Estás revisando la etapa{" "}
-                        {commercialContext.salesStage?.name || "seleccionada"}.
-                        Esta vista es solo lectura porque la oportunidad sigue
-                        en {currentCommercialStage?.name || "la etapa actual"}.
-                      </p>
-                    ) : null}
-
-                    {displayedCommercialCloseReason ? (
-                      <div className="field-group opportunity-stage-question">
-                        <label>Motivo de cierre comercial</label>
-                        <textarea
-                          aria-label="Motivo de cierre comercial"
-                          rows={3}
-                          value={displayedCommercialCloseReason}
-                          disabled
-                          readOnly
-                        />
-                      </div>
-                    ) : null}
-
-                    <div className="opportunity-commercial-actions">
-                      {[
-                        ...(isCommercialSuggestionFeatureEnabled
-                          ? [
-                              {
-                                key: "suggest-document-answers",
-                                tone: "primary",
-                                icon: analyzingCommercialSuggestions
-                                  ? "..."
-                                  : "✦",
-                                label: "Proponer respuestas desde documentos",
-                                shortLabel: "Sugerir",
-                                onClick: analyzeCommercialStageAnswers,
-                                disabled:
-                                  analyzingCommercialSuggestions ||
-                                  Boolean(savingCommercialAction) ||
-                                  isCommercialFlowClosed ||
-                                  !commercialContext.isSelectedStageCurrent ||
-                                  hasPendingStageChange ||
-                                  hasPendingCommercialClose ||
-                                  !opportunityDocuments.length,
-                              },
-                            ]
-                          : []),
-                        {
-                          key: "validate-current-stage",
-                          tone: "success",
-                          icon:
-                            savingCommercialAction === "validate-current-stage"
-                              ? "..."
-                              : "✓",
-                          label: "Validar etapa actual",
-                          shortLabel: "Validar",
-                          onClick: handleCurrentStageValidation,
-                          disabled:
-                            Boolean(savingCommercialAction) ||
-                            isCommercialFlowClosed ||
-                            !commercialContext.isSelectedStageCurrent ||
-                            hasPendingStageChange ||
-                            hasPendingCommercialClose,
-                        },
-                        {
-                          key: "stage-bypass",
-                          tone: "warning",
-                          icon:
-                            savingCommercialAction === "stage-bypass"
-                              ? "..."
-                              : ">>",
-                          label: "Bypasear etapa",
-                          shortLabel: "Bypasear",
-                          onClick: handleStageBypass,
-                          disabled:
-                            Boolean(savingCommercialAction) ||
-                            isCommercialFlowClosed ||
-                            !commercialContext.isSelectedStageCurrent ||
-                            hasPendingStageChange ||
-                            hasPendingCommercialClose ||
-                            !canBypassCurrentStage,
-                        },
-                        {
-                          key: "retreat",
-                          tone: "neutral",
-                          icon:
-                            savingCommercialAction === "retreat" ? "..." : "←",
-                          label: canRetreatToSelectedStage
-                            ? "Regresar a etapa seleccionada"
-                            : "Regresar etapa anterior",
-                          shortLabel: "Regresar",
-                          onClick: () => handleStageTransition("retreat"),
-                          disabled:
-                            Boolean(savingCommercialAction) ||
-                            isCommercialFlowClosed ||
-                            hasPendingStageChange ||
-                            hasPendingCommercialClose ||
-                            (!commercialContext.isSelectedStageCurrent &&
-                              !canRetreatToSelectedStage) ||
-                            (!canRetreatToSelectedStage &&
-                              !hasImmediatePreviousStage),
-                        },
-                        ...(isWaitingCurrentStage
-                          ? [
-                              {
-                                key: "ganada",
-                                tone: "success",
-                                icon:
-                                  savingCommercialAction === "ganada"
-                                    ? "..."
-                                    : "★",
-                                label: "Marcar ganada",
-                                shortLabel: "Ganada",
-                                onClick: () => handleCommercialClose("ganada"),
-                                disabled:
-                                  Boolean(savingCommercialAction) ||
-                                  isCommercialFlowClosed ||
-                                  !commercialContext.isSelectedStageCurrent ||
-                                  hasPendingStageChange ||
-                                  hasPendingCommercialClose,
-                              },
-                            ]
-                          : []),
-                        {
-                          key: "perdida",
-                          tone: "danger",
-                          icon:
-                            savingCommercialAction === "perdida" ? "..." : "✕",
-                          label: "Marcar perdida",
-                          shortLabel: "Perdida",
-                          onClick: () => handleCommercialClose("perdida"),
-                          disabled:
-                            Boolean(savingCommercialAction) ||
-                            isCommercialFlowClosed ||
-                            !commercialContext.isSelectedStageCurrent ||
-                            hasPendingStageChange,
-                        },
-                        {
-                          key: "anulada",
-                          tone: "muted",
-                          icon:
-                            savingCommercialAction === "anulada" ? "..." : "⊘",
-                          label: "Marcar anulada",
-                          shortLabel: "Anulada",
-                          onClick: () => handleCommercialClose("anulada"),
-                          disabled:
-                            Boolean(savingCommercialAction) ||
-                            isCommercialFlowClosed ||
-                            !commercialContext.isSelectedStageCurrent ||
-                            hasPendingStageChange,
-                        },
-                      ].map((action) => (
-                        <div
-                          key={action.key}
-                          className="opportunity-commercial-action-item"
-                        >
-                          <button
-                            type="button"
-                            className={`opportunity-commercial-action-icon is-${action.tone}`}
-                            onClick={action.onClick}
-                            disabled={action.disabled}
-                            title={action.label}
-                            aria-label={action.label}
-                          >
-                            <span aria-hidden="true">{action.icon}</span>
-                          </button>
-                          <span className="opportunity-commercial-action-label">
-                            {action.shortLabel}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {commercialContext.bypassInfo?.isBypassed ? (
-                      <div className="opportunity-stage-bypass-summary">
-                        <p className="field-hint opportunity-stage-readonly-banner">
-                          Esta etapa fue bypaseada. Solo se muestra el motivo
-                          del bypass.
-                        </p>
-                        <div className="field-group opportunity-stage-question">
-                          <label>Motivo del bypass</label>
-                          <textarea
-                            aria-label="Motivo del bypass aplicado"
-                            rows={3}
-                            value={
-                              commercialContext.bypassInfo.reason ||
-                              "Sin motivo registrado"
-                            }
-                            disabled
-                          />
-                        </div>
-                      </div>
-                    ) : commercialContext.answers.length > 0 ? (
-                      <div className="opportunity-stage-questions">
-                        {commercialContext.answers.map((answer) => {
-                          const suggestion =
-                            stageAnswerSuggestions[
-                              Number(answer.question_id)
-                            ] || null;
+                      <div
+                        className="opportunity-stage-stepper"
+                        role="tablist"
+                        aria-label="Etapas del proceso comercial"
+                      >
+                        {commercialContext.stages.map((stage) => {
+                          const isSelected =
+                            String(stage.id) ===
+                            String(selectedCommercialStageId);
+                          const normalizedStageName = stage.name
+                            .normalize("NFD")
+                            .replace(/[\u0300-\u036f]/g, "")
+                            .toLowerCase();
+                          const stepperStageName =
+                            normalizedStageName === "contacto inicial"
+                              ? "Contacto"
+                              : normalizedStageName ===
+                                  "identificacion de la oportunidad"
+                                ? "Identificacion"
+                                : stage.name;
+                          const className = [
+                            "opportunity-stage-step",
+                            isSelected ? "is-selected" : "",
+                            stage.isCurrent ? "is-current" : "",
+                            stage.isPast ? "is-past" : "",
+                            stage.isFuture ? "is-future" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
 
                           return (
-                            <div
-                              key={answer.question_id}
-                              className="field-group opportunity-stage-question"
+                            <button
+                              key={stage.id}
+                              type="button"
+                              className={className}
+                              onClick={() =>
+                                handleCommercialStageSelect(stage.id)
+                              }
+                              aria-label={stage.name}
+                              aria-pressed={isSelected}
+                              disabled={
+                                loadingCommercialStageView && isSelected
+                              }
                             >
-                              <label>
-                                {answer.prompt}{" "}
-                                {answer.is_required ? (
-                                  <span className="required-mark">*</span>
-                                ) : null}
-                              </label>
-                              <textarea
-                                aria-label={`${answer.prompt}${
-                                  answer.is_required ? " *" : ""
-                                }`}
-                                rows={3}
-                                value={answer.answer_value}
-                                onChange={(event) =>
-                                  updateCommercialAnswer(
-                                    answer.question_id,
-                                    event.target.value,
-                                  )
-                                }
-                                disabled={
-                                  isCommercialFlowClosed ||
-                                  !commercialContext.isSelectedStageCurrent ||
-                                  hasPendingStageChange
-                                }
-                              />
-
-                              {suggestion?.status === "proposed" ? (
-                                <div className="opportunity-answer-suggestion-card">
-                                  <div className="opportunity-answer-suggestion-copy">
-                                    <strong>
-                                      {String(answer.answer_value || "").trim()
-                                        ? "Reemplazo sugerido"
-                                        : "Sugerencia documental"}
-                                    </strong>
-                                    <p>{suggestion.proposedAnswer}</p>
-                                    {suggestion.reason ? (
-                                      <span>{suggestion.reason}</span>
-                                    ) : null}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className="btn-secondary"
-                                    onClick={() =>
-                                      applyCommercialAnswerSuggestion(
-                                        answer.question_id,
-                                      )
-                                    }
-                                    disabled={
-                                      isCommercialFlowClosed ||
-                                      !commercialContext.isSelectedStageCurrent ||
-                                      hasPendingStageChange
-                                    }
-                                  >
-                                    {String(answer.answer_value || "").trim()
-                                      ? "Aplicar reemplazo"
-                                      : "Aplicar sugerencia"}
-                                  </button>
-                                </div>
-                              ) : suggestion?.reason ? (
-                                <p className="field-hint opportunity-answer-suggestion-hint">
-                                  {suggestion.reason}
-                                </p>
-                              ) : null}
-                            </div>
+                              <span className="opportunity-stage-step-line" />
+                              <span className="opportunity-stage-step-circle-wrap">
+                                <span className="opportunity-stage-step-order">
+                                  {stage.order}
+                                </span>
+                              </span>
+                              <span className="opportunity-stage-step-content">
+                                <strong>{stepperStageName}</strong>
+                              </span>
+                            </button>
                           );
                         })}
                       </div>
-                    ) : (
-                      <p className="field-hint opportunity-commercial-hint">
-                        Esta etapa no tiene preguntas activas configuradas.
-                      </p>
-                    )}
-                    </div>
 
+                      {loadingCommercialStageView ? (
+                        <p className="field-hint opportunity-commercial-hint">
+                          Cargando etapa seleccionada...
+                        </p>
+                      ) : null}
+
+                      {hasPendingStageChange ? (
+                        <p className="field-hint opportunity-stage-readonly-banner">
+                          Hay un cambio de etapa pendiente hacia{" "}
+                          {currentCommercialStage?.name ||
+                            "la etapa seleccionada"}
+                          . Presiona Guardar cambios para grabarlo o cierra el
+                          modal para descartarlo.
+                        </p>
+                      ) : null}
+
+                      {hasPendingCommercialClose ? (
+                        <p className="field-hint opportunity-stage-readonly-banner">
+                          Hay un cierre comercial pendiente como{" "}
+                          {pendingCommercialCloseStatusName ||
+                            "estado seleccionado"}
+                          . Presiona Guardar cambios para grabarlo o cierra el
+                          modal para descartarlo.
+                        </p>
+                      ) : null}
+
+                      {isSelectedCommercialStageReadOnly ? (
+                        <p className="field-hint opportunity-stage-readonly-banner">
+                          Estás revisando la etapa{" "}
+                          {commercialContext.salesStage?.name || "seleccionada"}
+                          . Esta vista es solo lectura porque la oportunidad
+                          sigue en{" "}
+                          {currentCommercialStage?.name || "la etapa actual"}.
+                        </p>
+                      ) : null}
+
+                      {displayedCommercialCloseReason ? (
+                        <div className="field-group opportunity-stage-question">
+                          <label>Motivo de cierre comercial</label>
+                          <textarea
+                            aria-label="Motivo de cierre comercial"
+                            rows={3}
+                            value={displayedCommercialCloseReason}
+                            disabled
+                            readOnly
+                          />
+                        </div>
+                      ) : null}
+
+                      <div className="opportunity-commercial-actions">
+                        {[
+                          ...(isCommercialSuggestionFeatureEnabled
+                            ? [
+                                {
+                                  key: "suggest-document-answers",
+                                  tone: "primary",
+                                  icon: analyzingCommercialSuggestions
+                                    ? "..."
+                                    : "✦",
+                                  label: "Proponer respuestas desde documentos",
+                                  shortLabel: "Sugerir",
+                                  onClick: analyzeCommercialStageAnswers,
+                                  disabled:
+                                    analyzingCommercialSuggestions ||
+                                    Boolean(savingCommercialAction) ||
+                                    isCommercialFlowClosed ||
+                                    !commercialContext.isSelectedStageCurrent ||
+                                    hasPendingStageChange ||
+                                    hasPendingCommercialClose ||
+                                    !opportunityDocuments.length,
+                                },
+                              ]
+                            : []),
+                          {
+                            key: "validate-current-stage",
+                            tone: "success",
+                            icon:
+                              savingCommercialAction ===
+                              "validate-current-stage"
+                                ? "..."
+                                : "✓",
+                            label: "Validar etapa actual",
+                            shortLabel: "Validar",
+                            onClick: handleCurrentStageValidation,
+                            disabled:
+                              Boolean(savingCommercialAction) ||
+                              isCommercialFlowClosed ||
+                              !commercialContext.isSelectedStageCurrent ||
+                              hasPendingStageChange ||
+                              hasPendingCommercialClose,
+                          },
+                          {
+                            key: "stage-bypass",
+                            tone: "warning",
+                            icon:
+                              savingCommercialAction === "stage-bypass"
+                                ? "..."
+                                : ">>",
+                            label: "Bypasear etapa",
+                            shortLabel: "Bypasear",
+                            onClick: handleStageBypass,
+                            disabled:
+                              Boolean(savingCommercialAction) ||
+                              isCommercialFlowClosed ||
+                              !commercialContext.isSelectedStageCurrent ||
+                              hasPendingStageChange ||
+                              hasPendingCommercialClose ||
+                              !canBypassCurrentStage,
+                          },
+                          {
+                            key: "retreat",
+                            tone: "neutral",
+                            icon:
+                              savingCommercialAction === "retreat"
+                                ? "..."
+                                : "←",
+                            label: canRetreatToSelectedStage
+                              ? "Regresar a etapa seleccionada"
+                              : "Regresar etapa anterior",
+                            shortLabel: "Regresar",
+                            onClick: () => handleStageTransition("retreat"),
+                            disabled:
+                              Boolean(savingCommercialAction) ||
+                              isCommercialFlowClosed ||
+                              hasPendingStageChange ||
+                              hasPendingCommercialClose ||
+                              (!commercialContext.isSelectedStageCurrent &&
+                                !canRetreatToSelectedStage) ||
+                              (!canRetreatToSelectedStage &&
+                                !hasImmediatePreviousStage),
+                          },
+                          ...(isWaitingCurrentStage
+                            ? [
+                                {
+                                  key: "ganada",
+                                  tone: "success",
+                                  icon:
+                                    savingCommercialAction === "ganada"
+                                      ? "..."
+                                      : "★",
+                                  label: "Marcar ganada",
+                                  shortLabel: "Ganada",
+                                  onClick: () =>
+                                    handleCommercialClose("ganada"),
+                                  disabled:
+                                    Boolean(savingCommercialAction) ||
+                                    isCommercialFlowClosed ||
+                                    !commercialContext.isSelectedStageCurrent ||
+                                    hasPendingStageChange ||
+                                    hasPendingCommercialClose,
+                                },
+                              ]
+                            : []),
+                          {
+                            key: "perdida",
+                            tone: "danger",
+                            icon:
+                              savingCommercialAction === "perdida"
+                                ? "..."
+                                : "✕",
+                            label: "Marcar perdida",
+                            shortLabel: "Perdida",
+                            onClick: () => handleCommercialClose("perdida"),
+                            disabled:
+                              Boolean(savingCommercialAction) ||
+                              isCommercialFlowClosed ||
+                              !commercialContext.isSelectedStageCurrent ||
+                              hasPendingStageChange,
+                          },
+                          {
+                            key: "anulada",
+                            tone: "muted",
+                            icon:
+                              savingCommercialAction === "anulada"
+                                ? "..."
+                                : "⊘",
+                            label: "Marcar anulada",
+                            shortLabel: "Anulada",
+                            onClick: () => handleCommercialClose("anulada"),
+                            disabled:
+                              Boolean(savingCommercialAction) ||
+                              isCommercialFlowClosed ||
+                              !commercialContext.isSelectedStageCurrent ||
+                              hasPendingStageChange,
+                          },
+                        ].map((action) => (
+                          <div
+                            key={action.key}
+                            className="opportunity-commercial-action-item"
+                          >
+                            <button
+                              type="button"
+                              className={`opportunity-commercial-action-icon is-${action.tone}`}
+                              onClick={action.onClick}
+                              disabled={action.disabled}
+                              title={action.label}
+                              aria-label={action.label}
+                            >
+                              <span aria-hidden="true">{action.icon}</span>
+                            </button>
+                            <span className="opportunity-commercial-action-label">
+                              {action.shortLabel}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {commercialContext.bypassInfo?.isBypassed ? (
+                        <div className="opportunity-stage-bypass-summary">
+                          <p className="field-hint opportunity-stage-readonly-banner">
+                            Esta etapa fue bypaseada. Solo se muestra el motivo
+                            del bypass.
+                          </p>
+                          <div className="field-group opportunity-stage-question">
+                            <label>Motivo del bypass</label>
+                            <textarea
+                              aria-label="Motivo del bypass aplicado"
+                              rows={3}
+                              value={
+                                commercialContext.bypassInfo.reason ||
+                                "Sin motivo registrado"
+                              }
+                              disabled
+                            />
+                          </div>
+                        </div>
+                      ) : commercialContext.answers.length > 0 ? (
+                        <div className="opportunity-stage-questions">
+                          {commercialContext.answers.map((answer) => {
+                            const suggestion =
+                              stageAnswerSuggestions[
+                                Number(answer.question_id)
+                              ] || null;
+
+                            return (
+                              <div
+                                key={answer.question_id}
+                                className="field-group opportunity-stage-question"
+                              >
+                                <label>
+                                  {answer.prompt}{" "}
+                                  {answer.is_required ? (
+                                    <span className="required-mark">*</span>
+                                  ) : null}
+                                </label>
+                                <textarea
+                                  aria-label={`${answer.prompt}${
+                                    answer.is_required ? " *" : ""
+                                  }`}
+                                  rows={3}
+                                  value={answer.answer_value}
+                                  onChange={(event) =>
+                                    updateCommercialAnswer(
+                                      answer.question_id,
+                                      event.target.value,
+                                    )
+                                  }
+                                  disabled={
+                                    isCommercialFlowClosed ||
+                                    !commercialContext.isSelectedStageCurrent ||
+                                    hasPendingStageChange
+                                  }
+                                />
+
+                                {suggestion?.status === "proposed" ? (
+                                  <div className="opportunity-answer-suggestion-card">
+                                    <div className="opportunity-answer-suggestion-copy">
+                                      <strong>
+                                        {String(
+                                          answer.answer_value || "",
+                                        ).trim()
+                                          ? "Reemplazo sugerido"
+                                          : "Sugerencia documental"}
+                                      </strong>
+                                      <p>{suggestion.proposedAnswer}</p>
+                                      {suggestion.reason ? (
+                                        <span>{suggestion.reason}</span>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      onClick={() =>
+                                        applyCommercialAnswerSuggestion(
+                                          answer.question_id,
+                                        )
+                                      }
+                                      disabled={
+                                        isCommercialFlowClosed ||
+                                        !commercialContext.isSelectedStageCurrent ||
+                                        hasPendingStageChange
+                                      }
+                                    >
+                                      {String(answer.answer_value || "").trim()
+                                        ? "Aplicar reemplazo"
+                                        : "Aplicar sugerencia"}
+                                    </button>
+                                  </div>
+                                ) : suggestion?.reason ? (
+                                  <p className="field-hint opportunity-answer-suggestion-hint">
+                                    {suggestion.reason}
+                                  </p>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="field-hint opportunity-commercial-hint">
+                          Esta etapa no tiene preguntas activas configuradas.
+                        </p>
+                      )}
+                    </div>
                   </section>
                 )}
 
@@ -1052,6 +1086,26 @@ function OpportunityFormModal({
                     loadingCommercialStageView={loadingCommercialStageView}
                     isCommercialFlowClosed={isCommercialFlowClosed}
                     refreshCommercialContext={refreshOpportunityCommercialView}
+                    selectedOpportunityContact={selectedOpportunityContact}
+                    selectedOpportunityContactEmail={
+                      selectedOpportunityContactEmail
+                    }
+                    contactOptions={currentContactOptions}
+                    accountName={
+                      accountOptions.find(
+                        (account) =>
+                          Number(account?.id || 0) ===
+                          Number(form.accountId || 0),
+                      )?.name || ""
+                    }
+                    sellerUserEmail={
+                      sellerOptions.find(
+                        (user) =>
+                          Number(user?.id || 0) ===
+                          Number(form.sellerUserId || 0),
+                      )?.email || ""
+                    }
+                    canExecuteOperations={true}
                   />
                 ) : null}
 
@@ -1170,7 +1224,7 @@ function OpportunityFormModal({
               </div>
               <button
                 type="button"
-                className="opportunity-documents-apply-icon-button"
+                className="opportunity-documents-apply-icon-button account-modal-close-button"
                 onClick={closeCommercialSuggestionFeedback}
                 aria-label="Cerrar resultado de sugerencias"
                 title="Cerrar"
@@ -1249,7 +1303,7 @@ function OpportunityFormModal({
               </div>
               <button
                 type="button"
-                className="opportunity-documents-apply-icon-button"
+                className="opportunity-documents-apply-icon-button account-modal-close-button"
                 onClick={closeStageValidationResult}
                 aria-label="Cerrar resultado de validacion"
                 title="Cerrar"

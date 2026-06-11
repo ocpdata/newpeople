@@ -453,243 +453,251 @@ function OpportunityDocumentsPanel({
         </button>
       </div>
 
-      <div
-        id="opportunity-documents-section-body"
-        hidden={!isSectionExpanded}
-      >
-      <div
-        className={`opportunity-documents-toolbar-card${
-          documentCount ? " has-documents" : " is-empty"
-        }`}
-      >
-        <div className="opportunity-documents-toolbar-head">
-          <div className="opportunity-documents-toolbar-copy">
-            <span className="opportunity-documents-toolbar-eyebrow">
-              Analisis documental asistido
-            </span>
-            <strong>
-              {documentCount
-                ? "Repositorio listo para enriquecer el borrador"
-                : "Sube la evidencia comercial para arrancar el borrador"}
-            </strong>
-            <p className="field-hint opportunity-documents-toolbar-hint">
-              {documentCount
-                ? "Cada archivo analizado puede sugerir nombre, monto, etapa, cuenta y contactos antes de guardar la oportunidad."
-                : "Carga evidencia comercial para extraer contexto, detectar coincidencias internas y construir una primera propuesta automaticamente."}
-            </p>
-          </div>
-
-          <div className="opportunity-documents-toolbar-actions">
-            {!documentCount || !isCreateMode ? (
-              <div className="opportunity-documents-upload-dropzone-wrapper">
-                <div
-                  className={`opportunity-documents-upload-dropzone${
-                    isUploadDragActive ? " is-drag-active" : ""
-                  }${isUploadDisabled ? " is-disabled" : ""}`}
-                  role="button"
-                  tabIndex={isUploadDisabled ? -1 : 0}
-                  aria-label="Subir documentos arrastrando archivos o seleccionandolos"
-                  aria-disabled={isUploadDisabled}
-                  onClick={handleUploadDropZoneClick}
-                  onKeyDown={handleUploadDropZoneKeyDown}
-                  onDragEnter={handleUploadDropZoneDragEnter}
-                  onDragOver={handleUploadDropZoneDragOver}
-                  onDragLeave={handleUploadDropZoneDragLeave}
-                  onDrop={handleUploadDrop}
-                >
-                  <input
-                    ref={uploadInputRef}
-                    className="opportunity-documents-upload-input"
-                    type="file"
-                    multiple
-                    accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
-                    onChange={handleUploadInputChange}
-                    disabled={isUploadDisabled}
-                  />
-                  <div className="btn-secondary opportunity-documents-upload-button" aria-hidden="true">
-                    <span
-                      className="opportunity-documents-upload-button-icon"
-                      aria-hidden="true"
-                    >
-                      {uploadingOpportunityDocuments ? "…" : "+"}
-                    </span>
-                    <span className="opportunity-documents-upload-button-text">
-                      {uploadingOpportunityDocuments
-                        ? "Subiendo..."
-                        : isCreateMode
-                          ? "Cargar y analizar archivos"
-                          : "Agregar documentos"}
-                    </span>
-                  </div>
-                  <span className="field-hint opportunity-documents-upload-dropzone-hint">
-                    {isUploadDragActive
-                      ? "Suelta los archivos para cargarlos"
-                      : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
-                  </span>
-                </div>
-              </div>
-            ) : isCreateMode ? (
-              <div className="opportunity-documents-upload-dropzone-wrapper">
-                <div
-                  className={`opportunity-documents-upload-dropzone${
-                    isUploadDragActive ? " is-drag-active" : ""
-                  }${isUploadDisabled ? " is-disabled" : ""}`}
-                  role="button"
-                  tabIndex={isUploadDisabled ? -1 : 0}
-                  aria-label="Subir documentos arrastrando archivos o seleccionandolos"
-                  aria-disabled={isUploadDisabled}
-                  onClick={handleUploadDropZoneClick}
-                  onKeyDown={handleUploadDropZoneKeyDown}
-                  onDragEnter={handleUploadDropZoneDragEnter}
-                  onDragOver={handleUploadDropZoneDragOver}
-                  onDragLeave={handleUploadDropZoneDragLeave}
-                  onDrop={handleUploadDrop}
-                >
-                  <input
-                    ref={uploadInputRef}
-                    className="opportunity-documents-upload-input"
-                    type="file"
-                    multiple
-                    accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
-                    onChange={handleUploadInputChange}
-                    disabled={isUploadDisabled}
-                  />
-                  <div className="btn-secondary opportunity-documents-upload-button" aria-hidden="true">
-                    <span
-                      className="opportunity-documents-upload-button-icon"
-                      aria-hidden="true"
-                    >
-                      {uploadingOpportunityDocuments ? "…" : "+"}
-                    </span>
-                    <span className="opportunity-documents-upload-button-text">
-                      {uploadingOpportunityDocuments
-                        ? "Subiendo..."
-                        : "Subir y analizar mas archivos"}
-                    </span>
-                  </div>
-                  <span className="field-hint opportunity-documents-upload-dropzone-hint">
-                    {isUploadDragActive
-                      ? "Suelta los archivos para cargarlos"
-                      : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-            <span className="field-hint opportunity-documents-toolbar-formats">
-              Formatos: PDF, DOCX, XLSX, CSV, TXT, EML, imagen y audio.
-            </span>
-            <p className="opportunity-documents-a11y-status" aria-live="polite">
-              {uploadingOpportunityDocuments
-                ? "Subiendo archivos"
-                : isUploadDragActive
-                  ? "Zona de carga activa"
-                  : "Zona de carga lista"}
-            </p>
-          </div>
-        </div>
-
-        <div className="opportunity-documents-toolbar-body">
-          <div className="opportunity-documents-toolbar-overview">
-            <div className="opportunity-documents-toolbar-badges">
-              <span className="opportunity-documents-toolbar-badge">
-                <strong>{documentCount}</strong>
-                <span>documento{documentCount === 1 ? "" : "s"}</span>
+      <div id="opportunity-documents-section-body" hidden={!isSectionExpanded}>
+        <div
+          className={`opportunity-documents-toolbar-card${
+            documentCount ? " has-documents" : " is-empty"
+          }`}
+        >
+          <div className="opportunity-documents-toolbar-head">
+            <div className="opportunity-documents-toolbar-copy">
+              <span className="opportunity-documents-toolbar-eyebrow">
+                Analisis documental asistido
               </span>
-              <span className="opportunity-documents-toolbar-badge">
-                <strong>{reviewReadyCount}</strong>
-                <span>analizado{reviewReadyCount === 1 ? "" : "s"}</span>
-              </span>
-              <span className="opportunity-documents-toolbar-badge">
-                <strong>{processingCount}</strong>
-                <span>en analisis</span>
-              </span>
-            </div>
-            <div className="opportunity-documents-toolbar-summary-card">
-              <strong>Que puedes hacer aqui</strong>
-              <ul className="opportunity-documents-toolbar-summary-list">
-                <li>Adjuntar correos, propuestas, minutas y cotizaciones.</li>
-                <li>
-                  Pegar texto libre como evidencia adicional
-                  {isCreateMode ? " del borrador." : " de la oportunidad."}
-                </li>
-                <li>
-                  {isCreateMode
-                    ? "Aplicar solo las sugerencias utiles antes de guardar."
-                    : "Centralizar evidencia adicional para el seguimiento comercial."}
-                </li>
-              </ul>
+              <strong>
+                {documentCount
+                  ? "Repositorio listo para enriquecer el borrador"
+                  : "Sube la evidencia comercial para arrancar el borrador"}
+              </strong>
+              <p className="field-hint opportunity-documents-toolbar-hint">
+                {documentCount
+                  ? "Cada archivo analizado puede sugerir nombre, monto, etapa, cuenta y contactos antes de guardar la oportunidad."
+                  : "Carga evidencia comercial para extraer contexto, detectar coincidencias internas y construir una primera propuesta automaticamente."}
+              </p>
             </div>
 
-            {documents.length ? (
-              <div className="opportunity-documents-toolbar-list">
-                <div className="opportunity-documents-list">
-                  {documents.map((document) => (
-                    <article
-                      key={document.publicId}
-                      className={`opportunity-documents-card${
-                        isCreateMode
-                          ? " opportunity-documents-card-compact"
-                          : ""
-                      }`}
+            <div className="opportunity-documents-toolbar-actions">
+              {!documentCount || !isCreateMode ? (
+                <div className="opportunity-documents-upload-dropzone-wrapper">
+                  <div
+                    className={`opportunity-documents-upload-dropzone${
+                      isUploadDragActive ? " is-drag-active" : ""
+                    }${isUploadDisabled ? " is-disabled" : ""}`}
+                    role="button"
+                    tabIndex={isUploadDisabled ? -1 : 0}
+                    aria-label="Subir documentos arrastrando archivos o seleccionandolos"
+                    aria-disabled={isUploadDisabled}
+                    onClick={handleUploadDropZoneClick}
+                    onKeyDown={handleUploadDropZoneKeyDown}
+                    onDragEnter={handleUploadDropZoneDragEnter}
+                    onDragOver={handleUploadDropZoneDragOver}
+                    onDragLeave={handleUploadDropZoneDragLeave}
+                    onDrop={handleUploadDrop}
+                  >
+                    <input
+                      ref={uploadInputRef}
+                      className="opportunity-documents-upload-input"
+                      type="file"
+                      multiple
+                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                      onChange={handleUploadInputChange}
+                      disabled={isUploadDisabled}
+                    />
+                    <div
+                      className="btn-secondary opportunity-documents-upload-button"
+                      aria-hidden="true"
                     >
-                      <div className="opportunity-documents-card-header">
-                        <div className="opportunity-documents-card-summary">
-                          <strong
-                            className="opportunity-documents-card-title"
-                            title={document.originalFileName}
-                          >
-                            {document.originalFileName}
-                          </strong>
-                          {isCreateMode ? (
-                            <span className="field-hint opportunity-documents-card-meta">
-                              {renderDocumentStatus(document)}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="opportunity-documents-card-actions">
-                          <button
-                            type="button"
-                            className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button"
-                            onClick={() => openDocumentPreview(document)}
-                            aria-label={`Ver contenido de ${document.originalFileName}`}
-                            title={`Ver contenido de ${document.originalFileName}`}
-                          >
-                            i
-                          </button>
-                          {onDeleteDocument ? (
+                      <span
+                        className="opportunity-documents-upload-button-icon"
+                        aria-hidden="true"
+                      >
+                        {uploadingOpportunityDocuments ? "…" : "+"}
+                      </span>
+                      <span className="opportunity-documents-upload-button-text">
+                        {uploadingOpportunityDocuments
+                          ? "Subiendo..."
+                          : isCreateMode
+                            ? "Cargar y analizar archivos"
+                            : "Agregar documentos"}
+                      </span>
+                    </div>
+                    <span className="field-hint opportunity-documents-upload-dropzone-hint">
+                      {isUploadDragActive
+                        ? "Suelta los archivos para cargarlos"
+                        : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
+                    </span>
+                  </div>
+                </div>
+              ) : isCreateMode ? (
+                <div className="opportunity-documents-upload-dropzone-wrapper">
+                  <div
+                    className={`opportunity-documents-upload-dropzone${
+                      isUploadDragActive ? " is-drag-active" : ""
+                    }${isUploadDisabled ? " is-disabled" : ""}`}
+                    role="button"
+                    tabIndex={isUploadDisabled ? -1 : 0}
+                    aria-label="Subir documentos arrastrando archivos o seleccionandolos"
+                    aria-disabled={isUploadDisabled}
+                    onClick={handleUploadDropZoneClick}
+                    onKeyDown={handleUploadDropZoneKeyDown}
+                    onDragEnter={handleUploadDropZoneDragEnter}
+                    onDragOver={handleUploadDropZoneDragOver}
+                    onDragLeave={handleUploadDropZoneDragLeave}
+                    onDrop={handleUploadDrop}
+                  >
+                    <input
+                      ref={uploadInputRef}
+                      className="opportunity-documents-upload-input"
+                      type="file"
+                      multiple
+                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                      onChange={handleUploadInputChange}
+                      disabled={isUploadDisabled}
+                    />
+                    <div
+                      className="btn-secondary opportunity-documents-upload-button"
+                      aria-hidden="true"
+                    >
+                      <span
+                        className="opportunity-documents-upload-button-icon"
+                        aria-hidden="true"
+                      >
+                        {uploadingOpportunityDocuments ? "…" : "+"}
+                      </span>
+                      <span className="opportunity-documents-upload-button-text">
+                        {uploadingOpportunityDocuments
+                          ? "Subiendo..."
+                          : "Subir y analizar mas archivos"}
+                      </span>
+                    </div>
+                    <span className="field-hint opportunity-documents-upload-dropzone-hint">
+                      {isUploadDragActive
+                        ? "Suelta los archivos para cargarlos"
+                        : "Arrastra y suelta archivos aqui o haz clic para seleccionarlos"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              <span className="field-hint opportunity-documents-toolbar-formats">
+                Formatos: PDF, DOCX, XLSX, CSV, TXT, EML, imagen y audio.
+              </span>
+              <p
+                className="opportunity-documents-a11y-status"
+                aria-live="polite"
+              >
+                {uploadingOpportunityDocuments
+                  ? "Subiendo archivos"
+                  : isUploadDragActive
+                    ? "Zona de carga activa"
+                    : "Zona de carga lista"}
+              </p>
+            </div>
+          </div>
+
+          <div className="opportunity-documents-toolbar-body">
+            <div className="opportunity-documents-toolbar-overview">
+              <div className="opportunity-documents-toolbar-badges">
+                <span className="opportunity-documents-toolbar-badge">
+                  <strong>{documentCount}</strong>
+                  <span>documento{documentCount === 1 ? "" : "s"}</span>
+                </span>
+                <span className="opportunity-documents-toolbar-badge">
+                  <strong>{reviewReadyCount}</strong>
+                  <span>analizado{reviewReadyCount === 1 ? "" : "s"}</span>
+                </span>
+                <span className="opportunity-documents-toolbar-badge">
+                  <strong>{processingCount}</strong>
+                  <span>en analisis</span>
+                </span>
+              </div>
+              <div className="opportunity-documents-toolbar-summary-card">
+                <strong>Que puedes hacer aqui</strong>
+                <ul className="opportunity-documents-toolbar-summary-list">
+                  <li>Adjuntar correos, propuestas, minutas y cotizaciones.</li>
+                  <li>
+                    Pegar texto libre como evidencia adicional
+                    {isCreateMode ? " del borrador." : " de la oportunidad."}
+                  </li>
+                  <li>
+                    {isCreateMode
+                      ? "Aplicar solo las sugerencias utiles antes de guardar."
+                      : "Centralizar evidencia adicional para el seguimiento comercial."}
+                  </li>
+                </ul>
+              </div>
+
+              {documents.length ? (
+                <div className="opportunity-documents-toolbar-list">
+                  <div className="opportunity-documents-list">
+                    {documents.map((document) => (
+                      <article
+                        key={document.publicId}
+                        className={`opportunity-documents-card${
+                          isCreateMode
+                            ? " opportunity-documents-card-compact"
+                            : ""
+                        }`}
+                      >
+                        <div className="opportunity-documents-card-header">
+                          <div className="opportunity-documents-card-summary">
+                            <strong
+                              className="opportunity-documents-card-title"
+                              title={document.originalFileName}
+                            >
+                              {document.originalFileName}
+                            </strong>
+                            {isCreateMode ? (
+                              <span className="field-hint opportunity-documents-card-meta">
+                                {renderDocumentStatus(document)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="opportunity-documents-card-actions">
                             <button
                               type="button"
-                              className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button danger"
-                              onClick={() => handleDeleteDocument(document)}
-                              disabled={
-                                deletingOpportunityDocumentId ===
-                                document.publicId
-                              }
-                              aria-label={`Quitar ${document.originalFileName}`}
-                              title={`Quitar ${document.originalFileName}`}
+                              className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button"
+                              onClick={() => openDocumentPreview(document)}
+                              aria-label={`Ver contenido de ${document.originalFileName}`}
+                              title={`Ver contenido de ${document.originalFileName}`}
                             >
-                              {deletingOpportunityDocumentId ===
-                              document.publicId
-                                ? "…"
-                                : "×"}
+                              i
                             </button>
-                          ) : null}
+                            {onDeleteDocument ? (
+                              <button
+                                type="button"
+                                className="opportunity-documents-apply-icon-button opportunity-documents-file-action-button danger"
+                                onClick={() => handleDeleteDocument(document)}
+                                disabled={
+                                  deletingOpportunityDocumentId ===
+                                  document.publicId
+                                }
+                                aria-label={`Quitar ${document.originalFileName}`}
+                                title={`Quitar ${document.originalFileName}`}
+                              >
+                                {deletingOpportunityDocumentId ===
+                                document.publicId
+                                  ? "…"
+                                  : "×"}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
 
-          <div className="opportunity-documents-paste-card">
+            <div className="opportunity-documents-paste-card">
               <div className="opportunity-documents-paste-card-head">
                 <strong>Analizar texto pegado</strong>
                 <p className="field-hint opportunity-documents-paste-hint">
                   Convierte notas, correos o briefs en un documento `.txt`
                   dentro del mismo repositorio
-                  {isCreateMode ? " del borrador." : " documental de la oportunidad."}
+                  {isCreateMode
+                    ? " del borrador."
+                    : " documental de la oportunidad."}
                 </p>
               </div>
               <div className="field-group opportunity-documents-paste-name-group">
@@ -742,100 +750,100 @@ function OpportunityDocumentsPanel({
                   : "Agregar texto al analisis"}
               </button>
             </div>
-        </div>
-      </div>
-
-      {loadingDocumentSession ? (
-        <p className="field-hint opportunity-documents-empty">
-          Preparando sesion documental...
-        </p>
-      ) : null}
-
-      {loadingOpportunityDocuments ? (
-        <p className="field-hint opportunity-documents-empty">
-          Cargando documentos vinculados...
-        </p>
-      ) : null}
-
-      {isCreateMode && suggestedFields && compactSuggestions.length ? (
-        <div className="opportunity-documents-review-card opportunity-documents-review-card-compact">
-          <div className="opportunity-documents-review-header">
-            <div>
-              <strong>Sugerencias</strong>
-              <p className="field-hint opportunity-documents-review-hint">
-                Aplica solo lo util al borrador.
-              </p>
-            </div>
-            <button
-              type="button"
-              className="opportunity-documents-apply-icon-button opportunity-documents-apply-all-button"
-              onClick={() =>
-                onApplySuggestions({
-                  successMessage:
-                    "Sugerencias documentales aplicadas al borrador",
-                })
-              }
-              disabled={
-                applyingDocumentSuggestions || !documentReview?.canApply
-              }
-              aria-label={
-                applyingDocumentSuggestions
-                  ? "Aplicando sugerencias"
-                  : "Aplicar todas las sugerencias al borrador"
-              }
-              title={
-                applyingDocumentSuggestions
-                  ? "Aplicando sugerencias"
-                  : "Aplicar todas las sugerencias"
-              }
-            >
-              {applyingDocumentSuggestions ? "…" : "✓"}
-            </button>
           </div>
+        </div>
 
-          <div className="opportunity-documents-suggestion-grid opportunity-documents-suggestion-grid-compact">
-            {compactSuggestions.map((item) => (
-              <div
-                key={item.key}
-                className={`opportunity-documents-suggestion-item${
-                  item.isApplied ? " is-applied" : ""
-                }`}
-              >
-                <div className="opportunity-documents-suggestion-item-head">
-                  <span className="opportunity-documents-suggestion-label">
-                    {item.label}
-                  </span>
-                  <button
-                    type="button"
-                    className="opportunity-documents-apply-icon-button opportunity-documents-apply-field-button"
-                    onClick={item.onApply}
-                    disabled={
-                      applyingDocumentSuggestions ||
-                      !item.canApply ||
-                      item.isApplied
-                    }
-                    aria-label={`Aplicar ${item.label}`}
-                    title={`Aplicar ${item.label}`}
-                  >
-                    {applyingDocumentSuggestions ? "…" : "↗"}
-                  </button>
-                </div>
-                <strong
-                  className="opportunity-documents-suggestion-value"
-                  title={item.value}
-                >
-                  {item.value}
-                </strong>
-                {item.isApplied ? (
-                  <span className="opportunity-documents-suggestion-applied-note">
-                    Ya se aplico.
-                  </span>
-                ) : null}
+        {loadingDocumentSession ? (
+          <p className="field-hint opportunity-documents-empty">
+            Preparando sesion documental...
+          </p>
+        ) : null}
+
+        {loadingOpportunityDocuments ? (
+          <p className="field-hint opportunity-documents-empty">
+            Cargando documentos vinculados...
+          </p>
+        ) : null}
+
+        {isCreateMode && suggestedFields && compactSuggestions.length ? (
+          <div className="opportunity-documents-review-card opportunity-documents-review-card-compact">
+            <div className="opportunity-documents-review-header">
+              <div>
+                <strong>Sugerencias</strong>
+                <p className="field-hint opportunity-documents-review-hint">
+                  Aplica solo lo util al borrador.
+                </p>
               </div>
-            ))}
+              <button
+                type="button"
+                className="opportunity-documents-apply-icon-button opportunity-documents-apply-all-button"
+                onClick={() =>
+                  onApplySuggestions({
+                    successMessage:
+                      "Sugerencias documentales aplicadas al borrador",
+                  })
+                }
+                disabled={
+                  applyingDocumentSuggestions || !documentReview?.canApply
+                }
+                aria-label={
+                  applyingDocumentSuggestions
+                    ? "Aplicando sugerencias"
+                    : "Aplicar todas las sugerencias al borrador"
+                }
+                title={
+                  applyingDocumentSuggestions
+                    ? "Aplicando sugerencias"
+                    : "Aplicar todas las sugerencias"
+                }
+              >
+                {applyingDocumentSuggestions ? "…" : "✓"}
+              </button>
+            </div>
+
+            <div className="opportunity-documents-suggestion-grid opportunity-documents-suggestion-grid-compact">
+              {compactSuggestions.map((item) => (
+                <div
+                  key={item.key}
+                  className={`opportunity-documents-suggestion-item${
+                    item.isApplied ? " is-applied" : ""
+                  }`}
+                >
+                  <div className="opportunity-documents-suggestion-item-head">
+                    <span className="opportunity-documents-suggestion-label">
+                      {item.label}
+                    </span>
+                    <button
+                      type="button"
+                      className="opportunity-documents-apply-icon-button opportunity-documents-apply-field-button"
+                      onClick={item.onApply}
+                      disabled={
+                        applyingDocumentSuggestions ||
+                        !item.canApply ||
+                        item.isApplied
+                      }
+                      aria-label={`Aplicar ${item.label}`}
+                      title={`Aplicar ${item.label}`}
+                    >
+                      {applyingDocumentSuggestions ? "…" : "↗"}
+                    </button>
+                  </div>
+                  <strong
+                    className="opportunity-documents-suggestion-value"
+                    title={item.value}
+                  >
+                    {item.value}
+                  </strong>
+                  {item.isApplied ? (
+                    <span className="opportunity-documents-suggestion-applied-note">
+                      Ya se aplico.
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
       </div>
 
       {previewDocument ? (
@@ -868,7 +876,7 @@ function OpportunityDocumentsPanel({
                 </button>
                 <button
                   type="button"
-                  className="opportunity-documents-apply-icon-button"
+                  className="opportunity-documents-apply-icon-button account-modal-close-button"
                   onClick={() => setPreviewDocument(null)}
                   aria-label="Cerrar vista previa del documento"
                   title="Cerrar"

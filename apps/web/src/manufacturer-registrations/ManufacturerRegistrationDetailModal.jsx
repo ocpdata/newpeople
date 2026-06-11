@@ -33,7 +33,7 @@ export default function ManufacturerRegistrationDetailModal({
           </div>
           <button
             type="button"
-            className="opportunity-documents-apply-icon-button"
+            className="opportunity-documents-apply-icon-button account-modal-close-button"
             onClick={onClose}
             aria-label="Cerrar"
             title="Cerrar"

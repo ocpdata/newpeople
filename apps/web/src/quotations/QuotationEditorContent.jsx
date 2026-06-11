@@ -19,6 +19,7 @@ import {
   resolveQuotationItemSaleTarget,
 } from "./quotationsUtils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   QuotationCommercialConditionsCard,
   QuotationFinancingCard,
@@ -33,9 +34,57 @@ import {
 import { buildQuotationPrintModel } from "./quotationPrintModel";
 import QuotationPrintPreviewModal from "./QuotationPrintPreviewModal";
 import QuotationProductPickerModal from "./QuotationProductPickerModal";
+import QuotationEmailComposerModal from "./QuotationEmailComposerModal";
 import QuotationWorkflowPanel from "./QuotationWorkflowPanel";
 import { api, getApiErrorMessage } from "../api";
 import ModalInlineHelp from "../help/ModalInlineHelp";
+
+const QUOTATION_EMAIL_ATTACHMENT_MAX_FILES = 10;
+const QUOTATION_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+
+function normalizeQuotationPdfPayload(printModel) {
+  if (!printModel || typeof printModel !== "object") {
+    return null;
+  }
+
+  const { company: _ignoredCompany, ...payload } = printModel;
+
+  return {
+    ...payload,
+    sections: Array.isArray(payload.sections)
+      ? payload.sections.map((section) => ({
+          ...section,
+          subtotal: toNumber(section?.subtotal),
+          rows: Array.isArray(section?.rows)
+            ? section.rows.map((row) => ({
+                ...row,
+                displayOrder:
+                  row?.displayOrder == null ? null : Number(row.displayOrder),
+                quantity: row?.quantity == null ? null : toNumber(row.quantity),
+                salePriceUnit:
+                  row?.salePriceUnit == null
+                    ? null
+                    : toNumber(row.salePriceUnit),
+                salePriceTotal:
+                  row?.salePriceTotal == null
+                    ? null
+                    : toNumber(row.salePriceTotal),
+              }))
+            : [],
+        }))
+      : [],
+    summary: payload.summary
+      ? {
+          ...payload.summary,
+          subtotal: toNumber(payload.summary.subtotal),
+          discount: toNumber(payload.summary.discount),
+          discountedSubtotal: toNumber(payload.summary.discountedSubtotal),
+          vatAmount: toNumber(payload.summary.vatAmount),
+          total: toNumber(payload.summary.total),
+        }
+      : payload.summary,
+  };
+}
 
 function updateDraftEntry(setter, entryId, currentValue, field, value) {
   setter((prev) => ({
@@ -924,6 +973,32 @@ function QuotationEditorContent({
     recalculateField: "profitMarginPct",
   });
   const [isPrintPreviewModalOpen, setIsPrintPreviewModalOpen] = useState(false);
+  const [isQuotationEmailModalOpen, setIsQuotationEmailModalOpen] =
+    useState(false);
+  const [quotationEmailDraft, setQuotationEmailDraft] = useState({
+    to: "",
+    cc: "",
+    subject: "",
+    messageBody: "",
+    attachments: [],
+  });
+  const [quotationEmailError, setQuotationEmailError] = useState("");
+  const [quotationEmailNotice, setQuotationEmailNotice] = useState("");
+  const [sendingQuotationEmail, setSendingQuotationEmail] = useState(false);
+  const [quotationEmailSendResult, setQuotationEmailSendResult] = useState({
+    isOpen: false,
+    type: "success",
+    message: "",
+  });
+  const [quotationGoogleMailStatus, setQuotationGoogleMailStatus] = useState({
+    loading: false,
+    connected: false,
+    canSend: false,
+    missingScope: false,
+    needsReconnect: false,
+    googleEmail: "",
+    startUrl: "/api/auth/google-mail/start",
+  });
   const [documentViewMode, setDocumentViewMode] = useState("current");
   const [isQuotationDocumentsDragActive, setIsQuotationDocumentsDragActive] =
     useState(false);
@@ -1089,7 +1164,12 @@ function QuotationEditorContent({
         currencyCode: versionForm.currencyCode,
         summaryVatMode,
       }),
-    [financingForm, quotationFinalTotal, summaryVatMode, versionForm.currencyCode],
+    [
+      financingForm,
+      quotationFinalTotal,
+      summaryVatMode,
+      versionForm.currencyCode,
+    ],
   );
   const selectedContextContactName =
     contactOptions.find(
@@ -1283,6 +1363,374 @@ function QuotationEditorContent({
 
   function closePrintPreviewModal() {
     setIsPrintPreviewModalOpen(false);
+  }
+
+  function openQuotationEmailSendResult(type, message) {
+    setQuotationEmailSendResult({
+      isOpen: true,
+      type: type === "error" ? "error" : "success",
+      message: String(message || "").trim(),
+    });
+  }
+
+  function handleAcknowledgeQuotationEmailSendResult() {
+    const resultType = quotationEmailSendResult.type;
+    setQuotationEmailSendResult({
+      isOpen: false,
+      type: "success",
+      message: "",
+    });
+
+    if (resultType === "success") {
+      setIsQuotationEmailModalOpen(false);
+      return;
+    }
+
+    setIsQuotationEmailModalOpen(true);
+  }
+
+  function handleCloseQuotationEmailModal() {
+    if (sendingQuotationEmail) return;
+    setIsQuotationEmailModalOpen(false);
+    setQuotationEmailError("");
+    setQuotationEmailNotice("");
+  }
+
+  function handleQuotationEmailFieldChange(field, value) {
+    setQuotationEmailDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setQuotationEmailError("");
+    setQuotationEmailNotice("");
+  }
+
+  async function loadQuotationGoogleMailStatus({ silent = false } = {}) {
+    setQuotationGoogleMailStatus((current) => ({
+      ...current,
+      loading: true,
+    }));
+
+    try {
+      const { data } = await api.get("/api/auth/google-mail/status");
+      const nextStatus = {
+        loading: false,
+        connected: Boolean(data?.connected),
+        canSend: Boolean(data?.canSend),
+        missingScope: Boolean(data?.missingScope),
+        needsReconnect: Boolean(data?.needsReconnect),
+        googleEmail: String(data?.googleEmail || ""),
+        startUrl: String(data?.startUrl || "/api/auth/google-mail/start"),
+      };
+      setQuotationGoogleMailStatus(nextStatus);
+
+      if (!silent && !nextStatus.canSend) {
+        setQuotationEmailNotice(
+          "Debes conectar tu cuenta de Google para enviar esta cotizacion.",
+        );
+      }
+
+      return nextStatus;
+    } catch (err) {
+      setQuotationGoogleMailStatus({
+        loading: false,
+        connected: false,
+        canSend: false,
+        missingScope: false,
+        needsReconnect: false,
+        googleEmail: "",
+        startUrl: "/api/auth/google-mail/start",
+      });
+
+      if (!silent) {
+        setQuotationEmailError(
+          getApiErrorMessage(
+            err,
+            "No fue posible validar la conexion de Google para enviar cotizaciones.",
+          ),
+        );
+      }
+
+      return null;
+    }
+  }
+
+  async function handleConnectQuotationGoogleMail() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const connectUrl =
+      quotationGoogleMailStatus.startUrl || "/api/auth/google-mail/start";
+    try {
+      const { data } = await api.get(connectUrl, {
+        params: {
+          returnTo: window.location.href,
+          mode: "json",
+        },
+      });
+
+      const oauthUrl = String(data?.url || "").trim();
+      if (!oauthUrl) {
+        setQuotationEmailError(
+          "No fue posible iniciar la conexion con Google.",
+        );
+        return;
+      }
+
+      window.location.assign(oauthUrl);
+    } catch (err) {
+      setQuotationEmailError(
+        getApiErrorMessage(
+          err,
+          "No fue posible iniciar la conexion con Google.",
+        ),
+      );
+    }
+  }
+
+  function handleAddQuotationEmailAttachments(files) {
+    const incoming = Array.isArray(files) ? files : [];
+    if (!incoming.length) return;
+
+    setQuotationEmailDraft((current) => {
+      const existing = Array.isArray(current.attachments)
+        ? current.attachments
+        : [];
+      const nextAttachments = [
+        ...existing,
+        ...incoming.map((file, index) => ({
+          id: `${Date.now()}-${index}-${file.name}`,
+          file,
+        })),
+      ];
+
+      if (nextAttachments.length > QUOTATION_EMAIL_ATTACHMENT_MAX_FILES) {
+        setQuotationEmailError(
+          `Solo puedes adjuntar hasta ${QUOTATION_EMAIL_ATTACHMENT_MAX_FILES} archivos extra.`,
+        );
+        return current;
+      }
+
+      const totalBytes = nextAttachments.reduce(
+        (sum, entry) => sum + Number(entry.file?.size || 0),
+        0,
+      );
+      if (totalBytes > QUOTATION_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+        setQuotationEmailError(
+          "El peso total de adjuntos extra excede el limite permitido para el correo.",
+        );
+        return current;
+      }
+
+      setQuotationEmailError("");
+      setQuotationEmailNotice("");
+      return {
+        ...current,
+        attachments: nextAttachments,
+      };
+    });
+  }
+
+  function handleRemoveQuotationEmailAttachment(attachmentId) {
+    setQuotationEmailDraft((current) => ({
+      ...current,
+      attachments: (current.attachments || []).filter(
+        (entry) => entry.id !== attachmentId,
+      ),
+    }));
+    setQuotationEmailError("");
+    setQuotationEmailNotice("");
+  }
+
+  async function handleOpenQuotationEmailComposer() {
+    const recipientEmail = String(selectedContextContact?.email || "").trim();
+    const recipientName = String(
+      selectedContextContact?.full_name ||
+        selectedContextContact?.fullName ||
+        selectedContextContactName ||
+        "",
+    ).trim();
+    const proposalName = String(versionForm?.proposalName || "").trim();
+    const quotationId = Number(selectedQuotation?.id || 0);
+    const versionNumber = Number(selectedVersion?.versionNumber || 0);
+    const reference = [
+      quotationId > 0 ? `#${quotationId}` : "",
+      versionNumber > 0 ? `V${versionNumber}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const greeting = recipientName ? `Hola ${recipientName},` : "Hola,";
+    const subject = proposalName
+      ? reference
+        ? `Cotizacion ${reference} - ${proposalName}`
+        : `Cotizacion - ${proposalName}`
+      : reference
+        ? `Cotizacion ${reference}`
+        : "Cotizacion";
+
+    setQuotationEmailDraft({
+      to: recipientEmail,
+      cc: "",
+      subject,
+      messageBody: `${greeting}\n\nTe comparto la cotizacion para tu revision. Quedo atento a tus comentarios y a los siguientes pasos para avanzar con el proyecto.\n\nSaludos.`,
+      attachments: [],
+    });
+    setQuotationEmailError("");
+    setQuotationEmailNotice("");
+    setQuotationEmailSendResult({
+      isOpen: false,
+      type: "success",
+      message: "",
+    });
+    setIsQuotationEmailModalOpen(true);
+
+    const googleStatus = await loadQuotationGoogleMailStatus({ silent: true });
+    if (!googleStatus?.canSend) {
+      setQuotationEmailNotice(
+        "Conecta Google para habilitar el envio de cotizaciones.",
+      );
+    }
+  }
+
+  async function handleRequestSendQuotationEmail() {
+    const to = String(quotationEmailDraft.to || "").trim();
+    const subject = String(quotationEmailDraft.subject || "").trim();
+    const messageBody = String(quotationEmailDraft.messageBody || "").trim();
+
+    if (!to) {
+      openQuotationEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque falta el destinatario principal.",
+      );
+      return;
+    }
+    if (!subject) {
+      openQuotationEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque falta el asunto.",
+      );
+      return;
+    }
+    if (!messageBody) {
+      openQuotationEmailSendResult(
+        "error",
+        "No pudimos enviar el correo porque el mensaje esta vacio.",
+      );
+      return;
+    }
+
+    if (!quotationGoogleMailStatus.canSend) {
+      openQuotationEmailSendResult(
+        "error",
+        "Debes conectar Google antes de enviar cotizaciones por correo.",
+      );
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Se enviara este correo ahora a ${to}. ¿Deseas continuar?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const latestGoogleStatus = await loadQuotationGoogleMailStatus({
+      silent: true,
+    });
+    if (!latestGoogleStatus?.canSend) {
+      openQuotationEmailSendResult(
+        "error",
+        "Tu conexion de Google no esta lista. Reconecta e intenta de nuevo.",
+      );
+      return;
+    }
+
+    const normalizedPayload = normalizeQuotationPdfPayload(printModel);
+    if (!normalizedPayload) {
+      openQuotationEmailSendResult(
+        "error",
+        "No fue posible preparar el documento para enviarlo por correo.",
+      );
+      return;
+    }
+
+    if (!selectedVersion?.id) {
+      openQuotationEmailSendResult(
+        "error",
+        "No hay una version valida de cotizacion para enviar.",
+      );
+      return;
+    }
+
+    setSendingQuotationEmail(true);
+    setQuotationEmailError("");
+    setQuotationEmailNotice("");
+
+    try {
+      const formData = new FormData();
+      formData.append("to", to);
+      formData.append("cc", String(quotationEmailDraft.cc || "").trim());
+      formData.append("subject", subject);
+      formData.append("messageBody", messageBody);
+      formData.append("sendMode", "google_user");
+      formData.append("pdfPayload", JSON.stringify(normalizedPayload));
+
+      (quotationEmailDraft.attachments || []).forEach((entry, index) => {
+        if (entry.file) {
+          formData.append(`file_${index}`, entry.file, entry.file.name);
+        }
+      });
+
+      await api.post(
+        `/api/quotation-versions/${selectedVersion.id}/send-email`,
+        formData,
+      );
+
+      const transitionResult = await handleAction("enviar", {
+        confirmedEmailSent: true,
+      });
+      if (!transitionResult?.ok) {
+        openQuotationEmailSendResult(
+          "error",
+          transitionResult?.message ||
+            "El correo se envio, pero no se pudo actualizar el estado a Enviada.",
+        );
+        return;
+      }
+
+      openQuotationEmailSendResult(
+        "success",
+        `Correo enviado correctamente a ${to}.`,
+      );
+    } catch (err) {
+      const reason = String(err?.response?.data?.reason || "").toLowerCase();
+      if (reason === "google_reconnect_required") {
+        openQuotationEmailSendResult(
+          "error",
+          "La conexion con Google expiro o fue revocada. Reconecta para continuar.",
+        );
+        await loadQuotationGoogleMailStatus({ silent: true });
+      } else if (reason === "google_scope_missing") {
+        openQuotationEmailSendResult(
+          "error",
+          "La conexion de Google no incluye permiso de envio. Reconecta y acepta el permiso solicitado.",
+        );
+        await loadQuotationGoogleMailStatus({ silent: true });
+      } else {
+        openQuotationEmailSendResult(
+          "error",
+          getApiErrorMessage(
+            err,
+            "No fue posible enviar el correo de cotizacion",
+          ),
+        );
+      }
+    } finally {
+      setSendingQuotationEmail(false);
+    }
   }
 
   function handleOpenPdfPreview() {
@@ -2565,17 +3013,14 @@ function QuotationEditorContent({
 
   const handleWorkflowAction = useCallback(
     (actionCode, actionOptions = {}) => {
-      const nextActionOptions =
-        actionCode === "enviar"
-          ? {
-              ...actionOptions,
-              quotationPrintModel: printModel,
-            }
-          : actionOptions;
+      if (actionCode === "enviar") {
+        void handleOpenQuotationEmailComposer();
+        return;
+      }
 
-      return handleAction(actionCode, nextActionOptions);
+      return handleAction(actionCode, actionOptions);
     },
-    [handleAction, printModel],
+    [handleAction, handleOpenQuotationEmailComposer],
   );
 
   if (!selectedVersion) {
@@ -4835,6 +5280,54 @@ function QuotationEditorContent({
         onOpenPdfPreview={handleOpenPdfPreview}
         model={printModel}
       />
+
+      <QuotationEmailComposerModal
+        isOpen={isQuotationEmailModalOpen}
+        draft={quotationEmailDraft}
+        sending={sendingQuotationEmail}
+        error={quotationEmailError}
+        notice={quotationEmailNotice}
+        onClose={handleCloseQuotationEmailModal}
+        onChangeField={handleQuotationEmailFieldChange}
+        onAddAttachments={handleAddQuotationEmailAttachments}
+        onRemoveAttachment={handleRemoveQuotationEmailAttachment}
+        onRequestSend={handleRequestSendQuotationEmail}
+        googleMailStatus={quotationGoogleMailStatus}
+        onConnectGoogleMail={handleConnectQuotationGoogleMail}
+      />
+
+      {quotationEmailSendResult.isOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="modal-overlay modal-overlay-elevated proposal-email-result-overlay">
+              <div className="modal-dialog proposal-email-result-modal">
+                <div className="proposal-email-result-content">
+                  <span
+                    className={`proposal-email-result-icon is-${quotationEmailSendResult.type}`}
+                    aria-hidden="true"
+                  >
+                    {quotationEmailSendResult.type === "success" ? "✓" : "!"}
+                  </span>
+                  <h3>
+                    {quotationEmailSendResult.type === "success"
+                      ? "Correo enviado"
+                      : "No se pudo enviar"}
+                  </h3>
+                </div>
+                <p>{quotationEmailSendResult.message}</p>
+                <div className="modal-buttons proposal-email-result-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleAcknowledgeQuotationEmailSendResult}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

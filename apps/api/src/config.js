@@ -12,6 +12,15 @@ const envFileName =
 
 dotenv.config({ path: resolve(__dirname, envFileName) });
 
+function resolveGoogleMailRedirectUri() {
+  const explicit = String(process.env.GOOGLE_MAIL_REDIRECT_URI || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  return String(process.env.GOOGLE_REDIRECT_URI || "").trim();
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4000),
@@ -24,6 +33,8 @@ export const config = {
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       redirectUri: process.env.GOOGLE_REDIRECT_URI || "",
+      mailRedirectUri: resolveGoogleMailRedirectUri(),
+      tokenEncryptionKey: process.env.GOOGLE_TOKEN_ENCRYPTION_KEY || "",
     },
   },
   features: {

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 
 export function LoginPage({ onLogin, initialError = "" }) {
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -11,6 +12,7 @@ export function LoginPage({ onLogin, initialError = "" }) {
     enabled: false,
     startUrl: "",
   });
+  const [loadingProviders, setLoadingProviders] = useState(true);
 
   useEffect(() => {
     setError(initialError || "");
@@ -18,8 +20,9 @@ export function LoginPage({ onLogin, initialError = "" }) {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimeout = null;
 
-    async function loadOauthProviders() {
+    async function loadOauthProviders(retryCount = 0) {
       try {
         const { data } = await api.get("/api/auth/oauth/providers");
         if (cancelled) return;
@@ -27,9 +30,25 @@ export function LoginPage({ onLogin, initialError = "" }) {
           enabled: Boolean(data?.google?.enabled),
           startUrl: String(data?.google?.startUrl || ""),
         });
-      } catch {
+        setLoadingProviders(false);
+      } catch (error) {
         if (cancelled) return;
-        setGoogleAuth({ enabled: false, startUrl: "" });
+
+        // Reintentar hasta 3 veces con backoff exponencial
+        if (retryCount < 3) {
+          const delayMs = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+          retryTimeout = window.setTimeout(() => {
+            loadOauthProviders(retryCount + 1);
+          }, delayMs);
+        } else {
+          // Después de 3 intentos fallidos, usar valores por defecto
+          // Asumir que Google está habilitado (es lo más probable)
+          setGoogleAuth({
+            enabled: true,
+            startUrl: "/api/auth/oauth/google/start",
+          });
+          setLoadingProviders(false);
+        }
       }
     }
 
@@ -37,12 +56,40 @@ export function LoginPage({ onLogin, initialError = "" }) {
 
     return () => {
       cancelled = true;
+      if (retryTimeout) {
+        window.clearTimeout(retryTimeout);
+      }
     };
   }, []);
 
   function handleGoogleLogin() {
-    if (!googleAuth.enabled || !googleAuth.startUrl) return;
-    window.location.assign(googleAuth.startUrl);
+    if (!googleAuth.enabled) {
+      console.warn("Google no está habilitado");
+      setError("Google no está habilitado en este entorno");
+      return;
+    }
+
+    if (!googleAuth.startUrl) {
+      console.warn("No hay startUrl para Google");
+      setError("No fue posible obtener la URL de Google");
+      return;
+    }
+
+    console.log("Haciendo clic en Google. Url:", googleAuth.startUrl);
+    setSaving(true);
+
+    try {
+      const startUrl = new URL(googleAuth.startUrl, window.location.origin);
+      startUrl.searchParams.set(
+        "returnTo",
+        `${location.pathname}${location.search}${location.hash}`,
+      );
+      window.location.href = startUrl.toString();
+    } catch (err) {
+      console.error("Error al redirigir:", err);
+      setError("No fue posible redirigir a Google");
+      setSaving(false);
+    }
   }
 
   async function submit(e) {
@@ -78,7 +125,7 @@ export function LoginPage({ onLogin, initialError = "" }) {
         />
         {error && <p className="error">{error}</p>}
         <button disabled={saving}>{saving ? "Ingresando..." : "Entrar"}</button>
-        {googleAuth.enabled ? (
+        {!loadingProviders && googleAuth.enabled ? (
           <>
             <div className="auth-divider" aria-hidden="true">
               <span>o</span>
@@ -87,6 +134,7 @@ export function LoginPage({ onLogin, initialError = "" }) {
               type="button"
               className="auth-google-button"
               onClick={handleGoogleLogin}
+              disabled={saving}
             >
               Entrar con Google
             </button>

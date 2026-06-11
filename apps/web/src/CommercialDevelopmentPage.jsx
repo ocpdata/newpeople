@@ -3661,7 +3661,7 @@ function CommercialEmailDraftModal({
 
             <EmailRecipientCombobox
               value={emailDetails.recipient}
-              disabled={saving || isReadOnly}
+              disabled={saving}
               onChange={(value) => onChange("recipient", value)}
               options={recipientOptions}
               loading={recipientOptionsLoading}
@@ -6073,333 +6073,339 @@ export default function CommercialDevelopmentPage({
         </section>
 
         {canAccessCommercialCalendar ? (
-        <section className="commercial-development-spotlight commercial-development-calendar-panel">
-          <div className="commercial-development-section-header commercial-development-calendar-header">
-            <div>
-              <h3>Agenda comercial del trimestre</h3>
-              <p>
-                Visualiza actividades por dia, semana o mes y abre seguimiento
-                sin salir del módulo.
-              </p>
-            </div>
-            <span>{formatCalendarRange(calendarFilters)}</span>
-          </div>
-
-          <div className="commercial-development-calendar-toolbar">
-            <div
-              className="commercial-development-calendar-view-switcher"
-              role="tablist"
-              aria-label="Vista del calendario"
-            >
-              {[
-                { value: "day", label: "Dia" },
-                { value: "week", label: "Semana" },
-                { value: "month", label: "Mes" },
-              ].map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={calendarView === option.value ? "is-active" : ""}
-                  onClick={() => setCalendarView(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
+          <section className="commercial-development-spotlight commercial-development-calendar-panel">
+            <div className="commercial-development-section-header commercial-development-calendar-header">
+              <div>
+                <h3>Agenda comercial del trimestre</h3>
+                <p>
+                  Visualiza actividades por dia, semana o mes y abre seguimiento
+                  sin salir del módulo.
+                </p>
+              </div>
+              <span>{formatCalendarRange(calendarFilters)}</span>
             </div>
 
-            <div className="commercial-development-calendar-nav">
+            <div className="commercial-development-calendar-toolbar">
               <div
-                className="commercial-development-calendar-nav-segmented"
-                role="group"
-                aria-label="Navegacion del calendario"
+                className="commercial-development-calendar-view-switcher"
+                role="tablist"
+                aria-label="Vista del calendario"
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCalendarDate((current) =>
-                      shiftCalendarDate(calendarView, current, -1),
-                    )
-                  }
-                >
-                  Anterior
-                </button>
-                <button
-                  type="button"
-                  className="is-accent"
-                  onClick={() => setCalendarDate(getTodayDateValue())}
-                >
-                  Hoy
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCalendarDate((current) =>
-                      shiftCalendarDate(calendarView, current, 1),
-                    )
-                  }
-                >
-                  Siguiente
-                </button>
+                {[
+                  { value: "day", label: "Dia" },
+                  { value: "week", label: "Semana" },
+                  { value: "month", label: "Mes" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={calendarView === option.value ? "is-active" : ""}
+                    onClick={() => setCalendarView(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
-              <label className="commercial-development-calendar-date-input">
-                <span>Fecha de referencia</span>
-                <input
-                  type="date"
-                  value={calendarDate}
-                  onChange={(event) => setCalendarDate(event.target.value)}
-                />
-              </label>
-            </div>
-          </div>
 
-          {calendarError ? <p className="form-error">{calendarError}</p> : null}
-
-          <div className="commercial-development-calendar-summary">
-            <div>
-              <span>Total</span>
-              <strong>{Number(calendarData?.summary?.total || 0)}</strong>
-            </div>
-            <div>
-              <span>Pendientes</span>
-              <strong>{Number(calendarData?.summary?.pending || 0)}</strong>
-            </div>
-            <div>
-              <span>En curso</span>
-              <strong>{Number(calendarData?.summary?.inProgress || 0)}</strong>
-            </div>
-            <div>
-              <span>Realizadas</span>
-              <strong>{Number(calendarData?.summary?.done || 0)}</strong>
-            </div>
-          </div>
-
-          <div className="commercial-development-calendar-layout">
-            <div>
-              {calendarLoading ? (
-                <div className="empty-state">Actualizando agenda...</div>
-              ) : calendarDays.length ? (
+              <div className="commercial-development-calendar-nav">
                 <div
-                  className={
-                    calendarView === "month"
-                      ? "commercial-development-calendar-month-frame"
-                      : ""
-                  }
+                  className="commercial-development-calendar-nav-segmented"
+                  role="group"
+                  aria-label="Navegacion del calendario"
                 >
-                  {calendarView === "month" ? (
-                    <div
-                      className="commercial-development-calendar-month-weekdays"
-                      aria-hidden="true"
-                    >
-                      {CALENDAR_WEEKDAY_HEADERS.map((label) => (
-                        <div
-                          key={label}
-                          className="commercial-development-calendar-month-weekday"
-                        >
-                          {label}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div
-                    className={`commercial-development-calendar-grid is-${calendarView}`}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalendarDate((current) =>
+                        shiftCalendarDate(calendarView, current, -1),
+                      )
+                    }
                   >
-                    {calendarView === "month"
-                      ? Array.from({ length: monthLeadingEmptySlots }).map(
-                          (_, index) => (
-                            <div
-                              key={`calendar-empty-${index}`}
-                              className="commercial-development-calendar-day is-placeholder"
-                              aria-hidden="true"
-                            >
-                              <span className="commercial-development-calendar-placeholder-mark" />
-                            </div>
-                          ),
-                        )
-                      : null}
-                    {calendarDays.map((day) => {
-                      const isSelected = day.date === selectedDayData?.date;
-                      const isToday = day.date === getTodayDateValue();
-                      const previewLimit = calendarView === "month" ? 3 : 4;
-                      const heatLevelClass = getCalendarHeatLevel(day.count);
-                      return (
-                        <button
-                          key={day.date}
-                          type="button"
-                          className={`commercial-development-calendar-day ${calendarView === "month" ? "is-month" : ""} ${heatLevelClass} ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""}`.trim()}
-                          onClick={() => handleCalendarDayClick(day)}
-                        >
-                          <div className="commercial-development-calendar-day-header">
-                            {calendarView === "month" ? (
-                              <div className="commercial-development-calendar-month-day-copy">
-                                <strong className="commercial-development-calendar-month-day-number">
-                                  {Number(String(day.date).slice(-2))}
-                                </strong>
-                                <span className="commercial-development-calendar-month-day-label">
-                                  {isToday
-                                    ? "Hoy"
-                                    : getWeekdayLabel(day.date, "short")}
-                                </span>
-                              </div>
-                            ) : (
-                              <div>
-                                <span>{getWeekdayLabel(day.date, "long")}</span>
-                                <strong>{formatDate(day.date)}</strong>
-                              </div>
-                            )}
-                            <span className="commercial-development-calendar-count">
-                              {day.count}
-                            </span>
-                          </div>
-
-                          <div className="commercial-development-calendar-day-items">
-                            {asArray(day.items)
-                              .slice(0, previewLimit)
-                              .map((item) => (
-                                <span
-                                  key={`calendar-item-preview-${item.id}`}
-                                  className="commercial-development-calendar-preview-pill"
-                                >
-                                  {formatDateTime(item.scheduledAt)
-                                    .split(",")[1]
-                                    ?.trim() ||
-                                    getActivityTypeLabel(item.activityType)}
-                                </span>
-                              ))}
-                            {day.count > previewLimit ? (
-                              <span className="commercial-development-calendar-preview-more">
-                                +{day.count - previewLimit} mas
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                    Anterior
+                  </button>
+                  <button
+                    type="button"
+                    className="is-accent"
+                    onClick={() => setCalendarDate(getTodayDateValue())}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalendarDate((current) =>
+                        shiftCalendarDate(calendarView, current, 1),
+                      )
+                    }
+                  >
+                    Siguiente
+                  </button>
                 </div>
-              ) : (
-                <div className="empty-state">
-                  No hay actividades en este rango.
-                </div>
-              )}
+                <label className="commercial-development-calendar-date-input">
+                  <span>Fecha de referencia</span>
+                  <input
+                    type="date"
+                    value={calendarDate}
+                    onChange={(event) => setCalendarDate(event.target.value)}
+                  />
+                </label>
+              </div>
             </div>
 
-            <aside className="commercial-development-calendar-detail">
-              <div className="commercial-development-calendar-detail-header">
-                <div className="commercial-development-calendar-detail-heading">
-                  <span>Dia seleccionado</span>
-                  <h4>
-                    {selectedDayData?.date
-                      ? formatDate(selectedDayData.date)
-                      : "Sin seleccion"}
-                  </h4>
-                  <p>
-                    {selectedDayData?.date
-                      ? `${getWeekdayLabel(selectedDayData.date, "long")} · agenda operativa del dia`
-                      : "Selecciona un dia para ver su agenda."}
-                  </p>
-                </div>
-                <span className="commercial-development-pill is-low">
-                  {selectedDayItems.length} actividad
-                  {selectedDayItems.length === 1 ? "" : "es"}
-                </span>
-              </div>
+            {calendarError ? (
+              <p className="form-error">{calendarError}</p>
+            ) : null}
 
-              <div className="commercial-development-calendar-detail-summary">
-                <div className="commercial-development-calendar-detail-chip">
-                  <span>Oportunidades activas</span>
-                  <strong>{calendarOpportunityOptions.length}</strong>
-                </div>
+            <div className="commercial-development-calendar-summary">
+              <div>
+                <span>Total</span>
+                <strong>{Number(calendarData?.summary?.total || 0)}</strong>
               </div>
+              <div>
+                <span>Pendientes</span>
+                <strong>{Number(calendarData?.summary?.pending || 0)}</strong>
+              </div>
+              <div>
+                <span>En curso</span>
+                <strong>
+                  {Number(calendarData?.summary?.inProgress || 0)}
+                </strong>
+              </div>
+              <div>
+                <span>Realizadas</span>
+                <strong>{Number(calendarData?.summary?.done || 0)}</strong>
+              </div>
+            </div>
 
-              <div className="commercial-development-calendar-create-box">
-                <div className="commercial-development-calendar-create-copy">
-                  <span
-                    className="commercial-development-calendar-inline-icon"
-                    aria-hidden="true"
-                  >
-                    <CalendarPlusIcon />
-                  </span>
-                  <strong>Nueva actividad</strong>
-                  <p>
-                    Elige la oportunidad y crea la siguiente acción para este
-                    dia.
-                  </p>
-                </div>
-                <label>
-                  Oportunidad
-                  <select
-                    value={calendarOpportunityId}
-                    onChange={(event) =>
-                      setCalendarOpportunityId(event.target.value)
+            <div className="commercial-development-calendar-layout">
+              <div>
+                {calendarLoading ? (
+                  <div className="empty-state">Actualizando agenda...</div>
+                ) : calendarDays.length ? (
+                  <div
+                    className={
+                      calendarView === "month"
+                        ? "commercial-development-calendar-month-frame"
+                        : ""
                     }
-                    disabled={!calendarOpportunityOptions.length}
                   >
-                    {calendarOpportunityOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleCreateCalendarActivity}
-                  disabled={
-                    !canUpdateCommercialCalendar ||
-                    !calendarOpportunityId ||
-                    !selectedDayData?.date
-                  }
-                >
-                  Nueva actividad en este dia
-                </button>
-              </div>
+                    {calendarView === "month" ? (
+                      <div
+                        className="commercial-development-calendar-month-weekdays"
+                        aria-hidden="true"
+                      >
+                        {CALENDAR_WEEKDAY_HEADERS.map((label) => (
+                          <div
+                            key={label}
+                            className="commercial-development-calendar-month-weekday"
+                          >
+                            {label}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
 
-              <div className="commercial-development-calendar-event-list">
-                {selectedDayItems.length ? (
-                  selectedDayItems.map((item) => (
-                    <button
-                      key={`calendar-event-${item.id}`}
-                      type="button"
-                      className="commercial-development-calendar-event-card"
-                      onClick={() => handleCalendarEventClick(item)}
+                    <div
+                      className={`commercial-development-calendar-grid is-${calendarView}`}
                     >
-                      <div className="commercial-development-inline-row">
-                        <strong>
-                          {getActivityTypeLabel(item.activityType)}
-                        </strong>
-                        <span className="commercial-development-pill is-low">
-                          {getActivityStatusLabel(item.status)}
-                        </span>
-                      </div>
-                      <p>{item.title || "Sin objetivo registrado"}</p>
-                      <div className="commercial-development-calendar-event-meta">
-                        <span>{formatDateTime(item.scheduledAt)}</span>
-                        <span>{item.opportunityName}</span>
-                        <span>{item.accountName}</span>
-                      </div>
-                    </button>
-                  ))
+                      {calendarView === "month"
+                        ? Array.from({ length: monthLeadingEmptySlots }).map(
+                            (_, index) => (
+                              <div
+                                key={`calendar-empty-${index}`}
+                                className="commercial-development-calendar-day is-placeholder"
+                                aria-hidden="true"
+                              >
+                                <span className="commercial-development-calendar-placeholder-mark" />
+                              </div>
+                            ),
+                          )
+                        : null}
+                      {calendarDays.map((day) => {
+                        const isSelected = day.date === selectedDayData?.date;
+                        const isToday = day.date === getTodayDateValue();
+                        const previewLimit = calendarView === "month" ? 3 : 4;
+                        const heatLevelClass = getCalendarHeatLevel(day.count);
+                        return (
+                          <button
+                            key={day.date}
+                            type="button"
+                            className={`commercial-development-calendar-day ${calendarView === "month" ? "is-month" : ""} ${heatLevelClass} ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""}`.trim()}
+                            onClick={() => handleCalendarDayClick(day)}
+                          >
+                            <div className="commercial-development-calendar-day-header">
+                              {calendarView === "month" ? (
+                                <div className="commercial-development-calendar-month-day-copy">
+                                  <strong className="commercial-development-calendar-month-day-number">
+                                    {Number(String(day.date).slice(-2))}
+                                  </strong>
+                                  <span className="commercial-development-calendar-month-day-label">
+                                    {isToday
+                                      ? "Hoy"
+                                      : getWeekdayLabel(day.date, "short")}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div>
+                                  <span>
+                                    {getWeekdayLabel(day.date, "long")}
+                                  </span>
+                                  <strong>{formatDate(day.date)}</strong>
+                                </div>
+                              )}
+                              <span className="commercial-development-calendar-count">
+                                {day.count}
+                              </span>
+                            </div>
+
+                            <div className="commercial-development-calendar-day-items">
+                              {asArray(day.items)
+                                .slice(0, previewLimit)
+                                .map((item) => (
+                                  <span
+                                    key={`calendar-item-preview-${item.id}`}
+                                    className="commercial-development-calendar-preview-pill"
+                                  >
+                                    {formatDateTime(item.scheduledAt)
+                                      .split(",")[1]
+                                      ?.trim() ||
+                                      getActivityTypeLabel(item.activityType)}
+                                  </span>
+                                ))}
+                              {day.count > previewLimit ? (
+                                <span className="commercial-development-calendar-preview-more">
+                                  +{day.count - previewLimit} mas
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : (
-                  <div className="commercial-development-calendar-empty-state">
-                    <span
-                      className="commercial-development-calendar-empty-icon"
-                      aria-hidden="true"
-                    >
-                      <SparkIcon />
-                    </span>
-                    <strong>Dia sin Actividades</strong>
-                    <p>
-                      No hay actividades programadas para este dia. Puedes crear
-                      una desde este panel.
-                    </p>
+                  <div className="empty-state">
+                    No hay actividades en este rango.
                   </div>
                 )}
               </div>
-            </aside>
-          </div>
-        </section>
+
+              <aside className="commercial-development-calendar-detail">
+                <div className="commercial-development-calendar-detail-header">
+                  <div className="commercial-development-calendar-detail-heading">
+                    <span>Dia seleccionado</span>
+                    <h4>
+                      {selectedDayData?.date
+                        ? formatDate(selectedDayData.date)
+                        : "Sin seleccion"}
+                    </h4>
+                    <p>
+                      {selectedDayData?.date
+                        ? `${getWeekdayLabel(selectedDayData.date, "long")} · agenda operativa del dia`
+                        : "Selecciona un dia para ver su agenda."}
+                    </p>
+                  </div>
+                  <span className="commercial-development-pill is-low">
+                    {selectedDayItems.length} actividad
+                    {selectedDayItems.length === 1 ? "" : "es"}
+                  </span>
+                </div>
+
+                <div className="commercial-development-calendar-detail-summary">
+                  <div className="commercial-development-calendar-detail-chip">
+                    <span>Oportunidades activas</span>
+                    <strong>{calendarOpportunityOptions.length}</strong>
+                  </div>
+                </div>
+
+                <div className="commercial-development-calendar-create-box">
+                  <div className="commercial-development-calendar-create-copy">
+                    <span
+                      className="commercial-development-calendar-inline-icon"
+                      aria-hidden="true"
+                    >
+                      <CalendarPlusIcon />
+                    </span>
+                    <strong>Nueva actividad</strong>
+                    <p>
+                      Elige la oportunidad y crea la siguiente acción para este
+                      dia.
+                    </p>
+                  </div>
+                  <label>
+                    Oportunidad
+                    <select
+                      value={calendarOpportunityId}
+                      onChange={(event) =>
+                        setCalendarOpportunityId(event.target.value)
+                      }
+                      disabled={!calendarOpportunityOptions.length}
+                    >
+                      {calendarOpportunityOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleCreateCalendarActivity}
+                    disabled={
+                      !canUpdateCommercialCalendar ||
+                      !calendarOpportunityId ||
+                      !selectedDayData?.date
+                    }
+                  >
+                    Nueva actividad en este dia
+                  </button>
+                </div>
+
+                <div className="commercial-development-calendar-event-list">
+                  {selectedDayItems.length ? (
+                    selectedDayItems.map((item) => (
+                      <button
+                        key={`calendar-event-${item.id}`}
+                        type="button"
+                        className="commercial-development-calendar-event-card"
+                        onClick={() => handleCalendarEventClick(item)}
+                      >
+                        <div className="commercial-development-inline-row">
+                          <strong>
+                            {getActivityTypeLabel(item.activityType)}
+                          </strong>
+                          <span className="commercial-development-pill is-low">
+                            {getActivityStatusLabel(item.status)}
+                          </span>
+                        </div>
+                        <p>{item.title || "Sin objetivo registrado"}</p>
+                        <div className="commercial-development-calendar-event-meta">
+                          <span>{formatDateTime(item.scheduledAt)}</span>
+                          <span>{item.opportunityName}</span>
+                          <span>{item.accountName}</span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="commercial-development-calendar-empty-state">
+                      <span
+                        className="commercial-development-calendar-empty-icon"
+                        aria-hidden="true"
+                      >
+                        <SparkIcon />
+                      </span>
+                      <strong>Dia sin Actividades</strong>
+                      <p>
+                        No hay actividades programadas para este dia. Puedes
+                        crear una desde este panel.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
         ) : null}
       </div>
 

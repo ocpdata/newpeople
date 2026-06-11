@@ -66,6 +66,7 @@ const DEVELOPMENT_ACTION_LIMIT = 10;
 
 const COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
 const COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+const COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES = 3;
 const COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -391,11 +392,7 @@ async function listNarrativeStageAnswers({ opportunityId, salesStageId }) {
      WHERE q.sales_stage_id = ?
        AND q.is_active = 1
      ORDER BY q.display_order, q.id`,
-    [
-      normalizedOpportunityId,
-      normalizedSalesStageId,
-      normalizedSalesStageId,
-    ],
+    [normalizedOpportunityId, normalizedSalesStageId, normalizedSalesStageId],
   ).catch(() => []);
 
   return rows.map((row) => ({
@@ -507,7 +504,10 @@ function resolveCalendarSlaDays(rawValue) {
   if (!Number.isInteger(parsed)) {
     return CALENDAR_DEFAULT_SLA_DAYS;
   }
-  return Math.min(CALENDAR_MAX_SLA_DAYS, Math.max(CALENDAR_MIN_SLA_DAYS, parsed));
+  return Math.min(
+    CALENDAR_MAX_SLA_DAYS,
+    Math.max(CALENDAR_MIN_SLA_DAYS, parsed),
+  );
 }
 
 function getTimeZoneDayWindow(dateText, timeZone = BUSINESS_TIMEZONE) {
@@ -1030,7 +1030,11 @@ function normalizeNarrativeInsightsPayload(parsedPayload) {
       const normalizedStatusSummary =
         statusSummary || aiContract?.descriptionSituationText || "";
 
-      if (!normalizedStatusSummary && !normalizedRecommendation && !aiContract) {
+      if (
+        !normalizedStatusSummary &&
+        !normalizedRecommendation &&
+        !aiContract
+      ) {
         return null;
       }
 
@@ -1075,9 +1079,7 @@ function deriveSingleNarrativeFromText(outputText, opportunityId) {
     .map((part) => String(part || "").trim())
     .filter(Boolean);
 
-  const statusSummary = String(
-    lines[0] || sentenceParts[0] || "",
-  ).trim();
+  const statusSummary = String(lines[0] || sentenceParts[0] || "").trim();
   const nextStepRecommendation = String(
     lines[1] || sentenceParts[1] || lines[0] || "",
   ).trim();
@@ -1190,7 +1192,9 @@ function formatNarrativeRecommendedActionText(action) {
     return action.messageDraft || "";
   }
 
-  return action.messageDraft ? `${base} Mensaje sugerido: ${action.messageDraft}` : base;
+  return action.messageDraft
+    ? `${base} Mensaje sugerido: ${action.messageDraft}`
+    : base;
 }
 
 function buildFallbackRecommendedAction(item) {
@@ -1222,9 +1226,10 @@ function buildFallbackRecommendedAction(item) {
 
 function buildFallbackNarrativeContract(item, recommendedAction) {
   const stageLabel = item?.stageName || "Sin etapa";
-  const customerNeed = Array.isArray(item?.riskReasons) && item.riskReasons.length
-    ? `Resolver ${String(item.riskReasons[0] || "").toLowerCase()} para habilitar la compra.`
-    : "Confirmar necesidad prioritaria y criterio de decision del cliente.";
+  const customerNeed =
+    Array.isArray(item?.riskReasons) && item.riskReasons.length
+      ? `Resolver ${String(item.riskReasons[0] || "").toLowerCase()} para habilitar la compra.`
+      : "Confirmar necesidad prioritaria y criterio de decision del cliente.";
   const timeline = item?.closeDate
     ? `Objetivo comercial: ${toIsoDate(item.closeDate) || "sin fecha valida"}.`
     : "No hay fecha de cierre confirmada en CRM.";
@@ -1282,7 +1287,8 @@ function buildFallbackNarrativeContract(item, recommendedAction) {
     descriptionSituationText: `La oportunidad se encuentra en la etapa ${stageLabel} y hoy el cliente parece buscar una solucion que le permita avanzar en su necesidad prioritaria. ${customerNeed} ${item?.executionState?.summary || "Comercialmente la oportunidad sigue abierta, pero necesita mayor claridad de decisor, urgencia y condicion de avance."} ${timeline} ${actionsTaken ? `Hasta ahora el equipo comercial ha trabajado en los siguientes hitos: ${actionsTaken}.` : "Hasta ahora la evidencia comercial registrada sigue siendo parcial y debe consolidarse mejor para sostener una venta consultiva."} ${recentDocuments ? `En documentacion reciente destacan: ${recentDocuments}.` : "No hay suficiente documentacion reciente para reforzar la narrativa comercial."} ${stageAnswerEvidence ? `Las respuestas de etapa muestran esta evidencia relevante: ${stageAnswerEvidence}.` : "Las respuestas de etapa no aportan aun suficiente contexto estructurado."} ${quotationEvidence ? `En cotizaciones existe la siguiente señal de avance: ${quotationEvidence}.` : "No hay una señal fuerte de cotizacion que ayude a ordenar la conversacion de cierre."} ${contactEvidence ? `Los contactos relacionados son: ${contactEvidence}.` : "Aun falta consolidar claramente los contactos que influyen en la decision."}`,
     salesStrategyText: `${item?.recommendedHeading || "La estrategia comercial debe ayudar al vendedor a transformar interes en una decision concreta del cliente."} ${item?.recommendedRoute || "Para lograrlo, debe seguir la disciplina de la etapa actual y conectar cada accion con una evidencia comercial verificable en CRM."} ${recommendedSteps ? `La secuencia recomendada es: ${recommendedSteps}.` : "La secuencia recomendada debe comenzar por validar necesidad, decisor, prioridad de compra y siguiente hito con fecha."} ${item?.recommendedFinalObjective || "Cada accion debe producir un resultado visible: aclarar que busca el cliente, por que lo necesita, quien decide, bajo que criterio compraria y cuando puede ejecutar o comprar la solucion."} ${openDependencies ? `Ademas, hay dependencias que no pueden ignorarse: ${openDependencies}. La estrategia del vendedor debe destrabarlas o gestionarlas en paralelo para que no bloqueen el avance comercial.` : "No hay dependencias abiertas dominantes, por lo que el foco debe ponerse en calidad de conversacion comercial y compromiso del cliente."} ${Array.isArray(item?.riskReasons) && item.riskReasons.length ? `El principal riesgo hoy es ${item.riskReasons[0].toLowerCase()}; por eso la estrategia no debe ser solo de seguimiento, sino de conduccion activa con resultados concretos por accion.` : "El mayor riesgo es caer en seguimiento pasivo; la estrategia debe mantener conduccion activa y resultados concretos por accion."}`,
     nextBestStepText: `${recommendedAction?.action || "El siguiente paso debe ser una accion concreta con el cliente."} ${recommendedAction?.dueWindow ? `Debe ejecutarse ${recommendedAction.dueWindow.toLowerCase()} y no dejarse como un seguimiento abierto.` : "Debe ejecutarse de inmediato y no dejarse como un seguimiento abierto."} ${recommendedAction?.evidenceExpected || "El resultado esperado debe ser evidencia verificable de avance y decision."} Este paso es el mas adecuado porque ayuda a convertir la situacion actual en una definicion operativa: quien decide, que valida el cliente, cual es el criterio de compra y cual es la fecha del siguiente hito. El vendedor debe salir de esta accion con un compromiso concreto, una respuesta observable del cliente y registro suficiente en CRM para sostener el siguiente movimiento comercial.`,
-    alternativeStepText: "Si el mejor paso no puede ejecutarse o el cliente no responde en el plazo previsto, debe activarse una alternativa de rescate comercial. Esa alternativa consiste en escalar con un resumen ejecutivo que recuerde el valor de la solucion, el riesgo de no decidir, el estado actual de la oportunidad y una fecha alternativa de decision o revision. El objetivo del paso alternativo no es solo insistir, sino recuperar traccion, provocar una definicion del cliente y evitar que la oportunidad quede en seguimiento difuso. El vendedor debe usar este paso para obtener una respuesta formal, redefinir alcance si hace falta y decidir rapidamente si conviene retomar el plan principal o replantear la estrategia comercial.",
+    alternativeStepText:
+      "Si el mejor paso no puede ejecutarse o el cliente no responde en el plazo previsto, debe activarse una alternativa de rescate comercial. Esa alternativa consiste en escalar con un resumen ejecutivo que recuerde el valor de la solucion, el riesgo de no decidir, el estado actual de la oportunidad y una fecha alternativa de decision o revision. El objetivo del paso alternativo no es solo insistir, sino recuperar traccion, provocar una definicion del cliente y evitar que la oportunidad quede en seguimiento difuso. El vendedor debe usar este paso para obtener una respuesta formal, redefinir alcance si hace falta y decidir rapidamente si conviene retomar el plan principal o replantear la estrategia comercial.",
   });
 }
 
@@ -1326,7 +1332,8 @@ function buildOpportunityNarrativeFallback(item) {
   return {
     aiStatusSummary: statusSummary.trim(),
     aiNextStepRecommendation: String(
-      nextStepRecommendation || formatNarrativeRecommendedActionText(recommendedAction),
+      nextStepRecommendation ||
+        formatNarrativeRecommendedActionText(recommendedAction),
     ).trim(),
     aiRecommendedAction: recommendedAction,
     aiContract,
@@ -1368,7 +1375,9 @@ async function requestOpportunityNarrativesWithAi(
             executionState: item.executionState,
             riskLevel: item.riskLevel,
             riskReasons: Array.isArray(item.riskReasons)
-              ? item.riskReasons.slice(0, 5).map((reason) => truncateText(reason, 180))
+              ? item.riskReasons
+                  .slice(0, 5)
+                  .map((reason) => truncateText(reason, 180))
               : [],
             daysSinceActivity: Number(item.daysSinceActivity || 0),
             slaDays: Number(item.slaDays || 0),
@@ -1378,19 +1387,21 @@ async function requestOpportunityNarrativesWithAi(
                 ? truncateText(item.workspaceSummary, 900)
                 : null,
             scorecardOverallTone: item.scorecardOverallTone || "neutral",
-            scorecardItems: (item.scorecardItems || []).slice(0, 6).map(
-              (scorecardItem) => ({
+            scorecardItems: (item.scorecardItems || [])
+              .slice(0, 6)
+              .map((scorecardItem) => ({
                 label: truncateText(scorecardItem.label, 80),
                 tone: scorecardItem.tone,
                 statusLabel: truncateText(scorecardItem.statusLabel, 80),
                 summary: truncateText(scorecardItem.summary, 180),
-              }),
-            ),
-            openWeaknesses: (item.openWeaknesses || []).slice(0, 10).map((weakness) => ({
-              title: truncateText(weakness.title, 120),
-              severity: weakness.severity,
-              detail: truncateText(weakness.detail, 220),
-            })),
+              })),
+            openWeaknesses: (item.openWeaknesses || [])
+              .slice(0, 10)
+              .map((weakness) => ({
+                title: truncateText(weakness.title, 120),
+                severity: weakness.severity,
+                detail: truncateText(weakness.detail, 220),
+              })),
             nextStep: item.nextStep
               ? {
                   title: truncateText(item.nextStep.title, 120),
@@ -1420,12 +1431,14 @@ async function requestOpportunityNarrativesWithAi(
                     : [],
                 }
               : null,
-            dependencies: (item.dependencies || []).slice(0, 12).map((dependency) => ({
-              title: truncateText(dependency.title, 120),
-              dependencyLabel: truncateText(dependency.dependencyLabel, 80),
-              status: dependency.status,
-              isOverdue: Boolean(dependency.isOverdue),
-            })),
+            dependencies: (item.dependencies || [])
+              .slice(0, 12)
+              .map((dependency) => ({
+                title: truncateText(dependency.title, 120),
+                dependencyLabel: truncateText(dependency.dependencyLabel, 80),
+                status: dependency.status,
+                isOverdue: Boolean(dependency.isOverdue),
+              })),
             dependencyExecution: (item.dependencyExecution || [])
               .slice(0, 12)
               .map((dependency) => ({
@@ -1437,13 +1450,15 @@ async function requestOpportunityNarrativesWithAi(
                 isOverdue: Boolean(dependency.isOverdue),
                 expectedOutcome: truncateText(dependency.expectedOutcome, 180),
               })),
-            lastMilestones: (item.lastMilestones || []).slice(0, 10).map((milestone) => ({
-              type: milestone.type || "",
-              title: truncateText(milestone.title, 120),
-              status: milestone.status || "",
-              happenedAt: milestone.happenedAt || null,
-              summary: truncateText(milestone.summary, 180),
-            })),
+            lastMilestones: (item.lastMilestones || [])
+              .slice(0, 10)
+              .map((milestone) => ({
+                type: milestone.type || "",
+                title: truncateText(milestone.title, 120),
+                status: milestone.status || "",
+                happenedAt: milestone.happenedAt || null,
+                summary: truncateText(milestone.summary, 180),
+              })),
             recentActivities: (item.recentActivities || [])
               .slice(0, 12)
               .map((activity) => ({
@@ -1456,7 +1471,10 @@ async function requestOpportunityNarrativesWithAi(
                   activity.updatedAt ||
                   activity.createdAt ||
                   null,
-                summary: truncateText(activity.summary || activity.note || "", 220),
+                summary: truncateText(
+                  activity.summary || activity.note || "",
+                  220,
+                ),
               })),
             recentTimeline: (item.recentTimeline || [])
               .slice(0, 15)
@@ -1472,20 +1490,27 @@ async function requestOpportunityNarrativesWithAi(
                   timelineItem.createdAt ||
                   null,
               })),
-            stageAnswers: (item.stageAnswers || []).slice(0, 20).map((answer) => ({
-              salesStageName: truncateText(answer.salesStageName, 80),
-              questionCode: truncateText(answer.questionCode, 80),
-              questionPrompt: truncateText(answer.questionPrompt, 220),
-              answerValue: truncateText(answer.answerValue, 320),
-              isRequired: Boolean(answer.isRequired),
-              answeredAt: answer.answeredAt || null,
-            })),
+            stageAnswers: (item.stageAnswers || [])
+              .slice(0, 20)
+              .map((answer) => ({
+                salesStageName: truncateText(answer.salesStageName, 80),
+                questionCode: truncateText(answer.questionCode, 80),
+                questionPrompt: truncateText(answer.questionPrompt, 220),
+                answerValue: truncateText(answer.answerValue, 320),
+                isRequired: Boolean(answer.isRequired),
+                answeredAt: answer.answeredAt || null,
+              })),
             activityCount: Number(item.activityCount || 0),
             actionCount: Number(item.actionCount || 0),
             decisionStageGap: item.decisionStageGap
               ? {
-                  primaryGap: truncateText(item.decisionStageGap.primaryGap, 80),
-                  secondaryGaps: Array.isArray(item.decisionStageGap.secondaryGaps)
+                  primaryGap: truncateText(
+                    item.decisionStageGap.primaryGap,
+                    80,
+                  ),
+                  secondaryGaps: Array.isArray(
+                    item.decisionStageGap.secondaryGaps,
+                  )
                     ? item.decisionStageGap.secondaryGaps
                         .slice(0, 3)
                         .map((gap) => truncateText(gap, 80))
@@ -1496,7 +1521,9 @@ async function requestOpportunityNarrativesWithAi(
             documentActivity: item.documentActivity
               ? {
                   lastDocumentAt: item.documentActivity.lastDocumentAt || null,
-                  documentCount: Number(item.documentActivity.documentCount || 0),
+                  documentCount: Number(
+                    item.documentActivity.documentCount || 0,
+                  ),
                   docsLast7d: Number(item.documentActivity.docsLast7d || 0),
                 }
               : null,
@@ -1512,14 +1539,18 @@ async function requestOpportunityNarrativesWithAi(
               .map((document) => ({
                 fileName: truncateText(document.fileName, 120),
                 createdAt: document.createdAt || null,
-                processingStatus: String(document.processingStatus || "").trim(),
+                processingStatus: String(
+                  document.processingStatus || "",
+                ).trim(),
                 summary: truncateText(document.summary, 220),
               })),
-            accountContacts: (item.accountContacts || []).slice(0, 12).map((contact) => ({
-              fullName: truncateText(contact.fullName, 100),
-              positionTitle: truncateText(contact.positionTitle, 100),
-              email: truncateText(contact.email, 120),
-            })),
+            accountContacts: (item.accountContacts || [])
+              .slice(0, 12)
+              .map((contact) => ({
+                fullName: truncateText(contact.fullName, 100),
+                positionTitle: truncateText(contact.positionTitle, 100),
+                email: truncateText(contact.email, 120),
+              })),
             quotationSignals: (item.quotationSignals || [])
               .slice(0, 12)
               .map((quotation) => ({
@@ -1537,13 +1568,11 @@ async function requestOpportunityNarrativesWithAi(
             ),
             recommendedStrategySteps: (item.recommendedStrategySteps || [])
               .slice(0, 5)
-              .map(
-              (step) => ({
+              .map((step) => ({
                 priorityLabel: truncateText(step.priorityLabel, 40),
                 title: truncateText(step.title, 120),
                 text: truncateText(step.text, 220),
-              }),
-            ),
+              })),
             recommendedNextMove: getRecommendedNextMove(
               item.recommendedNextMove,
             ),
@@ -1656,13 +1685,13 @@ async function requestOpportunityNarrativesWithAi(
         const strengthenedNarrative = strengthenNarrativeWithEvidence(
           itemByOpportunityId.get(opportunityId),
           {
-          aiStatusSummary: String(item.aiStatusSummary || "").trim(),
-          aiNextStepRecommendation: String(
-            item.aiNextStepRecommendation || "",
-          ).trim(),
-          aiRecommendedAction: item.aiRecommendedAction || null,
-          aiContract: item.aiContract || null,
-          aiNarrativeSource: "openai",
+            aiStatusSummary: String(item.aiStatusSummary || "").trim(),
+            aiNextStepRecommendation: String(
+              item.aiNextStepRecommendation || "",
+            ).trim(),
+            aiRecommendedAction: item.aiRecommendedAction || null,
+            aiContract: item.aiContract || null,
+            aiNarrativeSource: "openai",
           },
         );
 
@@ -1743,18 +1772,17 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     quotationVersions,
     accountContactsByAccountId,
     stageAnswers,
-  ] =
-    await Promise.all([
-      listOpportunityDocumentSignals(opportunityId),
-      listCommercialQuotationVersionsForEmail({ opportunityId }).catch(() => []),
-      listContactsByAccountIds([Number(opportunity?.account_id || 0)]).catch(
-        () => new Map(),
-      ),
-      listNarrativeStageAnswers({
-        opportunityId,
-        salesStageId: Number(opportunity?.sales_stage_id || 0),
-      }).catch(() => []),
-    ]);
+  ] = await Promise.all([
+    listOpportunityDocumentSignals(opportunityId),
+    listCommercialQuotationVersionsForEmail({ opportunityId }).catch(() => []),
+    listContactsByAccountIds([Number(opportunity?.account_id || 0)]).catch(
+      () => new Map(),
+    ),
+    listNarrativeStageAnswers({
+      opportunityId,
+      salesStageId: Number(opportunity?.sales_stage_id || 0),
+    }).catch(() => []),
+  ]);
   const accountContacts = (
     accountContactsByAccountId.get(Number(opportunity?.account_id || 0)) || []
   )
@@ -1765,9 +1793,8 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
       positionTitle: String(contact.positionTitle || "").trim(),
       email: String(contact.email || "").trim(),
     }));
-  const quotationSignals = (Array.isArray(quotationVersions)
-    ? quotationVersions
-    : []
+  const quotationSignals = (
+    Array.isArray(quotationVersions) ? quotationVersions : []
   )
     .slice(0, 12)
     .map((quotationVersion) => ({
@@ -1872,8 +1899,12 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
       docsLast7d: Number(documentSignals.docsLast7d || 0),
     },
     documentReadiness: {
-      reviewReady: Number(documentSignals.processingStatusCounts.reviewReady || 0),
-      processing: Number(documentSignals.processingStatusCounts.processing || 0),
+      reviewReady: Number(
+        documentSignals.processingStatusCounts.reviewReady || 0,
+      ),
+      processing: Number(
+        documentSignals.processingStatusCounts.processing || 0,
+      ),
       failed: Number(documentSignals.processingStatusCounts.failed || 0),
     },
     documentHighlights: Array.isArray(documentSignals.highlights)
@@ -1891,10 +1922,12 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     actionCount: activitySummary.actionCount,
     accountContacts,
     quotationSignals,
-    stageAnswers: (Array.isArray(stageAnswers) ? stageAnswers : []).map((answer) => ({
-      ...answer,
-      salesStageName: opportunity?.sales_stage_name || "",
-    })),
+    stageAnswers: (Array.isArray(stageAnswers) ? stageAnswers : []).map(
+      (answer) => ({
+        ...answer,
+        salesStageName: opportunity?.sales_stage_name || "",
+      }),
+    ),
   };
 }
 
@@ -2093,7 +2126,9 @@ function strengthenNarrativeWithEvidence(item, narrative) {
       );
     }
 
-    if (!textContainsNarrativeAnchor(aiNextStepRecommendation, documentAnchor)) {
+    if (
+      !textContainsNarrativeAnchor(aiNextStepRecommendation, documentAnchor)
+    ) {
       const recommendationAnchor = documentAnchor.summary
         ? "Usar ese documento para cerrar validacion tecnica y economica con decisor."
         : "Usar ese documento como base de la sesion de decision con el cliente.";
@@ -2313,7 +2348,9 @@ async function executeCommercialOpportunityNarrative({ user, opportunityId }) {
           executionContext.fallback.aiRecommendedAction ||
           null,
         aiContract:
-          aiNarrative?.aiContract || executionContext.fallback.aiContract || null,
+          aiNarrative?.aiContract ||
+          executionContext.fallback.aiContract ||
+          null,
         aiNarrativeSource:
           aiNarrative?.aiNarrativeSource ||
           executionContext.fallback.aiNarrativeSource,
@@ -2353,7 +2390,7 @@ async function createOrReuseCommercialNarrativeJob({
   const reusableRows = forceRegenerate
     ? []
     : await query(
-    `SELECT *
+        `SELECT *
      FROM commercial_opportunity_narrative_jobs
      WHERE opportunity_id = ?
        AND requested_by_user_id = ?
@@ -2362,8 +2399,8 @@ async function createOrReuseCommercialNarrativeJob({
        AND (expires_at IS NULL OR expires_at > NOW(3))
      ORDER BY id DESC
      LIMIT 1`,
-    [opportunityId, requestedByUserId, fingerprint],
-  );
+        [opportunityId, requestedByUserId, fingerprint],
+      );
 
   if (reusableRows.length) {
     const reusableRow = reusableRows[0];
@@ -2371,9 +2408,9 @@ async function createOrReuseCommercialNarrativeJob({
       reusableRow.result_json,
       null,
     );
-    const reusableSource = String(
-      reusableResult?.aiNarrativeSource || "",
-    ).trim().toLowerCase();
+    const reusableSource = String(reusableResult?.aiNarrativeSource || "")
+      .trim()
+      .toLowerCase();
     const shouldBypassReuse =
       reusableRow.status === "completed" && reusableSource === "fallback";
 
@@ -2976,7 +3013,10 @@ function sortAlertsByRisk(left, right) {
     ? new Date(right.scheduledAt).getTime()
     : Number.MAX_SAFE_INTEGER;
   if (leftDate !== rightDate) return leftDate - rightDate;
-  return String(left.title || "").localeCompare(String(right.title || ""), "es");
+  return String(left.title || "").localeCompare(
+    String(right.title || ""),
+    "es",
+  );
 }
 
 async function listCalendarSellerOptions(user) {
@@ -3225,7 +3265,10 @@ async function listOpenDependencies(opportunityIds) {
 
 async function listOpportunityDocumentSignals(opportunityId) {
   const normalizedOpportunityId = Number(opportunityId || 0);
-  if (!Number.isInteger(normalizedOpportunityId) || normalizedOpportunityId <= 0) {
+  if (
+    !Number.isInteger(normalizedOpportunityId) ||
+    normalizedOpportunityId <= 0
+  ) {
     return {
       lastDocumentAt: null,
       documentCount: 0,
@@ -3351,7 +3394,10 @@ async function listLatestCommercialNarrativesByOpportunity(opportunityIds) {
       continue;
     }
 
-    const strengthenedResult = strengthenNarrativeWithEvidence(snapshot, result);
+    const strengthenedResult = strengthenNarrativeWithEvidence(
+      snapshot,
+      result,
+    );
 
     narrativeByOpportunity.set(opportunityId, {
       aiStatusSummary: String(strengthenedResult.aiStatusSummary || "").trim(),
@@ -3414,40 +3460,39 @@ async function listLastActivityByOpportunity(opportunityIds) {
     auditRows,
     interactionRows,
     documentRows,
-  ] =
-    await Promise.all([
-      query(
-        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+  ] = await Promise.all([
+    query(
+      `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
        FROM opportunity_workspace_actions
        WHERE opportunity_id IN (${placeholders})
          AND action_type IN (${actionTypePlaceholders})
        GROUP BY opportunity_id`,
-        [...opportunityIds, ...actionTypes],
-      ).catch(() => []),
-      query(
-        `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
+      [...opportunityIds, ...actionTypes],
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, MAX(COALESCE(updated_at, created_at)) AS last_activity_at
        FROM commercial_execution_dependencies
        WHERE opportunity_id IN (${placeholders})
        GROUP BY opportunity_id`,
-        opportunityIds,
-      ).catch(() => []),
-      query(
-        `SELECT opportunity_id, MAX(answered_at) AS last_activity_at
+      opportunityIds,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, MAX(answered_at) AS last_activity_at
        FROM opportunity_stage_question_answers
        WHERE opportunity_id IN (${placeholders})
        GROUP BY opportunity_id`,
-        opportunityIds,
-      ).catch(() => []),
-      query(
-        `SELECT entity_id AS opportunity_id, MAX(created_at) AS last_activity_at
+      opportunityIds,
+    ).catch(() => []),
+    query(
+      `SELECT entity_id AS opportunity_id, MAX(created_at) AS last_activity_at
        FROM audit_log
        WHERE entity_type = 'opportunity'
          AND entity_id IN (${placeholders})
        GROUP BY entity_id`,
-        opportunityIds,
-      ).catch(() => []),
-      query(
-        `SELECT related.opportunity_id, MAX(related.created_at) AS last_activity_at
+      opportunityIds,
+    ).catch(() => []),
+    query(
+      `SELECT related.opportunity_id, MAX(related.created_at) AS last_activity_at
        FROM (
          SELECT i.primary_opportunity_id AS opportunity_id, i.created_at
          FROM interactions i
@@ -3461,19 +3506,19 @@ async function listLastActivityByOpportunity(opportunityIds) {
          WHERE l.opportunity_id IN (${placeholders})
        ) related
        GROUP BY related.opportunity_id`,
-        [...opportunityIds, ...opportunityIds],
-      ).catch(() => []),
-      query(
-        `SELECT odl.opportunity_id,
+      [...opportunityIds, ...opportunityIds],
+    ).catch(() => []),
+    query(
+      `SELECT odl.opportunity_id,
                 MAX(COALESCE(odl.created_at, d.updated_at, d.created_at)) AS last_activity_at
          FROM opportunity_document_links odl
          INNER JOIN documents d ON d.id = odl.document_id
          WHERE odl.opportunity_id IN (${placeholders})
            AND d.is_deleted = 0
          GROUP BY odl.opportunity_id`,
-        opportunityIds,
-      ).catch(() => []),
-    ]);
+      opportunityIds,
+    ).catch(() => []),
+  ]);
 
   const activityByOpportunity = new Map();
   for (const row of [
@@ -3742,9 +3787,11 @@ function inferDecisionStageGap({ scorecardItems, riskReasons, dependencies }) {
   const riskText = (Array.isArray(riskReasons) ? riskReasons : [])
     .map((reason) => String(reason || "").toLowerCase())
     .join(" ");
-  const openDependencyCount = (Array.isArray(dependencies) ? dependencies : [])
-    .filter((dependency) => ["open", "blocked"].includes(dependency?.status))
-    .length;
+  const openDependencyCount = (
+    Array.isArray(dependencies) ? dependencies : []
+  ).filter((dependency) =>
+    ["open", "blocked"].includes(dependency?.status),
+  ).length;
 
   const candidates = [
     {
@@ -3798,7 +3845,11 @@ function buildNarrativeMilestones({ activitySummary, dependencies, nextStep }) {
       title: String(entry.title || "Actividad reciente"),
       status: String(entry.status || "pending"),
       happenedAt:
-        entry.scheduledAt || entry.dueDate || entry.updatedAt || entry.createdAt || null,
+        entry.scheduledAt ||
+        entry.dueDate ||
+        entry.updatedAt ||
+        entry.createdAt ||
+        null,
       summary:
         String(entry.successCriteria || "").trim() ||
         String(entry.note || "").trim() ||
@@ -3826,8 +3877,7 @@ function buildNarrativeMilestones({ activitySummary, dependencies, nextStep }) {
           status: nextStep.status || "pending",
           happenedAt: nextStep.dueDate || nextStep.scheduledAt || null,
           summary:
-            nextStep.successCriteria ||
-            "Sin criterio de exito documentado",
+            nextStep.successCriteria || "Sin criterio de exito documentado",
         },
       ]
     : [];
@@ -4468,6 +4518,7 @@ function normalizeCommercialEmailDraft(details = {}) {
     purposeOther: hasKnownPurpose
       ? normalizedPurposeOther
       : normalizedPurposeOther || normalizedPurpose,
+    aiInstructionText: String(details.aiInstructionText || "").trim(),
     messageBody: String(details.messageBody || "").trim(),
     attachmentsNote: String(details.attachmentsNote || "").trim(),
     attachments: Array.isArray(details.attachments)
@@ -4534,6 +4585,9 @@ function normalizeCommercialEmailAttachment(attachment = {}) {
       ? Number(attachment.quotationVersionId)
       : null,
     proposalName: String(attachment.proposalName || "").trim(),
+    title: String(attachment.title || "").trim(),
+    summary: String(attachment.summary || "").trim(),
+    assetTypeLabel: String(attachment.assetTypeLabel || "").trim(),
   };
 
   if (normalized.sourceType === "library_file") {
@@ -5542,6 +5596,258 @@ function buildCommercialRecipientGreeting(recipientName = "") {
   return recipientName ? `Estimado/a ${recipientName},` : "Buen dia,";
 }
 
+function tokenizeCommercialInstruction(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+    .filter(
+      (token) =>
+        !new Set([
+          "para",
+          "con",
+          "por",
+          "que",
+          "los",
+          "las",
+          "una",
+          "uno",
+          "del",
+          "sobre",
+          "correo",
+          "cliente",
+          "este",
+          "esta",
+          "como",
+          "hacer",
+          "debe",
+        ]).has(token),
+    );
+}
+
+function scoreCommercialLibraryFileByInstruction(file, instructionTokens) {
+  if (!instructionTokens.length) return 0;
+
+  const searchable = [
+    String(file?.title || ""),
+    String(file?.summary || ""),
+    String(file?.fileName || ""),
+    String(file?.assetTypeLabel || ""),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  let score = 0;
+  instructionTokens.forEach((token) => {
+    if (searchable.includes(token)) {
+      score += 2;
+    }
+  });
+
+  if (
+    /\b(demo|demostracion|presentacion)\b/i.test(instructionTokens.join(" "))
+  ) {
+    const typeText = String(file?.assetTypeLabel || "").toLowerCase();
+    if (
+      typeText.includes("presentacion") ||
+      typeText.includes("brochure") ||
+      typeText.includes("datasheet")
+    ) {
+      score += 1;
+    }
+  }
+
+  return score;
+}
+
+function buildCommercialAttachmentSuggestionsFallback({
+  libraryFiles = [],
+  details = {},
+}) {
+  const normalizedDetails = normalizeCommercialEmailDraft(details);
+  const instructionTokens = tokenizeCommercialInstruction(
+    normalizedDetails.aiInstructionText,
+  );
+
+  const scored = (Array.isArray(libraryFiles) ? libraryFiles : [])
+    .map((file) => ({
+      file,
+      score: scoreCommercialLibraryFileByInstruction(file, instructionTokens),
+    }))
+    .filter((entry) => entry.file?.id)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      const leftDate = new Date(left.file?.createdAt || 0).getTime();
+      const rightDate = new Date(right.file?.createdAt || 0).getTime();
+      return rightDate - leftDate;
+    })
+    .slice(0, COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES)
+    .map((entry) => ({
+      ...entry.file,
+      reason:
+        entry.score > 0
+          ? "Coincide con las instrucciones de la solicitud."
+          : "Recomendado por vigencia y contexto comercial.",
+    }));
+
+  return scored;
+}
+
+async function requestCommercialAttachmentSuggestionsWithAi({
+  opportunity,
+  details,
+  libraryFiles,
+  aiUsageContext = null,
+}) {
+  const fallbackSuggestions = buildCommercialAttachmentSuggestionsFallback({
+    libraryFiles,
+    details,
+  });
+
+  if (!config.openai.apiKey) {
+    return {
+      source: "fallback",
+      suggestions: fallbackSuggestions,
+    };
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
+  const normalizedDetails = normalizeCommercialEmailDraft(details);
+  const candidates = (Array.isArray(libraryFiles) ? libraryFiles : [])
+    .slice(0, 40)
+    .map((file) => ({
+      id: String(file.id || "").trim(),
+      title: String(file.title || "").trim(),
+      summary: String(file.summary || "").trim(),
+      fileName: String(file.fileName || "").trim(),
+      assetTypeLabel: String(file.assetTypeLabel || "").trim(),
+    }))
+    .filter((file) => file.id);
+
+  const payload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Eres un asistente de preventa. Responde solo con JSON valido. Debes seleccionar hasta 3 documentos de biblioteca que mejor respondan a las instrucciones del usuario y al contexto de la oportunidad. No inventes IDs. Solo puedes usar IDs del arreglo candidates.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          opportunity: {
+            id: Number(opportunity?.id || 0),
+            name: String(opportunity?.name || "").trim(),
+            accountName: String(opportunity?.account_name || "").trim(),
+            stageName: String(opportunity?.sales_stage_name || "").trim(),
+          },
+          aiInstructionText: normalizedDetails.aiInstructionText,
+          candidates,
+          expectedShape: {
+            suggestedAttachmentIds: ["library:..."],
+            reasons: [{ id: "library:...", reason: "string" }],
+          },
+        }),
+      },
+    ],
+  };
+
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  if (aiUsageUserId) {
+    await recordAiUsageFromOpenAiResponse({
+      internalRequestId: aiUsageInternalRequestId,
+      userId: aiUsageUserId,
+      featureCode:
+        String(
+          aiUsageContext?.featureCode ||
+            "commercial_development.email_attachment_suggestions",
+        ) || "commercial_development.email_attachment_suggestions",
+      model: String(payload?.model || config.openai.model || "").trim(),
+      openAiResponse: data,
+      jobType: aiUsageContext?.jobType || null,
+      jobId: aiUsageContext?.jobId || null,
+      startedAt: aiUsageStartedAt,
+    });
+  }
+
+  const parsed = extractJsonObject(extractResponseOutputText(data));
+  const reasonPairs = Array.isArray(parsed?.reasons) ? parsed.reasons : [];
+  const reasonById = new Map(
+    reasonPairs
+      .map((entry) => [
+        String(entry?.id || "").trim(),
+        String(entry?.reason || "").trim(),
+      ])
+      .filter(([id]) => id),
+  );
+
+  const requestedIds = Array.isArray(parsed?.suggestedAttachmentIds)
+    ? parsed.suggestedAttachmentIds
+    : [];
+  const selectedIds = Array.from(
+    new Set(
+      requestedIds.map((value) => String(value || "").trim()).filter(Boolean),
+    ),
+  ).slice(0, COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES);
+
+  const candidatesById = new Map(
+    (Array.isArray(libraryFiles) ? libraryFiles : [])
+      .filter((file) => file?.id)
+      .map((file) => [String(file.id).trim(), file]),
+  );
+
+  const suggestions = selectedIds
+    .map((id) => {
+      const file = candidatesById.get(id);
+      if (!file) return null;
+      return {
+        ...file,
+        reason:
+          reasonById.get(id) ||
+          "Seleccionado por alta coincidencia con las instrucciones.",
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    source: "openai",
+    suggestions: suggestions.length ? suggestions : fallbackSuggestions,
+  };
+}
+
 function buildCommercialEmailSuggestionFallback(
   opportunity,
   details = {},
@@ -5550,6 +5856,60 @@ function buildCommercialEmailSuggestionFallback(
   const normalizedDetails = normalizeCommercialEmailDraft(details);
   const contextLabel = getCommercialEmailSuggestionContextLabel(opportunity);
   const greeting = buildCommercialRecipientGreeting(recipientName);
+  const instructionText = normalizedDetails.aiInstructionText;
+
+  if (instructionText) {
+    const lowerInstruction = instructionText.toLowerCase();
+    const mentionsDemo = /\b(demo|demostraci[oó]n|demostrar)\b/i.test(
+      instructionText,
+    );
+    const mentionsInfo = /\b(informaci[oó]n|informar|info)\b/i.test(
+      instructionText,
+    );
+    const mentionsInvite = /\b(invitar|invitaci[oó]n)\b/i.test(instructionText);
+    const productLabel = /\bf5\s*dcs\b/i.test(instructionText)
+      ? "F5 DCS"
+      : contextLabel;
+
+    let subject = `Seguimiento sobre ${productLabel}`;
+    if (mentionsDemo && mentionsInfo) {
+      subject = `Informacion y demostracion de ${productLabel}`;
+    } else if (mentionsDemo) {
+      subject = `Invitacion a demostracion de ${productLabel}`;
+    } else if (mentionsInfo) {
+      subject = `Informacion de ${productLabel}`;
+    } else if (mentionsInvite) {
+      subject = `Invitacion sobre ${productLabel}`;
+    }
+
+    const lines = [
+      greeting,
+      "",
+      mentionsInfo
+        ? `Le comparto informacion sobre ${productLabel}.`
+        : `Le comparto este correo sobre ${productLabel}.`,
+      mentionsDemo || mentionsInvite
+        ? "Tambien me gustaria invitarle a una demostracion para mostrarle el alcance y resolver cualquier duda."
+        : "",
+      "Quedo atento a sus comentarios para avanzar con el siguiente paso.",
+      "",
+      "Saludos cordiales,",
+    ].filter(Boolean);
+
+    if (lowerInstruction.includes("breve")) {
+      lines.splice(
+        3,
+        0,
+        "He procurado dejar el mensaje breve y directo, como indicaste.",
+      );
+    }
+
+    return {
+      subject,
+      messageBody: lines.join("\n"),
+      source: "fallback",
+    };
+  }
 
   if (normalizedDetails.purpose === "request_information") {
     return {
@@ -5601,13 +5961,26 @@ async function requestCommercialEmailSuggestionWithAi({
   }
 
   const normalizedDetails = normalizeCommercialEmailDraft(details);
+  const selectedLibraryFiles = (
+    Array.isArray(normalizedDetails.attachments)
+      ? normalizedDetails.attachments
+      : []
+  )
+    .filter((attachment) => attachment?.sourceType === "library_file")
+    .slice(0, 3)
+    .map((attachment) => ({
+      fileName: String(attachment.fileName || "").trim(),
+      title: String(attachment.title || "").trim(),
+      summary: String(attachment.summary || "").trim(),
+      assetTypeLabel: String(attachment.assetTypeLabel || "").trim(),
+    }));
   const payload = {
     model: config.openai.model,
     input: [
       {
         role: "system",
         content:
-          "Eres un redactor comercial B2B. Responde solo con JSON válido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en español, formales, ejecutivos y listos para enviar. El asunto debe ser breve, específico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo profesional, cuerpo breve y cierre cordial. Si existe `recipientName`, úsalo en el saludo de forma natural. Debe sonar comercial, concreto y útil para avanzar la oportunidad según el propósito indicado.",
+          "Eres un redactor comercial B2B. Responde solo con JSON válido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en español, formales, ejecutivos y listos para enviar. El asunto debe ser breve, específico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo profesional, cuerpo breve y cierre cordial. Si existe `recipientName`, úsalo en el saludo de forma natural. Prioriza la instrucción del usuario (`aiInstructionText`) por encima del contexto fijo de la oportunidad, siempre que no contradiga hechos reales. Si la instrucción pide mencionar un producto, demo, reunión o material concreto, incorpóralo al correo de forma natural.",
       },
       {
         role: "user",
@@ -5626,12 +5999,21 @@ async function requestCommercialEmailSuggestionWithAi({
             purpose: normalizedDetails.purpose,
             purposeOther: normalizedDetails.purposeOther,
             recipientName,
+            aiInstructionText: normalizedDetails.aiInstructionText,
             expectedResponse: normalizedDetails.expectedResponse,
             attachmentsSummary:
               getCommercialEmailAttachmentsSummary(normalizedDetails),
             responseDueDate: normalizedDetails.responseDueDate,
+            selectedLibraryFiles,
           },
-          writingGoal:
+          writingGoal: normalizedDetails.aiInstructionText
+            ? `Sigue esta instruccion del usuario: ${normalizedDetails.aiInstructionText}`
+            : normalizedDetails.purpose === "proposal"
+              ? "Presentar o enviar una propuesta comercial."
+              : normalizedDetails.purpose === "request_information"
+                ? "Compartir informacion util para mover la oportunidad."
+                : `Redactar un correo sobre: ${normalizedDetails.purposeOther || "otro tema comercial relevante"}.`,
+          contextGoal:
             normalizedDetails.purpose === "proposal"
               ? "Presentar o enviar una propuesta comercial."
               : normalizedDetails.purpose === "request_information"
@@ -5829,7 +6211,7 @@ async function listCommercialCalendarActivities({
   }
 
   const rows = await query(
-        `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
+    `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
             a.scheduled_at, a.is_primary_next_step,
             o.name AS opportunity_name, o.close_date, o.amount_usd,
           o.seller_user_id,
@@ -5881,7 +6263,8 @@ async function listCommercialCalendarActivities({
   const summary = items.reduce(
     (accumulator, item) => {
       accumulator.total += 1;
-      if (isPendingCommercialActivityStatus(item.status)) accumulator.pending += 1;
+      if (isPendingCommercialActivityStatus(item.status))
+        accumulator.pending += 1;
       if (item.status === "in_progress") accumulator.inProgress += 1;
       if (item.status === "blocked") accumulator.blocked += 1;
       if (item.status === "done") accumulator.done += 1;
@@ -5915,7 +6298,12 @@ async function listCommercialCalendarActivities({
   };
 }
 
-async function listCalendarAlertActivities({ user, sellerUserId, now, next24h }) {
+async function listCalendarAlertActivities({
+  user,
+  sellerUserId,
+  now,
+  next24h,
+}) {
   const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
   const allowedStatuses = Array.from(COMMERCIAL_ACTIVITY_OPEN_STATUSES);
   const params = [];
@@ -5979,7 +6367,11 @@ async function listCalendarAlertActivities({ user, sellerUserId, now, next24h })
   }));
 }
 
-async function buildCommercialCalendarInsights({ user, sellerUserId, slaDays }) {
+async function buildCommercialCalendarInsights({
+  user,
+  sellerUserId,
+  slaDays,
+}) {
   const now = new Date();
   const nowMs = now.getTime();
   const todayDate = formatDateInTimeZone(now, BUSINESS_TIMEZONE);
@@ -6000,21 +6392,24 @@ async function buildCommercialCalendarInsights({ user, sellerUserId, slaDays }) 
     listLastActivityByOpportunity(opportunityIds),
   ]);
 
-  const dependenciesByOpportunity = dependencyRows.reduce((accumulator, row) => {
-    const key = Number(row.opportunity_id || 0);
-    if (!key) return accumulator;
-    const current = accumulator.get(key) || [];
-    current.push({
-      id: Number(row.id),
-      title: row.title || "Dependencia",
-      dependencyType: row.dependency_type || "other",
-      dependencyLabel: getDependencyTypeLabel(row.dependency_type),
-      dueDate: row.due_date || null,
-      isOverdue: Boolean(row.due_date && getDiffDays(row.due_date) > 0),
-    });
-    accumulator.set(key, current);
-    return accumulator;
-  }, new Map());
+  const dependenciesByOpportunity = dependencyRows.reduce(
+    (accumulator, row) => {
+      const key = Number(row.opportunity_id || 0);
+      if (!key) return accumulator;
+      const current = accumulator.get(key) || [];
+      current.push({
+        id: Number(row.id),
+        title: row.title || "Dependencia",
+        dependencyType: row.dependency_type || "other",
+        dependencyLabel: getDependencyTypeLabel(row.dependency_type),
+        dueDate: row.due_date || null,
+        isOverdue: Boolean(row.due_date && getDiffDays(row.due_date) > 0),
+      });
+      accumulator.set(key, current);
+      return accumulator;
+    },
+    new Map(),
+  );
 
   const prioritized = alertItems
     .map((item) => {
@@ -6033,9 +6428,14 @@ async function buildCommercialCalendarInsights({ user, sellerUserId, slaDays }) 
         scheduledAtMs >= nowMs &&
         scheduledAtMs < next24h.getTime();
       const deps = dependenciesByOpportunity.get(item.opportunityId) || [];
-      const hasOverdueDependency = deps.some((dependency) => dependency.isOverdue);
-      const lastActivityAt = lastActivityByOpportunity.get(item.opportunityId) || null;
-      const daysWithoutActivity = lastActivityAt ? getDiffDays(lastActivityAt, now) : 0;
+      const hasOverdueDependency = deps.some(
+        (dependency) => dependency.isOverdue,
+      );
+      const lastActivityAt =
+        lastActivityByOpportunity.get(item.opportunityId) || null;
+      const daysWithoutActivity = lastActivityAt
+        ? getDiffDays(lastActivityAt, now)
+        : 0;
       const isSilenceRisk = daysWithoutActivity > slaDays;
       const isBlocked = String(item.status || "") === "blocked";
 
@@ -6096,7 +6496,8 @@ async function buildCommercialCalendarInsights({ user, sellerUserId, slaDays }) 
       opportunityName: item.opportunityName,
       remindAt: new Date(reminderAtMs).toISOString(),
       channel: "in_app",
-      priority: item.riskScore >= 70 ? "high" : item.riskScore >= 40 ? "medium" : "low",
+      priority:
+        item.riskScore >= 70 ? "high" : item.riskScore >= 40 ? "medium" : "low",
       message:
         item.riskScore >= 70
           ? "Atencion inmediata recomendada"
@@ -6765,7 +7166,9 @@ router.get(
       ).trim(),
       aiRecommendedAction: fallback.aiRecommendedAction || null,
       aiContract: fallback.aiContract || null,
-      aiNarrativeSource: String(fallback.aiNarrativeSource || "fallback").trim(),
+      aiNarrativeSource: String(
+        fallback.aiNarrativeSource || "fallback",
+      ).trim(),
       aiNarrativeGeneratedAt: null,
     });
   },
@@ -7411,6 +7814,148 @@ router.get(
 );
 
 router.post(
+  "/opportunities/:id/email-attachment-suggestions",
+  requirePermission("desarrollo_comercial.update"),
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const details = normalizeCommercialEmailDraft(
+      req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {},
+    );
+    const selectedIds = new Set(
+      (Array.isArray(details.attachments) ? details.attachments : [])
+        .filter((attachment) => attachment?.sourceType === "library_file")
+        .map((attachment) => String(attachment.id || "").trim())
+        .filter(Boolean),
+    );
+
+    const options = await loadCommercialEmailAttachmentOptions({
+      user: req.user,
+      opportunityId,
+      libraryFilters: {
+        q: "",
+      },
+    });
+
+    const candidateLibraryFiles = (
+      Array.isArray(options?.libraryFiles) ? options.libraryFiles : []
+    )
+      .filter((file) => file?.id && !selectedIds.has(String(file.id).trim()))
+      .slice(0, 60);
+
+    if (!candidateLibraryFiles.length) {
+      return res.json({
+        source: "fallback",
+        suggestions: [],
+      });
+    }
+
+    try {
+      const result = await requestCommercialAttachmentSuggestionsWithAi({
+        opportunity,
+        details,
+        libraryFiles: candidateLibraryFiles,
+        aiUsageContext: req.user?.id
+          ? {
+              userId: Number(req.user.id),
+              featureCode:
+                "commercial_development.email_attachment_suggestions",
+              jobType: "commercial_email_attachment_suggestions",
+              jobId: Number(opportunity.id),
+              internalRequestId: `commercial_email_attachment_suggestions:${Number(opportunity.id)}:${Date.now()}`,
+            }
+          : null,
+      });
+
+      return res.json({
+        source: String(result?.source || "fallback"),
+        suggestions: (Array.isArray(result?.suggestions)
+          ? result.suggestions
+          : []
+        )
+          .slice(0, COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES)
+          .map((file) => ({
+            id: String(file.id || "").trim(),
+            sourceType: "library_file",
+            sourceLabel: String(file.sourceLabel || "Biblioteca").trim(),
+            resourcePublicId: String(file.resourcePublicId || "").trim(),
+            filePublicId: String(file.filePublicId || "").trim(),
+            fileName: String(file.fileName || "archivo").trim(),
+            mimeType: String(
+              file.mimeType || "application/octet-stream",
+            ).trim(),
+            byteSize:
+              file.byteSize === null || file.byteSize === undefined
+                ? null
+                : Number(file.byteSize),
+            title: String(file.title || "").trim(),
+            summary: String(file.summary || "").trim(),
+            assetTypeLabel: String(file.assetTypeLabel || "").trim(),
+            reason: String(file.reason || "").trim(),
+          }))
+          .filter(
+            (file) => file.id && file.resourcePublicId && file.filePublicId,
+          ),
+      });
+    } catch (error) {
+      if (config.nodeEnv !== "test") {
+        console.error(
+          "Commercial email attachment suggestion AI error:",
+          error?.message || error,
+        );
+      }
+
+      const fallbackSuggestions = buildCommercialAttachmentSuggestionsFallback({
+        libraryFiles: candidateLibraryFiles,
+        details,
+      });
+
+      return res.json({
+        source: "fallback",
+        suggestions: fallbackSuggestions
+          .slice(0, COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES)
+          .map((file) => ({
+            id: String(file.id || "").trim(),
+            sourceType: "library_file",
+            sourceLabel: String(file.sourceLabel || "Biblioteca").trim(),
+            resourcePublicId: String(file.resourcePublicId || "").trim(),
+            filePublicId: String(file.filePublicId || "").trim(),
+            fileName: String(file.fileName || "archivo").trim(),
+            mimeType: String(
+              file.mimeType || "application/octet-stream",
+            ).trim(),
+            byteSize:
+              file.byteSize === null || file.byteSize === undefined
+                ? null
+                : Number(file.byteSize),
+            title: String(file.title || "").trim(),
+            summary: String(file.summary || "").trim(),
+            assetTypeLabel: String(file.assetTypeLabel || "").trim(),
+            reason: String(file.reason || "").trim(),
+          }))
+          .filter(
+            (file) => file.id && file.resourcePublicId && file.filePublicId,
+          ),
+      });
+    }
+  },
+);
+
+router.post(
   "/opportunities/:id/email-suggestion",
   requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
@@ -7433,6 +7978,15 @@ router.post(
         ? req.body.details
         : {},
     );
+    const selectedLibraryAttachments = (
+      Array.isArray(details.attachments) ? details.attachments : []
+    ).filter((attachment) => attachment?.sourceType === "library_file");
+    if (selectedLibraryAttachments.length > 3) {
+      return res.status(400).json({
+        message:
+          "Solo puedes seleccionar hasta 3 activos de biblioteca para la sugerencia IA.",
+      });
+    }
     const accountContactsByAccountId = await listContactsByAccountIds([
       Number(opportunity.account_id),
     ]);

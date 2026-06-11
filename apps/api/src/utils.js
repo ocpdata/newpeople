@@ -261,3 +261,266 @@ export async function sendUserInvitationEmail({
     };
   }
 }
+
+export const GOOGLE_GMAIL_SEND_SCOPE =
+  "https://www.googleapis.com/auth/gmail.send";
+
+function normalizeBase64Input(value) {
+  return String(value || "")
+    .trim()
+    .replaceAll("-", "+")
+    .replaceAll("_", "/");
+}
+
+function resolveGoogleTokenEncryptionKey() {
+  const configured = String(config.auth.google.tokenEncryptionKey || "").trim();
+  if (configured) {
+    const normalized = normalizeBase64Input(configured);
+    try {
+      const decoded = Buffer.from(normalized, "base64");
+      if (decoded.length >= 32) {
+        return crypto.createHash("sha256").update(decoded).digest();
+      }
+    } catch {
+      // Continue with raw string fallback.
+    }
+    return crypto.createHash("sha256").update(configured).digest();
+  }
+  return crypto.createHash("sha256").update(config.jwtSecret).digest();
+}
+
+function toBase64Url(value) {
+  return Buffer.from(value)
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function wrapBase64Lines(value, lineLength = 76) {
+  if (!value) return "";
+  const chunks = [];
+  for (let index = 0; index < value.length; index += lineLength) {
+    chunks.push(value.slice(index, index + lineLength));
+  }
+  return chunks.join("\r\n");
+}
+
+function normalizeScopeSet(scopeText) {
+  return new Set(
+    String(scopeText || "")
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
+export function hasGoogleMailSendScope(scopeText) {
+  const scopes = normalizeScopeSet(scopeText);
+  return scopes.has(GOOGLE_GMAIL_SEND_SCOPE);
+}
+
+export function encryptOpaqueSecret(secretValue) {
+  const plaintext = String(secretValue || "").trim();
+  if (!plaintext) {
+    throw new Error("No se recibio un secreto para cifrar");
+  }
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(
+    "aes-256-gcm",
+    resolveGoogleTokenEncryptionKey(),
+    iv,
+  );
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]);
+  const authTag = cipher.getAuthTag();
+
+  return `v1:${toBase64Url(iv)}:${toBase64Url(encrypted)}:${toBase64Url(authTag)}`;
+}
+
+export function decryptOpaqueSecret(encryptedPayload) {
+  const payload = String(encryptedPayload || "").trim();
+  const [version, ivPart, contentPart, tagPart] = payload.split(":");
+
+  if (version !== "v1" || !ivPart || !contentPart || !tagPart) {
+    throw new Error("Formato de secreto cifrado invalido");
+  }
+
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    resolveGoogleTokenEncryptionKey(),
+    Buffer.from(normalizeBase64Input(ivPart), "base64"),
+  );
+  decipher.setAuthTag(Buffer.from(normalizeBase64Input(tagPart), "base64"));
+
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(normalizeBase64Input(contentPart), "base64")),
+    decipher.final(),
+  ]);
+  return decrypted.toString("utf8");
+}
+
+export async function exchangeGoogleRefreshToken(refreshToken) {
+  const body = new URLSearchParams({
+    client_id: config.auth.google.clientId,
+    client_secret: config.auth.google.clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: String(refreshToken || ""),
+  });
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  const payload = await response
+    .json()
+    .catch(() => ({ error: "invalid_token_response" }));
+  if (!response.ok || !payload?.access_token) {
+    const error = new Error("No fue posible renovar el token de Google");
+    error.code = String(payload?.error || "google_token_refresh_failed");
+    error.detail = String(payload?.error_description || payload?.error || "");
+    throw error;
+  }
+
+  return payload;
+}
+
+function normalizeEmailList(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function buildRawMimeMessage({
+  from,
+  to,
+  cc,
+  subject,
+  messageBody,
+  attachments,
+}) {
+  const normalizedTo = normalizeEmailList(to);
+  const normalizedCc = normalizeEmailList(cc);
+  const normalizedSubject = String(subject || "").trim();
+  const normalizedBody = String(messageBody || "");
+
+  if (!normalizedTo) {
+    throw new Error("Debes incluir al menos un destinatario");
+  }
+  if (!normalizedSubject) {
+    throw new Error("El asunto es obligatorio");
+  }
+
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+  if (!hasAttachments) {
+    const lines = [
+      `From: ${from}`,
+      `To: ${normalizedTo}`,
+      ...(normalizedCc ? [`Cc: ${normalizedCc}`] : []),
+      `Subject: ${normalizedSubject}`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      normalizedBody,
+    ];
+    return toBase64Url(lines.join("\r\n"));
+  }
+
+  const boundary = `np_${crypto.randomBytes(16).toString("hex")}`;
+  const lines = [
+    `From: ${from}`,
+    `To: ${normalizedTo}`,
+    ...(normalizedCc ? [`Cc: ${normalizedCc}`] : []),
+    `Subject: ${normalizedSubject}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    normalizedBody,
+  ];
+
+  for (const attachment of attachments) {
+    const contentBuffer = Buffer.isBuffer(attachment.content)
+      ? attachment.content
+      : Buffer.from(attachment.content || "");
+    const mimeType = String(
+      attachment.contentType || "application/octet-stream",
+    ).trim();
+    const filename = String(attachment.filename || "archivo.bin").trim();
+    const contentBase64 = wrapBase64Lines(contentBuffer.toString("base64"));
+
+    lines.push(`--${boundary}`);
+    lines.push(
+      `Content-Type: ${mimeType}; name="${filename.replaceAll('"', "")}"`,
+    );
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push(
+      `Content-Disposition: attachment; filename="${filename.replaceAll('"', "")}"`,
+    );
+    lines.push("");
+    lines.push(contentBase64);
+  }
+
+  lines.push(`--${boundary}--`, "");
+  return toBase64Url(lines.join("\r\n"));
+}
+
+export async function sendGoogleMailMessage({
+  accessToken,
+  from,
+  to,
+  cc,
+  subject,
+  messageBody,
+  attachments = [],
+}) {
+  const raw = buildRawMimeMessage({
+    from,
+    to,
+    cc,
+    subject,
+    messageBody,
+    attachments,
+  });
+  const response = await fetch(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw }),
+    },
+  );
+
+  const payload = await response
+    .json()
+    .catch(() => ({ error: { status: "google_send_invalid_response" } }));
+  if (!response.ok) {
+    const error = new Error("Google rechazo el envio del correo");
+    error.code = String(
+      payload?.error?.status || "google_send_failed",
+    ).toLowerCase();
+    error.detail = String(
+      payload?.error?.message || payload?.error?.status || "",
+    );
+    throw error;
+  }
+
+  return payload;
+}

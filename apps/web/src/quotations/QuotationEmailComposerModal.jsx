@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import "./proposal-print.css";
+import "../proposals/proposal-print.css";
 
 function formatBytes(value) {
   const size = Number(value || 0);
@@ -13,17 +13,6 @@ function formatBytes(value) {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function InsightAiIcon() {
-  return (
-    <svg viewBox="0 0 24 24" role="img" aria-hidden="true" focusable="false">
-      <path
-        d="M12 3.75 13.9 8.1l4.35 1.9-4.35 1.9L12 16.25l-1.9-4.35-4.35-1.9 4.35-1.9L12 3.75Zm6.25 9.5.95 2.3 2.3.95-2.3.95-.95 2.3-.95-2.3-2.3-.95 2.3-.95.95-2.3Zm-12.5 1.5.95 2.3 2.3.95-2.3.95-.95 2.3-.95-2.3-2.3-.95 2.3-.95.95-2.3Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
 }
 
 function AddAttachmentIcon() {
@@ -59,11 +48,10 @@ function CloseIcon() {
   );
 }
 
-export default function ProposalEmailComposerModal({
+export default function QuotationEmailComposerModal({
   isOpen,
   draft,
   sending,
-  suggesting,
   error,
   notice,
   onClose,
@@ -71,7 +59,6 @@ export default function ProposalEmailComposerModal({
   onAddAttachments,
   onRemoveAttachment,
   onRequestSend,
-  onSuggestWithAi,
   googleMailStatus,
   onConnectGoogleMail,
 }) {
@@ -117,9 +104,9 @@ export default function ProposalEmailComposerModal({
       <div className="modal-dialog proposal-email-modal">
         <div className="modal-header proposal-email-modal-header">
           <div className="proposal-email-modal-header-main">
-            <h3 className="modal-title">Enviar propuesta por correo</h3>
+            <h3 className="modal-title">Enviar cotizacion por correo</h3>
             <p className="field-hint">
-              Adjuntaremos automaticamente el PDF de la propuesta. Puedes sumar
+              Adjuntaremos automaticamente el PDF de la cotizacion. Puedes sumar
               archivos extra desde tu dispositivo.
             </p>
           </div>
@@ -190,7 +177,7 @@ export default function ProposalEmailComposerModal({
               value={draft.subject}
               disabled={sending}
               onChange={(event) => onChangeField("subject", event.target.value)}
-              placeholder="Propuesta comercial"
+              placeholder="Cotizacion comercial"
             />
           </label>
 
@@ -221,25 +208,11 @@ export default function ProposalEmailComposerModal({
           ) : null}
 
           <label className="proposal-email-field proposal-email-field-full-width">
-            <span className="proposal-email-message-header">
-              <span>Mensaje</span>
-              <button
-                type="button"
-                className={`opportunity-development-ai-icon-button${
-                  suggesting ? " is-loading" : ""
-                }`}
-                onClick={onSuggestWithAi}
-                disabled={sending || suggesting}
-                aria-label="Consultar IA"
-                title="Consultar IA"
-              >
-                <InsightAiIcon />
-              </button>
-            </span>
+            <span>Mensaje</span>
             <textarea
               rows="7"
               value={draft.messageBody}
-              disabled={sending || suggesting}
+              disabled={sending}
               onChange={(event) =>
                 onChangeField("messageBody", event.target.value)
               }
@@ -271,7 +244,7 @@ export default function ProposalEmailComposerModal({
             <div className="proposal-email-attachments-list">
               <div className="proposal-email-attachment-item is-fixed">
                 <div>
-                  <strong>Propuesta.pdf</strong>
+                  <strong>Cotizacion.pdf</strong>
                   <small>Se adjunta automaticamente al enviar</small>
                 </div>
               </div>
@@ -303,9 +276,7 @@ export default function ProposalEmailComposerModal({
             type="button"
             className="proposal-email-icon-button proposal-email-send-button"
             onClick={onRequestSend}
-            disabled={
-              sending || suggesting || mailStatus.loading || !canSendViaGoogle
-            }
+            disabled={sending || mailStatus.loading || !canSendViaGoogle}
             aria-label={sending ? "Enviando correo" : "Enviar correo"}
             title={sending ? "Enviando correo" : "Enviar correo"}
           >

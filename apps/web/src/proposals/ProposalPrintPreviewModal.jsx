@@ -59,7 +59,7 @@ export default function ProposalPrintPreviewModal({
             </button>
             <button
               type="button"
-              className="proposal-print-preview-icon-button"
+              className="proposal-print-preview-icon-button account-modal-close-button"
               onClick={onClose}
               aria-label="Cerrar"
               title="Cerrar"

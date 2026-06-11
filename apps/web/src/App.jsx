@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api, setAuthToken } from "./api";
 import { FirstUserSetup, LoginPage, SetPasswordPage } from "./AuthPages";
@@ -22,6 +22,7 @@ const OAUTH_ERROR_MESSAGES = {
 
 function App() {
   const location = useLocation();
+  const tokenRef = useRef("");
   const [loading, setLoading] = useState(true);
   const [hasUsers, setHasUsers] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("crm_token") || "");
@@ -33,10 +34,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    tokenRef.current = token;
     setAuthToken(token);
     if (token) {
       localStorage.setItem("crm_token", token);
-      fetchMe();
+      void fetchMe(token);
     } else {
       localStorage.removeItem("crm_token");
     }
@@ -80,11 +82,17 @@ function App() {
     }
   }
 
-  async function fetchMe() {
+  async function fetchMe(tokenAtRequestStart = tokenRef.current) {
     try {
       const { data } = await api.get("/api/auth/me");
+      if (tokenRef.current !== tokenAtRequestStart) {
+        return;
+      }
       setCurrentUser(data);
     } catch {
+      if (tokenRef.current !== tokenAtRequestStart) {
+        return;
+      }
       setCurrentUser(null);
       setToken("");
     }
@@ -109,8 +117,12 @@ function App() {
     );
   }
 
-  if (!token || !currentUser) {
+  if (!token) {
     return <LoginPage onLogin={setToken} initialError={oauthError} />;
+  }
+
+  if (!currentUser) {
+    return <div className="centered">Cargando...</div>;
   }
 
   return (

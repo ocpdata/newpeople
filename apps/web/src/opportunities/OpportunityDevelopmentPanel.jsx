@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import OpportunityOperationEmailModal from "./OpportunityOperationEmailModal";
 
 const AI_NARRATIVE_TIMEOUT_MS = 60000;
 const AI_NARRATIVE_POLL_INTERVAL_MS = 3000;
 const AI_NARRATIVE_TOTAL_POLL_TIMEOUT_MS = 120000;
+const OPERATION_EMAIL_MAX_LIBRARY_ASSETS = 3;
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -115,9 +117,10 @@ function InsightAiIcon() {
 }
 
 function ManageExecutionItemIcon({ tone }) {
-  const glyph =
-    tone === "done" ? "✓" : tone === "cancelled" ? "×" : "•";
-  return <span className="opportunity-development-item-manage-glyph">{glyph}</span>;
+  const glyph = tone === "done" ? "✓" : tone === "cancelled" ? "×" : "•";
+  return (
+    <span className="opportunity-development-item-manage-glyph">{glyph}</span>
+  );
 }
 
 const ACTIVITY_TYPE_OPTIONS = [
@@ -126,21 +129,6 @@ const ACTIVITY_TYPE_OPTIONS = [
   { value: "visit", label: "Visita" },
   { value: "presentation", label: "Presentacion" },
   { value: "other", label: "Otra actividad" },
-];
-
-const ACTION_TYPE_OPTIONS = [
-  { value: "next_step", label: "Siguiente paso" },
-  { value: "follow_up", label: "Seguimiento" },
-  { value: "call", label: "Llamada" },
-  { value: "waiting_customer", label: "Esperando cliente" },
-  { value: "send_email", label: "Enviar correo" },
-  { value: "prepare_proposal", label: "Preparar propuesta" },
-  { value: "request_information", label: "Solicitar informacion" },
-  { value: "coordinate_presales", label: "Coordinar preventa" },
-  { value: "send_documentation", label: "Enviar documentacion" },
-  { value: "update_quote", label: "Actualizar cotizacion" },
-  { value: "internal_approval", label: "Aprobacion interna" },
-  { value: "other_action", label: "Otra accion" },
 ];
 
 const DEPENDENCY_TYPE_OPTIONS = [
@@ -156,23 +144,18 @@ const DEPENDENCY_TYPE_OPTIONS = [
 const ACTIVITY_TYPE_LABELS = Object.fromEntries(
   ACTIVITY_TYPE_OPTIONS.map((item) => [item.value, item.label]),
 );
-const ACTION_TYPE_LABELS = Object.fromEntries(
-  ACTION_TYPE_OPTIONS.map((item) => [item.value, item.label]),
-);
 const DEPENDENCY_TYPE_LABELS = Object.fromEntries(
   DEPENDENCY_TYPE_OPTIONS.map((item) => [item.value, item.label]),
 );
 
-const ACTIVITY_TYPE_SET = new Set(ACTIVITY_TYPE_OPTIONS.map((item) => item.value));
+const ACTIVITY_TYPE_SET = new Set(
+  ACTIVITY_TYPE_OPTIONS.map((item) => item.value),
+);
 
 function getWorkspaceEntryKind(item) {
   const explicitKind = normalizeText(item?.details?.entryKind).toLowerCase();
   if (explicitKind === "action" || explicitKind === "activity") {
     return explicitKind;
-  }
-  const actionType = normalizeText(item?.actionType).toLowerCase();
-  if (actionType === "call") {
-    return "action";
   }
   return ACTIVITY_TYPE_SET.has(String(item?.actionType || ""))
     ? "activity"
@@ -197,6 +180,61 @@ function getExecutionStatusTone(status) {
   return "pending";
 }
 
+function getOperationStatusLabel(status) {
+  const normalized = normalizeText(status).toLowerCase();
+  if (normalized === "done") return "Enviada";
+  if (normalized === "cancelled") return "Cancelada";
+  if (normalized === "in_progress") return "En progreso";
+  if (normalized === "blocked") return "Bloqueada";
+  return "Pendiente";
+}
+
+function toDateOnlySafe(value) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  return text.slice(0, 10);
+}
+
+function mapDocumentToEmailAttachment(document) {
+  const publicId = String(document?.publicId || "").trim();
+  if (!publicId) return null;
+
+  return {
+    id: `opportunity:${publicId}`,
+    sourceType: "opportunity_document",
+    sourceLabel: "Documento cargado",
+    documentPublicId: publicId,
+    fileName: String(document?.originalFileName || "documento").trim(),
+    mimeType: String(document?.mimeType || "application/octet-stream").trim(),
+    byteSize: Number(document?.byteSize || 0),
+    createdAt: document?.createdAt || null,
+  };
+}
+
+function mapLibraryOptionToEmailAttachment(option, selectionSource = "manual") {
+  const id = normalizeText(option?.id);
+  const resourcePublicId = normalizeText(option?.resourcePublicId);
+  const filePublicId = normalizeText(option?.filePublicId);
+  if (!id || !resourcePublicId || !filePublicId) {
+    return null;
+  }
+
+  return {
+    id,
+    sourceType: "library_file",
+    sourceLabel: normalizeText(option?.sourceLabel) || "Biblioteca",
+    resourcePublicId,
+    filePublicId,
+    fileName: normalizeText(option?.fileName) || "archivo",
+    mimeType: normalizeText(option?.mimeType) || "application/octet-stream",
+    byteSize: Number(option?.byteSize || 0),
+    title: normalizeText(option?.title),
+    summary: normalizeText(option?.summary),
+    assetTypeLabel: normalizeText(option?.assetTypeLabel),
+    selectionSource: selectionSource === "ai" ? "library_ai" : "library_manual",
+  };
+}
+
 export default function OpportunityDevelopmentPanel({
   editingOpportunityId,
   form,
@@ -206,6 +244,12 @@ export default function OpportunityDevelopmentPanel({
   loadingCommercialStageView,
   isCommercialFlowClosed,
   refreshCommercialContext,
+  selectedOpportunityContact,
+  selectedOpportunityContactEmail,
+  contactOptions,
+  accountName,
+  sellerUserEmail,
+  canExecuteOperations,
 }) {
   const [quotations, setQuotations] = useState([]);
   const [interactions, setInteractions] = useState([]);
@@ -227,13 +271,6 @@ export default function OpportunityDevelopmentPanel({
     scheduledAt: "",
     note: "",
   });
-  const [actionDraft, setActionDraft] = useState({
-    actionType: "follow_up",
-    objective: "",
-    dueDate: "",
-    note: "",
-    priority: "medium",
-  });
   const [dependencyDraft, setDependencyDraft] = useState({
     dependencyType: "presales_support",
     title: "",
@@ -251,6 +288,49 @@ export default function OpportunityDevelopmentPanel({
   const [executionItemModalError, setExecutionItemModalError] = useState("");
   const [isDevelopmentExpanded, setIsDevelopmentExpanded] = useState(false);
   const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
+  const [isOperationEmailModalOpen, setIsOperationEmailModalOpen] =
+    useState(false);
+  const [sendingOperationEmail, setSendingOperationEmail] = useState(false);
+  const [operationEmailError, setOperationEmailError] = useState("");
+  const [operationEmailNotice, setOperationEmailNotice] = useState("");
+  const [operationLibraryError, setOperationLibraryError] = useState("");
+  const [operationLibraryQuery, setOperationLibraryQuery] = useState("");
+  const [operationLibraryOptions, setOperationLibraryOptions] = useState([]);
+  const [
+    operationSelectedLibraryAttachmentIds,
+    setOperationSelectedLibraryAttachmentIds,
+  ] = useState([]);
+  const [operationAiInstructionText, setOperationAiInstructionText] =
+    useState("");
+  const [operationAiSuggestion, setOperationAiSuggestion] = useState({
+    subject: "",
+    messageBody: "",
+  });
+  const [loadingOperationLibraryOptions, setLoadingOperationLibraryOptions] =
+    useState(false);
+  const [generatingOperationAiDraft, setGeneratingOperationAiDraft] =
+    useState(false);
+  const [
+    generatingOperationAiAttachments,
+    setGeneratingOperationAiAttachments,
+  ] = useState(false);
+  const [operationEmailDraft, setOperationEmailDraft] = useState({
+    actionId: null,
+    recipient: "",
+    cc: "",
+    subject: "",
+    messageBody: "",
+    attachments: [],
+  });
+  const [operationGoogleMailStatus, setOperationGoogleMailStatus] = useState({
+    loading: false,
+    connected: false,
+    canSend: false,
+    missingScope: false,
+    needsReconnect: false,
+    googleEmail: "",
+    startUrl: "/api/auth/google-mail/start",
+  });
 
   function applyAiNarrativePayload(payload) {
     if (!payload) return;
@@ -285,7 +365,9 @@ export default function OpportunityDevelopmentPanel({
   const proposalSignalsCount = quotations.filter((quotation) =>
     normalizeText(quotation?.latestProposalName),
   ).length;
-  const interactionsCount = Array.isArray(interactions) ? interactions.length : 0;
+  const interactionsCount = Array.isArray(interactions)
+    ? interactions.length
+    : 0;
   const notesCount = interactions.filter(
     (item) => normalizeText(item?.summary) || normalizeText(item?.title),
   ).length;
@@ -299,7 +381,8 @@ export default function OpportunityDevelopmentPanel({
         key: "risk-documents",
         title: "Sin evidencia documental",
         severity: "Alta",
-        mitigation: "Subir documento clave del requerimiento o contexto cliente.",
+        mitigation:
+          "Subir documento clave del requerimiento o contexto cliente.",
       });
     }
     if (missingRequiredAnswers > 0) {
@@ -307,7 +390,8 @@ export default function OpportunityDevelopmentPanel({
         key: "risk-answers",
         title: "Respuestas obligatorias incompletas",
         severity: "Alta",
-        mitigation: "Completar respuestas de etapa para habilitar movimiento comercial.",
+        mitigation:
+          "Completar respuestas de etapa para habilitar movimiento comercial.",
       });
     }
     if (!quotationsCount) {
@@ -315,7 +399,8 @@ export default function OpportunityDevelopmentPanel({
         key: "risk-quotation",
         title: "Sin cotizacion vinculada",
         severity: "Media",
-        mitigation: "Preparar una cotizacion inicial para avanzar con decision de compra.",
+        mitigation:
+          "Preparar una cotizacion inicial para avanzar con decision de compra.",
       });
     }
     if (!contactsCount) {
@@ -326,12 +411,17 @@ export default function OpportunityDevelopmentPanel({
         mitigation: "Definir el contacto decisor o influenciador principal.",
       });
     }
-    if (form?.closeDate && isDateInPast(form.closeDate) && !isCommercialFlowClosed) {
+    if (
+      form?.closeDate &&
+      isDateInPast(form.closeDate) &&
+      !isCommercialFlowClosed
+    ) {
       items.push({
         key: "risk-close-date",
         title: "Fecha objetivo vencida",
         severity: "Media",
-        mitigation: "Recalibrar fecha de cierre y compromisos del plan inmediato.",
+        mitigation:
+          "Recalibrar fecha de cierre y compromisos del plan inmediato.",
       });
     }
 
@@ -403,7 +493,8 @@ export default function OpportunityDevelopmentPanel({
         : {};
     const opportunityName =
       normalizeText(form?.name) || "Oportunidad comercial";
-    const accountName = normalizeText(form?.accountName) || "Cuenta no definida";
+    const accountName =
+      normalizeText(form?.accountName) || "Cuenta no definida";
     const sellerName =
       normalizeText(form?.sellerUserName) ||
       normalizeText(form?.sellerName) ||
@@ -479,16 +570,17 @@ export default function OpportunityDevelopmentPanel({
       (checkpoint.stageLabel === "Aun no lista"
         ? "Eliminar bloqueadores criticos y recuperar conduccion comercial de la etapa actual."
         : "Convertir interes en compromiso comercial verificable de la etapa actual.");
-    const planB72 = normalizeText(
-      [
-        normalizeText(alternativeStep.fallbackStep),
-        normalizeText(alternativeStep.trigger)
-          ? `Trigger: ${normalizeText(alternativeStep.trigger)}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" "),
-    ) ||
+    const planB72 =
+      normalizeText(
+        [
+          normalizeText(alternativeStep.fallbackStep),
+          normalizeText(alternativeStep.trigger)
+            ? `Trigger: ${normalizeText(alternativeStep.trigger)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ) ||
       "Si no hay respuesta en 72 horas, escalar con resumen ejecutivo, nueva propuesta de valor y fecha alternativa de decision.";
 
     const confidence =
@@ -500,17 +592,25 @@ export default function OpportunityDevelopmentPanel({
       {
         id: "q1",
         text: "La accion define verbo, responsable y fecha",
-        ok: Boolean(normalizeText(aiNarrative.nextStepRecommendation) && sellerName && commitmentLabel),
+        ok: Boolean(
+          normalizeText(aiNarrative.nextStepRecommendation) &&
+          sellerName &&
+          commitmentLabel,
+        ),
       },
       {
         id: "q2",
         text: "Se sustenta en evidencia reciente y verificable",
-        ok: Boolean(normalizeText(aiNarrative.statusSummary) && hasRecentEvidence),
+        ok: Boolean(
+          normalizeText(aiNarrative.statusSummary) && hasRecentEvidence,
+        ),
       },
       {
         id: "q3",
         text: "Mueve la etapa actual de forma explicita",
-        ok: Boolean(stageLabel && normalizeText(aiNarrative.nextStepRecommendation)),
+        ok: Boolean(
+          stageLabel && normalizeText(aiNarrative.nextStepRecommendation),
+        ),
       },
       {
         id: "q4",
@@ -541,7 +641,8 @@ export default function OpportunityDevelopmentPanel({
 
     const qualityScore = qualityChecks.filter((item) => item.ok).length;
     const semaforoLabel =
-      qualityScore >= 7 && normalizeText(aiNarrative.source).toLowerCase() === "openai"
+      qualityScore >= 7 &&
+      normalizeText(aiNarrative.source).toLowerCase() === "openai"
         ? "Verde"
         : qualityScore >= 6
           ? "Amarillo"
@@ -662,18 +763,20 @@ export default function OpportunityDevelopmentPanel({
           contactsCount > 0
             ? "Identificado en proceso comercial"
             : "Pendiente de confirmar",
-        legalProcurement:
-          "Pendiente de involucramiento formal",
-        technicalInfluencer:
-          "Pendiente de validacion tecnica",
+        legalProcurement: "Pendiente de involucramiento formal",
+        technicalInfluencer: "Pendiente de validacion tecnica",
         risk1: detailRisk1,
         risk1Probability: "Alta",
         risk1Impact: "Alto",
-        risk1Mitigation: riskItems[0]?.mitigation || "Definir accion concreta con fecha y responsable.",
+        risk1Mitigation:
+          riskItems[0]?.mitigation ||
+          "Definir accion concreta con fecha y responsable.",
         risk2: detailRisk2,
         risk2Probability: "Media",
         risk2Impact: "Medio",
-        risk2Mitigation: riskItems[1]?.mitigation || "Escalar decision con resumen ejecutivo y evidencia.",
+        risk2Mitigation:
+          riskItems[1]?.mitigation ||
+          "Escalar decision con resumen ejecutivo y evidencia.",
         planB72,
         alternativeTrigger:
           normalizeText(alternativeStep.trigger) ||
@@ -692,10 +795,8 @@ export default function OpportunityDevelopmentPanel({
         internalDeadline: closeDateLabel,
         activityKpi:
           "Al menos una interaccion ejecutiva registrada por semana.",
-        decisionKpi:
-          "Compromiso de decision con fecha confirmada.",
-        qualityKpi:
-          "Resumen de valor y objeciones actualizado en cada hito.",
+        decisionKpi: "Compromiso de decision con fecha confirmada.",
+        qualityKpi: "Resumen de valor y objeciones actualizado en cada hito.",
         weeklyTrafficLight: semaforoLabel,
         nextReview: closeDateLabel,
         qualityChecks,
@@ -729,40 +830,66 @@ export default function OpportunityDevelopmentPanel({
     ? commercialContext.workspace.actions
     : [];
   const previousActivities = workspaceActions
-    .filter(
-      (item) =>
-        getWorkspaceEntryKind(item) === "activity" &&
-        normalizeText(item?.actionType).toLowerCase() !== "call",
-    )
+    .filter((item) => getWorkspaceEntryKind(item) === "activity")
     .sort((left, right) => {
       const leftDate = new Date(
-        left?.scheduledAt || left?.dueDate || left?.updatedAt || left?.createdAt || 0,
+        left?.scheduledAt ||
+          left?.dueDate ||
+          left?.updatedAt ||
+          left?.createdAt ||
+          0,
       ).getTime();
       const rightDate = new Date(
-        right?.scheduledAt || right?.dueDate || right?.updatedAt || right?.createdAt || 0,
+        right?.scheduledAt ||
+          right?.dueDate ||
+          right?.updatedAt ||
+          right?.createdAt ||
+          0,
       ).getTime();
       return rightDate - leftDate;
     });
-  const previousActions = workspaceActions
+  const operationActions = workspaceActions
     .filter(
       (item) =>
-        getWorkspaceEntryKind(item) === "action" ||
-        normalizeText(item?.actionType).toLowerCase() === "call",
+        getWorkspaceEntryKind(item) === "action" &&
+        normalizeText(item?.actionType).toLowerCase() === "send_email",
     )
     .sort((left, right) => {
       const leftDate = new Date(
-        left?.dueDate || left?.updatedAt || left?.createdAt || 0,
+        left?.updatedAt || left?.createdAt || left?.dueDate || 0,
       ).getTime();
       const rightDate = new Date(
-        right?.dueDate || right?.updatedAt || right?.createdAt || 0,
+        right?.updatedAt || right?.createdAt || right?.dueDate || 0,
       ).getTime();
       return rightDate - leftDate;
     });
   const executionSummary = {
-    actions: previousActions.length,
     activities: previousActivities.length,
     dependencies: executionDependencies.length,
+    operations: operationActions.length,
   };
+
+  const resolvedOperationContact = selectedOpportunityContact;
+  const operationRecipientEmail = normalizeText(
+    selectedOpportunityContactEmail || "",
+  );
+  const selectedOperationLibraryAttachments = useMemo(() => {
+    const attachments = Array.isArray(operationEmailDraft.attachments)
+      ? operationEmailDraft.attachments
+      : [];
+    const selectedIds = Array.isArray(operationSelectedLibraryAttachmentIds)
+      ? operationSelectedLibraryAttachmentIds
+      : [];
+    return attachments
+      .filter(
+        (attachment) =>
+          attachment?.sourceType === "library_file" &&
+          selectedIds.includes(attachment?.id),
+      )
+      .filter(Boolean);
+  }, [operationEmailDraft.attachments, operationSelectedLibraryAttachmentIds]);
+  const canOpenSendEmailOperation =
+    Boolean(canExecuteOperations) && Boolean(operationRecipientEmail);
 
   useEffect(() => {
     if (!editingOpportunityId) {
@@ -771,13 +898,6 @@ export default function OpportunityDevelopmentPanel({
         objective: "",
         scheduledAt: "",
         note: "",
-      });
-      setActionDraft({
-        actionType: "follow_up",
-        objective: "",
-        dueDate: "",
-        note: "",
-        priority: "medium",
       });
       setDependencyDraft({
         dependencyType: "presales_support",
@@ -790,20 +910,15 @@ export default function OpportunityDevelopmentPanel({
 
     const defaultDate = new Date(Date.now() + 2 * 86400000);
     const defaultDateOnly = defaultDate.toISOString().slice(0, 10);
-    const defaultDateTime = toDateTimeLocalInputValue(defaultDate.toISOString());
+    const defaultDateTime = toDateTimeLocalInputValue(
+      defaultDate.toISOString(),
+    );
 
     setActivityDraft({
       activityType: "call",
       objective: "",
       scheduledAt: defaultDateTime,
       note: "",
-    });
-    setActionDraft({
-      actionType: "follow_up",
-      objective: "",
-      dueDate: defaultDateOnly,
-      note: "",
-      priority: "medium",
     });
     setDependencyDraft({
       dependencyType: "presales_support",
@@ -854,7 +969,9 @@ export default function OpportunityDevelopmentPanel({
           (item) => Number(item?.id || 0) === Number(editingOpportunityId),
         );
         setExecutionDependencies(
-          Array.isArray(currentItem?.dependencies) ? currentItem.dependencies : [],
+          Array.isArray(currentItem?.dependencies)
+            ? currentItem.dependencies
+            : [],
         );
       })
       .catch((error) => {
@@ -881,6 +998,18 @@ export default function OpportunityDevelopmentPanel({
     setIsDevelopmentExpanded(false);
     setIsExecutionExpanded(false);
   }, [editingOpportunityId]);
+
+  useEffect(() => {
+    if (!isOperationEmailModalOpen || !editingOpportunityId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void loadOperationEmailAttachmentOptions({
+        query: operationLibraryQuery,
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [editingOpportunityId, isOperationEmailModalOpen, operationLibraryQuery]);
 
   async function refreshExecutionSection() {
     if (typeof refreshCommercialContext === "function") {
@@ -919,7 +1048,9 @@ export default function OpportunityDevelopmentPanel({
 
     const result = normalizeText(executionItemUpdateDraft.result);
     if (!result) {
-      setExecutionItemModalError("Debes indicar un resultado antes de guardar.");
+      setExecutionItemModalError(
+        "Debes indicar un resultado antes de guardar.",
+      );
       return;
     }
 
@@ -959,7 +1090,8 @@ export default function OpportunityDevelopmentPanel({
         };
         if (entryKindForSave === "activity") {
           payload.scheduledAt =
-            item?.scheduledAt || `${toDateOnly(item?.dueDate) || new Date().toISOString().slice(0, 10)}T09:00`;
+            item?.scheduledAt ||
+            `${toDateOnly(item?.dueDate) || new Date().toISOString().slice(0, 10)}T09:00`;
         } else {
           payload.dueDate =
             toDateOnly(item?.dueDate) || new Date().toISOString().slice(0, 10);
@@ -1010,53 +1142,6 @@ export default function OpportunityDevelopmentPanel({
     }
   }
 
-  async function handleCreateAction() {
-    if (!editingOpportunityId) return;
-
-    const actionType = normalizeText(actionDraft.actionType) || "follow_up";
-    const isCallAction = actionType === "call";
-    const objective =
-      normalizeText(actionDraft.objective) ||
-      (actionType === "call" ? "Llamada de seguimiento" : "Accion comercial");
-    const dueDate =
-      normalizeText(actionDraft.dueDate) || new Date().toISOString().slice(0, 10);
-    const scheduledAtForCall = `${dueDate}T09:00`;
-
-    setSavingExecutionItem("action");
-    setSourceError("");
-    try {
-      const payload = {
-        entryKind: isCallAction ? "activity" : "action",
-        activityType: actionType,
-        objective,
-        note: actionDraft.note,
-        priority: actionDraft.priority,
-        details: {
-          entryKind: "action",
-          requestedAs: "action",
-        },
-      };
-
-      if (isCallAction) {
-        payload.scheduledAt = scheduledAtForCall;
-      } else {
-        payload.dueDate = dueDate;
-      }
-
-      await api.post(
-        `/api/execution-commercial/opportunities/${editingOpportunityId}/activities`,
-        payload,
-      );
-      await refreshExecutionSection();
-    } catch (error) {
-      setSourceError(
-        getApiErrorMessage(error, "No fue posible guardar la accion"),
-      );
-    } finally {
-      setSavingExecutionItem("");
-    }
-  }
-
   async function handleCreateDependency() {
     if (!editingOpportunityId) return;
 
@@ -1079,6 +1164,602 @@ export default function OpportunityDevelopmentPanel({
       );
     } finally {
       setSavingExecutionItem("");
+    }
+  }
+
+  function buildOperationEmailDefaultDraft() {
+    const recipientName = normalizeText(
+      resolvedOperationContact?.full_name ||
+        resolvedOperationContact?.fullName ||
+        "",
+    );
+    const sellerName = normalizeText(
+      form?.sellerUserName || form?.sellerName || "",
+    );
+    const sellerEmail = normalizeText(sellerUserEmail);
+    const safeAccountName = normalizeText(
+      accountName || form?.accountName || "",
+    );
+    const greeting = recipientName ? `Hola ${recipientName},` : "Hola,";
+    const sellerSignature = sellerName
+      ? `\n\nSaludos,\n${sellerName}`
+      : "\n\nSaludos.";
+
+    return {
+      actionId: null,
+      recipient: operationRecipientEmail,
+      cc: sellerEmail,
+      subject: safeAccountName
+        ? `Seguimiento comercial - ${safeAccountName}`
+        : "Seguimiento comercial",
+      messageBody: `${greeting}\n\nComparto este seguimiento para continuar con los siguientes pasos de la oportunidad.${sellerSignature}`,
+      attachments: [],
+    };
+  }
+
+  async function loadOperationGoogleMailStatus({ silent = false } = {}) {
+    setOperationGoogleMailStatus((current) => ({
+      ...current,
+      loading: true,
+    }));
+
+    try {
+      const { data } = await api.get("/api/auth/google-mail/status");
+      const nextStatus = {
+        loading: false,
+        connected: Boolean(data?.connected),
+        canSend: Boolean(data?.canSend),
+        missingScope: Boolean(data?.missingScope),
+        needsReconnect: Boolean(data?.needsReconnect),
+        googleEmail: String(data?.googleEmail || ""),
+        startUrl: String(data?.startUrl || "/api/auth/google-mail/start"),
+      };
+      setOperationGoogleMailStatus(nextStatus);
+
+      if (!silent && !nextStatus.canSend) {
+        setOperationEmailNotice(
+          "Debes conectar Google para habilitar el envio de correos.",
+        );
+      }
+
+      return nextStatus;
+    } catch (error) {
+      setOperationGoogleMailStatus({
+        loading: false,
+        connected: false,
+        canSend: false,
+        missingScope: false,
+        needsReconnect: false,
+        googleEmail: "",
+        startUrl: "/api/auth/google-mail/start",
+      });
+
+      if (!silent) {
+        setOperationEmailError(
+          getApiErrorMessage(
+            error,
+            "No fue posible validar la conexion de Google.",
+          ),
+        );
+      }
+
+      return null;
+    }
+  }
+
+  async function loadOperationEmailAttachmentOptions({ query = "" } = {}) {
+    if (!editingOpportunityId) return;
+
+    setLoadingOperationLibraryOptions(true);
+    setOperationLibraryError("");
+
+    try {
+      const { data } = await api.get(
+        `/api/execution-commercial/opportunities/${editingOpportunityId}/email-attachments/options`,
+        {
+          params: {
+            q: normalizeText(query),
+          },
+        },
+      );
+
+      const nextOptions = (
+        Array.isArray(data?.libraryFiles) ? data.libraryFiles : []
+      )
+        .map((item) => ({
+          id: normalizeText(item?.id),
+          sourceLabel: normalizeText(item?.sourceLabel) || "Biblioteca",
+          resourcePublicId: normalizeText(item?.resourcePublicId),
+          filePublicId: normalizeText(item?.filePublicId),
+          fileName: normalizeText(item?.fileName),
+          mimeType: normalizeText(item?.mimeType),
+          byteSize: Number(item?.byteSize || 0),
+          title: normalizeText(item?.title),
+          summary: normalizeText(item?.summary),
+          assetTypeLabel: normalizeText(item?.assetTypeLabel),
+        }))
+        .filter(
+          (item) => item.id && item.resourcePublicId && item.filePublicId,
+        );
+
+      setOperationLibraryOptions(nextOptions);
+    } catch (error) {
+      setOperationLibraryError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar contenido de biblioteca comercial.",
+        ),
+      );
+    } finally {
+      setLoadingOperationLibraryOptions(false);
+    }
+  }
+
+  function handleOperationAiInstructionChange(value) {
+    setOperationAiInstructionText(value);
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+  }
+
+  function handleOperationLibraryQueryChange(value) {
+    setOperationLibraryQuery(value);
+  }
+
+  function handleToggleOperationLibraryAttachment(attachmentId) {
+    const normalizedId = normalizeText(attachmentId);
+    if (!normalizedId) return;
+
+    const option = (
+      Array.isArray(operationLibraryOptions) ? operationLibraryOptions : []
+    ).find((asset) => asset.id === normalizedId);
+    const mappedAttachment = mapLibraryOptionToEmailAttachment(
+      option,
+      "manual",
+    );
+
+    setOperationSelectedLibraryAttachmentIds((current) => {
+      if (current.includes(normalizedId)) {
+        setOperationEmailDraft((draftCurrent) => ({
+          ...draftCurrent,
+          attachments: (draftCurrent.attachments || []).filter(
+            (attachment) => attachment.id !== normalizedId,
+          ),
+        }));
+        return current.filter((id) => id !== normalizedId);
+      }
+      if (current.length >= OPERATION_EMAIL_MAX_LIBRARY_ASSETS) {
+        setOperationEmailError(
+          `Solo puedes seleccionar hasta ${OPERATION_EMAIL_MAX_LIBRARY_ASSETS} activos de biblioteca.`,
+        );
+        return current;
+      }
+
+      if (mappedAttachment) {
+        setOperationEmailDraft((draftCurrent) => ({
+          ...draftCurrent,
+          attachments: [
+            ...(draftCurrent.attachments || []).filter(
+              (attachment) => attachment.id !== mappedAttachment.id,
+            ),
+            mappedAttachment,
+          ],
+        }));
+      }
+
+      return [...current, normalizedId];
+    });
+
+    setOperationEmailNotice("");
+  }
+
+  async function handleRequestOperationAiDraft() {
+    if (!editingOpportunityId) return;
+
+    setGeneratingOperationAiDraft(true);
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+
+    try {
+      const recipient = normalizeText(operationRecipientEmail);
+      const response = await api.post(
+        `/api/execution-commercial/opportunities/${editingOpportunityId}/email-suggestion`,
+        {
+          details: {
+            recipient,
+            cc: normalizeText(operationEmailDraft.cc),
+            subject: normalizeText(operationEmailDraft.subject),
+            messageBody: normalizeText(operationEmailDraft.messageBody),
+            purpose: "other",
+            purposeOther: "operaciones",
+            aiInstructionText: normalizeText(operationAiInstructionText),
+            attachments: selectedOperationLibraryAttachments,
+          },
+        },
+      );
+
+      setOperationAiSuggestion({
+        subject: normalizeText(response?.data?.subject),
+        messageBody: normalizeText(response?.data?.messageBody),
+      });
+
+      setOperationEmailNotice("Sugerencia generada con IA.");
+    } catch (error) {
+      setOperationEmailError(
+        getApiErrorMessage(error, "No fue posible generar el borrador con IA."),
+      );
+    } finally {
+      setGeneratingOperationAiDraft(false);
+    }
+  }
+
+  async function handleRequestOperationAiAttachments() {
+    if (!editingOpportunityId) return;
+
+    setGeneratingOperationAiAttachments(true);
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+
+    try {
+      const response = await api.post(
+        `/api/execution-commercial/opportunities/${editingOpportunityId}/email-attachment-suggestions`,
+        {
+          details: {
+            aiInstructionText: normalizeText(operationAiInstructionText),
+            attachments: selectedOperationLibraryAttachments,
+          },
+        },
+      );
+
+      const suggestedOptions = (
+        Array.isArray(response?.data?.suggestions)
+          ? response.data.suggestions
+          : []
+      )
+        .map((item) => ({
+          id: normalizeText(item?.id),
+          sourceLabel: normalizeText(item?.sourceLabel) || "Biblioteca",
+          resourcePublicId: normalizeText(item?.resourcePublicId),
+          filePublicId: normalizeText(item?.filePublicId),
+          fileName: normalizeText(item?.fileName),
+          mimeType: normalizeText(item?.mimeType),
+          byteSize: Number(item?.byteSize || 0),
+          title: normalizeText(item?.title),
+          summary: normalizeText(item?.summary),
+          assetTypeLabel: normalizeText(item?.assetTypeLabel),
+        }))
+        .filter((item) => item.id && item.resourcePublicId && item.filePublicId)
+        .slice(0, OPERATION_EMAIL_MAX_LIBRARY_ASSETS);
+
+      if (!suggestedOptions.length) {
+        setOperationEmailNotice(
+          "La IA no encontró adjuntos de biblioteca alineados a las instrucciones.",
+        );
+        return;
+      }
+
+      const currentSelectedIds = Array.isArray(
+        operationSelectedLibraryAttachmentIds,
+      )
+        ? operationSelectedLibraryAttachmentIds
+        : [];
+      const availableSlots = Math.max(
+        OPERATION_EMAIL_MAX_LIBRARY_ASSETS - currentSelectedIds.length,
+        0,
+      );
+
+      const suggestedAttachments = suggestedOptions
+        .map((item) => mapLibraryOptionToEmailAttachment(item, "ai"))
+        .filter(Boolean);
+      const newSuggestedAttachments = suggestedAttachments
+        .filter((attachment) => !currentSelectedIds.includes(attachment.id))
+        .slice(0, availableSlots);
+
+      if (!newSuggestedAttachments.length) {
+        setOperationEmailNotice(
+          "La IA no agregó nuevos adjuntos porque ya alcanzaste el limite o ya estaban seleccionados.",
+        );
+        return;
+      }
+
+      setOperationSelectedLibraryAttachmentIds((current) =>
+        Array.from(
+          new Set([
+            ...(Array.isArray(current) ? current : []),
+            ...newSuggestedAttachments.map((attachment) => attachment.id),
+          ]),
+        ),
+      );
+
+      setOperationEmailDraft((current) => {
+        const currentAttachments = Array.isArray(current.attachments)
+          ? current.attachments
+          : [];
+        const mergedById = new Map(
+          currentAttachments.map((attachment) => [attachment.id, attachment]),
+        );
+
+        newSuggestedAttachments.forEach((attachment) => {
+          mergedById.set(attachment.id, attachment);
+        });
+
+        return {
+          ...current,
+          attachments: Array.from(mergedById.values()),
+        };
+      });
+
+      setOperationEmailNotice(
+        `La IA sugirió ${newSuggestedAttachments.length} adjunto(s) de biblioteca.`,
+      );
+    } catch (error) {
+      setOperationEmailError(
+        getApiErrorMessage(error, "No fue posible sugerir adjuntos con IA."),
+      );
+    } finally {
+      setGeneratingOperationAiAttachments(false);
+    }
+  }
+
+  async function handleOpenSendEmailOperation() {
+    if (!editingOpportunityId || !canOpenSendEmailOperation) return;
+
+    setOperationEmailDraft(buildOperationEmailDefaultDraft());
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+    setOperationLibraryError("");
+    setOperationAiInstructionText("");
+    setOperationAiSuggestion({
+      subject: "",
+      messageBody: "",
+    });
+    setGeneratingOperationAiAttachments(false);
+    setOperationLibraryQuery("");
+    setOperationSelectedLibraryAttachmentIds([]);
+    setIsOperationEmailModalOpen(true);
+
+    void loadOperationEmailAttachmentOptions({ query: "" });
+
+    const googleStatus = await loadOperationGoogleMailStatus({ silent: true });
+    if (!googleStatus?.canSend) {
+      setOperationEmailNotice(
+        "Conecta Google para habilitar el envio desde Operaciones.",
+      );
+    }
+  }
+
+  function handleCloseOperationEmailModal() {
+    if (sendingOperationEmail || generatingOperationAiDraft) return;
+    setIsOperationEmailModalOpen(false);
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+  }
+
+  function handleUseOperationAiSuggestion() {
+    const subject = normalizeText(operationAiSuggestion.subject);
+    const messageBody = normalizeText(operationAiSuggestion.messageBody);
+    if (!subject && !messageBody) return;
+
+    setOperationEmailDraft((current) => ({
+      ...current,
+      subject: subject || current.subject,
+      messageBody: messageBody || current.messageBody,
+    }));
+    setOperationEmailNotice("Sugerencia copiada al borrador.");
+  }
+
+  function handleOperationEmailFieldChange(field, value) {
+    setOperationEmailDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+  }
+
+  async function handleConnectOperationGoogleMail() {
+    if (typeof window === "undefined") return;
+
+    const connectUrl =
+      operationGoogleMailStatus.startUrl || "/api/auth/google-mail/start";
+    const returnTo = window.location.href;
+    try {
+      const { data } = await api.get(connectUrl, {
+        params: { returnTo, mode: "json" },
+      });
+
+      const oauthUrl = String(data?.url || "").trim();
+      if (!oauthUrl) {
+        setOperationEmailError(
+          "No fue posible iniciar la conexion con Google.",
+        );
+        return;
+      }
+
+      window.location.assign(oauthUrl);
+    } catch (error) {
+      setOperationEmailError(
+        getApiErrorMessage(
+          error,
+          "No fue posible iniciar la conexion con Google.",
+        ),
+      );
+    }
+  }
+
+  function handleRemoveOperationEmailAttachment(attachmentId) {
+    const normalizedId = normalizeText(attachmentId);
+    setOperationEmailDraft((current) => ({
+      ...current,
+      attachments: (current.attachments || []).filter(
+        (attachment) => attachment.id !== normalizedId,
+      ),
+    }));
+    setOperationSelectedLibraryAttachmentIds((current) =>
+      current.filter((id) => id !== normalizedId),
+    );
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+  }
+
+  async function handleAddOperationEmailAttachments(files) {
+    if (!editingOpportunityId) return;
+
+    const incomingFiles = Array.isArray(files) ? files : [];
+    if (!incomingFiles.length) return;
+
+    const currentAttachments = Array.isArray(operationEmailDraft.attachments)
+      ? operationEmailDraft.attachments
+      : [];
+    if (currentAttachments.length + incomingFiles.length > 10) {
+      setOperationEmailError("Solo puedes adjuntar hasta 10 archivos.");
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      incomingFiles.forEach((file, index) => {
+        formData.append(`file_${index}`, file, file.name);
+      });
+      const { data } = await api.post(
+        `/api/opportunities/${editingOpportunityId}/documents`,
+        formData,
+      );
+
+      const uploadedAttachments = (Array.isArray(data) ? data : [])
+        .map((document) => mapDocumentToEmailAttachment(document))
+        .filter(Boolean);
+
+      setOperationEmailDraft((current) => ({
+        ...current,
+        attachments: [...(current.attachments || []), ...uploadedAttachments],
+      }));
+
+      setOperationEmailError("");
+      setOperationEmailNotice("");
+      await refreshExecutionSection();
+    } catch (error) {
+      setOperationEmailError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar el archivo para adjuntarlo.",
+        ),
+      );
+    }
+  }
+
+  async function handleRequestSendOperationEmail() {
+    if (!editingOpportunityId) return;
+
+    const recipient = normalizeText(operationEmailDraft.recipient);
+    const subject = normalizeText(operationEmailDraft.subject);
+    const messageBody = normalizeText(operationEmailDraft.messageBody);
+
+    if (!recipient) {
+      setOperationEmailError("Indica el destinatario principal.");
+      return;
+    }
+    if (!subject) {
+      setOperationEmailError("Indica el asunto del correo.");
+      return;
+    }
+    if (!messageBody) {
+      setOperationEmailError("El mensaje no puede ir vacio.");
+      return;
+    }
+
+    const latestGoogleStatus = await loadOperationGoogleMailStatus({
+      silent: true,
+    });
+    if (!latestGoogleStatus?.canSend) {
+      setOperationEmailError(
+        "Tu conexion de Google no esta lista para enviar correos.",
+      );
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Se enviara este correo ahora a ${recipient}. ¿Deseas continuar?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setSendingOperationEmail(true);
+    setOperationEmailError("");
+    setOperationEmailNotice("");
+
+    try {
+      const draftAttachments = Array.isArray(operationEmailDraft.attachments)
+        ? operationEmailDraft.attachments
+        : [];
+      const mergedAttachments = [
+        ...draftAttachments,
+        ...selectedOperationLibraryAttachments,
+      ].filter(Boolean);
+      const uniqueAttachments = Array.from(
+        new Map(
+          mergedAttachments.map((attachment) => [attachment.id, attachment]),
+        ).values(),
+      );
+
+      const createPayload = {
+        entryKind: "action",
+        activityType: "send_email",
+        dueDate: toDateOnlySafe(new Date().toISOString()),
+        objective: subject,
+        details: {
+          entryKind: "action",
+          recipient,
+          cc: normalizeText(operationEmailDraft.cc),
+          subject,
+          messageBody,
+          purpose: "other",
+          purposeOther: "operaciones",
+          aiInstructionText: normalizeText(operationAiInstructionText),
+          attachments: uniqueAttachments,
+        },
+      };
+
+      const createResponse = await api.post(
+        `/api/execution-commercial/opportunities/${editingOpportunityId}/activities`,
+        createPayload,
+      );
+      const actionId = Number(createResponse?.data?.id || 0);
+      if (!actionId) {
+        throw new Error("No se pudo preparar la accion de envio.");
+      }
+
+      await api.post(
+        `/api/execution-commercial/opportunities/${editingOpportunityId}/activities/${actionId}/send-email`,
+        {
+          details: {
+            recipient,
+            cc: normalizeText(operationEmailDraft.cc),
+            subject,
+            messageBody,
+            purpose: "other",
+            purposeOther: "operaciones",
+            aiInstructionText: normalizeText(operationAiInstructionText),
+            attachments: uniqueAttachments,
+            markDoneOnSend: true,
+          },
+        },
+      );
+
+      setOperationEmailNotice(`Correo enviado correctamente a ${recipient}.`);
+      setIsOperationEmailModalOpen(false);
+      await refreshExecutionSection();
+    } catch (error) {
+      setOperationEmailError(
+        getApiErrorMessage(
+          error,
+          "No fue posible enviar el correo desde Operaciones.",
+        ),
+      );
+    } finally {
+      setSendingOperationEmail(false);
     }
   }
 
@@ -1107,7 +1788,9 @@ export default function OpportunityDevelopmentPanel({
       const fallback = response?.data?.fallback || null;
 
       let resolvedData = response?.data;
-      const createdJobStatus = normalizeText(resolvedData?.job?.status).toLowerCase();
+      const createdJobStatus = normalizeText(
+        resolvedData?.job?.status,
+      ).toLowerCase();
       if (createdJobStatus) {
         setAiJobStatus(createdJobStatus);
       }
@@ -1115,7 +1798,9 @@ export default function OpportunityDevelopmentPanel({
         const jobId = normalizeText(resolvedData.job.id);
         const deadline = Date.now() + AI_NARRATIVE_TOTAL_POLL_TIMEOUT_MS;
         let nextDelay = Math.max(
-          Number(resolvedData?.job?.pollAfterMs || AI_NARRATIVE_POLL_INTERVAL_MS),
+          Number(
+            resolvedData?.job?.pollAfterMs || AI_NARRATIVE_POLL_INTERVAL_MS,
+          ),
           0,
         );
 
@@ -1132,7 +1817,9 @@ export default function OpportunityDevelopmentPanel({
           );
 
           resolvedData = pollResponse?.data;
-          const polledStatus = normalizeText(resolvedData?.job?.status).toLowerCase();
+          const polledStatus = normalizeText(
+            resolvedData?.job?.status,
+          ).toLowerCase();
           if (polledStatus) {
             setAiJobStatus(polledStatus);
           }
@@ -1159,7 +1846,9 @@ export default function OpportunityDevelopmentPanel({
       }
 
       let resultPayload = resolvedData?.result || null;
-      const resultSource = normalizeText(resultPayload?.aiNarrativeSource).toLowerCase();
+      const resultSource = normalizeText(
+        resultPayload?.aiNarrativeSource,
+      ).toLowerCase();
       if (!resultPayload || resultSource === "fallback") {
         try {
           const directResponse = await api.post(
@@ -1181,7 +1870,9 @@ export default function OpportunityDevelopmentPanel({
       } else if (pollTimedOut && fallback) {
         applyAiNarrativePayload(fallback);
       }
-      const finalStatus = normalizeText(resolvedData?.job?.status).toLowerCase();
+      const finalStatus = normalizeText(
+        resolvedData?.job?.status,
+      ).toLowerCase();
       if (resultPayload) {
         setAiJobStatus("completed");
       } else if (pollTimedOut) {
@@ -1250,7 +1941,9 @@ export default function OpportunityDevelopmentPanel({
   const alternativeStepText =
     normalizeText(aiContract.alternativeStepText) ||
     "No fue posible construir el paso alternativo.";
-  const aiQualityScore = Number(aiCommercialBlueprint?.short?.qualityScore || 0);
+  const aiQualityScore = Number(
+    aiCommercialBlueprint?.short?.qualityScore || 0,
+  );
   const aiSourceNormalized = normalizeText(aiNarrative.source).toLowerCase();
   const aiHeaderBadge =
     aiQualityScore >= 7 && aiSourceNormalized === "openai"
@@ -1297,7 +1990,9 @@ export default function OpportunityDevelopmentPanel({
       </div>
 
       {sourceError && isDevelopmentExpanded ? (
-        <p className="field-hint opportunity-development-warning">{sourceError}</p>
+        <p className="field-hint opportunity-development-warning">
+          {sourceError}
+        </p>
       ) : null}
 
       <article
@@ -1305,44 +2000,46 @@ export default function OpportunityDevelopmentPanel({
         className="opportunity-development-card is-highlight"
         hidden={!isDevelopmentExpanded}
       >
-          <div className="opportunity-development-card-header">
-            <h5>Siguiente mejor paso</h5>
-            <button
-              type="button"
-              className={`opportunity-development-ai-icon-button${loadingAiNarrative ? " is-loading" : ""}`}
-              onClick={refreshAiNarrative}
-              disabled={loadingAiNarrative || !editingOpportunityId}
-              aria-label="Actualizar estrategia con IA"
-              title={aiTooltip}
-            >
-              <InsightAiIcon />
-            </button>
+        <div className="opportunity-development-card-header">
+          <h5>Siguiente mejor paso</h5>
+          <button
+            type="button"
+            className={`opportunity-development-ai-icon-button${loadingAiNarrative ? " is-loading" : ""}`}
+            onClick={refreshAiNarrative}
+            disabled={loadingAiNarrative || !editingOpportunityId}
+            aria-label="Actualizar estrategia con IA"
+            title={aiTooltip}
+          >
+            <InsightAiIcon />
+          </button>
+        </div>
+        <div className="opportunity-development-ai-meta" aria-live="polite">
+          <span>Fuente: {aiSourceLabel}</span>
+          <span>Ultima actualizacion: {aiUpdatedLabel}</span>
+          <span
+            className={`opportunity-development-ai-job-status is-${aiJobStatusTone}`}
+          >
+            Estado del job: {aiJobStatusLabel}
+          </span>
+        </div>
+        <div className="opportunity-development-ai-detail">
+          <div className="opportunity-development-ai-detail-block">
+            <h6>Descripcion y situacion actual de la oportunidad</h6>
+            <p>{descriptionSituationText}</p>
           </div>
-          <div className="opportunity-development-ai-meta" aria-live="polite">
-            <span>Fuente: {aiSourceLabel}</span>
-            <span>Ultima actualizacion: {aiUpdatedLabel}</span>
-            <span className={`opportunity-development-ai-job-status is-${aiJobStatusTone}`}>
-              Estado del job: {aiJobStatusLabel}
-            </span>
+          <div className="opportunity-development-ai-detail-block">
+            <h6>Estrategia para lograr la venta</h6>
+            <p>{salesStrategyText}</p>
           </div>
-          <div className="opportunity-development-ai-detail">
-            <div className="opportunity-development-ai-detail-block">
-              <h6>Descripcion y situacion actual de la oportunidad</h6>
-              <p>{descriptionSituationText}</p>
-            </div>
-            <div className="opportunity-development-ai-detail-block">
-              <h6>Estrategia para lograr la venta</h6>
-              <p>{salesStrategyText}</p>
-            </div>
-            <div className="opportunity-development-ai-detail-block">
-              <h6>Siguiente mejor paso</h6>
-              <p>{nextBestStepText}</p>
-            </div>
-            <div className="opportunity-development-ai-detail-block">
-              <h6>Paso alternativo</h6>
-              <p>{alternativeStepText}</p>
-            </div>
+          <div className="opportunity-development-ai-detail-block">
+            <h6>Siguiente mejor paso</h6>
+            <p>{nextBestStepText}</p>
           </div>
+          <div className="opportunity-development-ai-detail-block">
+            <h6>Paso alternativo</h6>
+            <p>{alternativeStepText}</p>
+          </div>
+        </div>
       </article>
 
       <article className="opportunity-development-card opportunity-development-execution-card">
@@ -1355,9 +2052,15 @@ export default function OpportunityDevelopmentPanel({
           </div>
           <div className="opportunity-collapsible-section-actions">
             <div className="opportunity-development-execution-summary">
-              <span className="record-id-badge">Acciones {executionSummary.actions}</span>
-              <span className="record-id-badge">Actividades {executionSummary.activities}</span>
-              <span className="record-id-badge">Dependencias {executionSummary.dependencies}</span>
+              <span className="record-id-badge">
+                Actividades {executionSummary.activities}
+              </span>
+              <span className="record-id-badge">
+                Dependencias {executionSummary.dependencies}
+              </span>
+              <span className="record-id-badge">
+                Operaciones {executionSummary.operations}
+              </span>
             </div>
             <button
               type="button"
@@ -1376,359 +2079,398 @@ export default function OpportunityDevelopmentPanel({
           id="opportunity-execution-section-body"
           hidden={!isExecutionExpanded}
         >
-        <div className="opportunity-development-execution-section-header">
-          <h6>Registrar</h6>
-          <span className="field-hint">Tres entradas rapidas para mantener orden operativo.</span>
-        </div>
-        <div className="opportunity-development-execution-grid">
-          <div className="opportunity-development-execution-form" role="group" aria-label="Nueva accion">
-            <div className="opportunity-development-execution-form-header">
-              <h6>Accion</h6>
-              <span className="record-id-badge state-pending">Nueva</span>
-            </div>
-            <div className="opportunity-development-execution-form-grid">
-              <label>
-                Tipo
-                <select
-                  value={actionDraft.actionType}
-                  onChange={(event) =>
-                    setActionDraft((current) => ({
-                      ...current,
-                      actionType: event.target.value,
-                    }))
-                  }
-                >
-                  {ACTION_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Fecha
-                <input
-                  type="date"
-                  value={actionDraft.dueDate}
-                  onChange={(event) =>
-                    setActionDraft((current) => ({
-                      ...current,
-                      dueDate: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="is-span-2">
-                Objetivo
-                <input
-                  value={actionDraft.objective}
-                  onChange={(event) =>
-                    setActionDraft((current) => ({
-                      ...current,
-                      objective: event.target.value,
-                    }))
-                  }
-                  placeholder="Ej. confirmar fecha de comite de decision"
-                />
-              </label>
-              <label className="is-span-2">
-                Nota
-                <textarea
-                  rows={2}
-                  value={actionDraft.note}
-                  onChange={(event) =>
-                    setActionDraft((current) => ({
-                      ...current,
-                      note: event.target.value,
-                    }))
-                  }
-                  placeholder="Resultado esperado o contexto"
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary opportunity-development-execution-submit"
-              onClick={handleCreateAction}
-              disabled={savingExecutionItem === "action"}
+          <div className="opportunity-development-execution-section-header">
+            <h6>Registrar</h6>
+            <span className="field-hint">
+              Dos entradas rapidas para mantener orden operativo.
+            </span>
+          </div>
+          <div className="opportunity-development-execution-grid">
+            <div
+              className="opportunity-development-execution-form"
+              role="group"
+              aria-label="Nueva actividad"
             >
-              {savingExecutionItem === "action" ? "Guardando..." : "Agregar accion"}
-            </button>
+              <div className="opportunity-development-execution-form-header">
+                <h6>Actividad</h6>
+                <span className="record-id-badge state-pending">Nueva</span>
+              </div>
+              <div className="opportunity-development-execution-form-grid">
+                <label>
+                  Tipo
+                  <select
+                    value={activityDraft.activityType}
+                    onChange={(event) =>
+                      setActivityDraft((current) => ({
+                        ...current,
+                        activityType: event.target.value,
+                      }))
+                    }
+                  >
+                    {ACTIVITY_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Agenda
+                  <input
+                    type="datetime-local"
+                    value={activityDraft.scheduledAt}
+                    onChange={(event) =>
+                      setActivityDraft((current) => ({
+                        ...current,
+                        scheduledAt: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="is-span-2">
+                  Objetivo
+                  <input
+                    value={activityDraft.objective}
+                    onChange={(event) =>
+                      setActivityDraft((current) => ({
+                        ...current,
+                        objective: event.target.value,
+                      }))
+                    }
+                    placeholder="Ej. llamada de validacion con sponsor"
+                  />
+                </label>
+                <label className="is-span-2">
+                  Nota
+                  <textarea
+                    rows={2}
+                    value={activityDraft.note}
+                    onChange={(event) =>
+                      setActivityDraft((current) => ({
+                        ...current,
+                        note: event.target.value,
+                      }))
+                    }
+                    placeholder="Contexto para la actividad"
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary opportunity-development-execution-submit"
+                onClick={handleCreateActivity}
+                disabled={savingExecutionItem === "activity"}
+              >
+                {savingExecutionItem === "activity"
+                  ? "Guardando..."
+                  : "Agregar actividad"}
+              </button>
+            </div>
+
+            <div
+              className="opportunity-development-execution-form"
+              role="group"
+              aria-label="Nueva dependencia"
+            >
+              <div className="opportunity-development-execution-form-header">
+                <h6>Dependencia</h6>
+                <span className="record-id-badge state-pending">Nueva</span>
+              </div>
+              <div className="opportunity-development-execution-form-grid">
+                <label>
+                  Tipo
+                  <select
+                    value={dependencyDraft.dependencyType}
+                    onChange={(event) =>
+                      setDependencyDraft((current) => ({
+                        ...current,
+                        dependencyType: event.target.value,
+                      }))
+                    }
+                  >
+                    {DEPENDENCY_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Fecha
+                  <input
+                    type="date"
+                    value={dependencyDraft.dueDate}
+                    onChange={(event) =>
+                      setDependencyDraft((current) => ({
+                        ...current,
+                        dueDate: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="is-span-2">
+                  Titulo
+                  <input
+                    value={dependencyDraft.title}
+                    onChange={(event) =>
+                      setDependencyDraft((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                    placeholder="Ej. aprobacion de preventa para demo"
+                  />
+                </label>
+                <label className="is-span-2">
+                  Detalle
+                  <textarea
+                    rows={2}
+                    value={dependencyDraft.details}
+                    onChange={(event) =>
+                      setDependencyDraft((current) => ({
+                        ...current,
+                        details: event.target.value,
+                      }))
+                    }
+                    placeholder="Detalle operativo de la dependencia"
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary opportunity-development-execution-submit"
+                onClick={handleCreateDependency}
+                disabled={savingExecutionItem === "dependency"}
+              >
+                {savingExecutionItem === "dependency"
+                  ? "Guardando..."
+                  : "Agregar dependencia"}
+              </button>
+            </div>
+
+            <div
+              className="opportunity-development-execution-form"
+              role="group"
+              aria-label="Nueva operacion"
+            >
+              <div className="opportunity-development-execution-form-header">
+                <h6>Operaciones</h6>
+                <span className="record-id-badge state-pending">Nueva</span>
+              </div>
+              <p className="field-hint">
+                Ejecuta acciones operativas sin salir de la oportunidad.
+              </p>
+              <button
+                type="button"
+                className="btn-secondary opportunity-development-execution-submit"
+                onClick={handleOpenSendEmailOperation}
+                disabled={!canOpenSendEmailOperation || sendingOperationEmail}
+              >
+                Enviar correo al contacto
+              </button>
+              {!canOpenSendEmailOperation && !canExecuteOperations ? (
+                <p className="field-hint">
+                  Completa y guarda la oportunidad para habilitar operaciones.
+                </p>
+              ) : !canOpenSendEmailOperation && canExecuteOperations ? (
+                <p className="field-hint">
+                  Asigna un contacto con correo para habilitar el envío de
+                  emails.
+                </p>
+              ) : null}
+            </div>
           </div>
 
-          <div className="opportunity-development-execution-form" role="group" aria-label="Nueva actividad">
-            <div className="opportunity-development-execution-form-header">
-              <h6>Actividad</h6>
-              <span className="record-id-badge state-pending">Nueva</span>
-            </div>
-            <div className="opportunity-development-execution-form-grid">
-              <label>
-                Tipo
-                <select
-                  value={activityDraft.activityType}
-                  onChange={(event) =>
-                    setActivityDraft((current) => ({
-                      ...current,
-                      activityType: event.target.value,
-                    }))
-                  }
-                >
-                  {ACTIVITY_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Agenda
-                <input
-                  type="datetime-local"
-                  value={activityDraft.scheduledAt}
-                  onChange={(event) =>
-                    setActivityDraft((current) => ({
-                      ...current,
-                      scheduledAt: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="is-span-2">
-                Objetivo
-                <input
-                  value={activityDraft.objective}
-                  onChange={(event) =>
-                    setActivityDraft((current) => ({
-                      ...current,
-                      objective: event.target.value,
-                    }))
-                  }
-                  placeholder="Ej. llamada de validacion con sponsor"
-                />
-              </label>
-              <label className="is-span-2">
-                Nota
-                <textarea
-                  rows={2}
-                  value={activityDraft.note}
-                  onChange={(event) =>
-                    setActivityDraft((current) => ({
-                      ...current,
-                      note: event.target.value,
-                    }))
-                  }
-                  placeholder="Contexto para la actividad"
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary opportunity-development-execution-submit"
-              onClick={handleCreateActivity}
-              disabled={savingExecutionItem === "activity"}
-            >
-              {savingExecutionItem === "activity" ? "Guardando..." : "Agregar actividad"}
-            </button>
+          <div className="opportunity-development-execution-section-header is-history">
+            <h6>Seguimiento</h6>
+            <span className="field-hint">
+              Consulta lo creado y actualiza estado desde el indicador lateral.
+            </span>
           </div>
-
-          <div className="opportunity-development-execution-form" role="group" aria-label="Nueva dependencia">
-            <div className="opportunity-development-execution-form-header">
-              <h6>Dependencia</h6>
-              <span className="record-id-badge state-pending">Nueva</span>
-            </div>
-            <div className="opportunity-development-execution-form-grid">
-              <label>
-                Tipo
-                <select
-                  value={dependencyDraft.dependencyType}
-                  onChange={(event) =>
-                    setDependencyDraft((current) => ({
-                      ...current,
-                      dependencyType: event.target.value,
-                    }))
-                  }
-                >
-                  {DEPENDENCY_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Fecha
-                <input
-                  type="date"
-                  value={dependencyDraft.dueDate}
-                  onChange={(event) =>
-                    setDependencyDraft((current) => ({
-                      ...current,
-                      dueDate: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="is-span-2">
-                Titulo
-                <input
-                  value={dependencyDraft.title}
-                  onChange={(event) =>
-                    setDependencyDraft((current) => ({
-                      ...current,
-                      title: event.target.value,
-                    }))
-                  }
-                  placeholder="Ej. aprobacion de preventa para demo"
-                />
-              </label>
-              <label className="is-span-2">
-                Detalle
-                <textarea
-                  rows={2}
-                  value={dependencyDraft.details}
-                  onChange={(event) =>
-                    setDependencyDraft((current) => ({
-                      ...current,
-                      details: event.target.value,
-                    }))
-                  }
-                  placeholder="Detalle operativo de la dependencia"
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary opportunity-development-execution-submit"
-              onClick={handleCreateDependency}
-              disabled={savingExecutionItem === "dependency"}
-            >
-              {savingExecutionItem === "dependency" ? "Guardando..." : "Agregar dependencia"}
-            </button>
-          </div>
-        </div>
-
-        <div className="opportunity-development-execution-section-header is-history">
-          <h6>Seguimiento</h6>
-          <span className="field-hint">Consulta lo creado y actualiza estado desde el indicador lateral.</span>
-        </div>
-        <div className="opportunity-development-execution-history-grid">
-          <div className="opportunity-development-execution-history">
-            <div className="opportunity-development-execution-history-header">
-              <h6>Acciones</h6>
-              <span className="record-id-badge">{executionSummary.actions}</span>
-            </div>
-            {previousActions.length ? (
-              <ul>
-                {previousActions.map((item) => (
-                  <li key={`action-${item.id}`}>
-                    <div className="opportunity-development-execution-history-row">
-                      <div className="opportunity-development-execution-history-main">
-                        <strong>{item.title || "Sin titulo"}</strong>
-                        <span>
-                          {ACTION_TYPE_LABELS[item.actionType] || item.actionType || "Accion"} · {item.status || "pending"}
-                        </span>
-                        <span>
-                          {item.dueDate ? `Fecha: ${toDateOnly(item.dueDate)}` : "Sin fecha"}
-                        </span>
+          <div className="opportunity-development-execution-history-grid">
+            <div className="opportunity-development-execution-history">
+              <div className="opportunity-development-execution-history-header">
+                <h6>Actividades</h6>
+                <span className="record-id-badge">
+                  {executionSummary.activities}
+                </span>
+              </div>
+              {previousActivities.length ? (
+                <ul>
+                  {previousActivities.map((item) => (
+                    <li key={`activity-${item.id}`}>
+                      <div className="opportunity-development-execution-history-row">
+                        <div className="opportunity-development-execution-history-main">
+                          <strong>{item.title || "Sin titulo"}</strong>
+                          <span>
+                            {ACTIVITY_TYPE_LABELS[item.actionType] ||
+                              item.actionType ||
+                              "Actividad"}{" "}
+                            · {item.status || "pending"}
+                          </span>
+                          <span>
+                            {item.scheduledAt
+                              ? `Agenda: ${formatNarrativeTimestamp(item.scheduledAt)}`
+                              : item.dueDate
+                                ? `Fecha: ${toDateOnly(item.dueDate)}`
+                                : "Sin fecha"}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`opportunity-development-item-manage-button is-${getExecutionStatusTone(item.status)}`}
-                      onClick={() => openExecutionItemModal("action", item)}
-                      aria-label="Gestionar accion"
-                      title="Marcar realizada o cancelar"
-                    >
-                      <ManageExecutionItemIcon tone={getExecutionStatusTone(item.status)} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="field-hint">Aun no hay acciones registradas.</p>
-            )}
-          </div>
-
-          <div className="opportunity-development-execution-history">
-            <div className="opportunity-development-execution-history-header">
-              <h6>Actividades</h6>
-              <span className="record-id-badge">{executionSummary.activities}</span>
+                      <button
+                        type="button"
+                        className={`opportunity-development-item-manage-button is-${getExecutionStatusTone(item.status)}`}
+                        onClick={() => openExecutionItemModal("activity", item)}
+                        aria-label="Gestionar actividad"
+                        title="Marcar realizada o cancelar"
+                      >
+                        <ManageExecutionItemIcon
+                          tone={getExecutionStatusTone(item.status)}
+                        />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="field-hint">
+                  Aun no hay actividades registradas.
+                </p>
+              )}
             </div>
-            {previousActivities.length ? (
-              <ul>
-                {previousActivities.map((item) => (
-                  <li key={`activity-${item.id}`}>
-                    <div className="opportunity-development-execution-history-row">
-                      <div className="opportunity-development-execution-history-main">
-                        <strong>{item.title || "Sin titulo"}</strong>
-                        <span>
-                          {ACTIVITY_TYPE_LABELS[item.actionType] || item.actionType || "Actividad"} · {item.status || "pending"}
-                        </span>
-                        <span>
-                          {item.scheduledAt
-                            ? `Agenda: ${formatNarrativeTimestamp(item.scheduledAt)}`
-                            : item.dueDate
+
+            <div className="opportunity-development-execution-history">
+              <div className="opportunity-development-execution-history-header">
+                <h6>Dependencias</h6>
+                <span className="record-id-badge">
+                  {executionSummary.dependencies}
+                </span>
+              </div>
+              {executionDependencies.length ? (
+                <ul>
+                  {executionDependencies.map((item) => (
+                    <li key={`dependency-${item.id}`}>
+                      <div className="opportunity-development-execution-history-row">
+                        <div className="opportunity-development-execution-history-main">
+                          <strong>{item.title || "Sin titulo"}</strong>
+                          <span>
+                            {DEPENDENCY_TYPE_LABELS[item.dependencyType] ||
+                              item.dependencyLabel ||
+                              "Dependencia"}{" "}
+                            · {item.status || "open"}
+                          </span>
+                          <span>
+                            {item.dueDate
                               ? `Fecha: ${toDateOnly(item.dueDate)}`
                               : "Sin fecha"}
-                        </span>
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`opportunity-development-item-manage-button is-${getExecutionStatusTone(item.status)}`}
-                      onClick={() => openExecutionItemModal("activity", item)}
-                      aria-label="Gestionar actividad"
-                      title="Marcar realizada o cancelar"
-                    >
-                      <ManageExecutionItemIcon tone={getExecutionStatusTone(item.status)} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="field-hint">Aun no hay actividades registradas.</p>
-            )}
-          </div>
-
-          <div className="opportunity-development-execution-history">
-            <div className="opportunity-development-execution-history-header">
-              <h6>Dependencias</h6>
-              <span className="record-id-badge">{executionSummary.dependencies}</span>
+                      <button
+                        type="button"
+                        className={`opportunity-development-item-manage-button is-${getExecutionStatusTone(item.status)}`}
+                        onClick={() =>
+                          openExecutionItemModal("dependency", item)
+                        }
+                        aria-label="Gestionar dependencia"
+                        title="Marcar realizada o cancelar"
+                      >
+                        <ManageExecutionItemIcon
+                          tone={getExecutionStatusTone(item.status)}
+                        />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="field-hint">
+                  Aun no hay dependencias registradas.
+                </p>
+              )}
             </div>
-            {executionDependencies.length ? (
-              <ul>
-                {executionDependencies.map((item) => (
-                  <li key={`dependency-${item.id}`}>
-                    <div className="opportunity-development-execution-history-row">
-                      <div className="opportunity-development-execution-history-main">
-                        <strong>{item.title || "Sin titulo"}</strong>
-                        <span>
-                          {DEPENDENCY_TYPE_LABELS[item.dependencyType] || item.dependencyLabel || "Dependencia"} · {item.status || "open"}
-                        </span>
-                        <span>
-                          {item.dueDate ? `Fecha: ${toDateOnly(item.dueDate)}` : "Sin fecha"}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`opportunity-development-item-manage-button is-${getExecutionStatusTone(item.status)}`}
-                      onClick={() => openExecutionItemModal("dependency", item)}
-                      aria-label="Gestionar dependencia"
-                      title="Marcar realizada o cancelar"
-                    >
-                      <ManageExecutionItemIcon tone={getExecutionStatusTone(item.status)} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="field-hint">Aun no hay dependencias registradas.</p>
-            )}
+
+            <div className="opportunity-development-execution-history">
+              <div className="opportunity-development-execution-history-header">
+                <h6>Operaciones</h6>
+                <span className="record-id-badge">
+                  {executionSummary.operations}
+                </span>
+              </div>
+              {operationActions.length ? (
+                <ul>
+                  {operationActions.map((item) => {
+                    const details =
+                      item?.details && typeof item.details === "object"
+                        ? item.details
+                        : {};
+                    const sentAt = normalizeText(details.sentAt);
+                    const recipient = normalizeText(details.recipient);
+                    const subject = normalizeText(
+                      item.title || details.subject,
+                    );
+
+                    return (
+                      <li key={`operation-${item.id}`}>
+                        <div className="opportunity-development-execution-history-row">
+                          <div className="opportunity-development-execution-history-main">
+                            <strong>{subject || "Envio de correo"}</strong>
+                            <span>
+                              {getOperationStatusLabel(item.status)}
+                              {recipient ? ` · ${recipient}` : ""}
+                            </span>
+                            <span>
+                              {sentAt
+                                ? `Enviada: ${formatNarrativeTimestamp(sentAt)}`
+                                : item.dueDate
+                                  ? `Fecha: ${toDateOnly(item.dueDate)}`
+                                  : "Sin fecha"}
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="field-hint">
+                  Aun no hay operaciones registradas.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
         </div>
       </article>
+
+      <OpportunityOperationEmailModal
+        isOpen={isOperationEmailModalOpen}
+        draft={operationEmailDraft}
+        sending={sendingOperationEmail}
+        generatingAiDraft={generatingOperationAiDraft}
+        generatingAiAttachments={generatingOperationAiAttachments}
+        error={operationEmailError}
+        notice={operationEmailNotice}
+        libraryError={operationLibraryError}
+        googleMailStatus={operationGoogleMailStatus}
+        aiInstructionText={operationAiInstructionText}
+        aiSuggestionSubject={operationAiSuggestion.subject}
+        aiSuggestionMessageBody={operationAiSuggestion.messageBody}
+        libraryQuery={operationLibraryQuery}
+        libraryOptions={operationLibraryOptions}
+        libraryLoading={loadingOperationLibraryOptions}
+        selectedLibraryAttachmentIds={operationSelectedLibraryAttachmentIds}
+        maxLibraryAssets={OPERATION_EMAIL_MAX_LIBRARY_ASSETS}
+        onClose={handleCloseOperationEmailModal}
+        onChangeField={handleOperationEmailFieldChange}
+        onChangeAiInstruction={handleOperationAiInstructionChange}
+        onUseAiSuggestion={handleUseOperationAiSuggestion}
+        onChangeLibraryQuery={handleOperationLibraryQueryChange}
+        onToggleLibraryAttachment={handleToggleOperationLibraryAttachment}
+        onAddAttachments={handleAddOperationEmailAttachments}
+        onRemoveAttachment={handleRemoveOperationEmailAttachment}
+        onRequestAiDraft={handleRequestOperationAiDraft}
+        onRequestAiAttachments={handleRequestOperationAiAttachments}
+        onRequestSend={handleRequestSendOperationEmail}
+        onConnectGoogleMail={handleConnectOperationGoogleMail}
+      />
 
       {executionItemModal ? (
         <div className="modal-overlay" onClick={closeExecutionItemModal}>
@@ -1750,7 +2492,9 @@ export default function OpportunityDevelopmentPanel({
 
             <div className="opportunity-development-item-modal-content">
               <p className="field-hint">
-                <strong>{executionItemModal.item?.title || "Sin titulo"}</strong>
+                <strong>
+                  {executionItemModal.item?.title || "Sin titulo"}
+                </strong>
               </p>
 
               <label>

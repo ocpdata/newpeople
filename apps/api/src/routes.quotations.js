@@ -46,7 +46,13 @@ import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
-import { sendCommercialActionEmail } from "./utils.js";
+import {
+  decryptOpaqueSecret,
+  exchangeGoogleRefreshToken,
+  GOOGLE_GMAIL_SEND_SCOPE,
+  hasGoogleMailSendScope,
+  sendGoogleMailMessage,
+} from "./utils.js";
 
 const router = express.Router();
 const documentStorage = createDocumentStorage();
@@ -82,6 +88,80 @@ const proposalUpdateAccessPermissionCodes = Array.from(
 
 const PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
 const PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+const PROPOSAL_EMAIL_SEND_MODE_GOOGLE_USER = "google_user";
+
+let proposalGoogleMailConnectionsTableEnsured = false;
+
+async function ensureProposalGoogleMailConnectionsTable() {
+  if (proposalGoogleMailConnectionsTableEnsured) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_google_mail_connections (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id BIGINT UNSIGNED NOT NULL,
+      google_email VARCHAR(190) NOT NULL,
+      refresh_token_encrypted TEXT NOT NULL,
+      scope_text VARCHAR(2000) NULL,
+      last_connected_at DATETIME NOT NULL,
+      revoked_at DATETIME NULL,
+      last_error_code VARCHAR(120) NULL,
+      last_error_at DATETIME NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_google_mail_connections_user (user_id),
+      CONSTRAINT fk_user_google_mail_connections_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  proposalGoogleMailConnectionsTableEnsured = true;
+}
+
+async function findUserGoogleMailConnection(userId) {
+  await ensureProposalGoogleMailConnectionsTable();
+  const rows = await query(
+    `SELECT
+      id,
+      google_email,
+      refresh_token_encrypted,
+      scope_text,
+      revoked_at
+    FROM user_google_mail_connections
+    WHERE user_id = ?
+    LIMIT 1`,
+    [userId],
+  );
+  const row = rows[0] || null;
+  if (!row || row.revoked_at) {
+    return null;
+  }
+  return row;
+}
+
+async function markUserGoogleMailConnectionError({ userId, errorCode }) {
+  await ensureProposalGoogleMailConnectionsTable();
+  const now = new Date();
+  await query(
+    `UPDATE user_google_mail_connections
+     SET last_error_code = ?, last_error_at = ?, updated_at = ?
+     WHERE user_id = ?`,
+    [String(errorCode || "google_send_failed"), now, now, userId],
+  );
+}
+
+async function clearUserGoogleMailConnectionError(userId) {
+  await ensureProposalGoogleMailConnectionsTable();
+  await query(
+    `UPDATE user_google_mail_connections
+     SET last_error_code = NULL, last_error_at = NULL, updated_at = ?
+     WHERE user_id = ?`,
+    [new Date(), userId],
+  );
+}
 
 const quotationHumanApprovalPermissionCode = "cotizaciones.aprobacion_humana";
 const quotationAiApprovalPermissionCode = "cotizaciones.aprobacion_ia";
@@ -697,6 +777,36 @@ const proposalPdfRenderSchema = z.object({
 });
 
 const proposalEmailAddressSchema = z.string().trim().min(5).max(190).email();
+
+const proposalEmailSuggestionSchema = z.object({
+  proposalId: z.number().int().positive(),
+  tone: z.enum(["formal", "ejecutivo", "cercano"]).optional(),
+  length: z.enum(["corto", "medio", "largo"]).optional(),
+  objective: z.enum(["presentar", "seguimiento", "cierre"]).optional(),
+  includePricing: z.boolean().optional().default(true),
+  includeNextStep: z.boolean().optional().default(true),
+  recipientNameOverride: z.string().trim().max(160).optional(),
+  customInstruction: z.string().trim().max(600).optional(),
+  draftContext: z
+    .object({
+      currentSubject: z.string().trim().max(220).optional(),
+      currentMessageBody: z.string().trim().max(12000).optional(),
+      mode: z.enum(["crear", "mejorar"]).optional(),
+    })
+    .optional(),
+});
+
+const proposalEmailSuggestionAiResponseSchema = z.object({
+  subject: z.string().trim().min(3).max(220),
+  messageBody: z.string().trim().min(30).max(12000),
+  salutationUsed: z.string().trim().max(180).optional().default(""),
+  ctaUsed: z.string().trim().max(320).optional().default(""),
+  warnings: z.array(z.string().trim().max(400)).optional().default([]),
+});
+
+const PROPOSAL_EMAIL_SUGGESTION_OPENAI_TIMEOUT_MS = 45000;
+const PROPOSAL_EMAIL_SUGGESTION_SYSTEM_PROMPT =
+  'Eres asistente comercial B2B para redactar correos de propuesta en espanol. Usa SOLO la evidencia provista. No inventes datos (montos, fechas, terminos, alcance o promesas). Si falta informacion, usa lenguaje neutral sin afirmar datos no presentes. Devuelve EXCLUSIVAMENTE JSON valido con esta forma: {"subject": string, "messageBody": string, "salutationUsed": string, "ctaUsed": string, "warnings": string[]}. No incluyas markdown ni texto extra.';
 
 const proposalTemplateApplySchema = z.object({
   templateId: z.number().int().positive(),
@@ -7830,6 +7940,7 @@ async function getAccessibleProposal({ user, proposalId }) {
     `SELECT p.*, a.name AS account_name,
             o.name AS opportunity_name,
             CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+            c.email AS contact_email,
           pt.name AS template_name,
           pt.status AS template_status,
           pt.code AS template_code,
@@ -7904,6 +8015,7 @@ function serializeProposalRow(proposalRow, options = {}) {
     accountName: proposalRow.account_name || "",
     contactId: Number(proposalRow.contact_id),
     contactName: proposalRow.contact_name || "",
+    contactEmail: proposalRow.contact_email || "",
     opportunityId: Number(proposalRow.opportunity_id),
     opportunityName: proposalRow.opportunity_name || "",
     ownerUserId: Number(proposalRow.owner_user_id),
@@ -15147,6 +15259,357 @@ function getProposalEmailAttachmentMimeType(file) {
   return String(file?.mimetype || "application/octet-stream").trim();
 }
 
+function summarizeProposalEmailSuggestionKeyPoints(components) {
+  const raw = (Array.isArray(components) ? components : []).flatMap(
+    (component) => {
+      const componentTexts = [String(component?.title || "").trim()];
+      const blocks = Array.isArray(component?.blocks) ? component.blocks : [];
+      blocks.forEach((block) => {
+        componentTexts.push(String(block?.text || "").trim());
+        if (Array.isArray(block?.items)) {
+          block.items.forEach((item) => {
+            componentTexts.push(String(item || "").trim());
+          });
+        }
+      });
+      return componentTexts.filter(Boolean);
+    },
+  );
+
+  const unique = Array.from(new Set(raw.map((value) => value.trim()))).filter(
+    Boolean,
+  );
+  return unique
+    .map((value) => summarizeProposalAiText(value, 220))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+async function getProposalEmailSuggestionQuotationTerms(quotationVersionId) {
+  const rows = await query(
+    `SELECT proposal_name,
+            delivery_time,
+            quotation_validity,
+            warranty_term,
+            payment_terms,
+            currency_code,
+            exchange_rate,
+            quotation_notes
+     FROM quotation_versions
+     WHERE id = ?
+     LIMIT 1`,
+    [Number(quotationVersionId)],
+  );
+  return rows[0] || null;
+}
+
+function buildProposalEmailSuggestionRequestFingerprint(payload) {
+  return createHash("sha256")
+    .update(JSON.stringify(payload || {}))
+    .digest("hex");
+}
+
+async function requestProposalEmailSuggestionFromOpenAi({
+  user,
+  suggestionRequest,
+  contextPayload,
+}) {
+  const aiUsageUserId = Number(user?.id || 0);
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
+  const requestPayload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content: PROPOSAL_EMAIL_SUGGESTION_SYSTEM_PROMPT,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            preferences: suggestionRequest,
+            context: contextPayload,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    PROPOSAL_EMAIL_SUGGESTION_OPENAI_TIMEOUT_MS,
+  );
+
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId = randomUUID();
+  try {
+    const response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openai.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestPayload),
+        signal: controller.signal,
+      },
+    );
+
+    const responseData = await response.json().catch(() => null);
+    if (!response.ok || !responseData) {
+      const errorText =
+        responseData?.error?.message ||
+        responseData?.error?.code ||
+        `OpenAI request failed: ${response.status}`;
+      throw new Error(String(errorText || "OpenAI request failed"));
+    }
+
+    if (aiUsageUserId) {
+      await recordAiUsageFromOpenAiResponse({
+        userId: aiUsageUserId,
+        featureCode: "proposals_email_suggestion",
+        model: String(requestPayload.model || config.openai.model || "").trim(),
+        openAiResponse: responseData,
+        startedAt: aiUsageStartedAt,
+        endedAt: new Date(),
+        internalRequestId: aiUsageInternalRequestId,
+      });
+    }
+
+    const parsed = extractJsonObject(getOpenAiOutputText(responseData));
+    if (!parsed) {
+      throw new Error("OpenAI request failed: invalid JSON response");
+    }
+
+    const validated = proposalEmailSuggestionAiResponseSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error("OpenAI request failed: invalid email suggestion shape");
+    }
+
+    return validated.data;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+router.post(
+  "/proposals/email-suggestions",
+  requireAnyPermission(proposalReadAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertProposalReadPermission(req, res)) return;
+
+    const parsed = proposalEmailSuggestionSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        reason: "invalid_input",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    if (!config.openai.apiKey) {
+      return res.status(502).json({
+        message: "La sugerencia IA no esta disponible en este entorno",
+        reason: "ai_generation_failed",
+      });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId: parsed.data.proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({
+        message: "Propuesta no encontrada",
+        reason: "proposal_not_found",
+      });
+    }
+
+    const [proposalDetail, opportunity, answers, quotationSections, quotation] =
+      await Promise.all([
+        serializeProposalDetail(proposal),
+        getProposalOpportunityContext(Number(proposal.opportunity_id)),
+        listLatestOpportunityAnswersForProposalContext(
+          Number(proposal.opportunity_id),
+        ),
+        getQuotationVersionSections(Number(proposal.quotation_version_id)),
+        getProposalEmailSuggestionQuotationTerms(
+          Number(proposal.quotation_version_id),
+        ),
+      ]);
+
+    const keyPoints = summarizeProposalEmailSuggestionKeyPoints(
+      proposalDetail.components,
+    );
+    const pricingSummary =
+      safeParseJsonObject(proposal.pricing_snapshot_json)?.summary || {};
+
+    const evidence = {
+      opportunity: {
+        id: proposal.opportunity_id ? Number(proposal.opportunity_id) : null,
+        name: proposal.opportunity_name || null,
+        stage: opportunity?.sales_stage_name || null,
+        needSummary: summarizeProposalAiText(
+          (Array.isArray(answers) ? answers : [])
+            .map((answer) => answer.answer_value)
+            .filter(Boolean)
+            .join(" "),
+          400,
+        ),
+      },
+      proposal: {
+        id: Number(proposal.id),
+        title: proposal.title || "",
+        keyPoints,
+      },
+      quotation: {
+        id: Number(proposal.quotation_id || 0) || null,
+        versionId: Number(proposal.quotation_version_id || 0) || null,
+        currency:
+          quotation?.currency_code || pricingSummary?.currencyCode || null,
+        total: Number.isFinite(Number(pricingSummary?.total))
+          ? Number(pricingSummary.total)
+          : null,
+        validity: quotation?.quotation_validity || null,
+        paymentTerms: quotation?.payment_terms || null,
+      },
+    };
+
+    const missingCriticalData = [];
+    if (!evidence.proposal.title) {
+      missingCriticalData.push("proposal.title");
+    }
+    if (!evidence.proposal.keyPoints.length) {
+      missingCriticalData.push("proposal.keyPoints");
+    }
+
+    const suggestionRequest = {
+      tone: parsed.data.tone || "formal",
+      length: parsed.data.length || "medio",
+      objective: parsed.data.objective || "presentar",
+      includePricing: Boolean(parsed.data.includePricing ?? true),
+      includeNextStep: Boolean(parsed.data.includeNextStep ?? true),
+      recipientNameOverride: String(
+        parsed.data.recipientNameOverride || "",
+      ).trim(),
+      customInstruction: String(parsed.data.customInstruction || "").trim(),
+      draftContext: {
+        mode: parsed.data.draftContext?.mode || "crear",
+        currentSubject: String(
+          parsed.data.draftContext?.currentSubject || "",
+        ).trim(),
+        currentMessageBody: String(
+          parsed.data.draftContext?.currentMessageBody || "",
+        ).trim(),
+      },
+    };
+
+    const requestFingerprint = buildProposalEmailSuggestionRequestFingerprint({
+      suggestionRequest,
+      evidence,
+      quotationSections: Array.isArray(quotationSections)
+        ? quotationSections.map((section) => ({
+            title: section.title,
+            items: Array.isArray(section.items)
+              ? section.items.map((item) => ({
+                  productCode: item.productCode,
+                  productDescription: item.productDescription,
+                }))
+              : [],
+          }))
+        : [],
+    });
+
+    try {
+      const suggestion = await requestProposalEmailSuggestionFromOpenAi({
+        user: req.user,
+        suggestionRequest,
+        contextPayload: {
+          evidence,
+          quotationCommercialTerms: {
+            deliveryTime: quotation?.delivery_time || null,
+            quotationValidity: quotation?.quotation_validity || null,
+            warranty: quotation?.warranty_term || null,
+            paymentTerms: quotation?.payment_terms || null,
+            quotationNotes: quotation?.quotation_notes || null,
+          },
+          quotationSections: Array.isArray(quotationSections)
+            ? quotationSections.slice(0, 4).map((section) => ({
+                title: section.title,
+                items: Array.isArray(section.items)
+                  ? section.items.slice(0, 8).map((item) => ({
+                      productCode: item.productCode || "",
+                      productDescription: item.productDescription || "",
+                      quantity: Number(item.quantity || 0),
+                    }))
+                  : [],
+              }))
+            : [],
+          recipientContext: {
+            name:
+              suggestionRequest.recipientNameOverride ||
+              String(proposal.contact_name || "").trim() ||
+              null,
+          },
+        },
+      });
+
+      await logAuditEvent({
+        req,
+        module: "propuestas",
+        action: "sugerir_correo_ia",
+        entityType: "proposal_document",
+        entityId: Number(proposal.id),
+        detail: "Sugerencia IA de correo de propuesta generada",
+        after: {
+          proposalId: Number(proposal.id),
+          tone: suggestionRequest.tone,
+          length: suggestionRequest.length,
+          objective: suggestionRequest.objective,
+          requestFingerprint,
+        },
+      });
+
+      return res.json({
+        sent: false,
+        suggestion: {
+          subject: suggestion.subject,
+          messageBody: suggestion.messageBody,
+          salutationUsed: suggestion.salutationUsed || "",
+          ctaUsed: suggestion.ctaUsed || "",
+          tone: suggestionRequest.tone,
+          length: suggestionRequest.length,
+        },
+        evidence,
+        quality: {
+          confidence: missingCriticalData.length ? 0.52 : 0.82,
+          missingCriticalData,
+          warnings: Array.isArray(suggestion.warnings)
+            ? suggestion.warnings
+            : [],
+        },
+        meta: {
+          model: config.openai.model,
+          generatedAt: new Date().toISOString(),
+          requestFingerprint,
+        },
+      });
+    } catch (error) {
+      return res.status(502).json({
+        message: String(error?.message || "No fue posible generar sugerencia"),
+        reason: "ai_generation_failed",
+      });
+    }
+  },
+);
+
 router.post(
   "/proposals/send-email",
   requireAnyPermission(proposalReadAccessPermissionCodes),
@@ -15159,7 +15622,15 @@ router.post(
       const to = String(fields?.to || "").trim();
       const subject = String(fields?.subject || "").trim();
       const messageBody = String(fields?.messageBody || "").trim();
+      const sendMode = String(fields?.sendMode || "").trim();
       const ccEntries = splitProposalEmailList(fields?.cc || "");
+
+      if (sendMode !== PROPOSAL_EMAIL_SEND_MODE_GOOGLE_USER) {
+        return res.status(400).json({
+          message: "Modo de envio invalido para propuestas",
+          reason: "invalid_send_mode",
+        });
+      }
 
       if (!proposalEmailAddressSchema.safeParse(to).success) {
         return res.status(400).json({
@@ -15314,31 +15785,83 @@ router.post(
         });
       }
 
-      const mailResult = await sendCommercialActionEmail({
-        to,
-        cc: ccEntries,
-        subject,
-        messageBody,
-        attachments: [
-          {
-            filename: fileName || "propuesta.pdf",
-            contentType: "application/pdf",
-            content: buffer,
-          },
-          ...extraAttachments,
-        ],
-        metadataLines: [
-          `Propuesta: ${parsed.data.header.proposalTitle || "Sin titulo"}`,
-          `Cuenta: ${parsed.data.header.accountName || "Sin cuenta"}`,
-          `Contacto: ${parsed.data.header.contactName || "Sin contacto"}`,
-        ],
-      });
+      const googleConnection = await findUserGoogleMailConnection(req.user.id);
+      if (!googleConnection) {
+        return res.status(409).json({
+          message:
+            "Debes conectar tu cuenta de Google antes de enviar propuestas",
+          reason: "google_reconnect_required",
+        });
+      }
 
-      if (!mailResult.sent) {
+      if (!hasGoogleMailSendScope(googleConnection.scope_text || "")) {
+        return res.status(409).json({
+          message:
+            "Tu conexion de Google no incluye permisos para enviar correo",
+          reason: "google_scope_missing",
+          requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+        });
+      }
+
+      try {
+        const refreshToken = decryptOpaqueSecret(
+          googleConnection.refresh_token_encrypted,
+        );
+        const tokenPayload = await exchangeGoogleRefreshToken(refreshToken);
+
+        await sendGoogleMailMessage({
+          accessToken: tokenPayload.access_token,
+          from: googleConnection.google_email,
+          to,
+          cc: ccEntries.join(", "),
+          subject,
+          messageBody,
+          attachments: [
+            {
+              filename: fileName || "propuesta.pdf",
+              contentType: "application/pdf",
+              content: buffer,
+            },
+            ...extraAttachments,
+          ],
+        });
+
+        await clearUserGoogleMailConnectionError(req.user.id);
+      } catch (error) {
+        const errorCode = String(error?.code || "google_send_failed");
+        await markUserGoogleMailConnectionError({
+          userId: req.user.id,
+          errorCode,
+        });
+
+        const reconnectCodes = new Set([
+          "invalid_grant",
+          "invalid_token",
+          "unauthenticated",
+        ]);
+
+        if (reconnectCodes.has(errorCode.toLowerCase())) {
+          return res.status(409).json({
+            message:
+              "La conexion con Google expiro o fue revocada. Reconecta tu cuenta para continuar",
+            reason: "google_reconnect_required",
+          });
+        }
+
+        if (errorCode.toLowerCase() === "insufficient_scope") {
+          return res.status(409).json({
+            message:
+              "Tu conexion con Google no tiene permisos suficientes para enviar correo",
+            reason: "google_scope_missing",
+            requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+          });
+        }
+
         return res.status(502).json({
           message:
-            mailResult.detail || "No fue posible enviar el correo de propuesta",
-          reason: mailResult.reason || "smtp_send_failed",
+            String(error?.detail || error?.message || "") ||
+            "No fue posible enviar el correo mediante Google",
+          reason: "google_send_failed",
         });
       }
 
@@ -15351,9 +15874,251 @@ router.post(
         after: {
           to,
           cc: ccEntries,
+          sendMode,
+          senderGoogleEmail: googleConnection.google_email,
           proposalTitle: parsed.data.header.proposalTitle || "",
           quotationVersionId:
             parsed.data.quotationAttachmentRef.quotationVersionId,
+          extraAttachmentsCount: extraAttachments.length,
+        },
+      });
+
+      return res.json({
+        sent: true,
+        message: "Correo enviado correctamente",
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/send-email",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const { files, fields } = await parseMultipartFiles(req);
+
+    try {
+      const to = String(fields?.to || "").trim();
+      const subject = String(fields?.subject || "").trim();
+      const messageBody = String(fields?.messageBody || "").trim();
+      const sendMode = String(fields?.sendMode || "").trim();
+      const ccEntries = splitProposalEmailList(fields?.cc || "");
+
+      if (sendMode !== PROPOSAL_EMAIL_SEND_MODE_GOOGLE_USER) {
+        return res.status(400).json({
+          message: "Modo de envio invalido para cotizaciones",
+          reason: "invalid_send_mode",
+        });
+      }
+
+      if (!proposalEmailAddressSchema.safeParse(to).success) {
+        return res.status(400).json({
+          message: "El destinatario principal no tiene un correo valido",
+        });
+      }
+
+      if (ccEntries.length) {
+        const invalidCcEntries = getProposalEmailInvalidRecipients(ccEntries);
+        if (invalidCcEntries.length) {
+          return res.status(400).json({
+            message: `Hay correos en CC con formato invalido: ${invalidCcEntries.join(", ")}`,
+          });
+        }
+      }
+
+      if (!subject) {
+        return res.status(400).json({ message: "El asunto es obligatorio" });
+      }
+
+      if (!messageBody) {
+        return res
+          .status(400)
+          .json({ message: "El mensaje base es obligatorio" });
+      }
+
+      if (files.length > PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES) {
+        return res.status(400).json({
+          message: `Solo puedes adjuntar hasta ${PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES} archivos extra`,
+        });
+      }
+
+      const allowedMimeTypes = new Set(
+        config.documents.storage.allowedMimeTypes,
+      );
+      let totalExtraAttachmentBytes = 0;
+      for (const file of files) {
+        const mimeType = getProposalEmailAttachmentMimeType(file);
+        if (!allowedMimeTypes.has(mimeType)) {
+          return res.status(400).json({
+            message: `Tipo de archivo no permitido: ${normalizeProposalEmailAttachmentName(
+              file,
+            )}`,
+          });
+        }
+
+        totalExtraAttachmentBytes += Number(file?.size || 0);
+        if (
+          totalExtraAttachmentBytes > PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES
+        ) {
+          return res.status(400).json({
+            message:
+              "El peso total de adjuntos extra excede el limite permitido para el correo",
+          });
+        }
+      }
+
+      const rawPayload = String(fields?.pdfPayload || "").trim();
+      if (!rawPayload) {
+        return res
+          .status(400)
+          .json({ message: "No se recibio el payload PDF de la cotizacion" });
+      }
+
+      let payloadData = null;
+      try {
+        payloadData = JSON.parse(rawPayload);
+      } catch {
+        return res.status(400).json({
+          message:
+            "El payload PDF de la cotizacion no tiene formato JSON valido",
+        });
+      }
+
+      const parsed = quotationPdfRenderSchema.safeParse(payloadData);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Datos invalidos",
+          errors: parsed.error.flatten(),
+        });
+      }
+
+      const company = await getCompanyDocumentBranding();
+      const { buffer, fileName } = await buildQuotationPdfBuffer({
+        ...parsed.data,
+        company,
+      });
+
+      const extraAttachments = [];
+      for (const file of files) {
+        extraAttachments.push({
+          filename: normalizeProposalEmailAttachmentName(file),
+          contentType: getProposalEmailAttachmentMimeType(file),
+          content: await readFile(file.filepath),
+        });
+      }
+
+      const googleConnection = await findUserGoogleMailConnection(req.user.id);
+      if (!googleConnection) {
+        return res.status(409).json({
+          message:
+            "Debes conectar tu cuenta de Google antes de enviar cotizaciones",
+          reason: "google_reconnect_required",
+        });
+      }
+
+      if (!hasGoogleMailSendScope(googleConnection.scope_text || "")) {
+        return res.status(409).json({
+          message:
+            "Tu conexion de Google no incluye permisos para enviar correo",
+          reason: "google_scope_missing",
+          requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+        });
+      }
+
+      try {
+        const refreshToken = decryptOpaqueSecret(
+          googleConnection.refresh_token_encrypted,
+        );
+        const tokenPayload = await exchangeGoogleRefreshToken(refreshToken);
+
+        await sendGoogleMailMessage({
+          accessToken: tokenPayload.access_token,
+          from: googleConnection.google_email,
+          to,
+          cc: ccEntries.join(", "),
+          subject,
+          messageBody,
+          attachments: [
+            {
+              filename: fileName || "cotizacion.pdf",
+              contentType: "application/pdf",
+              content: buffer,
+            },
+            ...extraAttachments,
+          ],
+        });
+
+        await clearUserGoogleMailConnectionError(req.user.id);
+      } catch (error) {
+        const errorCode = String(error?.code || "google_send_failed");
+        await markUserGoogleMailConnectionError({
+          userId: req.user.id,
+          errorCode,
+        });
+
+        const reconnectCodes = new Set([
+          "invalid_grant",
+          "invalid_token",
+          "unauthenticated",
+        ]);
+
+        if (reconnectCodes.has(errorCode.toLowerCase())) {
+          return res.status(409).json({
+            message:
+              "La conexion con Google expiro o fue revocada. Reconecta tu cuenta para continuar",
+            reason: "google_reconnect_required",
+          });
+        }
+
+        if (errorCode.toLowerCase() === "insufficient_scope") {
+          return res.status(409).json({
+            message:
+              "Tu conexion con Google no tiene permisos suficientes para enviar correo",
+            reason: "google_scope_missing",
+            requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+          });
+        }
+
+        return res.status(502).json({
+          message:
+            String(error?.detail || error?.message || "") ||
+            "No fue posible enviar el correo mediante Google",
+          reason: "google_send_failed",
+        });
+      }
+
+      await logAuditEvent({
+        req,
+        module: "cotizaciones",
+        action: "enviar_correo",
+        entityType: "quotation_document",
+        entityId: Number(version.id),
+        detail: `Correo enviado con cotizacion PDF: ${parsed.data.header.proposalName || "cotizacion"}`,
+        after: {
+          quotationVersionId: Number(version.id),
+          quotationId: Number(version.quotation_id),
+          to,
+          cc: ccEntries,
+          sendMode,
+          senderGoogleEmail: googleConnection.google_email,
+          proposalName: parsed.data.header.proposalName || "",
           extraAttachmentsCount: extraAttachments.length,
         },
       });
