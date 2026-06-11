@@ -80,6 +80,24 @@ En raiz:
 - npm run test:api: ejecuta la suite inicial de integracion del backend.
 - npm run test:web:e2e: ejecuta la suite E2E del frontend con Playwright.
 
+## Operacion local + nube (implementado)
+
+Este repositorio ya incluye base operativa para usar el mismo codigo en local y en nube:
+
+- Validacion de configuracion al arranque de la API (falla temprano si faltan variables criticas).
+- Ejemplos de entorno para local y produccion en `apps/api/.env.example` y `apps/api/.env.aws-s3.example`.
+- Pipeline CI en GitHub Actions para pruebas API, build y lint web.
+- Workflow manual de smoke para validar una URL publica de despliegue.
+
+Workflows disponibles:
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/smoke-cloud.yml`
+
+Guia operativa detallada:
+
+- `readme/deploy-local-cloud.md`
+
 En apps/api:
 
 - npm run dev: API con nodemon.

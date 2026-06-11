@@ -1,0 +1,27 @@
+name: Smoke Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL publica (ej. https://newpip.digitalvs.com)"
+        required: true
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Normalize base URL
+        id: base
+        run: |
+          value="${{ inputs.base_url }}"
+          echo "base=${value%/}" >> "$GITHUB_OUTPUT"
+
+      - name: Healthcheck
+        run: |
+          curl -fsS "${{ steps.base.outputs.base }}/health" | cat
+
+      - name: Auth bootstrap status
+        run: |
+          curl -fsS "${{ steps.base.outputs.base }}/api/auth/bootstrap-status" | cat

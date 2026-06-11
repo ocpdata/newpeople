@@ -1,10 +1,12 @@
 import express from "express";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { normalizeEmail, signToken } from "./utils.js";
 import { authRequired, loadUser } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { config } from "./config.js";
 import {
   consumePasswordSetupToken,
   findPasswordSetupToken,
@@ -29,7 +31,8 @@ const avatarUrlValueSchema = z
   }, "Avatar invalido");
 
 const avatarUrlSchema = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  (value) =>
+    typeof value === "string" && value.trim() === "" ? undefined : value,
   avatarUrlValueSchema.optional(),
 );
 
@@ -56,9 +59,234 @@ const setPasswordContextSchema = z.object({
   token: z.string().min(32).max(255),
 });
 
+function resolveAppBaseUrl() {
+  if (config.app.baseUrl) {
+    return String(config.app.baseUrl).replace(/\/$/, "");
+  }
+
+  try {
+    return new URL(config.app.inviteSetupUrl).origin;
+  } catch {
+    return "http://localhost:5173";
+  }
+}
+
+function createGoogleOauthState() {
+  return jwt.sign(
+    {
+      provider: "google",
+      aud: "oauth_state",
+    },
+    config.jwtSecret,
+    { expiresIn: "10m" },
+  );
+}
+
+function resolveGoogleAuthUrl() {
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", config.auth.google.clientId);
+  url.searchParams.set("redirect_uri", config.auth.google.redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("prompt", "select_account");
+  url.searchParams.set("state", createGoogleOauthState());
+  return url.toString();
+}
+
+function resolveGoogleStartUrl() {
+  return "/api/auth/oauth/google/start";
+}
+
+async function exchangeGoogleCodeForToken(code) {
+  const body = new URLSearchParams({
+    code,
+    client_id: config.auth.google.clientId,
+    client_secret: config.auth.google.clientSecret,
+    redirect_uri: config.auth.google.redirectUri,
+    grant_type: "authorization_code",
+  });
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    throw new Error("GOOGLE_TOKEN_EXCHANGE_FAILED");
+  }
+
+  return response.json();
+}
+
+async function fetchGoogleUserProfile(accessToken) {
+  const response = await fetch(
+    "https://openidconnect.googleapis.com/v1/userinfo",
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("GOOGLE_PROFILE_FETCH_FAILED");
+  }
+
+  return response.json();
+}
+
+function redirectWithOauthError(res, reason) {
+  const appBaseUrl = resolveAppBaseUrl();
+  const url = new URL(appBaseUrl);
+  url.searchParams.set("oauthError", reason || "oauth_failed");
+  return res.redirect(url.toString());
+}
+
 router.get("/bootstrap-status", async (_req, res) => {
   const rows = await query("SELECT COUNT(*) AS count FROM users");
   res.json({ hasUsers: Number(rows[0].count) > 0 });
+});
+
+router.get("/oauth/providers", (_req, res) => {
+  return res.json({
+    google: {
+      enabled: config.auth.google.enabled,
+      startUrl: config.auth.google.enabled ? resolveGoogleStartUrl() : "",
+    },
+  });
+});
+
+router.get("/oauth/google/start", async (req, res) => {
+  if (!config.auth.google.enabled) {
+    return redirectWithOauthError(res, "google_disabled");
+  }
+
+  try {
+    return res.redirect(resolveGoogleAuthUrl());
+  } catch {
+    await logAuditEvent({
+      req,
+      module: "auth",
+      action: "oauth_google_start_failed",
+      entityType: "user",
+      detail: "No fue posible iniciar el flujo OAuth con Google",
+      status: "error",
+    });
+    return redirectWithOauthError(res, "oauth_start_failed");
+  }
+});
+
+router.get("/oauth/google/callback", async (req, res) => {
+  const state = String(req.query.state || "");
+  const code = String(req.query.code || "");
+  const oauthError = String(req.query.error || "");
+
+  if (!config.auth.google.enabled) {
+    return redirectWithOauthError(res, "google_disabled");
+  }
+
+  if (oauthError) {
+    await logAuditEvent({
+      req,
+      module: "auth",
+      action: "oauth_google_callback_denied",
+      entityType: "user",
+      detail: `Google devolvio error: ${oauthError}`,
+      status: "error",
+    });
+    return redirectWithOauthError(res, "google_denied");
+  }
+
+  if (!state || !code) {
+    return redirectWithOauthError(res, "google_invalid_callback");
+  }
+
+  try {
+    const payload = jwt.verify(state, config.jwtSecret);
+    if (payload?.aud !== "oauth_state" || payload?.provider !== "google") {
+      return redirectWithOauthError(res, "google_invalid_state");
+    }
+  } catch {
+    return redirectWithOauthError(res, "google_invalid_state");
+  }
+
+  try {
+    const tokenResponse = await exchangeGoogleCodeForToken(code);
+    const profile = await fetchGoogleUserProfile(tokenResponse.access_token);
+    const email = normalizeEmail(profile?.email || "");
+
+    if (!email) {
+      return redirectWithOauthError(res, "google_email_missing");
+    }
+
+    const rows = await query("SELECT * FROM users WHERE email = ?", [email]);
+    if (rows.length === 0) {
+      await logAuditEvent({
+        req,
+        actor: { email },
+        module: "auth",
+        action: "oauth_google_login_failed",
+        entityType: "user",
+        detail: "Intento OAuth con usuario inexistente",
+        status: "error",
+      });
+      return redirectWithOauthError(res, "google_user_not_found");
+    }
+
+    const user = rows[0];
+    if (user.status !== "active") {
+      await logAuditEvent({
+        req,
+        actor: { id: user.id, full_name: user.full_name, email: user.email },
+        module: "auth",
+        action: "oauth_google_login_failed",
+        entityType: "user",
+        entityId: user.id,
+        detail: "Intento OAuth con usuario inactivo",
+        status: "error",
+      });
+      return redirectWithOauthError(res, "google_user_inactive");
+    }
+
+    const now = new Date();
+    await query(
+      "UPDATE users SET last_visit_at = ?, updated_at = ? WHERE id = ?",
+      [now, now, user.id],
+    );
+
+    const token = signToken(user);
+    await logAuditEvent({
+      req,
+      actor: { id: user.id, full_name: user.full_name, email: user.email },
+      module: "auth",
+      action: "oauth_google_login_success",
+      entityType: "user",
+      entityId: user.id,
+      detail: "Inicio de sesion con Google exitoso",
+      before: { last_visit_at: user.last_visit_at || null },
+      after: { last_visit_at: now },
+    });
+
+    const appBaseUrl = resolveAppBaseUrl();
+    const url = new URL(appBaseUrl);
+    url.searchParams.set("oauthToken", token);
+    return res.redirect(url.toString());
+  } catch (error) {
+    await logAuditEvent({
+      req,
+      module: "auth",
+      action: "oauth_google_callback_failed",
+      entityType: "user",
+      detail: String(
+        error?.message || "No fue posible completar OAuth con Google",
+      ),
+      status: "error",
+    });
+    return redirectWithOauthError(res, "google_callback_failed");
+  }
 });
 
 router.post("/register-first", async (req, res) => {
@@ -265,7 +493,9 @@ router.get("/set-password-context", async (req, res) => {
   const state = resolvePasswordSetupTokenState(record);
 
   if (state === "invalid") {
-    return res.status(404).json({ message: "El enlace no es valido o ya no existe" });
+    return res
+      .status(404)
+      .json({ message: "El enlace no es valido o ya no existe" });
   }
 
   if (state === "used") {
@@ -308,13 +538,19 @@ router.post("/set-password", async (req, res) => {
       detail: "Intento de configurar password con token invalido",
       status: "error",
     });
-    return res.status(404).json({ message: "El enlace no es valido o ya no existe" });
+    return res
+      .status(404)
+      .json({ message: "El enlace no es valido o ya no existe" });
   }
 
   if (state === "used") {
     await logAuditEvent({
       req,
-      actor: { id: record.user_id, full_name: record.full_name, email: record.email },
+      actor: {
+        id: record.user_id,
+        full_name: record.full_name,
+        email: record.email,
+      },
       module: "auth",
       action: "set_password_failed",
       entityType: "user",
@@ -329,7 +565,11 @@ router.post("/set-password", async (req, res) => {
   if (state === "expired") {
     await logAuditEvent({
       req,
-      actor: { id: record.user_id, full_name: record.full_name, email: record.email },
+      actor: {
+        id: record.user_id,
+        full_name: record.full_name,
+        email: record.email,
+      },
       module: "auth",
       action: "set_password_failed",
       entityType: "user",
@@ -344,7 +584,11 @@ router.post("/set-password", async (req, res) => {
   if (state === "inactive") {
     await logAuditEvent({
       req,
-      actor: { id: record.user_id, full_name: record.full_name, email: record.email },
+      actor: {
+        id: record.user_id,
+        full_name: record.full_name,
+        email: record.email,
+      },
       module: "auth",
       action: "set_password_failed",
       entityType: "user",
@@ -379,7 +623,11 @@ router.post("/set-password", async (req, res) => {
   });
   await logAuditEvent({
     req,
-    actor: { id: record.user_id, full_name: record.full_name, email: record.email },
+    actor: {
+      id: record.user_id,
+      full_name: record.full_name,
+      email: record.email,
+    },
     module: "auth",
     action: "password_set",
     entityType: "user",

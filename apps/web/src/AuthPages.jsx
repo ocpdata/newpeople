@@ -2,11 +2,48 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 
-export function LoginPage({ onLogin }) {
+export function LoginPage({ onLogin, initialError = "" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [googleAuth, setGoogleAuth] = useState({
+    enabled: false,
+    startUrl: "",
+  });
+
+  useEffect(() => {
+    setError(initialError || "");
+  }, [initialError]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOauthProviders() {
+      try {
+        const { data } = await api.get("/api/auth/oauth/providers");
+        if (cancelled) return;
+        setGoogleAuth({
+          enabled: Boolean(data?.google?.enabled),
+          startUrl: String(data?.google?.startUrl || ""),
+        });
+      } catch {
+        if (cancelled) return;
+        setGoogleAuth({ enabled: false, startUrl: "" });
+      }
+    }
+
+    loadOauthProviders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleGoogleLogin() {
+    if (!googleAuth.enabled || !googleAuth.startUrl) return;
+    window.location.assign(googleAuth.startUrl);
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -41,6 +78,20 @@ export function LoginPage({ onLogin }) {
         />
         {error && <p className="error">{error}</p>}
         <button disabled={saving}>{saving ? "Ingresando..." : "Entrar"}</button>
+        {googleAuth.enabled ? (
+          <>
+            <div className="auth-divider" aria-hidden="true">
+              <span>o</span>
+            </div>
+            <button
+              type="button"
+              className="auth-google-button"
+              onClick={handleGoogleLogin}
+            >
+              Entrar con Google
+            </button>
+          </>
+        ) : null}
       </form>
     </section>
   );

@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { query } from "./db.js";
+import { config } from "./config.js";
 import { authRequired, loadUser } from "./auth.js";
 import authRoutes from "./routes.auth.js";
 import userRoutes from "./routes.users.js";
@@ -25,7 +26,7 @@ import aiRoutes from "./routes.ai.js";
 
 export function createApp() {
   const app = express();
-  const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "12mb";
+  const requestBodyLimit = config.requestBodyLimit;
 
   function isProposalModulePath(pathname = "") {
     return [

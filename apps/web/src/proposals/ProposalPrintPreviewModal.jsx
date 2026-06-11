@@ -7,6 +7,7 @@ export default function ProposalPrintPreviewModal({
   model,
   onClose,
   onOpenPdfPreview,
+  onOpenEmailComposer,
 }) {
   if (!isOpen || !model) {
     return null;
@@ -43,6 +44,17 @@ export default function ProposalPrintPreviewModal({
             >
               <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
                 <path d="M6.25 5.75A2 2 0 0 1 8.25 3.75h7.5l3 3v11.5a2 2 0 0 1-2 2h-8.5a2 2 0 0 1-2-2V5.75Zm8.5-2v3h3M12 8.75v7.5m0 0-3-3m3 3 3-3" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="proposal-print-preview-icon-button"
+              onClick={() => onOpenEmailComposer?.()}
+              aria-label="Enviar por correo"
+              title="Enviar por correo"
+            >
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M3.75 6.75h16.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5v-7.5a1.5 1.5 0 0 1 1.5-1.5Zm0 1.5L12 13.5l8.25-5.25" />
               </svg>
             </button>
             <button

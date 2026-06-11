@@ -5,12 +5,28 @@ import { FirstUserSetup, LoginPage, SetPasswordPage } from "./AuthPages";
 import AppShell from "./AppShell";
 import { HelpProvider } from "./help/HelpProvider";
 
+const OAUTH_ERROR_MESSAGES = {
+  google_disabled: "El acceso con Google no esta habilitado en este entorno.",
+  oauth_start_failed: "No fue posible iniciar el acceso con Google.",
+  google_denied: "Se cancelo el acceso con Google.",
+  google_invalid_callback: "La respuesta de Google es invalida o incompleta.",
+  google_invalid_state:
+    "No fue posible validar la sesion de acceso con Google.",
+  google_email_missing: "Google no devolvio un correo utilizable.",
+  google_user_not_found:
+    "Tu correo de Google no esta registrado en NewPeople. Solicita acceso al administrador.",
+  google_user_inactive: "Tu usuario esta inactivo. Contacta al administrador.",
+  google_callback_failed: "No fue posible completar el acceso con Google.",
+  oauth_failed: "No fue posible iniciar sesion con Google.",
+};
+
 function App() {
   const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [hasUsers, setHasUsers] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("crm_token") || "");
   const [currentUser, setCurrentUser] = useState(null);
+  const [oauthError, setOauthError] = useState("");
 
   useEffect(() => {
     boot();
@@ -25,6 +41,33 @@ function App() {
       localStorage.removeItem("crm_token");
     }
   }, [token]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const oauthToken = params.get("oauthToken") || "";
+    const oauthErrorCode = params.get("oauthError") || "";
+
+    if (oauthToken) {
+      setOauthError("");
+      setToken(oauthToken);
+      params.delete("oauthToken");
+      const nextQuery = params.toString();
+      const nextUrl = `${location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+      window.history.replaceState({}, "", nextUrl);
+      return;
+    }
+
+    if (oauthErrorCode) {
+      setOauthError(
+        OAUTH_ERROR_MESSAGES[oauthErrorCode] ||
+          OAUTH_ERROR_MESSAGES.oauth_failed,
+      );
+      params.delete("oauthError");
+      const nextQuery = params.toString();
+      const nextUrl = `${location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+      window.history.replaceState({}, "", nextUrl);
+    }
+  }, [location.pathname, location.search]);
 
   async function boot() {
     try {
@@ -67,7 +110,7 @@ function App() {
   }
 
   if (!token || !currentUser) {
-    return <LoginPage onLogin={setToken} />;
+    return <LoginPage onLogin={setToken} initialError={oauthError} />;
   }
 
   return (

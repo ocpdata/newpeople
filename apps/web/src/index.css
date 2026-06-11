@@ -128,6 +128,41 @@ body {
   padding: 22px;
 }
 
+.auth-divider {
+  position: relative;
+  margin: 2px 0;
+  text-align: center;
+  color: #6a7f98;
+  font-size: 13px;
+}
+
+.auth-divider::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 1px solid #d7e2f1;
+  transform: translateY(-50%);
+}
+
+.auth-divider span {
+  position: relative;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.auth-google-button {
+  border: 1px solid #c8d8ef;
+  background: #f8fbff;
+  color: #1f4f95;
+  font-weight: 600;
+}
+
+.auth-google-button:hover {
+  background: #edf4ff;
+}
+
 .password-setup-card {
   width: 100%;
   max-width: none;

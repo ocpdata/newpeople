@@ -15,8 +15,17 @@ dotenv.config({ path: resolve(__dirname, envFileName) });
 export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4000),
+  requestBodyLimit: process.env.REQUEST_BODY_LIMIT || "12mb",
   jwtSecret: process.env.JWT_SECRET || "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "8h",
+  auth: {
+    google: {
+      enabled: String(process.env.AUTH_GOOGLE_ENABLED || "false") === "true",
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      redirectUri: process.env.GOOGLE_REDIRECT_URI || "",
+    },
+  },
   features: {
     opportunityStageAnswerSuggestionsEnabled:
       String(
@@ -24,6 +33,7 @@ export const config = {
       ) === "true",
   },
   app: {
+    baseUrl: process.env.APP_BASE_URL || "",
     inviteSetupUrl:
       process.env.APP_INVITE_SETUP_URL || "http://localhost:5173/set-password",
     passwordSetupTokenMinutes: Number(

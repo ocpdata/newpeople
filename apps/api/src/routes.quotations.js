@@ -46,6 +46,7 @@ import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
+import { sendCommercialActionEmail } from "./utils.js";
 
 const router = express.Router();
 const documentStorage = createDocumentStorage();
@@ -78,6 +79,9 @@ const proposalCreateAccessPermissionCodes = Array.from(
 const proposalUpdateAccessPermissionCodes = Array.from(
   new Set([...proposalUpdatePermissionCodes, ...quotationPermissionCodes]),
 );
+
+const PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
+const PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
 
 const quotationHumanApprovalPermissionCode = "cotizaciones.aprobacion_humana";
 const quotationAiApprovalPermissionCode = "cotizaciones.aprobacion_ia";
@@ -691,6 +695,8 @@ const proposalPdfRenderSchema = z.object({
     quotationVersionId: z.number().int().positive(),
   }),
 });
+
+const proposalEmailAddressSchema = z.string().trim().min(5).max(190).email();
 
 const proposalTemplateApplySchema = z.object({
   templateId: z.number().int().positive(),
@@ -12530,7 +12536,7 @@ router.post(
             : Number(parsed.data.exchangeRate),
           parsed.data.quotationNotes ?? latestVersion.quotation_notes ?? "",
           parsed.data.bundleCollapseState == null
-            ? latestVersion.bundle_collapse_state_json ?? null
+            ? (latestVersion.bundle_collapse_state_json ?? null)
             : JSON.stringify(parsed.data.bundleCollapseState),
           now,
           now,
@@ -13018,7 +13024,7 @@ router.put(
           : Number(parsed.data.exchangeRate),
         parsed.data.quotationNotes ?? version.quotation_notes ?? "",
         parsed.data.bundleCollapseState == null
-          ? version.bundle_collapse_state_json ?? null
+          ? (version.bundle_collapse_state_json ?? null)
           : JSON.stringify(parsed.data.bundleCollapseState),
         now,
         Number(req.user.id),
@@ -13202,7 +13208,7 @@ router.put(
               : Number(parsed.data.exchangeRate),
             parsed.data.quotationNotes ?? version.quotation_notes ?? "",
             parsed.data.bundleCollapseState == null
-              ? version.bundle_collapse_state_json ?? null
+              ? (version.bundle_collapse_state_json ?? null)
               : JSON.stringify(parsed.data.bundleCollapseState),
             now,
             Number(req.user.id),
@@ -15115,6 +15121,250 @@ router.post(
     res.setHeader("Cache-Control", "no-store");
 
     return res.send(buffer);
+  },
+);
+
+function splitProposalEmailList(value) {
+  return String(value || "")
+    .split(/[;,\n]/)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+}
+
+function getProposalEmailInvalidRecipients(entries = []) {
+  return entries.filter(
+    (entry) => !proposalEmailAddressSchema.safeParse(entry).success,
+  );
+}
+
+function normalizeProposalEmailAttachmentName(file) {
+  return String(
+    file?.originalFilename || file?.newFilename || "adjunto",
+  ).trim();
+}
+
+function getProposalEmailAttachmentMimeType(file) {
+  return String(file?.mimetype || "application/octet-stream").trim();
+}
+
+router.post(
+  "/proposals/send-email",
+  requireAnyPermission(proposalReadAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertProposalReadPermission(req, res)) return;
+
+    const { files, fields } = await parseMultipartFiles(req);
+
+    try {
+      const to = String(fields?.to || "").trim();
+      const subject = String(fields?.subject || "").trim();
+      const messageBody = String(fields?.messageBody || "").trim();
+      const ccEntries = splitProposalEmailList(fields?.cc || "");
+
+      if (!proposalEmailAddressSchema.safeParse(to).success) {
+        return res.status(400).json({
+          message: "El destinatario principal no tiene un correo valido",
+        });
+      }
+
+      if (ccEntries.length) {
+        const invalidCcEntries = getProposalEmailInvalidRecipients(ccEntries);
+        if (invalidCcEntries.length) {
+          return res.status(400).json({
+            message: `Hay correos en CC con formato invalido: ${invalidCcEntries.join(", ")}`,
+          });
+        }
+      }
+
+      if (!subject) {
+        return res.status(400).json({ message: "El asunto es obligatorio" });
+      }
+
+      if (!messageBody) {
+        return res
+          .status(400)
+          .json({ message: "El mensaje base es obligatorio" });
+      }
+
+      if (files.length > PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES) {
+        return res.status(400).json({
+          message: `Solo puedes adjuntar hasta ${PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES} archivos extra`,
+        });
+      }
+
+      const allowedMimeTypes = new Set(
+        config.documents.storage.allowedMimeTypes,
+      );
+      let totalExtraAttachmentBytes = 0;
+      for (const file of files) {
+        const mimeType = getProposalEmailAttachmentMimeType(file);
+        if (!allowedMimeTypes.has(mimeType)) {
+          return res.status(400).json({
+            message: `Tipo de archivo no permitido: ${normalizeProposalEmailAttachmentName(
+              file,
+            )}`,
+          });
+        }
+
+        totalExtraAttachmentBytes += Number(file?.size || 0);
+        if (
+          totalExtraAttachmentBytes > PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES
+        ) {
+          return res.status(400).json({
+            message:
+              "El peso total de adjuntos extra excede el limite permitido para el correo",
+          });
+        }
+      }
+
+      const rawPayload = String(fields?.pdfPayload || "").trim();
+      if (!rawPayload) {
+        return res
+          .status(400)
+          .json({ message: "No se recibio el payload PDF de la propuesta" });
+      }
+
+      let payloadData = null;
+      try {
+        payloadData = JSON.parse(rawPayload);
+      } catch {
+        return res.status(400).json({
+          message:
+            "El payload PDF de la propuesta no tiene formato JSON valido",
+        });
+      }
+
+      const parsed = proposalPdfRenderSchema.safeParse(payloadData);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Datos invalidos",
+          errors: parsed.error.flatten(),
+        });
+      }
+
+      const company = await getCompanyDocumentBranding();
+      const quotationAttachment = await resolveProposalQuotationAttachment({
+        user: req.user,
+        company,
+        quotationVersionId:
+          parsed.data.quotationAttachmentRef.quotationVersionId,
+      });
+
+      const brochureAttachments = [];
+      const brochureAttachmentKeys = new Set();
+      for (const block of parsed.data.brochureBlocks || []) {
+        if (block.type !== "brochure" || !block.assetPublicId) {
+          continue;
+        }
+
+        for (const file of block.brochure?.files || []) {
+          const filePublicId = String(file?.publicId || "").trim();
+          if (!filePublicId) {
+            continue;
+          }
+
+          const attachmentKey = `${block.assetPublicId}:${filePublicId}`;
+          if (brochureAttachmentKeys.has(attachmentKey)) {
+            continue;
+          }
+          brochureAttachmentKeys.add(attachmentKey);
+
+          try {
+            const resource = await getCommercialEnablementFileStream({
+              assetPublicId: block.assetPublicId,
+              filePublicId,
+              user: req.user,
+            });
+            if (!resource) {
+              continue;
+            }
+
+            brochureAttachments.push({
+              title:
+                String(block.brochure?.title || "").trim() ||
+                String(resource.fileName || file.fileName || "").trim() ||
+                "Folleto",
+              fileName:
+                String(resource.fileName || file.fileName || "").trim() ||
+                "folleto",
+              mimeType:
+                String(resource.mimeType || file.mimeType || "").trim() ||
+                "application/octet-stream",
+              buffer: await streamToBuffer(resource.stream),
+            });
+          } catch {
+            // Ignore missing brochure attachments and keep generating the proposal.
+          }
+        }
+      }
+
+      const { buffer, fileName } = await buildProposalPdfBuffer({
+        ...parsed.data,
+        company,
+        quotationAttachment,
+        brochureAttachments,
+      });
+
+      const extraAttachments = [];
+      for (const file of files) {
+        extraAttachments.push({
+          filename: normalizeProposalEmailAttachmentName(file),
+          contentType: getProposalEmailAttachmentMimeType(file),
+          content: await readFile(file.filepath),
+        });
+      }
+
+      const mailResult = await sendCommercialActionEmail({
+        to,
+        cc: ccEntries,
+        subject,
+        messageBody,
+        attachments: [
+          {
+            filename: fileName || "propuesta.pdf",
+            contentType: "application/pdf",
+            content: buffer,
+          },
+          ...extraAttachments,
+        ],
+        metadataLines: [
+          `Propuesta: ${parsed.data.header.proposalTitle || "Sin titulo"}`,
+          `Cuenta: ${parsed.data.header.accountName || "Sin cuenta"}`,
+          `Contacto: ${parsed.data.header.contactName || "Sin contacto"}`,
+        ],
+      });
+
+      if (!mailResult.sent) {
+        return res.status(502).json({
+          message:
+            mailResult.detail || "No fue posible enviar el correo de propuesta",
+          reason: mailResult.reason || "smtp_send_failed",
+        });
+      }
+
+      await logAuditEvent({
+        req,
+        module: "propuestas",
+        action: "enviar_correo",
+        entityType: "proposal_document",
+        detail: `Correo enviado con propuesta PDF: ${parsed.data.header.proposalTitle || "propuesta"}`,
+        after: {
+          to,
+          cc: ccEntries,
+          proposalTitle: parsed.data.header.proposalTitle || "",
+          quotationVersionId:
+            parsed.data.quotationAttachmentRef.quotationVersionId,
+          extraAttachmentsCount: extraAttachments.length,
+        },
+      });
+
+      return res.json({
+        sent: true,
+        message: "Correo enviado correctamente",
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
   },
 );
 

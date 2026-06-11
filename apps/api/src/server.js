@@ -30,6 +30,7 @@ import {
   startQuotationProviderDocumentImportPreviewWorker,
   startProposalExecutiveSummaryGenerationWorker,
 } from "./routes.quotations.js";
+import { validateConfig } from "./validateConfig.js";
 import { startOpportunityStageAnswerSuggestionWorker } from "./opportunity-stage-answer-suggestions/async.js";
 import { ensureOpportunityStageAnswerSuggestionJobSchema } from "./opportunity-stage-answer-suggestions/schema.js";
 import { startOpportunityStageValidationWorker } from "./opportunity-stage-validations/async.js";
@@ -40,6 +41,7 @@ import { ensureCorePermissions } from "./permissions.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
 
 export async function startServer() {
+  validateConfig();
   await ensureCorePermissions();
   await ensureAiUsageSchema();
   await ensureInteractionPermissions();

@@ -75,8 +75,13 @@ npm test -- --run test/api.integration.test.js -t "cotizaciones genera un PDF in
 ## Variables de entorno clave
 
 - `PORT`
+- `REQUEST_BODY_LIMIT`
 - `JWT_SECRET`
 - `JWT_EXPIRES_IN`
+- `AUTH_GOOGLE_ENABLED`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI`
 - `DB_HOST`
 - `DB_PORT`
 - `DB_USER`

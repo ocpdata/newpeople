@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
+import ProposalEmailComposerModal from "./proposals/ProposalEmailComposerModal";
 import ModalInlineHelp from "./help/ModalInlineHelp";
 import { api, getApiErrorMessage } from "./api";
 
@@ -111,6 +112,8 @@ const BACKGROUND_COMPONENT_CODE = "background";
 const PRODUCT_BROCHURES_COMPONENT_CODE = "product_brochures";
 const PROPOSAL_BROCHURE_MAX_ITEMS = 10;
 const PROPOSAL_BROCHURE_DEFAULT_REQUESTED_COUNT = 3;
+const PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
+const PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
 
 function normalizeProposalAiMode(value, fallback = "auto") {
   return value === "manual" ? "manual" : fallback;
@@ -3062,6 +3065,20 @@ export default function ProposalsPage() {
   const [templateApplyMode, setTemplateApplyMode] =
     useState("preserve_content");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isProposalEmailModalOpen, setIsProposalEmailModalOpen] =
+    useState(false);
+  const [proposalEmailDraft, setProposalEmailDraft] = useState({
+    to: "",
+    cc: "",
+    subject: "",
+    messageBody: "",
+    attachments: [],
+  });
+  const [proposalEmailError, setProposalEmailError] = useState("");
+  const [proposalEmailNotice, setProposalEmailNotice] = useState("");
+  const [isConfirmingProposalEmailSend, setIsConfirmingProposalEmailSend] =
+    useState(false);
+  const [sendingProposalEmail, setSendingProposalEmail] = useState(false);
   const [companyBranding, setCompanyBranding] = useState(null);
   const [metadataDraft, setMetadataDraft] = useState({
     title: "",
@@ -4317,6 +4334,239 @@ export default function ProposalsPage() {
     setIsPreviewOpen(false);
   }
 
+  function openProposalEmailModalWithDefaults(previewSource) {
+    const nextPreviewModel = buildProposalPrintModel(
+      previewSource.proposal,
+      previewSource.metadata,
+      previewSource.drafts,
+      companyBranding,
+    );
+    const proposalTitle =
+      String(
+        nextPreviewModel?.title || previewSource.proposal?.title || "",
+      ).trim() || "Propuesta comercial";
+    const accountName =
+      String(
+        nextPreviewModel?.accountName ||
+          previewSource.proposal?.accountName ||
+          "",
+      ).trim() || "su equipo";
+    const contactName = String(
+      nextPreviewModel?.contactName ||
+        previewSource.proposal?.contactName ||
+        "",
+    ).trim();
+    const greeting = contactName ? `Estimado/a ${contactName},` : "Buen dia,";
+
+    setProposalEmailDraft({
+      to: "",
+      cc: "",
+      subject: `${proposalTitle} - ${accountName}`,
+      messageBody: `${greeting}\n\nComparto la propuesta para su revision. Quedo atento a sus comentarios y a los siguientes pasos para avanzar con el proyecto.\n\nSaludos cordiales,`,
+      attachments: [],
+    });
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+    setIsConfirmingProposalEmailSend(false);
+    setIsProposalEmailModalOpen(true);
+  }
+
+  async function handleOpenProposalEmailComposer() {
+    if (!selectedProposal) return;
+
+    let previewSource = null;
+    if (previewDirty) {
+      previewSource = {
+        proposal: selectedProposal,
+        metadata: metadataDraft,
+        drafts: componentDrafts,
+      };
+    } else {
+      previewSource = await resolvePreviewSource();
+    }
+
+    if (!previewSource) {
+      previewSource = {
+        proposal: selectedProposal,
+        metadata: metadataDraft,
+        drafts: componentDrafts,
+      };
+    }
+
+    openProposalEmailModalWithDefaults(previewSource);
+  }
+
+  function handleCloseProposalEmailModal() {
+    if (sendingProposalEmail) return;
+    setIsProposalEmailModalOpen(false);
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+    setIsConfirmingProposalEmailSend(false);
+  }
+
+  function handleProposalEmailFieldChange(field, value) {
+    setProposalEmailDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+  }
+
+  function handleAddProposalEmailAttachments(files) {
+    const incoming = Array.isArray(files) ? files : [];
+    if (!incoming.length) return;
+
+    setProposalEmailDraft((current) => {
+      const existing = Array.isArray(current.attachments)
+        ? current.attachments
+        : [];
+      const nextAttachments = [
+        ...existing,
+        ...incoming.map((file, index) => ({
+          id: `${Date.now()}-${index}-${file.name}`,
+          file,
+        })),
+      ];
+
+      if (nextAttachments.length > PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES) {
+        setProposalEmailError(
+          `Solo puedes adjuntar hasta ${PROPOSAL_EMAIL_ATTACHMENT_MAX_FILES} archivos extra.`,
+        );
+        return current;
+      }
+
+      const totalBytes = nextAttachments.reduce(
+        (sum, entry) => sum + Number(entry.file?.size || 0),
+        0,
+      );
+      if (totalBytes > PROPOSAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+        setProposalEmailError(
+          "El peso total de adjuntos extra excede el limite permitido para el correo.",
+        );
+        return current;
+      }
+
+      setProposalEmailError("");
+      setProposalEmailNotice("");
+      return {
+        ...current,
+        attachments: nextAttachments,
+      };
+    });
+  }
+
+  function handleRemoveProposalEmailAttachment(attachmentId) {
+    setProposalEmailDraft((current) => ({
+      ...current,
+      attachments: (current.attachments || []).filter(
+        (entry) => entry.id !== attachmentId,
+      ),
+    }));
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+  }
+
+  async function handleRequestSendProposalEmail() {
+    const to = String(proposalEmailDraft.to || "").trim();
+    const subject = String(proposalEmailDraft.subject || "").trim();
+    const messageBody = String(proposalEmailDraft.messageBody || "").trim();
+
+    if (!to) {
+      setProposalEmailError("Completa el destinatario principal.");
+      return;
+    }
+    if (!subject) {
+      setProposalEmailError("Completa el asunto del correo.");
+      return;
+    }
+    if (!messageBody) {
+      setProposalEmailError("Completa el mensaje base del correo.");
+      return;
+    }
+
+    if (!isConfirmingProposalEmailSend) {
+      setIsConfirmingProposalEmailSend(true);
+      setProposalEmailError("");
+      setProposalEmailNotice("");
+      return;
+    }
+
+    if (!selectedProposal) return;
+
+    setSendingProposalEmail(true);
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+
+    try {
+      const previewSource = await resolvePreviewSource();
+      if (!previewSource) {
+        setProposalEmailError(
+          "No fue posible preparar la propuesta para enviarla por correo.",
+        );
+        return;
+      }
+
+      const nextPreviewModel = buildProposalPrintModel(
+        previewSource.proposal,
+        previewSource.metadata,
+        previewSource.drafts,
+        companyBranding,
+      );
+      if (!nextPreviewModel) {
+        setProposalEmailError(
+          "No fue posible construir el documento previo de propuesta.",
+        );
+        return;
+      }
+
+      const pdfPayload = buildProposalPdfPayload(
+        nextPreviewModel,
+        previewSource.proposal,
+      );
+      if (!pdfPayload) {
+        setProposalEmailError(
+          "No fue posible construir el payload PDF para envio.",
+        );
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("to", to);
+      formData.append("cc", String(proposalEmailDraft.cc || "").trim());
+      formData.append("subject", subject);
+      formData.append("messageBody", messageBody);
+      formData.append("pdfPayload", JSON.stringify(pdfPayload));
+
+      (proposalEmailDraft.attachments || []).forEach((entry, index) => {
+        if (entry.file) {
+          formData.append(`file_${index}`, entry.file, entry.file.name);
+        }
+      });
+
+      await api.post("/api/proposals/send-email", formData);
+
+      setProposalEmailNotice("Correo enviado correctamente.");
+      setSuccess("Correo de propuesta enviado correctamente");
+      setIsProposalEmailModalOpen(false);
+      setIsConfirmingProposalEmailSend(false);
+    } catch (err) {
+      setProposalEmailError(
+        getApiErrorMessage(err, "No fue posible enviar el correo de propuesta"),
+      );
+      setIsConfirmingProposalEmailSend(false);
+    } finally {
+      setSendingProposalEmail(false);
+    }
+  }
+
+  function handleCancelConfirmProposalEmailSend() {
+    if (sendingProposalEmail) return;
+    setIsConfirmingProposalEmailSend(false);
+    setProposalEmailError("");
+    setProposalEmailNotice("");
+  }
+
   async function handleOpenPdfPreview() {
     if (!selectedProposal || typeof window === "undefined") return;
 
@@ -4840,6 +5090,22 @@ export default function ProposalsPage() {
         dirty={previewDirty}
         onClose={handleClosePreview}
         onOpenPdfPreview={handleOpenPdfPreview}
+        onOpenEmailComposer={handleOpenProposalEmailComposer}
+      />
+
+      <ProposalEmailComposerModal
+        isOpen={isProposalEmailModalOpen}
+        draft={proposalEmailDraft}
+        sending={sendingProposalEmail}
+        error={proposalEmailError}
+        notice={proposalEmailNotice}
+        isConfirmingSend={isConfirmingProposalEmailSend}
+        onClose={handleCloseProposalEmailModal}
+        onChangeField={handleProposalEmailFieldChange}
+        onAddAttachments={handleAddProposalEmailAttachments}
+        onRemoveAttachment={handleRemoveProposalEmailAttachment}
+        onRequestSend={handleRequestSendProposalEmail}
+        onCancelConfirm={handleCancelConfirmProposalEmailSend}
       />
     </section>
   );
