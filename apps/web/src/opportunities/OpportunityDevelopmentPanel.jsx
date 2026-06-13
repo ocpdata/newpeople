@@ -22,6 +22,15 @@ function toDateOnly(dateValue) {
   return text.slice(0, 10);
 }
 
+function toLocalDateInputValue(offsetDays = 0) {
+  const target = new Date();
+  target.setDate(target.getDate() + Number(offsetDays || 0));
+  const year = target.getFullYear();
+  const month = String(target.getMonth() + 1).padStart(2, "0");
+  const day = String(target.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function isDateInPast(dateValue) {
   const isoDate = toDateOnly(dateValue);
   if (!isoDate) return false;
@@ -123,6 +132,29 @@ function ManageExecutionItemIcon({ tone }) {
   );
 }
 
+function SaveExecutionItemIcon() {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-hidden="true" focusable="false">
+      <path
+        d="M4.75 4.75A1.75 1.75 0 0 1 6.5 3h9.88L20.5 7.12V19.5a1.75 1.75 0 0 1-1.75 1.75h-12A1.75 1.75 0 0 1 5 19.5v-14.75Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 3.5V9h7V3.5M8 14.5h8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const ACTIVITY_TYPE_OPTIONS = [
   { value: "call", label: "Llamada" },
   { value: "conference", label: "Conferencia" },
@@ -178,6 +210,36 @@ function getExecutionStatusTone(status) {
     return "cancelled";
   }
   return "pending";
+}
+
+function getExecutionStatusLabel(status) {
+  const normalized = normalizeText(status).toLowerCase();
+  if (normalized === "done") return "Realizada";
+  if (normalized === "cancelled") return "Cancelada";
+  if (normalized === "blocked") return "Bloqueada";
+  if (normalized === "in_progress") return "En progreso";
+  if (normalized === "confirmed") return "Confirmada";
+  if (normalized === "rescheduled") return "Reagendada";
+  if (normalized === "missed") return "No asistida";
+  return "Pendiente";
+}
+
+function getExecutionStatusBadgeTone(status) {
+  const normalized = normalizeText(status).toLowerCase();
+  if (normalized === "done") return "done";
+  if (normalized === "cancelled" || normalized === "blocked") {
+    return "blocked";
+  }
+  return "pending";
+}
+
+function isExecutionItemClosed(status) {
+  const normalized = normalizeText(status).toLowerCase();
+  return (
+    normalized === "done" ||
+    normalized === "cancelled" ||
+    normalized === "blocked"
+  );
 }
 
 function getOperationStatusLabel(status) {
@@ -282,6 +344,10 @@ export default function OpportunityDevelopmentPanel({
   const [executionItemModal, setExecutionItemModal] = useState(null);
   const [executionItemUpdateDraft, setExecutionItemUpdateDraft] = useState({
     status: "done",
+    objective: "",
+    note: "",
+    date: "",
+    time: "09:00",
     result: "",
   });
   const [savingExecutionUpdate, setSavingExecutionUpdate] = useState(false);
@@ -305,6 +371,8 @@ export default function OpportunityDevelopmentPanel({
   const [operationAiSuggestion, setOperationAiSuggestion] = useState({
     subject: "",
     messageBody: "",
+    source: "",
+    sourceReason: "",
   });
   const [loadingOperationLibraryOptions, setLoadingOperationLibraryOptions] =
     useState(false);
@@ -868,6 +936,9 @@ export default function OpportunityDevelopmentPanel({
     dependencies: executionDependencies.length,
     operations: operationActions.length,
   };
+  const isExecutionItemReadOnly = isExecutionItemClosed(
+    executionItemModal?.item?.status,
+  );
 
   const resolvedOperationContact = selectedOpportunityContact;
   const operationRecipientEmail = normalizeText(
@@ -944,7 +1015,9 @@ export default function OpportunityDevelopmentPanel({
     Promise.all([
       api.get(`/api/opportunities/${editingOpportunityId}/quotations`),
       api.get(`/api/interactions?page=1&pageSize=50`),
-      api.get("/api/execution-commercial/dashboard"),
+      api.get(
+        "/api/execution-commercial/dashboard?includeClosedDependencies=1",
+      ),
     ])
       .then(([quotationResponse, interactionResponse, dashboardResponse]) => {
         if (ignore) return;
@@ -1019,13 +1092,45 @@ export default function OpportunityDevelopmentPanel({
   }
 
   function openExecutionItemModal(itemType, item) {
+    const itemDetails =
+      item?.details && typeof item.details === "object" ? item.details : {};
     const currentStatus = normalizeText(item?.status).toLowerCase();
     const defaultStatus =
-      currentStatus && currentStatus !== "pending" ? currentStatus : "done";
+      currentStatus === "done"
+        ? "done"
+        : currentStatus === "cancelled" || currentStatus === "blocked"
+          ? "cancelled"
+          : "pending";
     const existingResult =
       itemType === "dependency"
-        ? normalizeText(item?.resolutionNote || item?.details)
+        ? normalizeText(item?.resolutionNote)
+        : normalizeText(itemDetails?.result);
+    const existingObjective = normalizeText(item?.title);
+    const existingNote =
+      itemType === "dependency"
+        ? normalizeText(item?.details)
         : normalizeText(item?.notes || item?.note);
+    const existingDateTimeLocal =
+      itemType === "dependency"
+        ? ""
+        : toDateTimeLocalInputValue(
+            item?.scheduledAt ||
+              (toDateOnly(item?.dueDate)
+                ? `${toDateOnly(item?.dueDate)}T09:00`
+                : ""),
+          );
+    const existingDate =
+      itemType === "dependency"
+        ? toDateOnly(item?.dueDate)
+        : existingDateTimeLocal
+          ? existingDateTimeLocal.slice(0, 10)
+          : toDateOnly(item?.dueDate);
+    const existingTime =
+      itemType === "dependency"
+        ? "09:00"
+        : existingDateTimeLocal
+          ? existingDateTimeLocal.slice(11, 16)
+          : "09:00";
 
     setExecutionItemModal({
       itemType,
@@ -1033,6 +1138,10 @@ export default function OpportunityDevelopmentPanel({
     });
     setExecutionItemUpdateDraft({
       status: defaultStatus,
+      objective: existingObjective,
+      note: existingNote,
+      date: existingDate,
+      time: existingTime,
       result: existingResult,
     });
     setExecutionItemModalError("");
@@ -1043,13 +1152,89 @@ export default function OpportunityDevelopmentPanel({
     setExecutionItemModalError("");
   }
 
-  async function handleSaveExecutionItemUpdate() {
-    if (!editingOpportunityId || !executionItemModal?.item) return;
-
+  async function handleSelectExecutionDoneStatus() {
+    if (isExecutionItemReadOnly) return;
+    if (savingExecutionUpdate) return;
     const result = normalizeText(executionItemUpdateDraft.result);
     if (!result) {
       setExecutionItemModalError(
-        "Debes indicar un resultado antes de guardar.",
+        "Debes indicar un resultado antes de declarar la actividad realizada.",
+      );
+      return;
+    }
+
+    const shouldConfirmDone = window.confirm(
+      "Al declarar la actividad como realizada, ya no se podra modificar. ¿Deseas continuar?",
+    );
+    if (!shouldConfirmDone) {
+      return;
+    }
+
+    setExecutionItemUpdateDraft((current) => ({
+      ...current,
+      status: "done",
+    }));
+    setExecutionItemModalError("");
+    await handleSaveExecutionItemUpdate("done");
+  }
+
+  async function handleSelectExecutionCancelledStatus() {
+    if (isExecutionItemReadOnly) return;
+    if (savingExecutionUpdate) return;
+
+    const shouldConfirmCancelled = window.confirm(
+      "Al cancelar la actividad, ya no se podra modificar. ¿Deseas continuar?",
+    );
+    if (!shouldConfirmCancelled) {
+      return;
+    }
+
+    setExecutionItemUpdateDraft((current) => ({
+      ...current,
+      status: "cancelled",
+    }));
+    setExecutionItemModalError("");
+    await handleSaveExecutionItemUpdate("cancelled");
+  }
+
+  async function handleSaveExecutionItemUpdate(statusOverride) {
+    if (!editingOpportunityId || !executionItemModal?.item) return;
+    if (isExecutionItemReadOnly) return;
+
+    const isDependencyItem = executionItemModal.itemType === "dependency";
+    const currentStatus = normalizeText(
+      executionItemModal?.item?.status,
+    ).toLowerCase();
+    const objective = normalizeText(executionItemUpdateDraft.objective);
+    const note = normalizeText(executionItemUpdateDraft.note);
+    const datePart = normalizeText(executionItemUpdateDraft.date);
+    const timePart = normalizeText(executionItemUpdateDraft.time);
+    const dateValue = isDependencyItem
+      ? datePart
+      : datePart && timePart
+        ? `${datePart}T${timePart}`
+        : "";
+    const selectedStatus = normalizeText(
+      statusOverride ?? executionItemUpdateDraft.status,
+    ).toLowerCase();
+    const isDeclaringAsDone =
+      selectedStatus === "done" && currentStatus !== "done";
+    const result = normalizeText(executionItemUpdateDraft.result);
+    if (!objective) {
+      setExecutionItemModalError("Debes indicar el objetivo.");
+      return;
+    }
+    if (!dateValue) {
+      setExecutionItemModalError(
+        isDependencyItem
+          ? "Debes indicar la fecha."
+          : "Debes indicar fecha y hora.",
+      );
+      return;
+    }
+    if (isDeclaringAsDone && !result) {
+      setExecutionItemModalError(
+        "Debes indicar un resultado antes de declarar la actividad realizada.",
       );
       return;
     }
@@ -1061,40 +1246,51 @@ export default function OpportunityDevelopmentPanel({
     try {
       if (itemType === "dependency") {
         const dependencyStatus =
-          executionItemUpdateDraft.status === "cancelled" ||
-          executionItemUpdateDraft.status === "blocked"
+          selectedStatus === "cancelled"
             ? "blocked"
-            : "done";
+            : selectedStatus === "done"
+              ? "done"
+              : currentStatus === "blocked"
+                ? "blocked"
+                : currentStatus === "done"
+                  ? "done"
+                  : "open";
         await api.patch(`/api/execution-commercial/dependencies/${item.id}`, {
           status: dependencyStatus,
-          resolutionNote: result,
-          details: result,
+          title: objective,
+          dueDate: toDateOnly(datePart),
+          details: note,
+          resolutionNote: result || null,
         });
       } else {
         const isCallAction =
           itemType === "action" &&
           normalizeText(item?.actionType).toLowerCase() === "call";
         const entryKindForSave = isCallAction ? "activity" : itemType;
+        const existingDetails =
+          item?.details && typeof item.details === "object" ? item.details : {};
+        const nextActivityStatus =
+          selectedStatus === "done"
+            ? "done"
+            : selectedStatus === "cancelled"
+              ? "cancelled"
+              : currentStatus || "pending";
         const payload = {
           entryKind: entryKindForSave,
           activityType: normalizeText(item?.actionType) || "follow_up",
-          objective: normalizeText(item?.title) || "Accion comercial",
-          status:
-            executionItemUpdateDraft.status === "done" ? "done" : "cancelled",
-          note: result,
+          objective,
+          status: nextActivityStatus,
+          note,
           details: {
-            ...(item?.details || {}),
+            ...existingDetails,
             entryKind: itemType,
             result,
           },
         };
         if (entryKindForSave === "activity") {
-          payload.scheduledAt =
-            item?.scheduledAt ||
-            `${toDateOnly(item?.dueDate) || new Date().toISOString().slice(0, 10)}T09:00`;
+          payload.scheduledAt = dateValue;
         } else {
-          payload.dueDate =
-            toDateOnly(item?.dueDate) || new Date().toISOString().slice(0, 10);
+          payload.dueDate = toDateOnly(datePart);
         }
         await api.patch(
           `/api/execution-commercial/opportunities/${editingOpportunityId}/activities/${item.id}`,
@@ -1377,12 +1573,31 @@ export default function OpportunityDevelopmentPanel({
         },
       );
 
+      const suggestionSource = normalizeText(response?.data?.source);
+      const suggestionReason = normalizeText(response?.data?.sourceReason);
+      const usedAi = suggestionSource === "openai";
+
+      const fallbackReasonMessage =
+        suggestionReason === "missing_openai_api_key"
+          ? "Fallback: falta configurar OPENAI_API_KEY."
+          : suggestionReason === "ai_budget_exceeded"
+            ? "Fallback: saldo IA insuficiente."
+            : suggestionReason === "openai_request_failed"
+              ? "Fallback: fallo la llamada a OpenAI."
+              : suggestionReason
+                ? "Fallback: error de generacion IA."
+                : "Fallback aplicado por disponibilidad.";
+
       setOperationAiSuggestion({
         subject: normalizeText(response?.data?.subject),
         messageBody: normalizeText(response?.data?.messageBody),
+        source: suggestionSource || "fallback",
+        sourceReason: suggestionReason,
       });
 
-      setOperationEmailNotice("Sugerencia generada con IA.");
+      setOperationEmailNotice(
+        usedAi ? "Sugerencia generada con IA." : fallbackReasonMessage,
+      );
     } catch (error) {
       setOperationEmailError(
         getApiErrorMessage(error, "No fue posible generar el borrador con IA."),
@@ -1410,6 +1625,10 @@ export default function OpportunityDevelopmentPanel({
         },
       );
 
+      const suggestionSource = normalizeText(response?.data?.source);
+      const usedAi = suggestionSource === "openai";
+      const suggestionLabel = usedAi ? "La IA" : "La heuristica";
+
       const suggestedOptions = (
         Array.isArray(response?.data?.suggestions)
           ? response.data.suggestions
@@ -1432,7 +1651,7 @@ export default function OpportunityDevelopmentPanel({
 
       if (!suggestedOptions.length) {
         setOperationEmailNotice(
-          "La IA no encontró adjuntos de biblioteca alineados a las instrucciones.",
+          `${suggestionLabel} no encontró adjuntos de biblioteca alineados a las instrucciones.`,
         );
         return;
       }
@@ -1456,7 +1675,7 @@ export default function OpportunityDevelopmentPanel({
 
       if (!newSuggestedAttachments.length) {
         setOperationEmailNotice(
-          "La IA no agregó nuevos adjuntos porque ya alcanzaste el limite o ya estaban seleccionados.",
+          `${suggestionLabel} no agregó nuevos adjuntos porque ya alcanzaste el limite o ya estaban seleccionados.`,
         );
         return;
       }
@@ -1489,7 +1708,7 @@ export default function OpportunityDevelopmentPanel({
       });
 
       setOperationEmailNotice(
-        `La IA sugirió ${newSuggestedAttachments.length} adjunto(s) de biblioteca.`,
+        `${suggestionLabel} sugirio ${newSuggestedAttachments.length} adjunto(s) de biblioteca.`,
       );
     } catch (error) {
       setOperationEmailError(
@@ -1511,6 +1730,8 @@ export default function OpportunityDevelopmentPanel({
     setOperationAiSuggestion({
       subject: "",
       messageBody: "",
+      source: "",
+      sourceReason: "",
     });
     setGeneratingOperationAiAttachments(false);
     setOperationLibraryQuery("");
@@ -2042,7 +2263,10 @@ export default function OpportunityDevelopmentPanel({
         </div>
       </article>
 
-      <article className="opportunity-development-card opportunity-development-execution-card">
+      <article
+        className="opportunity-development-card opportunity-development-execution-card"
+        hidden={!isDevelopmentExpanded}
+      >
         <div className="opportunity-development-card-header">
           <div>
             <h5>Ejecucion comercial</h5>
@@ -2306,7 +2530,7 @@ export default function OpportunityDevelopmentPanel({
                             {ACTIVITY_TYPE_LABELS[item.actionType] ||
                               item.actionType ||
                               "Actividad"}{" "}
-                            · {item.status || "pending"}
+                            · {getExecutionStatusLabel(item.status)}
                           </span>
                           <span>
                             {item.scheduledAt
@@ -2356,7 +2580,7 @@ export default function OpportunityDevelopmentPanel({
                             {DEPENDENCY_TYPE_LABELS[item.dependencyType] ||
                               item.dependencyLabel ||
                               "Dependencia"}{" "}
-                            · {item.status || "open"}
+                            · {getExecutionStatusLabel(item.status)}
                           </span>
                           <span>
                             {item.dueDate
@@ -2453,6 +2677,8 @@ export default function OpportunityDevelopmentPanel({
         aiInstructionText={operationAiInstructionText}
         aiSuggestionSubject={operationAiSuggestion.subject}
         aiSuggestionMessageBody={operationAiSuggestion.messageBody}
+        aiSuggestionSource={operationAiSuggestion.source}
+        aiSuggestionSourceReason={operationAiSuggestion.sourceReason}
         libraryQuery={operationLibraryQuery}
         libraryOptions={operationLibraryOptions}
         libraryLoading={loadingOperationLibraryOptions}
@@ -2482,37 +2708,178 @@ export default function OpportunityDevelopmentPanel({
               <h3>Actualizar registro</h3>
               <button
                 type="button"
-                className="btn-secondary"
+                className="opportunity-documents-apply-icon-button account-modal-close-button"
                 onClick={closeExecutionItemModal}
                 disabled={savingExecutionUpdate}
+                aria-label="Cerrar modal de actualización de registro"
+                title="Cerrar"
               >
-                Cerrar
+                ×
               </button>
             </div>
 
             <div className="opportunity-development-item-modal-content">
-              <p className="field-hint">
-                <strong>
-                  {executionItemModal.item?.title || "Sin titulo"}
-                </strong>
-              </p>
+              <div className="opportunity-development-item-modal-status-row">
+                <span
+                  className={`record-id-badge state-${getExecutionStatusBadgeTone(executionItemModal.item?.status)}`}
+                >
+                  Estado actual:{" "}
+                  {getExecutionStatusLabel(executionItemModal.item?.status)}
+                </span>
+              </div>
 
               <label>
-                Estado
-                <select
-                  value={executionItemUpdateDraft.status}
+                Objetivo
+                <textarea
+                  className="opportunity-development-item-modal-objective-textarea"
+                  rows={4}
+                  value={executionItemUpdateDraft.objective}
                   onChange={(event) =>
                     setExecutionItemUpdateDraft((current) => ({
                       ...current,
-                      status: event.target.value,
+                      objective: event.target.value,
                     }))
                   }
-                  disabled={savingExecutionUpdate}
-                >
-                  <option value="done">Realizada</option>
-                  <option value="cancelled">Cancelada</option>
-                </select>
+                  placeholder="Describe el objetivo del registro"
+                  disabled={savingExecutionUpdate || isExecutionItemReadOnly}
+                />
               </label>
+
+              <label>
+                Nota
+                <textarea
+                  rows={3}
+                  value={executionItemUpdateDraft.note}
+                  onChange={(event) =>
+                    setExecutionItemUpdateDraft((current) => ({
+                      ...current,
+                      note: event.target.value,
+                    }))
+                  }
+                  placeholder="Agrega contexto o seguimiento"
+                  disabled={savingExecutionUpdate || isExecutionItemReadOnly}
+                />
+              </label>
+
+              <div className="opportunity-development-item-modal-schedule">
+                <span>Agenda</span>
+                <div
+                  className={`opportunity-development-item-modal-schedule-grid${executionItemModal.itemType === "dependency" ? " is-date-only" : ""}`}
+                >
+                  <label className="opportunity-development-item-modal-inline-field">
+                    Fecha
+                    <input
+                      type="date"
+                      value={executionItemUpdateDraft.date}
+                      onChange={(event) =>
+                        setExecutionItemUpdateDraft((current) => ({
+                          ...current,
+                          date: event.target.value,
+                        }))
+                      }
+                      disabled={
+                        savingExecutionUpdate || isExecutionItemReadOnly
+                      }
+                    />
+                  </label>
+                  {executionItemModal.itemType === "dependency" ? null : (
+                    <label className="opportunity-development-item-modal-inline-field">
+                      Hora
+                      <input
+                        type="time"
+                        step={300}
+                        value={executionItemUpdateDraft.time}
+                        onChange={(event) =>
+                          setExecutionItemUpdateDraft((current) => ({
+                            ...current,
+                            time: event.target.value,
+                          }))
+                        }
+                        disabled={
+                          savingExecutionUpdate || isExecutionItemReadOnly
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
+                <div className="opportunity-development-item-modal-schedule-quick-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary opportunity-development-item-modal-quick-chip"
+                    onClick={() =>
+                      setExecutionItemUpdateDraft((current) => ({
+                        ...current,
+                        date: toLocalDateInputValue(0),
+                      }))
+                    }
+                    disabled={savingExecutionUpdate || isExecutionItemReadOnly}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary opportunity-development-item-modal-quick-chip"
+                    onClick={() =>
+                      setExecutionItemUpdateDraft((current) => ({
+                        ...current,
+                        date: toLocalDateInputValue(1),
+                      }))
+                    }
+                    disabled={savingExecutionUpdate || isExecutionItemReadOnly}
+                  >
+                    Manana
+                  </button>
+                  {executionItemModal.itemType === "dependency" ? null : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-secondary opportunity-development-item-modal-quick-chip"
+                        onClick={() =>
+                          setExecutionItemUpdateDraft((current) => ({
+                            ...current,
+                            time: "09:00",
+                          }))
+                        }
+                        disabled={
+                          savingExecutionUpdate || isExecutionItemReadOnly
+                        }
+                      >
+                        09:00
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary opportunity-development-item-modal-quick-chip"
+                        onClick={() =>
+                          setExecutionItemUpdateDraft((current) => ({
+                            ...current,
+                            time: "12:00",
+                          }))
+                        }
+                        disabled={
+                          savingExecutionUpdate || isExecutionItemReadOnly
+                        }
+                      >
+                        12:00
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary opportunity-development-item-modal-quick-chip"
+                        onClick={() =>
+                          setExecutionItemUpdateDraft((current) => ({
+                            ...current,
+                            time: "16:00",
+                          }))
+                        }
+                        disabled={
+                          savingExecutionUpdate || isExecutionItemReadOnly
+                        }
+                      >
+                        16:00
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
 
               <label>
                 Resultado
@@ -2526,9 +2893,13 @@ export default function OpportunityDevelopmentPanel({
                     }))
                   }
                   placeholder="Describe el resultado de la gestion"
-                  disabled={savingExecutionUpdate}
+                  disabled={savingExecutionUpdate || isExecutionItemReadOnly}
                 />
               </label>
+
+              {isExecutionItemReadOnly ? (
+                <p className="field-hint">Registro cerrado: solo consulta.</p>
+              ) : null}
 
               {executionItemModalError ? (
                 <p className="field-hint opportunity-development-warning">
@@ -2536,16 +2907,66 @@ export default function OpportunityDevelopmentPanel({
                 </p>
               ) : null}
 
-              <div className="opportunity-development-item-modal-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleSaveExecutionItemUpdate}
-                  disabled={savingExecutionUpdate}
-                >
-                  {savingExecutionUpdate ? "Guardando..." : "Guardar resultado"}
-                </button>
-              </div>
+              {!isExecutionItemReadOnly ? (
+                <div className="opportunity-development-item-modal-icon-actions">
+                  <button
+                    type="button"
+                    className={`opportunity-development-item-modal-status-button${executionItemUpdateDraft.status === "done" ? " is-active-done" : ""}`}
+                    onClick={handleSelectExecutionDoneStatus}
+                    aria-label={
+                      executionItemModal?.itemType === "dependency"
+                        ? "Declarar la dependencia resuelta"
+                        : "Declarar la actividad realizada"
+                    }
+                    title={
+                      executionItemModal?.itemType === "dependency"
+                        ? "Declarar la dependencia resuelta"
+                        : "Declarar la actividad realizada"
+                    }
+                    aria-pressed={executionItemUpdateDraft.status === "done"}
+                    disabled={savingExecutionUpdate}
+                  >
+                    <span aria-hidden="true">✓</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`opportunity-development-item-modal-status-button${executionItemUpdateDraft.status === "cancelled" ? " is-active-cancelled" : ""}`}
+                    onClick={handleSelectExecutionCancelledStatus}
+                    aria-label={
+                      executionItemModal?.itemType === "dependency"
+                        ? "Cancelar la dependencia"
+                        : "Cancelar la actividad"
+                    }
+                    title={
+                      executionItemModal?.itemType === "dependency"
+                        ? "Cancelar la dependencia"
+                        : "Cancelar la actividad"
+                    }
+                    aria-pressed={
+                      executionItemUpdateDraft.status === "cancelled"
+                    }
+                    disabled={savingExecutionUpdate}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="opportunity-development-item-modal-save-button"
+                    onClick={() => {
+                      void handleSaveExecutionItemUpdate();
+                    }}
+                    aria-label="Guardar cambios"
+                    title="Guardar cambios"
+                    disabled={savingExecutionUpdate}
+                  >
+                    {savingExecutionUpdate ? (
+                      <span aria-hidden="true">…</span>
+                    ) : (
+                      <SaveExecutionItemIcon />
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

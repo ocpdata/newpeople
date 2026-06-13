@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { api } from "../api";
 
 function formatBytes(value) {
   const size = Number(value || 0);
@@ -34,6 +35,74 @@ function OpportunityCopyIcon() {
   );
 }
 
+function OpportunityPreviewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M1.75 12s3.6-6 10.25-6 10.25 6 10.25 6-3.6 6-10.25 6S1.75 12 1.75 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function OpportunityBackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M10 5 3 12l7 7" />
+      <path d="M3 12h18" />
+    </svg>
+  );
+}
+
+function OpportunitySendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M21.5 3.5 10 15" />
+      <path d="M21.5 3.5 14.5 20.5 10 15 3.5 10.5 21.5 3.5Z" />
+    </svg>
+  );
+}
+
+function OpportunityAttachmentAddIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M12 5.5v13" />
+      <path d="M5.5 12h13" />
+    </svg>
+  );
+}
+
+function OpportunityGoogleConnectIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M13 4.5a7.5 7.5 0 1 0 0 15h3.5" />
+      <path d="M19 8.5v7" />
+      <path d="M15.5 12h7" />
+    </svg>
+  );
+}
+
+function OpportunityAttachmentDownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M12 3.5v11" />
+      <path d="m8 10.5 4 4 4-4" />
+      <path d="M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
+function OpportunityAttachmentRemoveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M4.5 7.5h15" />
+      <path d="M9.5 7.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2" />
+      <path d="M8 7.5l.75 11a1 1 0 0 0 1 .93h4.5a1 1 0 0 0 1-.93L16 7.5" />
+      <path d="M10.25 10.5v6" />
+      <path d="M13.75 10.5v6" />
+    </svg>
+  );
+}
+
 export default function OpportunityOperationEmailModal({
   isOpen,
   draft,
@@ -47,6 +116,8 @@ export default function OpportunityOperationEmailModal({
   aiInstructionText,
   aiSuggestionSubject,
   aiSuggestionMessageBody,
+  aiSuggestionSource,
+  aiSuggestionSourceReason,
   libraryQuery,
   libraryOptions,
   libraryLoading,
@@ -66,10 +137,8 @@ export default function OpportunityOperationEmailModal({
   onConnectGoogleMail,
 }) {
   const fileInputRef = useRef(null);
-
-  if (!isOpen || !draft) {
-    return null;
-  }
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   const status = googleMailStatus || {};
   const canSendViaGoogle = Boolean(status.canSend);
@@ -78,6 +147,76 @@ export default function OpportunityOperationEmailModal({
     : [];
   const selectedCount = selectedLibraryIds.length;
   const safeMaxLibraryAssets = Number(maxLibraryAssets || 3);
+  const currentAttachments = Array.isArray(draft?.attachments)
+    ? draft.attachments
+    : [];
+  const effectiveError = previewError || error;
+  const normalizedAiSuggestionSource = String(aiSuggestionSource || "")
+    .trim()
+    .toLowerCase();
+  const aiSuggestionSourceLabel =
+    normalizedAiSuggestionSource === "openai"
+      ? "Origen: IA"
+      : normalizedAiSuggestionSource
+        ? "Origen: fallback"
+        : "";
+  const normalizedAiSuggestionReason = String(aiSuggestionSourceReason || "")
+    .trim()
+    .toLowerCase();
+  const aiSuggestionFallbackReasonLabel =
+    normalizedAiSuggestionSource === "openai"
+      ? ""
+      : normalizedAiSuggestionReason === "missing_openai_api_key"
+        ? "Motivo fallback: falta OPENAI_API_KEY"
+        : normalizedAiSuggestionReason === "ai_budget_exceeded"
+          ? "Motivo fallback: saldo IA insuficiente"
+          : normalizedAiSuggestionReason === "openai_request_failed"
+            ? "Motivo fallback: fallo de llamada a OpenAI"
+            : normalizedAiSuggestionReason
+              ? "Motivo fallback: error de generacion IA"
+              : "";
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsPreviewOpen(false);
+      setPreviewError("");
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setPreviewError("");
+  }, [draft?.recipient, draft?.subject, draft?.messageBody]);
+
+  function validateDraftForPreview() {
+    const recipient = String(draft?.recipient || "").trim();
+    const subject = String(draft?.subject || "").trim();
+    const messageBody = String(draft?.messageBody || "").trim();
+
+    if (!recipient) {
+      return "Indica el destinatario principal.";
+    }
+    if (!subject) {
+      return "Indica el asunto del correo.";
+    }
+    if (!messageBody) {
+      return "El mensaje no puede ir vacio.";
+    }
+    return "";
+  }
+
+  function handleOpenPreview() {
+    const validationMessage = validateDraftForPreview();
+    if (validationMessage) {
+      setPreviewError(validationMessage);
+      return;
+    }
+    setPreviewError("");
+    setIsPreviewOpen(true);
+  }
+
+  if (!isOpen || !draft) {
+    return null;
+  }
 
   function handleFilesChange(event) {
     const files = Array.from(event.target.files || []);
@@ -100,6 +239,63 @@ export default function OpportunityOperationEmailModal({
         : "Biblioteca (manual)";
     }
     return String(attachment?.sourceLabel || "Adjunto").trim() || "Adjunto";
+  }
+
+  function getAttachmentDownloadUrl(attachment) {
+    const sourceType = String(attachment?.sourceType || "").trim();
+    if (sourceType === "opportunity_document") {
+      const documentPublicId = String(
+        attachment?.documentPublicId || "",
+      ).trim();
+      if (!documentPublicId) return "";
+      return `/api/opportunities/documents/${encodeURIComponent(documentPublicId)}/content`;
+    }
+    if (sourceType === "library_file") {
+      const assetPublicId = String(attachment?.resourcePublicId || "").trim();
+      const filePublicId = String(attachment?.filePublicId || "").trim();
+      if (!assetPublicId || !filePublicId) return "";
+      return `/api/commercial-enablement/assets/${encodeURIComponent(assetPublicId)}/files/${encodeURIComponent(filePublicId)}/content`;
+    }
+    return "";
+  }
+
+  async function handleDownloadAttachment(attachment) {
+    if (typeof window === "undefined") return;
+    const targetUrl = getAttachmentDownloadUrl(attachment);
+    if (!targetUrl) return;
+
+    try {
+      const response = await api.get(targetUrl, { responseType: "blob" });
+      const blob = response?.data;
+      if (!(blob instanceof Blob)) {
+        throw new Error("download_failed");
+      }
+
+      const contentDisposition = String(
+        response?.headers?.["content-disposition"] || "",
+      ).trim();
+      const encodedNameMatch = contentDisposition.match(
+        /filename\*=UTF-8''([^;]+)/i,
+      );
+      const plainNameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+
+      const headerFileName = encodedNameMatch?.[1]
+        ? decodeURIComponent(encodedNameMatch[1])
+        : plainNameMatch?.[1] || "";
+
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download =
+        String(headerFileName || attachment?.fileName || "documento").trim() ||
+        "documento";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      // Keep silent here; modal-level notices already communicate API failures.
+    }
   }
 
   return (
@@ -130,7 +326,7 @@ export default function OpportunityOperationEmailModal({
           </button>
         </div>
 
-        {error ? <p className="form-error">{error}</p> : null}
+        {effectiveError ? <p className="form-error">{effectiveError}</p> : null}
         {notice ? <p className="field-hint">{notice}</p> : null}
 
         <div className="opportunity-operation-email-google-status">
@@ -144,338 +340,466 @@ export default function OpportunityOperationEmailModal({
             </p>
           ) : null}
           {!status.loading && !canSendViaGoogle ? (
-            <p className="field-hint">
-              Debes conectar Google con permisos de envio para continuar.
-            </p>
-          ) : null}
-          {!canSendViaGoogle ? (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onConnectGoogleMail}
-              disabled={sending || status.loading}
-            >
-              {status.connected ? "Re-conectar Google" : "Conectar Google"}
-            </button>
-          ) : null}
-        </div>
-
-        <div className="opportunity-operation-email-form-grid">
-          <label>
-            Para
-            <input
-              type="email"
-              value={draft.recipient}
-              disabled={sending}
-              onChange={(event) =>
-                onChangeField("recipient", event.target.value)
-              }
-              placeholder="destinatario@cliente.com"
-              title="Edita el destinatario si necesitas enviar a otro correo"
-            />
-            <small className="field-hint">
-              Puedes editar este destinatario antes de enviar.
-            </small>
-          </label>
-          <label>
-            CC
-            <input
-              value={draft.cc}
-              disabled={sending}
-              onChange={(event) => onChangeField("cc", event.target.value)}
-              placeholder="equipo@cliente.com"
-            />
-            <small
-              className="field-hint opportunity-operation-email-hint-placeholder"
-              aria-hidden="true"
-            >
-              Destinatario fijo: contacto de la oportunidad.
-            </small>
-          </label>
-          <label className="is-span-2">
-            Asunto
-            <input
-              value={draft.subject}
-              disabled={sending}
-              onChange={(event) => onChangeField("subject", event.target.value)}
-              placeholder="Seguimiento comercial"
-            />
-          </label>
-          <label className="is-span-2">
-            Mensaje
-            <textarea
-              rows={7}
-              value={draft.messageBody}
-              disabled={sending}
-              onChange={(event) =>
-                onChangeField("messageBody", event.target.value)
-              }
-            />
-          </label>
-
-          <section className="is-span-2 opportunity-operation-email-ai-instructions">
-            <div className="opportunity-operation-email-ai-instructions-head">
-              <span id="opportunity-operation-email-ai-instructions-label">
-                IA
-              </span>
+            <div className="opportunity-operation-email-google-connect-row">
               <button
                 type="button"
-                className="opportunity-operation-email-ai-icon-button"
-                onClick={onRequestAiDraft}
-                disabled={sending || generatingAiDraft}
+                className="opportunity-operation-email-google-connect-icon-button"
+                onClick={onConnectGoogleMail}
+                disabled={sending || status.loading}
                 aria-label={
-                  generatingAiDraft
-                    ? "Generando borrador con IA"
-                    : "Generar borrador con IA"
+                  status.connected
+                    ? "Re-conectar Google. Es necesario para enviar el correo"
+                    : "Conectar Google. Es necesario para enviar el correo"
                 }
                 title={
-                  generatingAiDraft ? "Generando..." : "Generar borrador con IA"
+                  status.connected ? "Re-conectar Google" : "Conectar Google"
                 }
               >
-                <OpportunityAiIcon />
-                <span>Generar IA</span>
+                <OpportunityGoogleConnectIcon />
+              </button>
+              <p className="field-hint opportunity-operation-email-google-connect-help">
+                Conectar Google es obligatorio para enviar el correo.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {isPreviewOpen ? (
+          <div
+            className="opportunity-operation-email-preview"
+            role="region"
+            aria-label="Vista previa del correo"
+          >
+            <div className="opportunity-operation-email-preview-header">
+              <h4>Vista previa del correo</h4>
+              <p className="field-hint">Revisa el contenido antes de enviar.</p>
+            </div>
+
+            <div className="opportunity-operation-email-preview-meta">
+              <p>
+                <strong>Para:</strong>{" "}
+                {String(draft.recipient || "").trim() || "-"}
+              </p>
+              <p>
+                <strong>CC:</strong>{" "}
+                {String(draft.cc || "").trim() || "Sin copia"}
+              </p>
+              <p>
+                <strong>Asunto:</strong>{" "}
+                {String(draft.subject || "").trim() || "-"}
+              </p>
+            </div>
+
+            <div className="opportunity-operation-email-preview-message">
+              <h5>Mensaje</h5>
+              <div className="opportunity-operation-email-preview-message-body">
+                {String(draft.messageBody || "").trim() || "Sin contenido"}
+              </div>
+            </div>
+
+            <div className="opportunity-operation-email-preview-attachments">
+              <h5>Adjuntos</h5>
+              {currentAttachments.length ? (
+                <ul>
+                  {currentAttachments.map((attachment) => (
+                    <li key={attachment.id}>
+                      <strong>{attachment.fileName || "Adjunto"}</strong>
+                      <span>
+                        {formatBytes(attachment.byteSize || 0)} ·{" "}
+                        {getAttachmentOriginLabel(attachment)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="field-hint">No hay adjuntos seleccionados.</p>
+              )}
+            </div>
+
+            <div className="modal-buttons opportunity-operation-email-modal-actions">
+              <button
+                type="button"
+                className="opportunity-operation-email-preview-icon-button"
+                onClick={() => setIsPreviewOpen(false)}
+                disabled={sending}
+                aria-label="Volver a editar"
+                title="Volver a editar"
+              >
+                <OpportunityBackIcon />
+              </button>
+              <button
+                type="button"
+                className="opportunity-operation-email-preview-icon-button is-send"
+                onClick={onRequestSend}
+                disabled={sending || status.loading || !canSendViaGoogle}
+                aria-label={sending ? "Enviando" : "Enviar ahora"}
+                title={sending ? "Enviando" : "Enviar ahora"}
+              >
+                <OpportunitySendIcon />
               </button>
             </div>
-            <small className="field-hint" aria-live="polite">
-              {generatingAiDraft
-                ? "Generando borrador con IA..."
-                : "Describe el tono y el objetivo. La IA devolverá una sugerencia lista para copiar."}
-            </small>
-
-            <div className="opportunity-operation-email-ai-fields">
-              <label className="opportunity-operation-email-ai-field">
-                <span>Instrucciones</span>
-                <textarea
-                  rows={3}
-                  value={aiInstructionText}
-                  aria-labelledby="opportunity-operation-email-ai-instructions-label"
-                  disabled={sending || generatingAiDraft}
+          </div>
+        ) : (
+          <>
+            <div className="opportunity-operation-email-form-grid">
+              <label>
+                Para
+                <input
+                  type="email"
+                  value={draft.recipient}
+                  disabled={sending}
                   onChange={(event) =>
-                    onChangeAiInstruction(event.target.value)
+                    onChangeField("recipient", event.target.value)
                   }
-                  placeholder="Ejemplo: tono ejecutivo, breve, incluir llamado a la accion y fecha compromiso."
-                />
-              </label>
-
-              <div className="opportunity-operation-email-ai-suggestion">
-                <div className="opportunity-operation-email-ai-suggestion-head">
-                  <span>Sugerencia</span>
-                  <button
-                    type="button"
-                    className="opportunity-operation-email-ai-copy-button"
-                    onClick={onUseAiSuggestion}
-                    disabled={
-                      sending ||
-                      generatingAiDraft ||
-                      !String(aiSuggestionMessageBody || "").trim()
-                    }
-                    aria-label="Copiar sugerencia al borrador"
-                    title="Copiar sugerencia al borrador"
-                  >
-                    <OpportunityCopyIcon />
-                    <span>Usar sugerencia</span>
-                  </button>
-                </div>
-                {aiSuggestionSubject ? (
-                  <small className="field-hint opportunity-operation-email-ai-suggestion-subject">
-                    Asunto sugerido: {aiSuggestionSubject}
-                  </small>
-                ) : null}
-                <textarea
-                  rows={5}
-                  value={aiSuggestionMessageBody || ""}
-                  readOnly
-                  placeholder="La sugerencia generada por la IA aparecerá aqui."
+                  placeholder="destinatario@cliente.com"
+                  title="Edita el destinatario si necesitas enviar a otro correo"
                 />
                 <small className="field-hint">
-                  Puedes copiar esta sugerencia o seguir editando el borrador.
+                  Puedes editar este destinatario antes de enviar.
                 </small>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <div className="opportunity-operation-email-attachments">
-          <div className="opportunity-operation-email-attachments-header">
-            <strong>Adjuntos</strong>
-          </div>
-
-          <div className="opportunity-operation-email-attachments-subsections">
-            <section className="opportunity-operation-email-attachments-subsection">
-              <div className="opportunity-operation-email-subsection-head">
-                <strong>Adjuntar localmente</strong>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={
-                    sending || generatingAiDraft || generatingAiAttachments
-                  }
-                >
-                  Agregar archivos
-                </button>
+              </label>
+              <label>
+                CC
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="opportunity-operation-email-file-input"
-                  onChange={handleFilesChange}
+                  value={draft.cc}
+                  disabled={sending}
+                  onChange={(event) => onChangeField("cc", event.target.value)}
+                  placeholder="equipo@cliente.com"
                 />
-              </div>
-              <p className="field-hint">
-                Carga archivos desde tu equipo para agregarlos al correo.
-              </p>
-            </section>
-
-            <section className="opportunity-operation-email-attachments-subsection">
-              <div className="opportunity-operation-email-subsection-head">
-                <strong>Adjuntar de biblioteca</strong>
-                <span className="field-hint">
-                  Seleccionados: {selectedCount}/{safeMaxLibraryAssets}
-                </span>
-              </div>
-
-              <div className="opportunity-operation-email-library-tools">
-                <button
-                  type="button"
-                  className="opportunity-operation-email-ai-icon-button"
-                  onClick={onRequestAiAttachments}
-                  disabled={
-                    sending ||
-                    generatingAiDraft ||
-                    generatingAiAttachments ||
-                    !String(aiInstructionText || "").trim()
-                  }
-                  aria-label="Sugerir adjuntos de biblioteca con IA"
-                  title="Sugerir adjuntos de biblioteca con IA"
+                <small
+                  className="field-hint opportunity-operation-email-hint-placeholder"
+                  aria-hidden="true"
                 >
-                  <OpportunityAiIcon />
-                  <span>
-                    {generatingAiAttachments ? "Sugiriendo..." : "IA Adjuntos"}
-                  </span>
-                </button>
-              </div>
-
-              <label className="opportunity-operation-email-library-search">
-                <span>Buscar contenido</span>
+                  Destinatario fijo: contacto de la oportunidad.
+                </small>
+              </label>
+              <label className="is-span-2">
+                Asunto
                 <input
-                  type="search"
-                  value={libraryQuery}
-                  disabled={
-                    sending || generatingAiDraft || generatingAiAttachments
+                  value={draft.subject}
+                  disabled={sending}
+                  onChange={(event) =>
+                    onChangeField("subject", event.target.value)
                   }
-                  placeholder="Buscar por titulo, resumen o tipo"
-                  onChange={(event) => onChangeLibraryQuery(event.target.value)}
+                  placeholder="Seguimiento comercial"
+                />
+              </label>
+              <label className="is-span-2">
+                Mensaje
+                <textarea
+                  rows={7}
+                  value={draft.messageBody}
+                  disabled={sending}
+                  onChange={(event) =>
+                    onChangeField("messageBody", event.target.value)
+                  }
                 />
               </label>
 
-              {libraryError ? (
-                <p className="form-error">{libraryError}</p>
-              ) : null}
-
-              <div className="opportunity-operation-email-library-picker">
-                <div className="opportunity-operation-email-library-picker-header">
-                  <strong>Biblioteca comercial para adjuntar</strong>
-                  <span className="field-hint">
-                    Maximo 3 resultados visibles
+              <section className="is-span-2 opportunity-operation-email-ai-instructions">
+                <div className="opportunity-operation-email-ai-instructions-head">
+                  <span id="opportunity-operation-email-ai-instructions-label">
+                    IA
                   </span>
-                </div>
-                <div className="opportunity-operation-email-library-options">
-                  {libraryLoading ? (
-                    <p className="field-hint">
-                      Cargando biblioteca comercial...
-                    </p>
-                  ) : Array.isArray(libraryOptions) && libraryOptions.length ? (
-                    libraryOptions.slice(0, 3).map((asset) => {
-                      const isSelected = selectedLibraryIds.includes(asset.id);
-                      const reachedLimit =
-                        !isSelected && selectedCount >= safeMaxLibraryAssets;
-                      return (
-                        <label
-                          key={asset.id}
-                          className={
-                            isSelected
-                              ? "opportunity-operation-email-library-option is-selected"
-                              : "opportunity-operation-email-library-option"
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={
-                              sending ||
-                              generatingAiDraft ||
-                              generatingAiAttachments ||
-                              reachedLimit
-                            }
-                            onChange={() => onToggleLibraryAttachment(asset.id)}
-                          />
-                          <div>
-                            <strong>
-                              {asset.fileName || asset.title || "Activo"}
-                            </strong>
-                            <small>
-                              {asset.sourceLabel || "Biblioteca"}
-                              {asset.assetTypeLabel
-                                ? ` · ${asset.assetTypeLabel}`
-                                : ""}
-                            </small>
-                          </div>
-                        </label>
-                      );
-                    })
-                  ) : (
-                    <p className="field-hint">
-                      No hay activos de biblioteca disponibles con ese filtro.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div className="opportunity-operation-email-attachments-list">
-            {(draft.attachments || []).length ? (
-              draft.attachments.map((attachment) => (
-                <div
-                  key={attachment.id}
-                  className="opportunity-operation-email-attachment-item"
-                >
-                  <div>
-                    <strong>{attachment.fileName || "Adjunto"}</strong>
-                    <small>
-                      {formatBytes(attachment.byteSize || 0)} ·{" "}
-                      {getAttachmentOriginLabel(attachment)}
-                    </small>
-                  </div>
                   <button
                     type="button"
-                    className="btn-secondary"
-                    onClick={() => onRemoveAttachment(attachment.id)}
-                    disabled={
-                      sending || generatingAiDraft || generatingAiAttachments
+                    className="opportunity-operation-email-ai-icon-button"
+                    onClick={onRequestAiDraft}
+                    disabled={sending || generatingAiDraft}
+                    aria-label={
+                      generatingAiDraft
+                        ? "Generando borrador con IA"
+                        : "Generar borrador con IA"
+                    }
+                    title={
+                      generatingAiDraft
+                        ? "Generando..."
+                        : "Generar borrador con IA"
                     }
                   >
-                    Quitar
+                    <OpportunityAiIcon />
+                    <span>Generar IA</span>
                   </button>
                 </div>
-              ))
-            ) : (
-              <p className="field-hint">No hay adjuntos seleccionados.</p>
-            )}
-          </div>
-        </div>
+                <small className="field-hint" aria-live="polite">
+                  {generatingAiDraft
+                    ? "Generando borrador con IA..."
+                    : "Describe el tono y el objetivo. La IA devolverá una sugerencia lista para copiar."}
+                </small>
 
-        <div className="modal-buttons">
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={onRequestSend}
-            disabled={sending || status.loading || !canSendViaGoogle}
-          >
-            {sending ? "Enviando..." : "Enviar correo"}
-          </button>
-        </div>
+                <div className="opportunity-operation-email-ai-fields">
+                  <label className="opportunity-operation-email-ai-field">
+                    <span>Instrucciones</span>
+                    <textarea
+                      rows={3}
+                      value={aiInstructionText}
+                      aria-labelledby="opportunity-operation-email-ai-instructions-label"
+                      disabled={sending || generatingAiDraft}
+                      onChange={(event) =>
+                        onChangeAiInstruction(event.target.value)
+                      }
+                      placeholder="Ejemplo: tono ejecutivo, breve, incluir llamado a la accion y fecha compromiso."
+                    />
+                  </label>
+
+                  <div className="opportunity-operation-email-ai-suggestion">
+                    <div className="opportunity-operation-email-ai-suggestion-head">
+                      <span>Sugerencia</span>
+                      <button
+                        type="button"
+                        className="opportunity-operation-email-ai-copy-button"
+                        onClick={onUseAiSuggestion}
+                        disabled={
+                          sending ||
+                          generatingAiDraft ||
+                          !String(aiSuggestionMessageBody || "").trim()
+                        }
+                        aria-label="Copiar sugerencia al borrador"
+                        title="Copiar sugerencia al borrador"
+                      >
+                        <OpportunityCopyIcon />
+                        <span>Usar sugerencia</span>
+                      </button>
+                    </div>
+                    {aiSuggestionSubject ? (
+                      <small className="field-hint opportunity-operation-email-ai-suggestion-subject">
+                        Asunto sugerido: {aiSuggestionSubject}
+                      </small>
+                    ) : null}
+                    {aiSuggestionSourceLabel ? (
+                      <small className="field-hint opportunity-operation-email-ai-suggestion-source">
+                        {aiSuggestionSourceLabel}
+                      </small>
+                    ) : null}
+                    {aiSuggestionFallbackReasonLabel ? (
+                      <small className="field-hint opportunity-operation-email-ai-suggestion-source">
+                        {aiSuggestionFallbackReasonLabel}
+                      </small>
+                    ) : null}
+                    <textarea
+                      rows={5}
+                      value={aiSuggestionMessageBody || ""}
+                      readOnly
+                      placeholder="La sugerencia generada por la IA aparecerá aqui."
+                    />
+                    <small className="field-hint">
+                      Puedes copiar esta sugerencia o seguir editando el
+                      borrador.
+                    </small>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="opportunity-operation-email-attachments">
+              <div className="opportunity-operation-email-attachments-header">
+                <strong>Adjuntos</strong>
+              </div>
+
+              <div className="opportunity-operation-email-attachments-subsections">
+                <section className="opportunity-operation-email-attachments-subsection">
+                  <div className="opportunity-operation-email-subsection-head">
+                    <strong>Adjuntar localmente</strong>
+                    <button
+                      type="button"
+                      className="opportunity-operation-email-attach-icon-button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={
+                        sending || generatingAiDraft || generatingAiAttachments
+                      }
+                      aria-label="Agregar archivos"
+                      title="Agregar archivos"
+                    >
+                      <OpportunityAttachmentAddIcon />
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="opportunity-operation-email-file-input"
+                      onChange={handleFilesChange}
+                    />
+                  </div>
+                  <p className="field-hint">
+                    Carga archivos desde tu equipo para agregarlos al correo.
+                  </p>
+                </section>
+
+                <section className="opportunity-operation-email-attachments-subsection">
+                  <div className="opportunity-operation-email-subsection-head">
+                    <strong>Adjuntar de biblioteca</strong>
+                    <span className="field-hint">
+                      Seleccionados: {selectedCount}/{safeMaxLibraryAssets}
+                    </span>
+                  </div>
+
+                  <div className="opportunity-operation-email-library-tools">
+                    <button
+                      type="button"
+                      className="opportunity-operation-email-ai-icon-button"
+                      onClick={onRequestAiAttachments}
+                      disabled={sending || generatingAiAttachments}
+                      aria-label="Sugerir adjuntos de biblioteca con IA"
+                      title="Sugerir adjuntos de biblioteca con IA"
+                    >
+                      <OpportunityAiIcon />
+                      <span>
+                        {generatingAiAttachments
+                          ? "Sugiriendo..."
+                          : "IA Adjuntos"}
+                      </span>
+                    </button>
+                  </div>
+
+                  <label className="opportunity-operation-email-library-search">
+                    <span>Buscar contenido</span>
+                    <input
+                      type="search"
+                      value={libraryQuery}
+                      disabled={
+                        sending || generatingAiDraft || generatingAiAttachments
+                      }
+                      placeholder="Buscar por titulo, resumen o tipo"
+                      onChange={(event) =>
+                        onChangeLibraryQuery(event.target.value)
+                      }
+                    />
+                  </label>
+
+                  {libraryError ? (
+                    <p className="form-error">{libraryError}</p>
+                  ) : null}
+
+                  <div className="opportunity-operation-email-library-picker">
+                    <div className="opportunity-operation-email-library-picker-header">
+                      <strong>Biblioteca comercial para adjuntar</strong>
+                      <span className="field-hint">
+                        Maximo 3 resultados visibles
+                      </span>
+                    </div>
+                    <div className="opportunity-operation-email-library-options">
+                      {libraryLoading ? (
+                        <p className="field-hint">
+                          Cargando biblioteca comercial...
+                        </p>
+                      ) : Array.isArray(libraryOptions) &&
+                        libraryOptions.length ? (
+                        libraryOptions.slice(0, 3).map((asset) => {
+                          const isSelected = selectedLibraryIds.includes(
+                            asset.id,
+                          );
+                          const reachedLimit =
+                            !isSelected &&
+                            selectedCount >= safeMaxLibraryAssets;
+                          return (
+                            <label
+                              key={asset.id}
+                              className={
+                                isSelected
+                                  ? "opportunity-operation-email-library-option is-selected"
+                                  : "opportunity-operation-email-library-option"
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={
+                                  sending ||
+                                  generatingAiDraft ||
+                                  generatingAiAttachments ||
+                                  reachedLimit
+                                }
+                                onChange={() =>
+                                  onToggleLibraryAttachment(asset.id)
+                                }
+                              />
+                              <div>
+                                <strong>
+                                  {asset.fileName || asset.title || "Activo"}
+                                </strong>
+                                <small>
+                                  {asset.sourceLabel || "Biblioteca"}
+                                  {asset.assetTypeLabel
+                                    ? ` · ${asset.assetTypeLabel}`
+                                    : ""}
+                                </small>
+                              </div>
+                            </label>
+                          );
+                        })
+                      ) : (
+                        <p className="field-hint">
+                          No hay activos de biblioteca disponibles con ese
+                          filtro.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div className="opportunity-operation-email-attachments-list">
+                {currentAttachments.length ? (
+                  currentAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="opportunity-operation-email-attachment-item"
+                    >
+                      <div>
+                        <strong>{attachment.fileName || "Adjunto"}</strong>
+                        <small>
+                          {formatBytes(attachment.byteSize || 0)} ·{" "}
+                          {getAttachmentOriginLabel(attachment)}
+                        </small>
+                      </div>
+                      <div className="opportunity-operation-email-attachment-actions">
+                        <button
+                          type="button"
+                          className="opportunity-operation-email-attachment-icon-button"
+                          onClick={() => handleDownloadAttachment(attachment)}
+                          disabled={!getAttachmentDownloadUrl(attachment)}
+                          aria-label={`Descargar documento: ${attachment.fileName || "Adjunto"}`}
+                          title="Descargar documento"
+                        >
+                          <OpportunityAttachmentDownloadIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="opportunity-operation-email-attachment-icon-button is-remove"
+                          onClick={() => onRemoveAttachment(attachment.id)}
+                          disabled={
+                            sending ||
+                            generatingAiDraft ||
+                            generatingAiAttachments
+                          }
+                          aria-label={`Quitar adjunto: ${attachment.fileName || "Adjunto"}`}
+                          title="Quitar adjunto"
+                        >
+                          <OpportunityAttachmentRemoveIcon />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="field-hint">No hay adjuntos seleccionados.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-buttons opportunity-operation-email-modal-actions">
+              <button
+                type="button"
+                className="btn-secondary opportunity-operation-email-preview-button"
+                onClick={handleOpenPreview}
+                disabled={
+                  sending || generatingAiDraft || generatingAiAttachments
+                }
+              >
+                Vista previa
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

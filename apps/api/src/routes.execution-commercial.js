@@ -3263,6 +3263,25 @@ async function listOpenDependencies(opportunityIds) {
   );
 }
 
+async function listDependencies(opportunityIds) {
+  if (!opportunityIds.length) {
+    return [];
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  return query(
+    `SELECT d.id, d.opportunity_id, d.dependency_type, d.title, d.status,
+            d.owner_user_id, d.due_date, d.expected_outcome, d.details,
+            d.resolution_note, d.created_at, d.updated_at,
+            u.full_name AS owner_user_name
+     FROM commercial_execution_dependencies d
+     LEFT JOIN users u ON u.id = d.owner_user_id
+     WHERE d.opportunity_id IN (${placeholders})
+     ORDER BY d.due_date IS NULL ASC, d.due_date ASC, d.updated_at DESC`,
+    opportunityIds,
+  );
+}
+
 async function listOpportunityDocumentSignals(opportunityId) {
   const normalizedOpportunityId = Number(opportunityId || 0);
   if (
@@ -5948,7 +5967,11 @@ async function requestCommercialEmailSuggestionWithAi({
   );
 
   if (!config.openai.apiKey) {
-    return fallback;
+    return {
+      ...fallback,
+      source: "fallback",
+      sourceReason: "missing_openai_api_key",
+    };
   }
 
   const aiUsageUserId = Number(aiUsageContext?.userId || 0);
@@ -5976,7 +5999,24 @@ async function requestCommercialEmailSuggestionWithAi({
     }));
   const payload = {
     model: config.openai.model,
-    input: [
+    temperature: 0.2,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "commercial_email_suggestion",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: { type: "string" },
+            messageBody: { type: "string" },
+          },
+          required: ["subject", "messageBody"],
+        },
+      },
+    },
+    messages: [
       {
         role: "system",
         content:
@@ -6030,7 +6070,7 @@ async function requestCommercialEmailSuggestionWithAi({
   };
 
   const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+    `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
       headers: {
@@ -6048,22 +6088,32 @@ async function requestCommercialEmailSuggestionWithAi({
 
   const data = await response.json();
   if (aiUsageUserId) {
-    await recordAiUsageFromOpenAiResponse({
-      internalRequestId: aiUsageInternalRequestId,
-      userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode ||
-            "commercial_development.email_suggestion",
-        ) || "commercial_development.email_suggestion",
-      model: String(payload?.model || config.openai.model || "").trim(),
-      openAiResponse: data,
-      jobType: aiUsageContext?.jobType || null,
-      jobId: aiUsageContext?.jobId || null,
-      startedAt: aiUsageStartedAt,
-    });
+    try {
+      await recordAiUsageFromOpenAiResponse({
+        internalRequestId: aiUsageInternalRequestId,
+        userId: aiUsageUserId,
+        featureCode:
+          String(
+            aiUsageContext?.featureCode ||
+              "commercial_development.email_suggestion",
+          ) || "commercial_development.email_suggestion",
+        model: String(payload?.model || config.openai.model || "").trim(),
+        openAiResponse: data,
+        jobType: aiUsageContext?.jobType || null,
+        jobId: aiUsageContext?.jobId || null,
+        startedAt: aiUsageStartedAt,
+      });
+    } catch (usageError) {
+      if (config.nodeEnv !== "test") {
+        console.warn(
+          "Commercial email suggestion usage log warning:",
+          usageError?.message || usageError,
+        );
+      }
+    }
   }
-  const parsed = extractJsonObject(extractResponseOutputText(data));
+  const completionContent = String(data?.choices?.[0]?.message?.content || "");
+  const parsed = extractJsonObject(completionContent);
   const subject = String(parsed?.subject || "").trim() || fallback.subject;
   const messageBody =
     String(parsed?.messageBody || "").trim() || fallback.messageBody;
@@ -6072,6 +6122,7 @@ async function requestCommercialEmailSuggestionWithAi({
     subject,
     messageBody,
     source: "openai",
+    sourceReason: "openai",
   };
 }
 
@@ -6566,6 +6617,8 @@ router.get(
   ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
+    const includeClosedDependencies =
+      String(req.query?.includeClosedDependencies || "").trim() === "1";
     const quarterSelection = resolveQuarterSelection(req.query || {});
     const developmentPeriods = await listDevelopmentPeriods();
     const stagesCatalog = await listActiveSalesStages();
@@ -6579,7 +6632,9 @@ router.get(
     );
     const recommendationCatalog =
       await loadCommercialEnablementRecommendationCatalog();
-    const dependencyRows = await listOpenDependencies(opportunityIds);
+    const dependencyRows = includeClosedDependencies
+      ? await listDependencies(opportunityIds)
+      : await listOpenDependencies(opportunityIds);
     const lastActivityByOpportunity =
       await listLastActivityByOpportunity(opportunityIds);
     const dependenciesByOpportunity = dependencyRows.reduce(
@@ -8001,8 +8056,8 @@ router.post(
       recipientName,
     );
 
-    setTimeout(() => {
-      void requestCommercialEmailSuggestionWithAi({
+    try {
+      const result = await requestCommercialEmailSuggestionWithAi({
         opportunity,
         details,
         recipientName,
@@ -8015,17 +8070,39 @@ router.post(
               internalRequestId: `commercial_email_suggestion:${Number(opportunity.id)}:${Date.now()}`,
             }
           : null,
-      }).catch((error) => {
-        if (config.nodeEnv !== "test") {
-          console.error(
-            "Commercial email suggestion AI error:",
-            error?.message || error,
-          );
-        }
       });
-    }, 0);
 
-    return res.json(fallbackSuggestion);
+      return res.json({
+        subject: String(result?.subject || fallbackSuggestion.subject).trim(),
+        messageBody: String(
+          result?.messageBody || fallbackSuggestion.messageBody,
+        ).trim(),
+        source: String(
+          result?.source || fallbackSuggestion.source || "fallback",
+        ).trim(),
+        sourceReason: String(result?.sourceReason || "").trim(),
+      });
+    } catch (error) {
+      if (config.nodeEnv !== "test") {
+        console.error(
+          "Commercial email suggestion AI error:",
+          error?.message || error,
+        );
+      }
+
+      const fallbackReason =
+        String(error?.code || "").trim() === "AI_BUDGET_EXCEEDED"
+          ? "ai_budget_exceeded"
+          : String(error?.message || "").includes("OpenAI request failed")
+            ? "openai_request_failed"
+            : "ai_generation_error";
+
+      return res.json({
+        ...fallbackSuggestion,
+        source: "fallback",
+        sourceReason: fallbackReason,
+      });
+    }
   },
 );
 

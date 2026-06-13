@@ -8,6 +8,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
 }
@@ -17611,6 +17615,58 @@ td {
   gap: 6px;
 }
 
+.opportunity-operation-email-google-connect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.opportunity-operation-email-google-connect-icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c8d9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #2f69a9;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-google-connect-icon-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #9dbce3;
+  color: #1f4f83;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-google-connect-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-google-connect-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.opportunity-operation-email-google-connect-help {
+  margin: 0;
+}
+
 .opportunity-operation-email-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -17788,6 +17844,12 @@ td {
   margin: 0;
 }
 
+.opportunity-operation-email-ai-suggestion-source {
+  margin: 0;
+  font-weight: 700;
+  color: #274f80;
+}
+
 .opportunity-operation-email-form-grid input,
 .opportunity-operation-email-form-grid textarea {
   width: 100%;
@@ -17878,6 +17940,8 @@ td {
   border-radius: 8px;
   padding: 8px;
   display: grid;
+  grid-auto-rows: min-content;
+  align-content: start;
   gap: 6px;
   background: #f9fcff;
 }
@@ -17898,6 +17962,48 @@ td {
   display: none;
 }
 
+.opportunity-operation-email-attach-icon-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-attach-icon-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-attach-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-attach-icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .opportunity-operation-email-attachments-list {
   display: grid;
   gap: 6px;
@@ -17914,9 +18020,228 @@ td {
   gap: 8px;
 }
 
+.opportunity-operation-email-attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.opportunity-operation-email-attachment-icon-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-attachment-icon-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-attachment-icon-button.is-remove {
+  border-color: #e4c8c8;
+  color: #8c3c3c;
+}
+
+.opportunity-operation-email-attachment-icon-button.is-remove:hover:not(
+    :disabled
+  ) {
+  background: #fff0f0;
+  border-color: #d79f9f;
+  color: #7d1f1f;
+}
+
+.opportunity-operation-email-attachment-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-attachment-icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .opportunity-operation-email-attachment-item small {
   display: block;
   color: #5f7287;
+}
+
+.opportunity-operation-email-modal-actions {
+  display: flex;
+  margin-top: 2px;
+  justify-content: flex-end;
+}
+
+.opportunity-operation-email-preview-button {
+  min-width: 160px;
+  border-color: #1e5cc7;
+  background: #1e5cc7;
+  color: #ffffff;
+}
+
+.opportunity-operation-email-preview-button:hover:not(:disabled) {
+  border-color: #184da7;
+  background: #184da7;
+  color: #ffffff;
+}
+
+.opportunity-operation-email-preview-icon-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.opportunity-operation-email-preview-icon-button:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.opportunity-operation-email-preview-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.opportunity-operation-email-preview-icon-button.is-send {
+  border-color: #1f5fb4;
+  background: #2f73ce;
+  color: #fff;
+}
+
+.opportunity-operation-email-preview-icon-button.is-send:hover:not(:disabled) {
+  border-color: #1b4f96;
+  background: #245fab;
+  color: #fff;
+}
+
+.opportunity-operation-email-preview-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.opportunity-operation-email-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.opportunity-operation-email-preview-header h4,
+.opportunity-operation-email-preview-message h5,
+.opportunity-operation-email-preview-attachments h5 {
+  margin: 0;
+  color: #234564;
+}
+
+.opportunity-operation-email-preview-header {
+  display: grid;
+  gap: 2px;
+}
+
+.opportunity-operation-email-preview-header p {
+  margin: 0;
+}
+
+.opportunity-operation-email-preview-meta {
+  border: 1px solid #d7e5f3;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f8fbff;
+  display: grid;
+  gap: 4px;
+}
+
+.opportunity-operation-email-preview-meta p {
+  margin: 0;
+  font-size: 13px;
+  color: #315474;
+}
+
+.opportunity-operation-email-preview-message {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-preview-message-body {
+  border: 1px solid #d7e5f3;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+  min-height: 160px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: #1d3853;
+}
+
+.opportunity-operation-email-preview-attachments {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-preview-attachments ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-operation-email-preview-attachments li {
+  border: 1px solid #e2ebf4;
+  border-radius: 8px;
+  background: #f9fcff;
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.opportunity-operation-email-preview-attachments li strong {
+  color: #234564;
+}
+
+.opportunity-operation-email-preview-attachments li span {
+  color: #5f7287;
+  font-size: 12px;
 }
 
 @media (max-width: 720px) {
@@ -18015,6 +18340,11 @@ td {
   gap: 10px;
 }
 
+.opportunity-development-item-modal-status-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .opportunity-development-item-modal-content label {
   display: grid;
   gap: 4px;
@@ -18023,9 +18353,122 @@ td {
   font-weight: 600;
 }
 
-.opportunity-development-item-modal-actions {
+.opportunity-development-item-modal-objective-textarea {
+  width: 100%;
+  min-height: 112px;
+  max-height: 240px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.opportunity-development-item-modal-schedule {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: #2f4f70;
+  font-weight: 600;
+}
+
+.opportunity-development-item-modal-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.opportunity-development-item-modal-schedule-grid.is-date-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.opportunity-development-item-modal-inline-field {
+  display: grid;
+  gap: 4px;
+}
+
+.opportunity-development-item-modal-schedule-quick-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.opportunity-development-item-modal-quick-chip {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.opportunity-development-item-modal-status-button {
+  appearance: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #c6d6e6;
+  border-radius: 999px;
+  background: #f4f8fc;
+  color: #21486f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.opportunity-development-item-modal-status-button:hover:not(:disabled) {
+  background: #eaf2fb;
+}
+
+.opportunity-development-item-modal-status-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.opportunity-development-item-modal-status-button.is-active-done {
+  border-color: #8ac29b;
+  background: #e5f7ec;
+  color: #14532d;
+}
+
+.opportunity-development-item-modal-status-button.is-active-cancelled {
+  border-color: #e3a29a;
+  background: #feebe8;
+  color: #7f1d1d;
+}
+
+.opportunity-development-item-modal-icon-actions {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
+}
+
+.opportunity-development-item-modal-save-button {
+  appearance: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #164f83;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2580cf 0%, #1f6eb8 100%);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 5px rgba(17, 49, 79, 0.28);
+  cursor: pointer;
+}
+
+.opportunity-development-item-modal-save-button svg {
+  width: 23px;
+  height: 23px;
+}
+
+.opportunity-development-item-modal-save-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1f6eb8 0%, #185d99 100%);
+}
+
+.opportunity-development-item-modal-save-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .opportunity-development-execution-history li strong {
