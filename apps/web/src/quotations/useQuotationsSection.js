@@ -2040,6 +2040,9 @@ export function useQuotationsSection({
           versionNumber: Number(
             version.versionNumber ?? version.version_number ?? 0,
           ),
+          contactId:
+            Number(version.contactId ?? version.contact_id ?? 0) || null,
+          contactName: version.contactName ?? version.contact_name ?? "",
           quotationDate:
             version.quotationDate ?? version.quotation_date ?? null,
           statusCode: version.statusCode ?? version.status_code ?? "",

@@ -3054,6 +3054,34 @@ export default function ProposalsPage() {
   const [proposalsPerPage, setProposalsPerPage] = useState(10);
   const [selectedProposal, setSelectedProposal] = useState(null);
   const [openProposalMenuId, setOpenProposalMenuId] = useState(null);
+  const [accountModalAccount, setAccountModalAccount] = useState(null);
+  const [accountModalDetail, setAccountModalDetail] = useState(null);
+  const [accountModalLoading, setAccountModalLoading] = useState(false);
+  const [accountModalError, setAccountModalError] = useState("");
+  const [accountModalStatusFilter, setAccountModalStatusFilter] =
+    useState("all");
+
+  const [contactModalContact, setContactModalContact] = useState(null);
+  const [contactModalDetail, setContactModalDetail] = useState(null);
+  const [contactModalLoading, setContactModalLoading] = useState(false);
+  const [contactModalError, setContactModalError] = useState("");
+  const [contactModalStatusFilter, setContactModalStatusFilter] =
+    useState("all");
+
+  const [opportunityModalOpportunity, setOpportunityModalOpportunity] =
+    useState(null);
+  const [opportunityModalDetail, setOpportunityModalDetail] = useState(null);
+  const [opportunityModalLoading, setOpportunityModalLoading] = useState(false);
+  const [opportunityModalError, setOpportunityModalError] = useState("");
+  const [opportunityModalStatusFilter, setOpportunityModalStatusFilter] =
+    useState("all");
+
+  const [quotationModalQuotation, setQuotationModalQuotation] = useState(null);
+  const [quotationModalDetail, setQuotationModalDetail] = useState(null);
+  const [quotationModalLoading, setQuotationModalLoading] = useState(false);
+  const [quotationModalError, setQuotationModalError] = useState("");
+  const [quotationModalStatusFilter, setQuotationModalStatusFilter] =
+    useState("all");
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busyAction, setBusyAction] = useState("");
@@ -4996,6 +5024,209 @@ export default function ProposalsPage() {
     );
   }
 
+  function normalizeRelationStatus(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function getRelationStatusCode(detail) {
+    const activationStatus = normalizeRelationStatus(
+      detail?.activation_status || detail?.activationStatus || "",
+    );
+    if (activationStatus.includes("desactiv")) return "inactive";
+    if (activationStatus.includes("pendiente")) return "pending";
+    if (activationStatus) return "active";
+
+    const workflowStatus = normalizeRelationStatus(
+      detail?.statusCode || detail?.status_code || detail?.status || "",
+    );
+    if (
+      workflowStatus.includes("archiv") ||
+      workflowStatus.includes("cancel") ||
+      workflowStatus.includes("rechaz") ||
+      workflowStatus.includes("inactive")
+    ) {
+      return "inactive";
+    }
+    if (workflowStatus.includes("pend")) return "pending";
+    return "active";
+  }
+
+  function getRelationStatusBadgeClass(detail) {
+    const statusCode = getRelationStatusCode(detail);
+    if (statusCode === "inactive") return "user-status-badge inactive";
+    if (statusCode === "pending") return "user-status-badge pending";
+    return "user-status-badge active";
+  }
+
+  function getRelationStatusLabel(detail, noun = "f") {
+    const statusCode = getRelationStatusCode(detail);
+    if (statusCode === "inactive") {
+      return noun === "m" ? "Desactivado" : "Desactivada";
+    }
+    if (statusCode === "pending") return "Pendiente";
+    return noun === "m" ? "Activado" : "Activada";
+  }
+
+  function getQuotationLatestVersion(detail) {
+    const versions = Array.isArray(detail?.versions) ? detail.versions : [];
+    if (!versions.length) return null;
+    const latestVersionId = Number(detail?.latestVersionId || 0);
+    const byLatestId = versions.find(
+      (version) => Number(version?.id || 0) === latestVersionId,
+    );
+    if (byLatestId) return byLatestId;
+    return versions
+      .slice()
+      .sort(
+        (left, right) =>
+          Number(right?.versionNumber || 0) - Number(left?.versionNumber || 0),
+      )[0];
+  }
+
+  async function openAccountModal(proposal) {
+    const accountId = Number(proposal?.accountId || 0);
+    if (!accountId) return;
+    setOpenProposalMenuId(null);
+    setAccountModalAccount({
+      id: accountId,
+      name: proposal?.accountName || `Cuenta #${accountId}`,
+    });
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/accounts/${accountId}`);
+      setAccountModalDetail(data || null);
+    } catch (err) {
+      setAccountModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la cuenta",
+        ),
+      );
+    } finally {
+      setAccountModalLoading(false);
+    }
+  }
+
+  function closeAccountModal() {
+    setAccountModalAccount(null);
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(false);
+  }
+
+  async function openContactModal(proposal) {
+    const contactId = Number(proposal?.contactId || 0);
+    if (!contactId) return;
+    setOpenProposalMenuId(null);
+    setContactModalContact({
+      id: contactId,
+      name: proposal?.contactName || `Contacto #${contactId}`,
+    });
+    setContactModalDetail(null);
+    setContactModalError("");
+    setContactModalStatusFilter("all");
+    setContactModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/contacts/${contactId}`);
+      setContactModalDetail(data || null);
+    } catch (err) {
+      setContactModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle del contacto",
+        ),
+      );
+    } finally {
+      setContactModalLoading(false);
+    }
+  }
+
+  function closeContactModal() {
+    setContactModalContact(null);
+    setContactModalDetail(null);
+    setContactModalError("");
+    setContactModalStatusFilter("all");
+    setContactModalLoading(false);
+  }
+
+  async function openOpportunityModal(proposal) {
+    const opportunityId = Number(proposal?.opportunityId || 0);
+    if (!opportunityId) return;
+    setOpenProposalMenuId(null);
+    setOpportunityModalOpportunity({
+      id: opportunityId,
+      name: proposal?.opportunityName || `Oportunidad #${opportunityId}`,
+    });
+    setOpportunityModalDetail(null);
+    setOpportunityModalError("");
+    setOpportunityModalStatusFilter("all");
+    setOpportunityModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/opportunities/${opportunityId}`);
+      setOpportunityModalDetail(data || null);
+    } catch (err) {
+      setOpportunityModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la oportunidad",
+        ),
+      );
+    } finally {
+      setOpportunityModalLoading(false);
+    }
+  }
+
+  function closeOpportunityModal() {
+    setOpportunityModalOpportunity(null);
+    setOpportunityModalDetail(null);
+    setOpportunityModalError("");
+    setOpportunityModalStatusFilter("all");
+    setOpportunityModalLoading(false);
+  }
+
+  async function openQuotationModal(proposal) {
+    const quotationId = Number(proposal?.quotationId || 0);
+    if (!quotationId) return;
+    setOpenProposalMenuId(null);
+    setQuotationModalQuotation({
+      id: quotationId,
+      name: `Cotizacion #${quotationId}`,
+    });
+    setQuotationModalDetail(null);
+    setQuotationModalError("");
+    setQuotationModalStatusFilter("all");
+    setQuotationModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/quotations/${quotationId}`);
+      setQuotationModalDetail(data || null);
+    } catch (err) {
+      setQuotationModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la cotizacion",
+        ),
+      );
+    } finally {
+      setQuotationModalLoading(false);
+    }
+  }
+
+  function closeQuotationModal() {
+    setQuotationModalQuotation(null);
+    setQuotationModalDetail(null);
+    setQuotationModalError("");
+    setQuotationModalStatusFilter("all");
+    setQuotationModalLoading(false);
+  }
+
   return (
     <section className="panel proposal-shell">
       <div className="roles-page-header">
@@ -5181,6 +5412,34 @@ export default function ProposalsPage() {
                             >
                               <button
                                 type="button"
+                                disabled={!Number(proposal.accountId || 0)}
+                                onClick={() => openAccountModal(proposal)}
+                              >
+                                Cuenta
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!Number(proposal.contactId || 0)}
+                                onClick={() => openContactModal(proposal)}
+                              >
+                                Contacto
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!Number(proposal.opportunityId || 0)}
+                                onClick={() => openOpportunityModal(proposal)}
+                              >
+                                Oportunidad
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!Number(proposal.quotationId || 0)}
+                                onClick={() => openQuotationModal(proposal)}
+                              >
+                                Cotizacion
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() =>
                                   handleSelectProposal(proposal.id)
                                 }
@@ -5256,6 +5515,588 @@ export default function ProposalsPage() {
           ) : null}
         </aside>
       </div>
+
+      {accountModalAccount ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Cuenta ${accountModalAccount.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAccountModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Cuenta -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {accountModalAccount.name}
+                </span>
+              </h3>
+            </div>
+
+            {!accountModalLoading &&
+            !accountModalError &&
+            accountModalDetail ? (
+              <div className="account-opps-filters">
+                <div
+                  className="account-opps-pills"
+                  role="group"
+                  aria-label="Filtrar por estado"
+                >
+                  {[
+                    { value: "active", label: "Activas", tone: "active" },
+                    {
+                      value: "inactive",
+                      label: "Desactivadas",
+                      tone: "inactive",
+                    },
+                    { value: "all", label: "Todas", tone: "all" },
+                  ].map((status) => (
+                    <button
+                      key={status.value}
+                      type="button"
+                      className={`account-opps-pill account-opps-pill--${status.tone}${
+                        accountModalStatusFilter === status.value
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() => setAccountModalStatusFilter(status.value)}
+                    >
+                      {status.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(() => {
+              const items = accountModalDetail ? [accountModalDetail] : [];
+              const visibleItems =
+                accountModalStatusFilter === "all"
+                  ? items
+                  : items.filter((item) => {
+                      const inactive =
+                        getRelationStatusCode(item) === "inactive";
+                      return accountModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (accountModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando cuentas...</p>
+                );
+              }
+              if (accountModalError) {
+                return (
+                  <p className="account-opps-empty">{accountModalError}</p>
+                );
+              }
+              if (!items.length) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay cuentas registradas para esta propuesta.
+                  </p>
+                );
+              }
+              if (!visibleItems.length) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleItems.map((item) => (
+                    <div
+                      key={item.id || accountModalAccount.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.name || accountModalAccount.name}
+                        </span>
+                        <span className={getRelationStatusBadgeClass(item)}>
+                          {getRelationStatusLabel(item, "f")}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Tipo: {item.account_type || "-"}</span>
+                        <span>Sector: {item.economic_sector || "-"}</span>
+                        <span>Pais: {item.country || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeAccountModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {contactModalContact ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Contacto ${contactModalContact.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeContactModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Contacto -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {contactModalContact.name}
+                </span>
+              </h3>
+            </div>
+
+            {!contactModalLoading &&
+            !contactModalError &&
+            contactModalDetail ? (
+              <div className="account-opps-filters">
+                <div
+                  className="account-opps-pills"
+                  role="group"
+                  aria-label="Filtrar por estado"
+                >
+                  {[
+                    { value: "active", label: "Activas", tone: "active" },
+                    {
+                      value: "inactive",
+                      label: "Desactivadas",
+                      tone: "inactive",
+                    },
+                    { value: "all", label: "Todas", tone: "all" },
+                  ].map((status) => (
+                    <button
+                      key={status.value}
+                      type="button"
+                      className={`account-opps-pill account-opps-pill--${status.tone}${
+                        contactModalStatusFilter === status.value
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() => setContactModalStatusFilter(status.value)}
+                    >
+                      {status.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(() => {
+              const items = contactModalDetail ? [contactModalDetail] : [];
+              const visibleItems =
+                contactModalStatusFilter === "all"
+                  ? items
+                  : items.filter((item) => {
+                      const inactive =
+                        getRelationStatusCode(item) === "inactive";
+                      return contactModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (contactModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando contactos...</p>
+                );
+              }
+              if (contactModalError) {
+                return (
+                  <p className="account-opps-empty">{contactModalError}</p>
+                );
+              }
+              if (!items.length) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay contactos registrados para esta propuesta.
+                  </p>
+                );
+              }
+              if (!visibleItems.length) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleItems.map((item) => (
+                    <div
+                      key={item.id || contactModalContact.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.full_name || contactModalContact.name}
+                        </span>
+                        <span className={getRelationStatusBadgeClass(item)}>
+                          {getRelationStatusLabel(item, "m")}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Cargo: {item.position_title || "-"}</span>
+                        <span>E-mail: {item.email || "-"}</span>
+                        <span>Movil: {item.mobile || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeContactModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {opportunityModalOpportunity ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Oportunidad ${opportunityModalOpportunity.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeOpportunityModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Oportunidad -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {opportunityModalOpportunity.name}
+                </span>
+              </h3>
+            </div>
+
+            {!opportunityModalLoading &&
+            !opportunityModalError &&
+            opportunityModalDetail ? (
+              <div className="account-opps-filters">
+                <div
+                  className="account-opps-pills"
+                  role="group"
+                  aria-label="Filtrar por estado"
+                >
+                  {[
+                    { value: "active", label: "Activas", tone: "active" },
+                    {
+                      value: "inactive",
+                      label: "Desactivadas",
+                      tone: "inactive",
+                    },
+                    { value: "all", label: "Todas", tone: "all" },
+                  ].map((status) => (
+                    <button
+                      key={status.value}
+                      type="button"
+                      className={`account-opps-pill account-opps-pill--${status.tone}${
+                        opportunityModalStatusFilter === status.value
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        setOpportunityModalStatusFilter(status.value)
+                      }
+                    >
+                      {status.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(() => {
+              const items = opportunityModalDetail
+                ? [opportunityModalDetail]
+                : [];
+              const visibleItems =
+                opportunityModalStatusFilter === "all"
+                  ? items
+                  : items.filter((item) => {
+                      const inactive =
+                        getRelationStatusCode(item) === "inactive";
+                      return opportunityModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (opportunityModalLoading) {
+                return (
+                  <p className="account-opps-empty">
+                    Cargando oportunidades...
+                  </p>
+                );
+              }
+              if (opportunityModalError) {
+                return (
+                  <p className="account-opps-empty">{opportunityModalError}</p>
+                );
+              }
+              if (!items.length) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay oportunidades registradas para esta propuesta.
+                  </p>
+                );
+              }
+              if (!visibleItems.length) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleItems.map((item) => (
+                    <div
+                      key={item.id || opportunityModalOpportunity.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.name || opportunityModalOpportunity.name}
+                        </span>
+                        <span className={getRelationStatusBadgeClass(item)}>
+                          {getRelationStatusLabel(item, "f")}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Cuenta: {item.account_name || "-"}</span>
+                        <span>Etapa: {item.sales_stage || "-"}</span>
+                        <span>
+                          Importe:{" "}
+                          {Number(item.amount_usd || 0).toLocaleString(
+                            "en-US",
+                            { style: "currency", currency: "USD" },
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeOpportunityModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {quotationModalQuotation ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Cotizacion ${quotationModalQuotation.id}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeQuotationModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Cotizacion -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {quotationModalQuotation.name}
+                </span>
+              </h3>
+            </div>
+
+            {!quotationModalLoading &&
+            !quotationModalError &&
+            quotationModalDetail ? (
+              <div className="account-opps-filters">
+                <div
+                  className="account-opps-pills"
+                  role="group"
+                  aria-label="Filtrar por estado"
+                >
+                  {[
+                    { value: "active", label: "Activas", tone: "active" },
+                    {
+                      value: "inactive",
+                      label: "Desactivadas",
+                      tone: "inactive",
+                    },
+                    { value: "all", label: "Todas", tone: "all" },
+                  ].map((status) => (
+                    <button
+                      key={status.value}
+                      type="button"
+                      className={`account-opps-pill account-opps-pill--${status.tone}${
+                        quotationModalStatusFilter === status.value
+                          ? " is-active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        setQuotationModalStatusFilter(status.value)
+                      }
+                    >
+                      {status.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(() => {
+              const items = quotationModalDetail ? [quotationModalDetail] : [];
+              const visibleItems =
+                quotationModalStatusFilter === "all"
+                  ? items
+                  : items.filter((item) => {
+                      const latestVersion = getQuotationLatestVersion(item);
+                      const inactive =
+                        getRelationStatusCode({
+                          statusCode:
+                            latestVersion?.statusCode ||
+                            latestVersion?.status_code ||
+                            "",
+                        }) === "inactive";
+                      return quotationModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (quotationModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando cotizaciones...</p>
+                );
+              }
+              if (quotationModalError) {
+                return (
+                  <p className="account-opps-empty">{quotationModalError}</p>
+                );
+              }
+              if (!items.length) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay cotizaciones registradas para esta propuesta.
+                  </p>
+                );
+              }
+              if (!visibleItems.length) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleItems.map((item) => {
+                    const latestVersion = getQuotationLatestVersion(item);
+                    const statusDetail = {
+                      statusCode:
+                        latestVersion?.statusCode ||
+                        latestVersion?.status_code ||
+                        "",
+                    };
+                    return (
+                      <div
+                        key={item.id || quotationModalQuotation.id}
+                        className="account-opp-row"
+                      >
+                        <div className="account-opp-main">
+                          <span className="account-opp-name">{`Cotizacion #${item.id || quotationModalQuotation.id}`}</span>
+                          <span
+                            className={getRelationStatusBadgeClass(
+                              statusDetail,
+                            )}
+                          >
+                            {latestVersion?.statusName ||
+                              latestVersion?.status_name ||
+                              getRelationStatusLabel(statusDetail, "f")}
+                          </span>
+                        </div>
+                        <div className="account-opp-meta">
+                          <span>
+                            Cuenta:{" "}
+                            {item.accountName || item.account_name || "-"}
+                          </span>
+                          <span>
+                            Oportunidad:{" "}
+                            {item.opportunityName ||
+                              item.opportunity_name ||
+                              "-"}
+                          </span>
+                          <span>
+                            Version actual: v
+                            {latestVersion?.versionNumber ||
+                              latestVersion?.version_number ||
+                              "-"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeQuotationModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {error ? <div className="toast toast-error">{error}</div> : null}
       {success ? <div className="toast toast-success">{success}</div> : null}
