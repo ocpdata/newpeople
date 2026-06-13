@@ -469,14 +469,6 @@ export default function OpportunityOperationEmailModal({
         <div className="modal-buttons">
           <button
             type="button"
-            className="btn-secondary"
-            onClick={onRequestAiDraft}
-            disabled={sending || generatingAiDraft}
-          >
-            {generatingAiDraft ? "Generando..." : "Generar borrador con IA"}
-          </button>
-          <button
-            type="button"
             className="btn-primary"
             onClick={onRequestSend}
             disabled={sending || status.loading || !canSendViaGoogle}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import "./commercial-tracking.css";
@@ -6,18 +6,48 @@ import "./commercial-tracking.css";
 const TAB_OPTIONS = [
   { id: "overview", label: "Resumen" },
   { id: "open", label: "Abiertas" },
+  { id: "won", label: "Ganadas" },
   { id: "period", label: "Oportunidades por periodo" },
   { id: "forecast", label: "Pipeline mensual" },
 ];
 
+const HIDDEN_TAB_IDS = new Set(["overview", "forecast"]);
+
 const QUICK_FILTER_OPTIONS = [
-  { id: "all", label: "Todas" },
-  { id: "blocked", label: "Bloqueadas" },
-  { id: "no_next_step", label: "Sin siguiente paso" },
-  { id: "stale", label: "Sin actividad" },
-  { id: "advanced_this_week", label: "Avanzadas semana" },
-  { id: "waiting_internal", label: "Esperando interno" },
-  { id: "waiting_customer", label: "Esperando cliente" },
+  {
+    id: "all",
+    label: "Todas",
+    tooltip: "Muestra todas las oportunidades abiertas y activadas.",
+  },
+  {
+    id: "blocked",
+    label: "Bloqueadas",
+    tooltip: "Oportunidades con una dependencia interna bloqueada o vencida.",
+  },
+  {
+    id: "no_next_step",
+    label: "Sin siguiente paso",
+    tooltip:
+      "Oportunidades sin ninguna actividad activa (llamada, visita, etc.) pendiente o en progreso.",
+  },
+  {
+    id: "stale",
+    label: "Sin actividad",
+    tooltip:
+      "Oportunidades sin movimiento registrado por más días de lo que permite su SLA de etapa.",
+  },
+  {
+    id: "advanced_this_week",
+    label: "Avanzadas semana",
+    tooltip:
+      "Oportunidades que avanzaron de etapa comercial durante la semana seleccionada.",
+  },
+  {
+    id: "waiting_internal",
+    label: "Esperando interno",
+    tooltip:
+      "Oportunidades con dependencias internas abiertas que aún no están bloqueadas ni vencidas.",
+  },
 ];
 
 const COMMERCIAL_STAGE_ORDER = {
@@ -120,6 +150,14 @@ function buildCockpitWeekOptions(selectedWeekStart) {
 
 function getCurrentMonth() {
   return new Date().toISOString().slice(0, 7);
+}
+
+function getCurrentYearStartMonth() {
+  return `${new Date().getFullYear()}-01`;
+}
+
+function getCurrentYearEndMonth() {
+  return `${new Date().getFullYear()}-12`;
 }
 
 function getQuarterKeyForDate(rawDate) {
@@ -254,6 +292,65 @@ function getForecastSortArrow(activeField, activeDirection, field) {
   return activeDirection === "asc" ? "↑" : "↓";
 }
 
+function groupOpenItemsByMonth(items) {
+  const grouped = new Map();
+  const monthOrder = [];
+
+  items.forEach((item) => {
+    const monthKey = item.closeDate ? item.closeDate.slice(0, 7) : "sin-fecha";
+    if (!grouped.has(monthKey)) {
+      grouped.set(monthKey, []);
+      monthOrder.push(monthKey);
+    }
+    grouped.get(monthKey).push(item);
+  });
+
+  // Ordenar meses: primero fechas válidas (alfabéticamente = cronológicamente), luego "sin-fecha"
+  monthOrder.sort((a, b) => {
+    if (a === "sin-fecha") return 1;
+    if (b === "sin-fecha") return -1;
+    return a.localeCompare(b);
+  });
+
+  return monthOrder.map((monthKey) => {
+    const monthItems = [...(grouped.get(monthKey) || [])];
+    monthItems.sort((left, right) => {
+      const leftOrder = Number(COMMERCIAL_STAGE_ORDER[left?.stageCode] || 0);
+      const rightOrder = Number(COMMERCIAL_STAGE_ORDER[right?.stageCode] || 0);
+      if (rightOrder !== leftOrder) {
+        return rightOrder - leftOrder;
+      }
+
+      const stageNameCompare = String(right?.stageName || "").localeCompare(
+        String(left?.stageName || ""),
+        "es",
+        { sensitivity: "base" },
+      );
+      if (stageNameCompare !== 0) {
+        return stageNameCompare;
+      }
+
+      return String(left?.opportunityName || "").localeCompare(
+        String(right?.opportunityName || ""),
+        "es",
+        { sensitivity: "base" },
+      );
+    });
+
+    return {
+      monthKey,
+      monthLabel:
+        monthKey !== "sin-fecha"
+          ? formatMonthLabel(monthKey)
+          : "Sin fecha de cierre",
+      items: monthItems,
+      total: grouped
+        .get(monthKey)
+        .reduce((sum, item) => sum + (item.amountUsd || 0), 0),
+    };
+  });
+}
+
 function SummaryCard({ label, value, helper, tone = "default", onClick }) {
   const clickable = typeof onClick === "function";
   const Tag = clickable ? "button" : "article";
@@ -320,7 +417,12 @@ function SparkBars({ items, valueKey, formatter }) {
     <div className="tracking-spark-bars">
       {items.map((item) => {
         const value = Number(item?.[valueKey] || 0);
-        const width = maxValue > 0 ? Math.max(8, (value / maxValue) * 100) : 8;
+        const width =
+          value <= 0
+            ? 0
+            : maxValue > 0
+              ? Math.max(8, (value / maxValue) * 100)
+              : 0;
         return (
           <div
             key={item.periodKey || item.stageCode || item.id}
@@ -373,9 +475,130 @@ function AttentionList({ title, items }) {
   );
 }
 
+const MONTH_SHORT_LABELS = [
+  "Ene",
+  "Feb",
+  "Mar",
+  "Abr",
+  "May",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dic",
+];
+
+function MonthPicker({ value, onChange, placeholder = "Sin límite" }) {
+  const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState(() => {
+    if (value && typeof value === "string" && value.length >= 4) {
+      return Number(value.substring(0, 4));
+    }
+    return new Date().getFullYear();
+  });
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(event) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [open]);
+
+  function handleSelect(monthIndex) {
+    const m = String(monthIndex + 1).padStart(2, "0");
+    onChange(`${viewYear}-${m}`);
+    setOpen(false);
+  }
+
+  function handleClear(event) {
+    event.stopPropagation();
+    onChange("");
+  }
+
+  const displayValue =
+    value && typeof value === "string" ? formatMonthLabel(value) : null;
+  const triggerLabel = displayValue || placeholder;
+
+  return (
+    <div className="month-picker" ref={containerRef}>
+      <button
+        type="button"
+        className={`month-picker-trigger${open ? " is-open" : ""}`}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className={value ? "" : "month-picker-placeholder"}>
+          {triggerLabel}
+        </span>
+        {value ? (
+          <span
+            role="button"
+            tabIndex={0}
+            className="month-picker-clear"
+            onClick={handleClear}
+            onKeyDown={(e) => e.key === "Enter" && handleClear(e)}
+            aria-label="Quitar filtro"
+          >
+            ×
+          </span>
+        ) : (
+          <span className="month-picker-caret" aria-hidden="true">
+            ⌄
+          </span>
+        )}
+      </button>
+      {open ? (
+        <div className="month-picker-popover">
+          <div className="month-picker-nav">
+            <button
+              type="button"
+              className="month-picker-nav-btn"
+              onClick={() => setViewYear((y) => y - 1)}
+            >
+              ‹
+            </button>
+            <span className="month-picker-year">{viewYear}</span>
+            <button
+              type="button"
+              className="month-picker-nav-btn"
+              onClick={() => setViewYear((y) => y + 1)}
+            >
+              ›
+            </button>
+          </div>
+          <div className="month-picker-grid">
+            {MONTH_SHORT_LABELS.map((name, index) => {
+              const optionValue = `${viewYear}-${String(index + 1).padStart(2, "0")}`;
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  className={`month-picker-cell${value === optionValue ? " is-selected" : ""}`}
+                  onClick={() => handleSelect(index)}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function CommercialTrackingPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("open");
   const [weekStart, setWeekStart] = useState(getCurrentWeekStart);
   const [forecastMonth, setForecastMonth] = useState(getCurrentMonth);
   const [forecastWeekStart, setForecastWeekStart] = useState("");
@@ -383,6 +606,8 @@ export default function CommercialTrackingPage() {
   const [businessLineId, setBusinessLineId] = useState("");
   const [viewMode, setViewMode] = useState("count");
   const [quickFilter, setQuickFilter] = useState("all");
+  const [openMonthFrom, setOpenMonthFrom] = useState(getCurrentYearStartMonth);
+  const [openMonthTo, setOpenMonthTo] = useState(getCurrentYearEndMonth);
   const [periodGranularity, setPeriodGranularity] = useState("week");
   const [periodFrom, setPeriodFrom] = useState(getDefaultPeriodStart);
   const [periodTo, setPeriodTo] = useState(getDefaultPeriodEnd);
@@ -390,6 +615,12 @@ export default function CommercialTrackingPage() {
   const [businessLines, setBusinessLines] = useState([]);
   const [overview, setOverview] = useState(null);
   const [openData, setOpenData] = useState(null);
+  const [wonData, setWonData] = useState(null);
+  const [openFilterOpportunity, setOpenFilterOpportunity] = useState("");
+  const [openFilterAccount, setOpenFilterAccount] = useState("");
+  const [openFilterStage, setOpenFilterStage] = useState("");
+  const [openFilterState, setOpenFilterState] = useState("");
+  const [openFilterNextStep, setOpenFilterNextStep] = useState("");
   const [periodData, setPeriodData] = useState(null);
   const [forecastData, setForecastData] = useState(null);
   const [forecastSort, setForecastSort] = useState(FORECAST_SORT_DEFAULT);
@@ -445,10 +676,28 @@ export default function CommercialTrackingPage() {
           sellerUserId: sellerUserId || undefined,
           businessLineId: businessLineId || undefined,
           quickFilter,
+          closeDateFrom: openMonthFrom ? `${openMonthFrom}-01` : undefined,
+          closeDateTo: openMonthTo ? `${openMonthTo}-31` : undefined,
         },
       },
     );
     setOpenData(response.data);
+  }
+
+  async function loadWonData() {
+    const response = await api.get(
+      "/api/commercial-tracking/won-opportunities",
+      {
+        params: {
+          weekStart,
+          sellerUserId: sellerUserId || undefined,
+          businessLineId: businessLineId || undefined,
+          closeDateFrom: openMonthFrom ? `${openMonthFrom}-01` : undefined,
+          closeDateTo: openMonthTo ? `${openMonthTo}-31` : undefined,
+        },
+      },
+    );
+    setWonData(response.data);
   }
 
   async function loadPeriodData() {
@@ -461,7 +710,7 @@ export default function CommercialTrackingPage() {
           granularity: periodGranularity,
           sellerUserId: sellerUserId || undefined,
           businessLineId: businessLineId || undefined,
-          viewMode,
+          viewMode: "count",
         },
       },
     );
@@ -507,6 +756,9 @@ export default function CommercialTrackingPage() {
         if (activeTab === "open") {
           await loadOpenData();
         }
+        if (activeTab === "won") {
+          await loadWonData();
+        }
         if (activeTab === "period") {
           await loadPeriodData();
         }
@@ -515,10 +767,7 @@ export default function CommercialTrackingPage() {
         }
       } catch (requestError) {
         setError(
-          getApiErrorMessage(
-            requestError,
-            "No fue posible cargar el pipeline",
-          ),
+          getApiErrorMessage(requestError, "No fue posible cargar el pipeline"),
         );
       } finally {
         setLoadingTab(false);
@@ -542,6 +791,9 @@ export default function CommercialTrackingPage() {
       try {
         if (activeTab === "open") {
           await loadOpenData();
+        }
+        if (activeTab === "won") {
+          await loadWonData();
         }
         if (activeTab === "period") {
           await loadPeriodData();
@@ -591,6 +843,9 @@ export default function CommercialTrackingPage() {
         if (activeTab === "open") {
           await loadOpenData();
         }
+        if (activeTab === "won") {
+          await loadWonData();
+        }
         if (activeTab === "period") {
           await loadPeriodData();
         }
@@ -619,15 +874,82 @@ export default function CommercialTrackingPage() {
     sellerUserId,
     businessLineId,
     viewMode,
+    openMonthFrom,
+    openMonthTo,
     forecastMonth,
     forecastWeekStart,
   ]);
 
+  const filteredOpenItems = useMemo(() => {
+    const baseItems = openData?.items || [];
+    let items = [...baseItems];
+
+    if (openFilterOpportunity) {
+      const q = openFilterOpportunity.toLowerCase();
+      items = items.filter((item) =>
+        (item.opportunityName || "").toLowerCase().includes(q),
+      );
+    }
+
+    if (openFilterAccount) {
+      const q = openFilterAccount.toLowerCase();
+      items = items.filter((item) =>
+        (item.accountName || "").toLowerCase().includes(q),
+      );
+    }
+
+    if (openFilterStage) {
+      items = items.filter((item) => item.stageCode === openFilterStage);
+    }
+
+    if (openFilterState) {
+      items = items.filter(
+        (item) =>
+          (item.executionStateCode || item.executionState?.code) ===
+          openFilterState,
+      );
+    }
+
+    if (openFilterNextStep) {
+      const q = openFilterNextStep.toLowerCase();
+      items = items.filter((item) =>
+        (item.nextStep?.title || "").toLowerCase().includes(q),
+      );
+    }
+
+    return items;
+  }, [
+    openData,
+    openFilterOpportunity,
+    openFilterAccount,
+    openFilterStage,
+    openFilterState,
+    openFilterNextStep,
+  ]);
+  const openItems = filteredOpenItems;
+  const openItemsByMonth = useMemo(
+    () => groupOpenItemsByMonth(openItems),
+    [openItems],
+  );
+  const openListTotalAmountUsd = useMemo(
+    () =>
+      openItems.reduce((sum, item) => sum + Number(item?.amountUsd || 0), 0),
+    [openItems],
+  );
+  const wonItems = wonData?.items || [];
+  const wonItemsByMonth = useMemo(
+    () => groupOpenItemsByMonth(wonItems),
+    [wonItems],
+  );
+  const wonListTotalAmountUsd = useMemo(
+    () => wonItems.reduce((sum, item) => sum + Number(item?.amountUsd || 0), 0),
+    [wonItems],
+  );
   const overviewSummary = overview?.summary || {};
   const overviewQuarterQuota = overview?.quarterQuota || null;
   const weekChange = overview?.weekChange || {};
   const immediateAttention = overview?.immediateAttention || {};
-  const openItems = openData?.items || [];
+  const overviewPipelineMovement = overview?.pipelineMovement || [];
   const periodSeries = periodData?.series || [];
   const forecastSummary = forecastData?.summary || {};
   const forecastQuarterQuota = forecastData?.quarterQuota || null;
@@ -778,7 +1100,9 @@ export default function CommercialTrackingPage() {
               <label>
                 Semana
                 <select
-                  value={forecastData?.meta?.activeWeekStart || forecastWeekStart}
+                  value={
+                    forecastData?.meta?.activeWeekStart || forecastWeekStart
+                  }
                   onChange={(event) => setForecastWeekStart(event.target.value)}
                   disabled={!forecastWeeks.length}
                 >
@@ -790,67 +1114,148 @@ export default function CommercialTrackingPage() {
                 </select>
               </label>
             </>
-          ) : (
-            <label>
-              Semana
-              <select
-                value={weekStart}
-                onChange={(event) => setWeekStart(event.target.value)}
-              >
-                {cockpitWeekOptions.map((week) => (
-                  <option key={week.value} value={week.value}>
-                    {week.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label>
-            Vendedor
-            <select
-              value={sellerUserId}
-              onChange={(event) => setSellerUserId(event.target.value)}
-            >
-              <option value="">Todos</option>
-              {sellers.map((seller) => (
-                <option
-                  key={seller.id || seller.value || seller.email}
-                  value={seller.id || seller.value || ""}
+          ) : activeTab === "period" ? (
+            <>
+              <label>
+                Granularidad
+                <select
+                  value={periodGranularity}
+                  onChange={(event) => setPeriodGranularity(event.target.value)}
                 >
-                  {seller.full_name ||
-                    seller.fullName ||
-                    seller.name ||
-                    seller.label ||
-                    "Sin nombre"}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Línea
-            <select
-              value={businessLineId}
-              onChange={(event) => setBusinessLineId(event.target.value)}
-            >
-              <option value="">Todas</option>
-              {businessLines.map((line) => (
-                <option key={line.id || line.value} value={line.id || ""}>
-                  {line.name || line.label || "Sin nombre"}
-                </option>
-              ))}
-            </select>
-          </label>
-          {activeTab !== "forecast" ? (
-            <label>
-              Vista
-              <select
-                value={viewMode}
-                onChange={(event) => setViewMode(event.target.value)}
-              >
-                <option value="count">Cantidad</option>
-                <option value="amount">Monto</option>
-              </select>
-            </label>
+                  <option value="week">Semanal</option>
+                  <option value="month">Mensual</option>
+                </select>
+              </label>
+              <label>
+                Desde
+                <input
+                  type="date"
+                  value={periodFrom}
+                  onChange={(event) => setPeriodFrom(event.target.value)}
+                />
+              </label>
+              <label>
+                Hasta
+                <input
+                  type="date"
+                  value={periodTo}
+                  onChange={(event) => setPeriodTo(event.target.value)}
+                />
+              </label>
+              <label>
+                Vendedor
+                <select
+                  value={sellerUserId}
+                  onChange={(event) => setSellerUserId(event.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {sellers.map((seller) => (
+                    <option
+                      key={seller.id || seller.value || seller.email}
+                      value={seller.id || seller.value || ""}
+                    >
+                      {seller.full_name ||
+                        seller.fullName ||
+                        seller.name ||
+                        seller.label ||
+                        "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Línea
+                <select
+                  value={businessLineId}
+                  onChange={(event) => setBusinessLineId(event.target.value)}
+                >
+                  <option value="">Todas</option>
+                  {businessLines.map((line) => (
+                    <option key={line.id || line.value} value={line.id || ""}>
+                      {line.name || line.label || "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <>
+              <label>
+                Semana
+                <select
+                  value={weekStart}
+                  onChange={(event) => setWeekStart(event.target.value)}
+                >
+                  {cockpitWeekOptions.map((week) => (
+                    <option key={week.value} value={week.value}>
+                      {week.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Vendedor
+                <select
+                  value={sellerUserId}
+                  onChange={(event) => setSellerUserId(event.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {sellers.map((seller) => (
+                    <option
+                      key={seller.id || seller.value || seller.email}
+                      value={seller.id || seller.value || ""}
+                    >
+                      {seller.full_name ||
+                        seller.fullName ||
+                        seller.name ||
+                        seller.label ||
+                        "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Línea
+                <select
+                  value={businessLineId}
+                  onChange={(event) => setBusinessLineId(event.target.value)}
+                >
+                  <option value="">Todas</option>
+                  {businessLines.map((line) => (
+                    <option key={line.id || line.value} value={line.id || ""}>
+                      {line.name || line.label || "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {activeTab === "overview" ? (
+                <label>
+                  Vista
+                  <select
+                    value={viewMode}
+                    onChange={(event) => setViewMode(event.target.value)}
+                  >
+                    <option value="count">Cantidad</option>
+                    <option value="amount">Monto</option>
+                  </select>
+                </label>
+              ) : null}
+            </>
+          )}
+          {activeTab === "open" || activeTab === "won" ? (
+            <>
+              <label>
+                Desde
+                <MonthPicker
+                  value={openMonthFrom}
+                  onChange={setOpenMonthFrom}
+                />
+              </label>
+              <label>
+                Hasta
+                <MonthPicker value={openMonthTo} onChange={setOpenMonthTo} />
+              </label>
+            </>
           ) : null}
           <button
             type="button"
@@ -881,7 +1286,7 @@ export default function CommercialTrackingPage() {
         role="tablist"
         aria-label="Vistas de pipeline"
       >
-        {TAB_OPTIONS.map((tab) => (
+        {TAB_OPTIONS.filter((tab) => !HIDDEN_TAB_IDS.has(tab.id)).map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -894,9 +1299,7 @@ export default function CommercialTrackingPage() {
       </div>
 
       {loading ? (
-        <div className="tracking-empty-state">
-          Cargando pipeline...
-        </div>
+        <div className="tracking-empty-state">Cargando pipeline...</div>
       ) : null}
 
       {activeTab === "overview" ? (
@@ -1025,7 +1428,7 @@ export default function CommercialTrackingPage() {
             <section className="tracking-panel">
               <div className="tracking-panel-header">
                 <h3>Movimiento del pipeline por etapa</h3>
-                <span>{overview?.pipelineMovement?.length || 0} etapas</span>
+                <span>{overviewPipelineMovement?.length || 0} etapas</span>
               </div>
               <div className="tracking-table-wrap">
                 <table className="tracking-table">
@@ -1040,7 +1443,7 @@ export default function CommercialTrackingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(overview?.pipelineMovement || []).map((item) => (
+                    {(overviewPipelineMovement || []).map((item) => (
                       <tr key={item.stageCode}>
                         <td>{item.stageName}</td>
                         <td>{formatNumber(item.openCount)}</td>
@@ -1394,6 +1797,7 @@ export default function CommercialTrackingPage() {
                     type="button"
                     className={`tracking-pill ${quickFilter === option.id ? "is-active" : ""}`.trim()}
                     onClick={() => setQuickFilter(option.id)}
+                    title={option.tooltip}
                   >
                     {option.label}
                   </button>
@@ -1412,6 +1816,7 @@ export default function CommercialTrackingPage() {
                       <th>Cuenta</th>
                       <th>Vendedor</th>
                       <th>Etapa</th>
+                      <th>Mes cierre</th>
                       <th>Monto</th>
                       <th>Estado</th>
                       <th>Siguiente paso</th>
@@ -1419,33 +1824,167 @@ export default function CommercialTrackingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {openItems.map((item) => (
-                      <tr key={item.id || item.opportunityId}>
-                        <td>
-                          <strong>{item.name || item.opportunityName}</strong>
-                          {item.advancedThisWeek ? (
-                            <div className="tracking-inline-note">
-                              Avanzó esta semana
+                    {openItemsByMonth.map((monthGroup) => (
+                      <React.Fragment key={monthGroup.monthKey}>
+                        <tr className="tracking-month-header">
+                          <td colSpan="9">
+                            <div className="tracking-month-header-content">
+                              <strong>{monthGroup.monthLabel}</strong>
+                              <span className="tracking-month-total">
+                                {monthGroup.items.length} oportunidades ·{" "}
+                                {formatCurrency(monthGroup.total)}
+                              </span>
                             </div>
-                          ) : null}
-                        </td>
-                        <td>{item.accountName}</td>
-                        <td>{item.sellerUserName}</td>
-                        <td>{item.stageName}</td>
-                        <td>{formatCurrency(item.amountUsd)}</td>
-                        <td>
-                          <span
-                            className={`tracking-state-badge is-${item.executionState?.code || item.executionStateCode || "en_curso"}`.trim()}
-                          >
-                            {item.executionState?.label ||
-                              item.executionStateLabel ||
-                              "En curso"}
-                          </span>
-                        </td>
-                        <td>{item.nextStep?.title || "Sin siguiente paso"}</td>
-                        <td>{formatNumber(item.daysSinceActivity)}</td>
-                      </tr>
+                          </td>
+                        </tr>
+                        {monthGroup.items.map((item) => (
+                          <tr key={item.id || item.opportunityId}>
+                            <td>
+                              <strong>
+                                {item.name || item.opportunityName}
+                              </strong>
+                              {item.advancedThisWeek ? (
+                                <div className="tracking-inline-note">
+                                  Avanzó esta semana
+                                </div>
+                              ) : null}
+                            </td>
+                            <td>{item.accountName}</td>
+                            <td>{item.sellerUserName}</td>
+                            <td>{item.stageName}</td>
+                            <td>
+                              {item.closeDate
+                                ? formatMonthLabel(item.closeDate.slice(0, 7))
+                                : "Sin fecha"}
+                            </td>
+                            <td>{formatCurrency(item.amountUsd)}</td>
+                            <td>
+                              <span
+                                className={`tracking-state-badge is-${item.executionState?.code || item.executionStateCode || "en_curso"}`.trim()}
+                              >
+                                {item.executionState?.label ||
+                                  item.executionStateLabel ||
+                                  "En curso"}
+                              </span>
+                            </td>
+                            <td>
+                              {item.nextStep?.title || "Sin siguiente paso"}
+                            </td>
+                            <td>{formatNumber(item.daysSinceActivity)}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     ))}
+                    <tr className="tracking-list-total-row">
+                      <td colSpan="9">
+                        <div className="tracking-month-header-content">
+                          <strong>Total del listado</strong>
+                          <span className="tracking-month-total">
+                            {openItems.length} oportunidades ·{" "}
+                            {formatCurrency(openListTotalAmountUsd)}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {!loading && activeTab === "won" ? (
+        <div className="tracking-layout">
+          <section className="tracking-panel">
+            <div className="tracking-panel-header tracking-panel-header-wide">
+              <div>
+                <h3>Oportunidades ganadas</h3>
+                <span>{wonData?.summary?.total || 0} oportunidades</span>
+              </div>
+            </div>
+            {loadingTab ? (
+              <div className="tracking-empty-state">Cargando detalle...</div>
+            ) : null}
+            {!loadingTab ? (
+              <div className="tracking-table-wrap">
+                <table className="tracking-table">
+                  <thead>
+                    <tr>
+                      <th>Oportunidad</th>
+                      <th>Cuenta</th>
+                      <th>Vendedor</th>
+                      <th>Etapa</th>
+                      <th>Mes cierre</th>
+                      <th>Monto</th>
+                      <th>Estado</th>
+                      <th>Siguiente paso</th>
+                      <th>Días sin actividad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wonItemsByMonth.map((monthGroup) => (
+                      <React.Fragment key={monthGroup.monthKey}>
+                        <tr className="tracking-month-header">
+                          <td colSpan="9">
+                            <div className="tracking-month-header-content">
+                              <strong>{monthGroup.monthLabel}</strong>
+                              <span className="tracking-month-total">
+                                {monthGroup.items.length} oportunidades ·{" "}
+                                {formatCurrency(monthGroup.total)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {monthGroup.items.map((item) => (
+                          <tr key={item.id || item.opportunityId}>
+                            <td>
+                              <strong>
+                                {item.name || item.opportunityName}
+                              </strong>
+                              {item.advancedThisWeek ? (
+                                <div className="tracking-inline-note">
+                                  Avanzó esta semana
+                                </div>
+                              ) : null}
+                            </td>
+                            <td>{item.accountName}</td>
+                            <td>{item.sellerUserName}</td>
+                            <td>{item.stageName}</td>
+                            <td>
+                              {item.closeDate
+                                ? formatMonthLabel(item.closeDate.slice(0, 7))
+                                : "Sin fecha"}
+                            </td>
+                            <td>{formatCurrency(item.amountUsd)}</td>
+                            <td>
+                              <span
+                                className={`tracking-state-badge is-${item.executionState?.code || item.executionStateCode || "ganada"}`.trim()}
+                              >
+                                {item.executionState?.label ||
+                                  item.executionStateLabel ||
+                                  "Ganada"}
+                              </span>
+                            </td>
+                            <td>
+                              {item.nextStep?.title || "Sin siguiente paso"}
+                            </td>
+                            <td>{formatNumber(item.daysSinceActivity)}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                    <tr className="tracking-list-total-row">
+                      <td colSpan="9">
+                        <div className="tracking-month-header-content">
+                          <strong>Total del listado</strong>
+                          <span className="tracking-month-total">
+                            {wonItems.length} oportunidades ·{" "}
+                            {formatCurrency(wonListTotalAmountUsd)}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1462,36 +2001,6 @@ export default function CommercialTrackingPage() {
                 <h3>Oportunidades por período</h3>
                 <span>{periodSeries.length} cortes</span>
               </div>
-              <div className="tracking-inline-filters">
-                <label>
-                  Granularidad
-                  <select
-                    value={periodGranularity}
-                    onChange={(event) =>
-                      setPeriodGranularity(event.target.value)
-                    }
-                  >
-                    <option value="week">Semanal</option>
-                    <option value="month">Mensual</option>
-                  </select>
-                </label>
-                <label>
-                  Desde
-                  <input
-                    type="date"
-                    value={periodFrom}
-                    onChange={(event) => setPeriodFrom(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Hasta
-                  <input
-                    type="date"
-                    value={periodTo}
-                    onChange={(event) => setPeriodTo(event.target.value)}
-                  />
-                </label>
-              </div>
             </div>
             {loadingTab ? (
               <div className="tracking-empty-state">Cargando tendencia...</div>
@@ -1500,12 +2009,8 @@ export default function CommercialTrackingPage() {
               <>
                 <SparkBars
                   items={periodSeries}
-                  valueKey={
-                    viewMode === "amount" ? "createdAmountUsd" : "createdCount"
-                  }
-                  formatter={
-                    viewMode === "amount" ? formatCurrency : formatNumber
-                  }
+                  valueKey="createdCount"
+                  formatter={formatNumber}
                 />
                 <div className="tracking-table-wrap">
                   <table className="tracking-table">
@@ -1515,60 +2020,30 @@ export default function CommercialTrackingPage() {
                         <th>Creadas</th>
                         <th>Ganadas</th>
                         <th>Perdidas</th>
-                        <th>Abiertas al cierre</th>
+                        <th>En proceso</th>
                         <th>Variación</th>
                       </tr>
                     </thead>
                     <tbody>
                       {periodSeries.map((item) => {
-                        const createdValue =
-                          viewMode === "amount"
-                            ? item.createdAmountUsd
-                            : item.createdCount;
-                        const wonValue =
-                          viewMode === "amount"
-                            ? item.wonAmountUsd
-                            : item.wonCount;
-                        const lostValue =
-                          viewMode === "amount"
-                            ? item.lostAmountUsd
-                            : item.lostCount;
-                        const openValue =
-                          viewMode === "amount"
-                            ? item.openAtEndAmountUsd
-                            : item.openAtEndCount;
+                        const createdValue = item.createdCount;
+                        const wonValue = item.wonCount;
+                        const lostValue = item.lostCount;
+                        const openValue = item.openAtEndCount;
                         const delta = item.deltaVsPrevious;
 
                         return (
                           <tr key={item.periodKey}>
                             <td>{item.periodLabel}</td>
-                            <td>
-                              {viewMode === "amount"
-                                ? formatCurrency(createdValue)
-                                : formatNumber(createdValue)}
-                            </td>
-                            <td>
-                              {viewMode === "amount"
-                                ? formatCurrency(wonValue)
-                                : formatNumber(wonValue)}
-                            </td>
-                            <td>
-                              {viewMode === "amount"
-                                ? formatCurrency(lostValue)
-                                : formatNumber(lostValue)}
-                            </td>
-                            <td>
-                              {viewMode === "amount"
-                                ? formatCurrency(openValue)
-                                : formatNumber(openValue)}
-                            </td>
+                            <td>{formatNumber(createdValue)}</td>
+                            <td>{formatNumber(wonValue)}</td>
+                            <td>{formatNumber(lostValue)}</td>
+                            <td>{formatNumber(openValue)}</td>
                             <td>
                               {delta ? (
                                 <span>
                                   {delta.deltaAbsolute > 0 ? "+" : ""}
-                                  {viewMode === "amount"
-                                    ? formatCurrency(delta.deltaAbsolute)
-                                    : formatNumber(delta.deltaAbsolute)}
+                                  {formatNumber(delta.deltaAbsolute)}
                                   {delta.deltaPercent === null
                                     ? " · sin base"
                                     : ` · ${delta.deltaPercent > 0 ? "+" : ""}${delta.deltaPercent}%`}

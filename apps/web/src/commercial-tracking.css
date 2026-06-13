@@ -388,6 +388,43 @@
   width: 5rem;
 }
 
+.tracking-month-header {
+  background-color: #f0f3f1;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.tracking-month-header td {
+  padding: 1rem 0.8rem;
+  background-color: #f0f3f1;
+}
+
+.tracking-month-header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.tracking-month-total {
+  font-weight: 400;
+  color: #617168;
+  font-size: 0.9rem;
+}
+
+.tracking-list-total-row td {
+  padding: 1rem 0.8rem;
+  background: #e2e9e4;
+  border-top: 1px solid rgba(35, 58, 43, 0.18);
+  border-bottom: 1px solid rgba(35, 58, 43, 0.18);
+}
+
+.tracking-list-total-row strong {
+  color: #1d3326;
+}
+
 .tracking-actions-cell {
   width: 5rem;
   text-align: right;
@@ -529,4 +566,177 @@
     grid-template-columns: 1fr;
     width: 100%;
   }
+}
+
+/* ── Month Picker ─────────────────────────────────────── */
+.month-picker {
+  position: relative;
+  width: 100%;
+}
+
+.month-picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgba(43, 70, 52, 0.18);
+  border-radius: 0.8rem;
+  padding: 0 0.85rem;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.9rem;
+  color: #294437;
+  cursor: pointer;
+  text-align: left;
+  gap: 0.4rem;
+}
+
+.month-picker-trigger.is-open {
+  border-color: rgba(43, 70, 52, 0.4);
+  outline: none;
+}
+
+.month-picker-placeholder {
+  color: #8a9e8c;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.month-picker-trigger span:first-child {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.month-picker-caret {
+  font-size: 1rem;
+  color: #6b8c6d;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.month-picker-clear {
+  font-size: 1rem;
+  line-height: 1;
+  color: #8a9e8c;
+  cursor: pointer;
+  padding: 0 0.1rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.month-picker-clear:hover {
+  color: #294437;
+}
+
+.month-picker-popover {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 300;
+  background: #fff;
+  border: 1px solid rgba(43, 70, 52, 0.15);
+  border-radius: 0.9rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.13);
+  padding: 0.75rem;
+  min-width: 200px;
+}
+
+.month-picker-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.month-picker-nav-btn {
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid rgba(43, 70, 52, 0.15);
+  border-radius: 0.45rem;
+  background: #f5f8f5;
+  cursor: pointer;
+  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #294437;
+  line-height: 1;
+}
+
+.month-picker-nav-btn:hover {
+  background: #e4ede4;
+}
+
+.month-picker-year {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #294437;
+}
+
+.month-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.25rem;
+}
+
+.month-picker-cell {
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  padding: 0.45rem 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: #294437;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.month-picker-cell:hover {
+  background: #f0f6f1;
+  border-color: rgba(43, 70, 52, 0.15);
+}
+
+.month-picker-cell.is-selected {
+  background: #0056d6;
+  color: #fff;
+  border-color: #0056d6;
+}
+
+/* ── Table Filters ────────────────────────────────────── */
+.tracking-filters-row {
+  background: #f7faf7;
+  border-top: 1px solid rgba(43, 70, 52, 0.1);
+}
+
+.tracking-filters-row td {
+  padding: 0.5rem;
+}
+
+.tracking-filter-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(43, 70, 52, 0.15);
+  border-radius: 0.5rem;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+  background: #fff;
+  color: #294437;
+}
+
+.tracking-filter-input::placeholder {
+  color: #8a9e8c;
+}
+
+.tracking-filter-input:focus {
+  outline: none;
+  border-color: #0056d6;
+  box-shadow: 0 0 0 2px rgba(0, 86, 214, 0.1);
 }

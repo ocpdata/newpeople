@@ -16,7 +16,12 @@ const STAGE_SLA_DAYS = {
   validacion_valor: 5,
 };
 
-const NEXT_STEP_ACTION_TYPES = ["next_step", "follow_up", "call", "waiting_customer"];
+const NEXT_STEP_ACTION_TYPES = [
+  "next_step",
+  "follow_up",
+  "call",
+  "waiting_customer",
+];
 
 function userHasPermission(user, permission) {
   return user?.permissionSet?.has(permission);
@@ -633,6 +638,98 @@ async function buildOpenOpportunityItems(user, filters = {}) {
         return right.priorityScore - left.priorityScore;
       }
       return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+    });
+}
+
+async function buildWonOpportunityItems(user, filters = {}) {
+  const scopedOpportunities =
+    filters.scopedOpportunities ||
+    (await listScopedOpportunities(user, filters));
+  const wonRows = scopedOpportunities.filter((item) =>
+    isRealWonOpportunity(item),
+  );
+  const opportunityIds = wonRows.map((item) => Number(item.id));
+  const [
+    nextSteps,
+    dependencyRows,
+    lastActivityByOpportunity,
+    stageAdvancedRows,
+  ] = await Promise.all([
+    listNextSteps(opportunityIds),
+    listOpenDependencies(opportunityIds),
+    listLastActivityByOpportunity(opportunityIds),
+    listAuditEvents(
+      opportunityIds,
+      ["stage_advanced"],
+      filters.weekRange.start,
+      filters.weekRange.end,
+    ),
+  ]);
+
+  const dependenciesByOpportunity = dependencyRows.reduce(
+    (accumulator, row) => {
+      const key = Number(row.opportunity_id || 0);
+      const current = accumulator.get(key) || [];
+      current.push(row);
+      accumulator.set(key, current);
+      return accumulator;
+    },
+    new Map(),
+  );
+  const advancedThisWeekIds = new Set(
+    stageAdvancedRows.map((row) => Number(row.entity_id || 0)).filter(Boolean),
+  );
+
+  return wonRows
+    .map((row) => {
+      const opportunityId = Number(row.id);
+      const nextStep = nextSteps.get(opportunityId) || null;
+      const dependencies = dependenciesByOpportunity.get(opportunityId) || [];
+      const lastActivity = lastActivityByOpportunity.get(opportunityId) || null;
+      const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
+      const daysSinceActivity = lastActivity
+        ? getDiffDays(lastActivity)
+        : getDiffDays(row.updated_at || row.created_at);
+
+      return {
+        opportunityId,
+        opportunityName: row.name || "",
+        accountId: Number(row.account_id),
+        accountName: row.account_name || "",
+        sellerUserId:
+          row.seller_user_id === null || row.seller_user_id === undefined
+            ? null
+            : Number(row.seller_user_id),
+        sellerUserName: row.seller_user_name || "Sin vendedor",
+        businessLineId: Number(row.business_line_id || 0),
+        businessLineName: row.business_line_name || "",
+        stageCode: row.sales_stage_code || "",
+        stageName: row.sales_stage_name || "",
+        amountUsd: Number(row.amount_usd || 0),
+        closeDate: row.close_date || null,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+        nextStep,
+        dependencies,
+        executionStateCode: "ganada",
+        executionStateLabel: row.commercial_status_name || "Ganada",
+        lastActivityAt: lastActivity
+          ? lastActivity.toISOString()
+          : row.updated_at,
+        daysSinceActivity,
+        slaDays,
+        isStale: daysSinceActivity > slaDays,
+        advancedThisWeek: advancedThisWeekIds.has(opportunityId),
+      };
+    })
+    .sort((left, right) => {
+      if (Number(right.amountUsd || 0) !== Number(left.amountUsd || 0)) {
+        return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+      }
+
+      return String(left.opportunityName || "").localeCompare(
+        String(right.opportunityName || ""),
+      );
     });
 }
 
@@ -1286,10 +1383,16 @@ router.get(
     const businessLineId = toPositiveInt(req.query?.businessLineId);
     const quickFilter = String(req.query?.quickFilter || "all").trim();
     const weekRange = getWeekRange(req.query?.weekStart);
+    const closeDateFrom =
+      String(req.query?.closeDateFrom || "").trim() || undefined;
+    const closeDateTo =
+      String(req.query?.closeDateTo || "").trim() || undefined;
     const items = await buildOpenOpportunityItems(req.user, {
       sellerUserId,
       businessLineId,
       weekRange,
+      closeDateFrom,
+      closeDateTo,
     });
 
     const filteredItems = items.filter((item) => {
@@ -1322,6 +1425,43 @@ router.get(
         ),
       },
       items: filteredItems,
+    });
+  },
+);
+
+router.get(
+  "/won-opportunities",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const sellerUserId = toPositiveInt(req.query?.sellerUserId);
+    const businessLineId = toPositiveInt(req.query?.businessLineId);
+    const weekRange = getWeekRange(req.query?.weekStart);
+    const closeDateFrom =
+      String(req.query?.closeDateFrom || "").trim() || undefined;
+    const closeDateTo =
+      String(req.query?.closeDateTo || "").trim() || undefined;
+    const items = await buildWonOpportunityItems(req.user, {
+      sellerUserId,
+      businessLineId,
+      weekRange,
+      closeDateFrom,
+      closeDateTo,
+    });
+
+    res.json({
+      appliedFilters: {
+        weekStart: formatIsoDate(weekRange.start),
+        sellerUserId,
+        businessLineId,
+      },
+      summary: {
+        total: items.length,
+        totalAmountUsd: toAmount(
+          items.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+        ),
+      },
+      items,
     });
   },
 );
