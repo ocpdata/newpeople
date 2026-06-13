@@ -22,7 +22,11 @@ function normalizeText(value) {
     .trim();
 }
 
-export function useAccountsCrud({ currentUser }) {
+export function useAccountsCrud({
+  currentUser,
+  searchParams,
+  setSearchParams,
+}) {
   const [accounts, setAccounts] = useState([]);
   const [users, setUsers] = useState([]);
   const [accountsPendingEnabled, setAccountsPendingEnabled] = useState(false);
@@ -1045,6 +1049,29 @@ export function useAccountsCrud({ currentUser }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAccountDuplicateReview(null);
   }, [form.name, form.registrationCode, form.website, form.countryId]);
+
+  useEffect(() => {
+    if (!searchParams || typeof setSearchParams !== "function") {
+      return;
+    }
+
+    const editId = searchParams.get("edit");
+    if (!editId) return;
+
+    let cancelled = false;
+
+    async function syncEditParam() {
+      setSearchParams({}, { replace: true });
+      if (cancelled) return;
+      await openEditAccountModal(Number(editId));
+    }
+
+    void syncEditParam();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, setSearchParams]);
 
   function useSuggestedCompanyDescription() {
     const nextDescription =

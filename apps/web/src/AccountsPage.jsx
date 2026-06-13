@@ -1,6 +1,8 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ConfirmationModal } from "./AppModals";
 import AccountContactsModal from "./accounts/AccountContactsModal";
+import AccountQuotationsModal from "./accounts/AccountQuotationsModal";
+import AccountProposalsModal from "./accounts/AccountProposalsModal";
 import AccountFormModal from "./accounts/AccountFormModal";
 import { useAccountInteractions } from "./accounts/useAccountInteractions";
 import AccountsListSection from "./accounts/AccountsListSection";
@@ -10,6 +12,24 @@ import { useAccountRelatedRecords } from "./accounts/useAccountRelatedRecords";
 
 function AccountsPage({ can, currentUser }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canAccessQuotations = [
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
+  const canAccessProposals = [
+    "propuestas.read",
+    "propuestas.create",
+    "propuestas.update",
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
   const {
     users,
     accountStatusFilter,
@@ -73,7 +93,7 @@ function AccountsPage({ can, currentUser }) {
     openDuplicateCandidateAccount,
     useSuggestedCompanyDescription,
     applySuggestedAccountField,
-  } = useAccountsCrud({ currentUser });
+  } = useAccountsCrud({ currentUser, searchParams, setSearchParams });
 
   const {
     editAccountOpportunities,
@@ -84,16 +104,32 @@ function AccountsPage({ can, currentUser }) {
     setOppSectionYearFilter,
     accountOppsModalAccount,
     accountContactsModalAccount,
+    accountQuotationsModalAccount,
+    accountProposalsModalAccount,
     editAccountContacts,
+    editAccountQuotations,
+    editAccountProposals,
     loadingAccountContacts,
+    loadingAccountQuotations,
+    loadingAccountProposals,
     contactModalStatusFilter,
+    quotationModalStatusFilter,
+    proposalModalStatusFilter,
     setContactModalStatusFilter,
+    setQuotationModalStatusFilter,
+    setProposalModalStatusFilter,
     openAccountOppsModal,
     closeAccountOppsModal,
     openAccountContactsModal,
     closeAccountContactsModal,
+    openAccountQuotationsModal,
+    closeAccountQuotationsModal,
+    openAccountProposalsModal,
+    closeAccountProposalsModal,
     getOpportunityStatusBadgeClass,
     getContactStatusBadgeClass,
+    getQuotationStatusBadgeClass,
+    getProposalStatusBadgeClass,
   } = useAccountRelatedRecords();
 
   const {
@@ -159,6 +195,8 @@ function AccountsPage({ can, currentUser }) {
         accountsPendingEnabled={accountsPendingEnabled}
         canReadOpportunities={can("oportunidades.read")}
         canReadContacts={can("contactos.read")}
+        canAccessQuotations={canAccessQuotations}
+        canAccessProposals={canAccessProposals}
         accountStatusFilter={accountStatusFilter}
         setAccountStatusFilter={setAccountStatusFilter}
         accountStatusCounts={accountStatusCounts}
@@ -182,6 +220,8 @@ function AccountsPage({ can, currentUser }) {
         openAccountStatusConfirmation={openAccountStatusConfirmation}
         openAccountOppsModal={openAccountOppsModal}
         openAccountContactsModal={openAccountContactsModal}
+        openAccountQuotationsModal={openAccountQuotationsModal}
+        openAccountProposalsModal={openAccountProposalsModal}
         accountsPage={accountsPage}
         accountsPerPage={accountsPerPage}
         totalAccountPages={totalAccountPages}
@@ -305,6 +345,41 @@ function AccountsPage({ can, currentUser }) {
           navigate(`/contacts?edit=${contactId}`);
         }}
         getContactStatusBadgeClass={getContactStatusBadgeClass}
+      />
+
+      <AccountQuotationsModal
+        account={accountQuotationsModalAccount}
+        loading={loadingAccountQuotations}
+        quotations={editAccountQuotations}
+        statusFilter={quotationModalStatusFilter}
+        setStatusFilter={setQuotationModalStatusFilter}
+        onClose={closeAccountQuotationsModal}
+        onQuotationSelect={(quotation) => {
+          closeAccountQuotationsModal();
+          const opportunityId = Number(
+            quotation?.opportunityId || quotation?.opportunity_id || 0,
+          );
+          if (opportunityId) {
+            navigate(`/quotations?opportunityId=${opportunityId}`);
+            return;
+          }
+          navigate("/quotations");
+        }}
+        getQuotationStatusBadgeClass={getQuotationStatusBadgeClass}
+      />
+
+      <AccountProposalsModal
+        account={accountProposalsModalAccount}
+        loading={loadingAccountProposals}
+        proposals={editAccountProposals}
+        statusFilter={proposalModalStatusFilter}
+        setStatusFilter={setProposalModalStatusFilter}
+        onClose={closeAccountProposalsModal}
+        onProposalSelect={(proposalId) => {
+          closeAccountProposalsModal();
+          navigate(`/proposals?proposalId=${Number(proposalId || 0)}`);
+        }}
+        getProposalStatusBadgeClass={getProposalStatusBadgeClass}
       />
     </section>
   );

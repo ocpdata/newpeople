@@ -28,6 +28,41 @@ const EMPTY_TEMPORARY_FEATURE_SETTINGS = {
   updatedByUserName: "",
 };
 
+const EMPTY_CHATBOT_SETTINGS = {
+  requestTimeoutMs: 60000,
+  updatedAt: null,
+  updatedByUserName: "",
+};
+
+const STAGE_SLA_ENTRIES = [
+  { code: "contacto_inicial", label: "Contacto inicial" },
+  {
+    code: "identificacion_oportunidad",
+    label: "Identificación de oportunidad",
+  },
+  { code: "desarrollo", label: "Desarrollo" },
+  { code: "cotizacion", label: "Cotización" },
+  { code: "demostracion", label: "Demostración" },
+  { code: "negociacion", label: "Negociación" },
+  { code: "waiting", label: "En espera" },
+];
+
+const DEFAULT_STAGE_SLA_MAP = {
+  contacto_inicial: 3,
+  identificacion_oportunidad: 3,
+  desarrollo: 5,
+  cotizacion: 5,
+  demostracion: 6,
+  negociacion: 4,
+  waiting: 3,
+};
+
+const EMPTY_COMMERCIAL_SETTINGS = {
+  stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+  updatedAt: null,
+  updatedByUserName: "",
+};
+
 const EMPTY_PROPOSAL_CONTENT_CONFIG = {
   id: null,
   status: "active",
@@ -472,6 +507,90 @@ function serializeTemporaryFeatureSettings(settings) {
   });
 }
 
+function deserializeTemporaryFeatureSettingsSnapshot(snapshot) {
+  try {
+    return normalizeTemporaryFeatureSettings(JSON.parse(snapshot || "null"));
+  } catch {
+    return { ...EMPTY_TEMPORARY_FEATURE_SETTINGS };
+  }
+}
+
+function normalizeChatbotSettings(settings) {
+  if (!settings) {
+    return { ...EMPTY_CHATBOT_SETTINGS };
+  }
+
+  return {
+    requestTimeoutMs: Math.max(
+      5000,
+      Number(settings.requestTimeoutMs || 60000),
+    ),
+    updatedAt: settings.updatedAt || null,
+    updatedByUserName: String(settings.updatedByUserName || ""),
+  };
+}
+
+function serializeChatbotSettings(settings) {
+  return JSON.stringify({
+    requestTimeoutMs: Number(settings.requestTimeoutMs || 0),
+  });
+}
+
+function deserializeChatbotSettingsSnapshot(snapshot) {
+  try {
+    return normalizeChatbotSettings(JSON.parse(snapshot || "null"));
+  } catch {
+    return { ...EMPTY_CHATBOT_SETTINGS };
+  }
+}
+
+function normalizeCommercialSettings(settings) {
+  if (!settings) {
+    return {
+      ...EMPTY_COMMERCIAL_SETTINGS,
+      stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+    };
+  }
+
+  const stageSlaMap = { ...DEFAULT_STAGE_SLA_MAP };
+  if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
+    Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
+      const parsed = Number(days);
+      if (
+        Object.prototype.hasOwnProperty.call(DEFAULT_STAGE_SLA_MAP, code) &&
+        Number.isInteger(parsed) &&
+        parsed >= 1 &&
+        parsed <= 90
+      ) {
+        stageSlaMap[code] = parsed;
+      }
+    });
+  }
+
+  return {
+    stageSlaMap,
+    updatedAt: settings.updatedAt || null,
+    updatedByUserName: String(settings.updatedByUserName || ""),
+  };
+}
+
+function serializeCommercialSettings(settings) {
+  return JSON.stringify(settings?.stageSlaMap || {});
+}
+
+function deserializeCommercialSettingsSnapshot(snapshot) {
+  try {
+    return normalizeCommercialSettings({
+      stageSlaMap: JSON.parse(snapshot || "null"),
+    });
+  } catch {
+    return {
+      ...EMPTY_COMMERCIAL_SETTINGS,
+      stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+    };
+  }
+}
+
 function formatDateTime(value) {
   if (!value) return "Sin cambios registrados";
   try {
@@ -516,6 +635,9 @@ export function useConfigurationPage() {
   const [temporaryFeatureSettings, setTemporaryFeatureSettings] = useState(
     EMPTY_TEMPORARY_FEATURE_SETTINGS,
   );
+  const [chatbotSettings, setChatbotSettings] = useState(
+    EMPTY_CHATBOT_SETTINGS,
+  );
   const [form, setForm] = useState(EMPTY_FORM);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const [initialSnapshot, setInitialSnapshot] = useState(
@@ -528,6 +650,18 @@ export function useConfigurationPage() {
   ] = useState(
     serializeTemporaryFeatureSettings(EMPTY_TEMPORARY_FEATURE_SETTINGS),
   );
+  const [savingChatbotSettings, setSavingChatbotSettings] = useState(false);
+  const [initialChatbotSettingsSnapshot, setInitialChatbotSettingsSnapshot] =
+    useState(serializeChatbotSettings(EMPTY_CHATBOT_SETTINGS));
+  const [commercialSettings, setCommercialSettings] = useState(
+    EMPTY_COMMERCIAL_SETTINGS,
+  );
+  const [savingCommercialSettings, setSavingCommercialSettings] =
+    useState(false);
+  const [
+    initialCommercialSettingsSnapshot,
+    setInitialCommercialSettingsSnapshot,
+  ] = useState(serializeCommercialSettings(EMPTY_COMMERCIAL_SETTINGS));
   const [auditEntries, setAuditEntries] = useState([]);
   const [workspacePlaybooks, setWorkspacePlaybooks] = useState([]);
   const [workspacePlaybookDetail, setWorkspacePlaybookDetail] = useState(null);
@@ -585,6 +719,8 @@ export function useConfigurationPage() {
         const [
           profileResponse,
           temporaryFeaturesResponse,
+          chatbotSettingsResponse,
+          commercialSettingsResponse,
           countriesResponse,
           auditResponse,
           playbooksResponse,
@@ -596,6 +732,12 @@ export function useConfigurationPage() {
           api.get("/api/settings/company-profile"),
           api
             .get("/api/settings/temporary-features")
+            .catch(() => ({ data: { settings: null } })),
+          api
+            .get("/api/settings/chatbot")
+            .catch(() => ({ data: { settings: null } })),
+          api
+            .get("/api/settings/commercial")
             .catch(() => ({ data: { settings: null } })),
           api.get("/api/catalogs/countries"),
           api.get("/api/settings/audit?limit=25"),
@@ -626,13 +768,27 @@ export function useConfigurationPage() {
         const nextTemporaryFeatureSettings = normalizeTemporaryFeatureSettings(
           temporaryFeaturesResponse.data?.settings,
         );
+        const nextChatbotSettings = normalizeChatbotSettings(
+          chatbotSettingsResponse.data?.settings,
+        );
+        const nextCommercialSettings = normalizeCommercialSettings(
+          commercialSettingsResponse.data?.settings,
+        );
         const nextForm = normalizeProfileToForm(nextProfile);
         setCompanyProfile(nextProfile);
         setTemporaryFeatureSettings(nextTemporaryFeatureSettings);
+        setChatbotSettings(nextChatbotSettings);
+        setCommercialSettings(nextCommercialSettings);
         setForm(nextForm);
         setInitialSnapshot(serializeForm(nextForm));
         setInitialTemporaryFeaturesSnapshot(
           serializeTemporaryFeatureSettings(nextTemporaryFeatureSettings),
+        );
+        setInitialChatbotSettingsSnapshot(
+          serializeChatbotSettings(nextChatbotSettings),
+        );
+        setInitialCommercialSettingsSnapshot(
+          serializeCommercialSettings(nextCommercialSettings),
         );
         setCountries(
           Array.isArray(countriesResponse.data) ? countriesResponse.data : [],
@@ -747,6 +903,18 @@ export function useConfigurationPage() {
       initialTemporaryFeaturesSnapshot,
     [temporaryFeatureSettings, initialTemporaryFeaturesSnapshot],
   );
+  const chatbotSettingsDirty = useMemo(
+    () =>
+      serializeChatbotSettings(chatbotSettings) !==
+      initialChatbotSettingsSnapshot,
+    [chatbotSettings, initialChatbotSettingsSnapshot],
+  );
+  const commercialSettingsDirty = useMemo(
+    () =>
+      serializeCommercialSettings(commercialSettings) !==
+      initialCommercialSettingsSnapshot,
+    [commercialSettings, initialCommercialSettingsSnapshot],
+  );
   const aiParametersDirty = useMemo(
     () =>
       serializeAiParameterDraft(aiParameterDraft) !==
@@ -759,7 +927,13 @@ export function useConfigurationPage() {
   const temporaryFeaturesCanSave = temporaryFeaturesDirty;
 
   useEffect(() => {
-    if (!isDirty && !temporaryFeaturesDirty && !aiParametersDirty) {
+    if (
+      !isDirty &&
+      !temporaryFeaturesDirty &&
+      !chatbotSettingsDirty &&
+      !commercialSettingsDirty &&
+      !aiParametersDirty
+    ) {
       return undefined;
     }
 
@@ -770,7 +944,13 @@ export function useConfigurationPage() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isDirty, temporaryFeaturesDirty, aiParametersDirty]);
+  }, [
+    isDirty,
+    temporaryFeaturesDirty,
+    chatbotSettingsDirty,
+    commercialSettingsDirty,
+    aiParametersDirty,
+  ]);
 
   function updateField(field, value) {
     setSaveAttempted(false);
@@ -778,7 +958,15 @@ export function useConfigurationPage() {
   }
 
   function confirmDiscardChanges() {
-    if (!isDirty && !aiParametersDirty) return true;
+    if (
+      !isDirty &&
+      !temporaryFeaturesDirty &&
+      !chatbotSettingsDirty &&
+      !commercialSettingsDirty &&
+      !aiParametersDirty
+    ) {
+      return true;
+    }
     return window.confirm("Hay cambios sin guardar. ¿Deseas descartarlos?");
   }
 
@@ -798,6 +986,20 @@ export function useConfigurationPage() {
       setAiParameterDraft(nextEntry);
       setInitialAiParameterSnapshot(serializeAiParameterDraft(nextEntry));
       setAiParameterValidationWarnings([]);
+    } else if (activeSection === "global") {
+      const nextTemporaryFeatureSettings =
+        deserializeTemporaryFeatureSettingsSnapshot(
+          initialTemporaryFeaturesSnapshot,
+        );
+      const nextChatbotSettings = deserializeChatbotSettingsSnapshot(
+        initialChatbotSettingsSnapshot,
+      );
+      const nextCommercialSettings = deserializeCommercialSettingsSnapshot(
+        initialCommercialSettingsSnapshot,
+      );
+      setTemporaryFeatureSettings(nextTemporaryFeatureSettings);
+      setChatbotSettings(nextChatbotSettings);
+      setCommercialSettings(nextCommercialSettings);
     } else {
       const nextForm = normalizeProfileToForm(companyProfile);
       setForm(nextForm);
@@ -947,6 +1149,102 @@ export function useConfigurationPage() {
     }
   }
 
+  function updateChatbotSetting(field, value) {
+    setChatbotSettings((current) => ({
+      ...current,
+      [field]: Number(value || 0),
+    }));
+  }
+
+  async function saveChatbotSettings() {
+    setSavingChatbotSettings(true);
+    setError("");
+    setSuccess("");
+    try {
+      const payload = {
+        requestTimeoutMs: Math.max(
+          5000,
+          Number(chatbotSettings.requestTimeoutMs || 60000),
+        ),
+      };
+
+      const [saveResponse, auditResponse] = await Promise.all([
+        api.put("/api/settings/chatbot", payload),
+        api.get("/api/settings/audit?limit=25"),
+      ]);
+
+      const nextSettings = normalizeChatbotSettings(
+        saveResponse.data?.settings,
+      );
+      setChatbotSettings(nextSettings);
+      setInitialChatbotSettingsSnapshot(serializeChatbotSettings(nextSettings));
+      setAuditEntries(
+        Array.isArray(auditResponse.data) ? auditResponse.data : [],
+      );
+      setSuccess(
+        saveResponse.data?.message ||
+          "Configuracion del chatbot actualizada correctamente",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar la configuracion del chatbot",
+        ),
+      );
+    } finally {
+      setSavingChatbotSettings(false);
+    }
+  }
+
+  function updateCommercialSetting(stageCode, days) {
+    setCommercialSettings((current) => ({
+      ...current,
+      stageSlaMap: {
+        ...current.stageSlaMap,
+        [stageCode]: Number(days) || 1,
+      },
+    }));
+  }
+
+  async function saveCommercialSettings() {
+    setSavingCommercialSettings(true);
+    setError("");
+    setSuccess("");
+    try {
+      const [saveResponse, auditResponse] = await Promise.all([
+        api.put("/api/settings/commercial", {
+          stageSlaMap: commercialSettings.stageSlaMap,
+        }),
+        api.get("/api/settings/audit?limit=25"),
+      ]);
+
+      const nextSettings = normalizeCommercialSettings(
+        saveResponse.data?.settings,
+      );
+      setCommercialSettings(nextSettings);
+      setInitialCommercialSettingsSnapshot(
+        serializeCommercialSettings(nextSettings),
+      );
+      setAuditEntries(
+        Array.isArray(auditResponse.data) ? auditResponse.data : [],
+      );
+      setSuccess(
+        saveResponse.data?.message ||
+          "Configuracion comercial actualizada correctamente",
+      );
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar la configuracion comercial",
+        ),
+      );
+    } finally {
+      setSavingCommercialSettings(false);
+    }
+  }
+
   async function activateWorkspacePlaybook(versionId) {
     setActivatingWorkspaceVersionId(versionId);
     setError("");
@@ -1068,6 +1366,24 @@ export function useConfigurationPage() {
       temporaryFeatureSettings.updatedByUserName || "sistema"
     }`;
   }, [temporaryFeatureSettings]);
+
+  const latestChatbotSettingsUpdateText = useMemo(() => {
+    if (!chatbotSettings.updatedAt) {
+      return "Sin cambios registrados";
+    }
+    return `${formatDateTime(chatbotSettings.updatedAt)} por ${
+      chatbotSettings.updatedByUserName || "sistema"
+    }`;
+  }, [chatbotSettings]);
+
+  const latestCommercialSettingsUpdateText = useMemo(() => {
+    if (!commercialSettings.updatedAt) {
+      return "Sin cambios registrados";
+    }
+    return `${formatDateTime(commercialSettings.updatedAt)} por ${
+      commercialSettings.updatedByUserName || "sistema"
+    }`;
+  }, [commercialSettings]);
 
   const latestProposalContentUpdateText = useMemo(() => {
     if (!proposalContentConfig.updatedAt) {
@@ -1700,7 +2016,10 @@ export function useConfigurationPage() {
         id: "global",
         title: "Parámetros globales",
         description: "Ajustes funcionales comunes a toda la aplicacion",
-        dirty: temporaryFeaturesDirty,
+        dirty:
+          temporaryFeaturesDirty ||
+          chatbotSettingsDirty ||
+          commercialSettingsDirty,
       },
       {
         id: "ai_parameters",
@@ -1733,7 +2052,13 @@ export function useConfigurationPage() {
         dirty: false,
       },
     ],
-    [aiParametersDirty, isDirty, temporaryFeaturesDirty],
+    [
+      aiParametersDirty,
+      chatbotSettingsDirty,
+      commercialSettingsDirty,
+      isDirty,
+      temporaryFeaturesDirty,
+    ],
   );
 
   return {
@@ -1745,6 +2070,8 @@ export function useConfigurationPage() {
     countries,
     companyProfile,
     temporaryFeatureSettings,
+    chatbotSettings,
+    commercialSettings,
     form,
     auditEntries,
     workspacePlaybooks,
@@ -1778,15 +2105,22 @@ export function useConfigurationPage() {
     isDirty,
     canSave,
     savingTemporaryFeatures,
+    savingChatbotSettings,
+    savingCommercialSettings,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
+    chatbotSettingsDirty,
+    commercialSettingsDirty,
     aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
+    latestChatbotSettingsUpdateText,
+    latestCommercialSettingsUpdateText,
     latestAiWalletUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
     sectionItems,
+    stageSlaEntries: STAGE_SLA_ENTRIES,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -1796,6 +2130,10 @@ export function useConfigurationPage() {
     saveCompanyProfile,
     updateTemporaryFeatureSetting,
     saveTemporaryFeatureSettings,
+    updateChatbotSetting,
+    saveChatbotSettings,
+    updateCommercialSetting,
+    saveCommercialSettings,
     reloadAiWalletSummaries,
     loadAiWalletDetail,
     selectAiWalletUser,

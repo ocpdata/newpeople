@@ -23,6 +23,7 @@ import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.
 import settingsRoutes from "./routes.settings.js";
 import toolsRoutes from "./routes.tools.js";
 import aiRoutes from "./routes.ai.js";
+import chatbotRoutes from "./routes.chatbot.js";
 
 export function createApp() {
   const app = express();
@@ -105,6 +106,7 @@ export function createApp() {
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
   app.use("/api", authRequired, loadUser, aiRoutes);
+  app.use("/api/chatbot", authRequired, loadUser, chatbotRoutes);
 
   app.use((err, req, res, _next) => {
     const status = Number(err?.status) || 500;

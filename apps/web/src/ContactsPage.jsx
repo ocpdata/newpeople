@@ -1,14 +1,61 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ConfirmationModal } from "./AppModals";
 import ContactFormModal from "./contacts/ContactFormModal";
 import ContactOpportunitiesModal from "./contacts/ContactOpportunitiesModal";
+import AccountQuotationsModal from "./accounts/AccountQuotationsModal";
+import AccountProposalsModal from "./accounts/AccountProposalsModal";
+import { useAccountRelatedRecords } from "./accounts/useAccountRelatedRecords";
+import { api, getApiErrorMessage } from "./api";
 import { useContactsPage } from "./contacts/useContactsPage";
 
 function ContactsPage({ can, currentUser }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const canAccessAccounts = can("cuentas.read") || can("cuentas.read_all");
+  const canAccessQuotations = [
+    "cotizaciones.read",
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
+  const canAccessProposals = [
+    "propuestas.read",
+    "propuestas.create",
+    "propuestas.update",
+    "cotizaciones.operacion",
+    "cotizaciones.revision",
+    "cotizaciones.ingreso",
+    "cotizaciones.administracion",
+    "cotizaciones.externo",
+  ].some(can);
+  const [accountModalAccount, setAccountModalAccount] = useState(null);
+  const [accountModalDetail, setAccountModalDetail] = useState(null);
+  const [accountModalLoading, setAccountModalLoading] = useState(false);
+  const [accountModalError, setAccountModalError] = useState("");
+  const [accountModalStatusFilter, setAccountModalStatusFilter] =
+    useState("all");
   const helpRef = useRef(null);
+  const {
+    accountQuotationsModalAccount,
+    accountProposalsModalAccount,
+    editAccountQuotations,
+    editAccountProposals,
+    loadingAccountQuotations,
+    loadingAccountProposals,
+    quotationModalStatusFilter,
+    proposalModalStatusFilter,
+    setQuotationModalStatusFilter,
+    setProposalModalStatusFilter,
+    openAccountQuotationsModal,
+    closeAccountQuotationsModal,
+    openAccountProposalsModal,
+    closeAccountProposalsModal,
+    getQuotationStatusBadgeClass,
+    getProposalStatusBadgeClass,
+  } = useAccountRelatedRecords();
   const {
     contactStatusFilter,
     setContactStatusFilter,
@@ -80,6 +127,74 @@ function ContactsPage({ can, currentUser }) {
   function handleOpportunitySelect(opportunityId) {
     closeContactOppsModal();
     navigate(`/opportunities?edit=${opportunityId}`);
+  }
+
+  function toContactAccount(contact) {
+    const accountId = Number(contact?.account_id || 0);
+    return {
+      id: accountId,
+      name:
+        String(contact?.account_name || "").trim() || `Cuenta #${accountId}`,
+    };
+  }
+
+  async function openContactAccountModal(contact) {
+    const account = toContactAccount(contact);
+    if (!Number(account.id || 0)) return;
+
+    setAccountModalAccount(account);
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/accounts/${Number(account.id)}`);
+      setAccountModalDetail(data || null);
+    } catch (err) {
+      setAccountModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la cuenta",
+        ),
+      );
+    } finally {
+      setAccountModalLoading(false);
+    }
+  }
+
+  function closeContactAccountModal() {
+    setAccountModalAccount(null);
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(false);
+  }
+
+  function getAccountModalStatusCode(accountDetail) {
+    const status = String(
+      accountDetail?.activation_status || accountDetail?.activationStatus || "",
+    )
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+    if (status.includes("desactiv")) return "inactive";
+    if (status.includes("pendiente")) return "pending";
+    return "active";
+  }
+
+  function getAccountModalStatusLabel(accountDetail) {
+    const statusCode = getAccountModalStatusCode(accountDetail);
+    if (statusCode === "inactive") return "Desactivada";
+    if (statusCode === "pending") return "Pendiente";
+    return "Activada";
+  }
+
+  function getAccountModalStatusBadgeClass(accountDetail) {
+    const statusCode = getAccountModalStatusCode(accountDetail);
+    if (statusCode === "inactive") return "user-status-badge inactive";
+    if (statusCode === "pending") return "user-status-badge pending";
+    return "user-status-badge active";
   }
 
   useEffect(() => {
@@ -292,6 +407,182 @@ function ContactsPage({ can, currentUser }) {
         getOpportunityStatusBadgeClass={getOpportunityStatusBadgeClass}
       />
 
+      {accountModalAccount && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Cuenta ${accountModalAccount.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeContactAccountModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Cuenta -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {accountModalAccount.name}
+                </span>
+              </h3>
+            </div>
+
+            {!accountModalLoading &&
+              !accountModalError &&
+              accountModalDetail && (
+                <div className="account-opps-filters">
+                  <div
+                    className="account-opps-pills"
+                    role="group"
+                    aria-label="Filtrar por estado"
+                  >
+                    {[
+                      { value: "active", label: "Activas", tone: "active" },
+                      {
+                        value: "inactive",
+                        label: "Desactivadas",
+                        tone: "inactive",
+                      },
+                      { value: "all", label: "Todas", tone: "all" },
+                    ].map((status) => (
+                      <button
+                        key={status.value}
+                        type="button"
+                        className={`account-opps-pill account-opps-pill--${status.tone}${
+                          accountModalStatusFilter === status.value
+                            ? " is-active"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          setAccountModalStatusFilter(status.value)
+                        }
+                      >
+                        {status.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            {(() => {
+              const accountItems = accountModalDetail
+                ? [accountModalDetail]
+                : [];
+              const visibleAccounts =
+                accountModalStatusFilter === "all"
+                  ? accountItems
+                  : accountItems.filter((item) => {
+                      const inactive =
+                        getAccountModalStatusCode(item) === "inactive";
+                      return accountModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (accountModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando cuentas...</p>
+                );
+              }
+
+              if (accountModalError) {
+                return (
+                  <p className="account-opps-empty">{accountModalError}</p>
+                );
+              }
+
+              if (accountItems.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay cuentas registradas para esta cuenta.
+                  </p>
+                );
+              }
+
+              if (visibleAccounts.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleAccounts.map((item) => (
+                    <div
+                      key={item.id || accountModalAccount.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.name || accountModalAccount.name}
+                        </span>
+                        <span className={getAccountModalStatusBadgeClass(item)}>
+                          {getAccountModalStatusLabel(item)}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Tipo: {item.account_type || "-"}</span>
+                        <span>Sector: {item.economic_sector || "-"}</span>
+                        <span>Pais: {item.country || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeContactAccountModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AccountQuotationsModal
+        account={accountQuotationsModalAccount}
+        loading={loadingAccountQuotations}
+        quotations={editAccountQuotations}
+        statusFilter={quotationModalStatusFilter}
+        setStatusFilter={setQuotationModalStatusFilter}
+        onClose={closeAccountQuotationsModal}
+        onQuotationSelect={(quotation) => {
+          closeAccountQuotationsModal();
+          const opportunityId = Number(
+            quotation?.opportunityId || quotation?.opportunity_id || 0,
+          );
+          if (opportunityId) {
+            navigate(`/quotations?opportunityId=${opportunityId}`);
+            return;
+          }
+          navigate("/quotations");
+        }}
+        getQuotationStatusBadgeClass={getQuotationStatusBadgeClass}
+      />
+
+      <AccountProposalsModal
+        account={accountProposalsModalAccount}
+        loading={loadingAccountProposals}
+        proposals={editAccountProposals}
+        statusFilter={proposalModalStatusFilter}
+        setStatusFilter={setProposalModalStatusFilter}
+        onClose={closeAccountProposalsModal}
+        onProposalSelect={(proposalId) => {
+          closeAccountProposalsModal();
+          navigate(`/proposals?proposalId=${Number(proposalId || 0)}`);
+        }}
+        getProposalStatusBadgeClass={getProposalStatusBadgeClass}
+      />
+
       {error && <div className="toast toast-error">{error}</div>}
       {success && <div className="toast toast-success">{success}</div>}
 
@@ -393,6 +684,52 @@ function ContactsPage({ can, currentUser }) {
                     </button>
                     {openContactMenuId === contact.id && (
                       <div className="user-kebab-menu">
+                        {canAccessAccounts && (
+                          <button
+                            type="button"
+                            disabled={!Number(contact.account_id || 0)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runContactAction(() =>
+                                openContactAccountModal(contact),
+                              );
+                            }}
+                          >
+                            Cuenta
+                          </button>
+                        )}
+                        {canAccessQuotations && (
+                          <button
+                            type="button"
+                            disabled={!Number(contact.account_id || 0)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runContactAction(() =>
+                                openAccountQuotationsModal(
+                                  toContactAccount(contact),
+                                ),
+                              );
+                            }}
+                          >
+                            Cotizaciones
+                          </button>
+                        )}
+                        {canAccessProposals && (
+                          <button
+                            type="button"
+                            disabled={!Number(contact.account_id || 0)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runContactAction(() =>
+                                openAccountProposalsModal(
+                                  toContactAccount(contact),
+                                ),
+                              );
+                            }}
+                          >
+                            Propuestas
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={(event) => {

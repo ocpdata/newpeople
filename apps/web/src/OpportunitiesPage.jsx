@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CommercialCloseConfirmationModal,
@@ -5,6 +6,7 @@ import {
   StageBypassConfirmationModal,
 } from "./AppModals";
 import { formatDateFilterValue, parseDateFilterValue } from "./appFilters";
+import { useChatbotContextRegistration } from "./chatbot/context.jsx";
 import OpportunityFormModal from "./opportunities/OpportunityFormModal";
 import OpportunitiesListSection from "./opportunities/OpportunitiesListSection";
 import { useOpportunitiesPage } from "./opportunities/useOpportunitiesPage";
@@ -133,6 +135,87 @@ function OpportunitiesPage({ currentUser, can }) {
     linkOpportunityDocumentToAnswer,
     commercialAnswerSuggestionsByStageId,
   } = useOpportunitiesPage({ currentUser, searchParams, setSearchParams });
+
+  const activeOpportunityChatbotContext = useMemo(() => {
+    if (!showOpportunityModal || !editingOpportunityId) {
+      return null;
+    }
+
+    const recommendedStrategy =
+      commercialContext?.workspace?.recommendedStrategy;
+
+    return {
+      module: "opportunities",
+      viewType: "edit_modal",
+      surface: "opportunity_form_modal",
+      activeEntity: {
+        type: "opportunity",
+        id: Number(editingOpportunityId),
+        name: String(form?.name || "").trim(),
+      },
+      relatedEntities: {
+        accountId: form?.accountId ? Number(form.accountId) : null,
+        contactId: form?.contactId ? Number(form.contactId) : null,
+      },
+      visibleData: {
+        currentSalesStageCode: String(
+          currentCommercialStage?.code ||
+            commercialContext?.currentSalesStage?.code ||
+            "",
+        ).trim(),
+        currentSalesStageName: String(
+          currentCommercialStage?.name ||
+            commercialContext?.currentSalesStage?.name ||
+            "",
+        ).trim(),
+        commercialStatusCode: String(
+          commercialContext?.commercialStatus?.code || "",
+        ).trim(),
+        commercialStatusName: String(
+          commercialContext?.commercialStatus?.name || "",
+        ).trim(),
+        recommendedStrategy: recommendedStrategy
+          ? {
+              heading: String(recommendedStrategy.heading || "").trim(),
+              route: String(recommendedStrategy.route || "").trim(),
+              finalObjective: String(
+                recommendedStrategy.finalObjective || "",
+              ).trim(),
+              steps: Array.isArray(recommendedStrategy.steps)
+                ? recommendedStrategy.steps.slice(0, 3).map((step) => ({
+                    priorityLabel: String(step?.priorityLabel || "").trim(),
+                    title: String(step?.title || "").trim(),
+                    text: String(step?.text || "").trim(),
+                  }))
+                : [],
+            }
+          : null,
+      },
+      selection: {
+        selectedSalesStageId: selectedCommercialStageId
+          ? Number(selectedCommercialStageId)
+          : null,
+      },
+      uiState: {
+        modalOpen: true,
+        editing: true,
+      },
+    };
+  }, [
+    commercialContext,
+    currentCommercialStage,
+    editingOpportunityId,
+    form,
+    selectedCommercialStageId,
+    showOpportunityModal,
+  ]);
+
+  useChatbotContextRegistration(
+    "opportunities:edit-modal",
+    activeOpportunityChatbotContext,
+    100,
+    Boolean(activeOpportunityChatbotContext),
+  );
 
   return (
     <section className="panel">

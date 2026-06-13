@@ -1154,6 +1154,127 @@ function TemporaryFeaturesCard({
   );
 }
 
+function ChatbotSettingsCard({
+  settings,
+  latestUpdateText,
+  saving,
+  canSave,
+  isDirty,
+  onChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Chatbot</h4>
+          <p>
+            Ajusta el tiempo maximo de espera para las solicitudes del chatbot
+            desde el frontend.
+          </p>
+        </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
+      </div>
+
+      <div className="configuration-form-grid">
+        <div className="field-group configuration-grid-span-full">
+          <label>Timeout de solicitud (ms)</label>
+          <input
+            type="number"
+            min="5000"
+            max="300000"
+            step="1000"
+            value={settings.requestTimeoutMs}
+            onChange={(event) =>
+              onChange("requestTimeoutMs", Number(event.target.value || 0))
+            }
+          />
+          <p className="field-hint">
+            Valor recomendado: 60000 ms. El chatbot usara este limite para abrir
+            sesiones, cargar historial y enviar mensajes.
+          </p>
+        </div>
+      </div>
+
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          Ultima actualizacion: {latestUpdateText}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar chatbot"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CommercialSettingsCard({
+  settings,
+  stageSlaEntries,
+  latestUpdateText,
+  saving,
+  canSave,
+  isDirty,
+  onChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
+      <div className="configuration-card-heading">
+        <div>
+          <h4>SLA por etapa comercial</h4>
+          <p>
+            Define el máximo de días sin actividad registrada por etapa antes de
+            que una oportunidad sea marcada como rezagada.
+          </p>
+        </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
+      </div>
+
+      <div className="configuration-form-grid">
+        {stageSlaEntries.map((entry) => (
+          <div key={entry.code} className="field-group">
+            <label>{entry.label}</label>
+            <input
+              type="number"
+              min="1"
+              max="90"
+              step="1"
+              value={settings.stageSlaMap?.[entry.code] ?? 5}
+              onChange={(event) =>
+                onChange(entry.code, Number(event.target.value || 1))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          Ultima actualizacion: {latestUpdateText}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar SLA"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ConfigurationModuleCards({ items, onOpenAudit }) {
   return (
     <div className="configuration-module-grid">
@@ -3713,6 +3834,8 @@ export default function ConfigurationPage() {
     countries,
     companyProfile,
     temporaryFeatureSettings,
+    chatbotSettings,
+    commercialSettings,
     form,
     auditEntries,
     workspacePlaybooks,
@@ -3746,15 +3869,22 @@ export default function ConfigurationPage() {
     isDirty,
     canSave,
     savingTemporaryFeatures,
+    savingChatbotSettings,
+    savingCommercialSettings,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
+    chatbotSettingsDirty,
+    commercialSettingsDirty,
     aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
+    latestChatbotSettingsUpdateText,
+    latestCommercialSettingsUpdateText,
     latestAiWalletUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
     sectionItems,
+    stageSlaEntries,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -3764,6 +3894,10 @@ export default function ConfigurationPage() {
     saveCompanyProfile,
     updateTemporaryFeatureSetting,
     saveTemporaryFeatureSettings,
+    updateChatbotSetting,
+    saveChatbotSettings,
+    updateCommercialSetting,
+    saveCommercialSettings,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
@@ -4428,6 +4562,27 @@ export default function ConfigurationPage() {
 
           {activeSection === "global" ? (
             <div className="configuration-section-stack">
+              <ChatbotSettingsCard
+                settings={chatbotSettings}
+                latestUpdateText={latestChatbotSettingsUpdateText}
+                saving={savingChatbotSettings}
+                canSave={chatbotSettingsDirty}
+                isDirty={chatbotSettingsDirty}
+                onChange={updateChatbotSetting}
+                onSave={saveChatbotSettings}
+              />
+
+              <CommercialSettingsCard
+                settings={commercialSettings}
+                stageSlaEntries={stageSlaEntries}
+                latestUpdateText={latestCommercialSettingsUpdateText}
+                saving={savingCommercialSettings}
+                canSave={commercialSettingsDirty}
+                isDirty={commercialSettingsDirty}
+                onChange={updateCommercialSetting}
+                onSave={saveCommercialSettings}
+              />
+
               <TemporaryFeaturesCard
                 settings={temporaryFeatureSettings}
                 latestUpdateText={latestTemporaryFeaturesUpdateText}

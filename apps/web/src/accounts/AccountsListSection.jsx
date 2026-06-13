@@ -6,6 +6,8 @@ function AccountsListSection({
   accountsPendingEnabled,
   canReadOpportunities,
   canReadContacts,
+  canAccessQuotations,
+  canAccessProposals,
   accountStatusFilter,
   setAccountStatusFilter,
   accountStatusCounts,
@@ -29,6 +31,8 @@ function AccountsListSection({
   openAccountStatusConfirmation,
   openAccountOppsModal,
   openAccountContactsModal,
+  openAccountQuotationsModal,
+  openAccountProposalsModal,
   accountsPage,
   accountsPerPage,
   totalAccountPages,
@@ -87,8 +91,8 @@ function AccountsListSection({
               <div className="accounts-module-help-popover">
                 <strong>Para qué sirve</strong>
                 <p>
-                  Este módulo concentra el padrón de clientes y prospectos,
-                  su información comercial y el contexto necesario para dar
+                  Este módulo concentra el padrón de clientes y prospectos, su
+                  información comercial y el contexto necesario para dar
                   seguimiento.
                 </p>
                 <strong>Cómo usarlo</strong>
@@ -182,7 +186,9 @@ function AccountsListSection({
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Todas</span>
-            <span className="status-filter-pill-count">{totalAccountsCount}</span>
+            <span className="status-filter-pill-count">
+              {totalAccountsCount}
+            </span>
           </button>
         </div>
         <input
@@ -304,7 +310,9 @@ function AccountsListSection({
                           type="button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            runAccountAction(() => openEditAccountModal(account.id));
+                            runAccountAction(() =>
+                              openEditAccountModal(account.id),
+                            );
                           }}
                         >
                           Editar
@@ -345,7 +353,10 @@ function AccountsListSection({
                           }
                           onClick={(event) => {
                             event.stopPropagation();
-                            openAccountStatusConfirmation(account, "desactivada");
+                            openAccountStatusConfirmation(
+                              account,
+                              "desactivada",
+                            );
                           }}
                         >
                           Desactivar
@@ -355,7 +366,9 @@ function AccountsListSection({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              runAccountAction(() => openAccountOppsModal(account));
+                              runAccountAction(() =>
+                                openAccountOppsModal(account),
+                              );
                             }}
                           >
                             Oportunidades
@@ -366,10 +379,38 @@ function AccountsListSection({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              runAccountAction(() => openAccountContactsModal(account));
+                              runAccountAction(() =>
+                                openAccountContactsModal(account),
+                              );
                             }}
                           >
                             Contactos
+                          </button>
+                        )}
+                        {canAccessQuotations && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runAccountAction(() =>
+                                openAccountQuotationsModal(account),
+                              );
+                            }}
+                          >
+                            Cotizaciones
+                          </button>
+                        )}
+                        {canAccessProposals && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              runAccountAction(() =>
+                                openAccountProposalsModal(account),
+                              );
+                            }}
+                          >
+                            Propuestas
                           </button>
                         )}
                       </div>
@@ -393,8 +434,8 @@ function AccountsListSection({
           <div className="users-pagination-left">
             <span className="users-pagination-info">
               {(accountsPage - 1) * accountsPerPage + 1}-
-              {Math.min(accountsPage * accountsPerPage, visibleAccounts.length)} de{" "}
-              {visibleAccounts.length}
+              {Math.min(accountsPage * accountsPerPage, visibleAccounts.length)}{" "}
+              de {visibleAccounts.length}
             </span>
           </div>
           <div className="users-pagination-center">

@@ -1,8 +1,24 @@
 import express from "express";
 import { requireAnyPermission } from "./auth.js";
 import { query } from "./db.js";
+import { getCommercialSettings, STAGE_SLA_DEFAULTS } from "./settings.js";
 
 const router = express.Router();
+
+let _stageSlaCache = null;
+let _stageSlaExpiry = 0;
+
+async function loadStageSlaMap() {
+  if (_stageSlaCache && Date.now() < _stageSlaExpiry) {
+    return _stageSlaCache;
+  }
+  const settings = await getCommercialSettings().catch(() => null);
+  _stageSlaCache = settings?.stageSlaMap
+    ? { ...STAGE_SLA_DEFAULTS, ...settings.stageSlaMap }
+    : { ...STAGE_SLA_DEFAULTS };
+  _stageSlaExpiry = Date.now() + 60000;
+  return _stageSlaCache;
+}
 
 const STAGE_SLA_DAYS = {
   contacto_inicial: 3,
@@ -12,8 +28,6 @@ const STAGE_SLA_DAYS = {
   demostracion: 6,
   negociacion: 4,
   waiting: 3,
-  descubrimiento: 5,
-  validacion_valor: 5,
 };
 
 const NEXT_STEP_ACTION_TYPES = [
@@ -584,6 +598,7 @@ async function buildOpenOpportunityItems(user, filters = {}) {
   const advancedThisWeekIds = new Set(
     stageAdvancedRows.map((row) => Number(row.entity_id || 0)).filter(Boolean),
   );
+  const stageSlaMap = await loadStageSlaMap();
 
   return openRows
     .map((row) => {
@@ -592,7 +607,7 @@ async function buildOpenOpportunityItems(user, filters = {}) {
       const dependencies = dependenciesByOpportunity.get(opportunityId) || [];
       const executionState = getExecutionState({ nextStep, dependencies });
       const lastActivity = lastActivityByOpportunity.get(opportunityId) || null;
-      const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
+      const slaDays = stageSlaMap[row.sales_stage_code] || 5;
       const daysSinceActivity = lastActivity
         ? getDiffDays(lastActivity)
         : getDiffDays(row.updated_at || row.created_at);
@@ -679,6 +694,7 @@ async function buildWonOpportunityItems(user, filters = {}) {
   const advancedThisWeekIds = new Set(
     stageAdvancedRows.map((row) => Number(row.entity_id || 0)).filter(Boolean),
   );
+  const stageSlaMap = await loadStageSlaMap();
 
   return wonRows
     .map((row) => {
@@ -686,7 +702,7 @@ async function buildWonOpportunityItems(user, filters = {}) {
       const nextStep = nextSteps.get(opportunityId) || null;
       const dependencies = dependenciesByOpportunity.get(opportunityId) || [];
       const lastActivity = lastActivityByOpportunity.get(opportunityId) || null;
-      const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
+      const slaDays = stageSlaMap[row.sales_stage_code] || 5;
       const daysSinceActivity = lastActivity
         ? getDiffDays(lastActivity)
         : getDiffDays(row.updated_at || row.created_at);
@@ -754,7 +770,7 @@ function isRealWonOpportunity(item = {}) {
   return (
     String(item.commercial_status_code || item.commercialStatusCode || "") ===
       "ganada" ||
-    String(item.sales_stage_code || item.stageCode || "") === "cierre"
+    String(item.sales_stage_code || item.stageCode || "") === "ganada"
   );
 }
 

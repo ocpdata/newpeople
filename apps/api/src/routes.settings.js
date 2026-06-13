@@ -14,6 +14,7 @@ import {
   getAiParametersConfiguration,
   getCompanyDocumentBranding,
   getCompanyProfile,
+  getChatbotSettings,
   getInstitutionalAsset,
   getPublishedAiParameterEntryByCapabilityKey,
   getProposalContentConfiguration,
@@ -28,7 +29,10 @@ import {
   saveProposalContentComponent,
   setProposalContentComponentStatus,
   getTemporaryFeatureSettings,
+  saveChatbotSettings,
   saveTemporaryFeatureSettings,
+  getCommercialSettings,
+  saveCommercialSettings,
 } from "./settings.js";
 
 const router = express.Router();
@@ -92,6 +96,10 @@ const temporaryFeatureSettingsSchema = z.object({
   accountsPendingEnabled: z.boolean(),
   contactsPendingEnabled: z.boolean(),
   opportunitiesPendingEnabled: z.boolean(),
+});
+
+const chatbotSettingsSchema = z.object({
+  requestTimeoutMs: z.number().int().min(5000).max(300000),
 });
 
 const aiParameterCapabilityKeySchema = z.enum([
@@ -1348,6 +1356,100 @@ router.put(
 
     res.json({
       message: "Configuracion temporal actualizada correctamente",
+      settings,
+    });
+  },
+);
+
+router.get(
+  "/chatbot",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const settings = await getChatbotSettings();
+    res.json({ settings });
+  },
+);
+
+router.put(
+  "/chatbot",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = chatbotSettingsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const before = await getChatbotSettings();
+    const settings = await saveChatbotSettings(
+      parsed.data,
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "updated_chatbot_settings",
+      entityType: "chatbot_settings",
+      entityId: settings.id,
+      detail: "Configuracion del chatbot actualizada",
+      before,
+      after: settings,
+    });
+
+    res.json({
+      message: "Configuracion del chatbot actualizada correctamente",
+      settings,
+    });
+  },
+);
+
+const commercialSettingsSchema = z.object({
+  stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
+});
+
+router.get(
+  "/commercial",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    const settings = await getCommercialSettings();
+    res.json({ settings });
+  },
+);
+
+router.put(
+  "/commercial",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = commercialSettingsSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const before = await getCommercialSettings();
+    const settings = await saveCommercialSettings(
+      parsed.data,
+      Number(req.user?.id) || null,
+    );
+
+    await logAuditEvent({
+      req,
+      module: "configuracion",
+      action: "updated_commercial_settings",
+      entityType: "commercial_settings",
+      entityId: settings.id,
+      detail: "Configuracion comercial actualizada",
+      before,
+      after: settings,
+    });
+
+    res.json({
+      message: "Configuracion comercial actualizada correctamente",
       settings,
     });
   },

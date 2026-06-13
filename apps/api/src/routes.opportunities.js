@@ -1579,6 +1579,7 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
   const rows = await query(
     `SELECT o.id, o.name, o.amount_usd, o.close_date,
             a.id AS account_id, a.name AS account_name,
+          o.contact_id AS contact_id,
             CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
             oss.name AS sales_stage,
             ocs.name AS commercial_status,

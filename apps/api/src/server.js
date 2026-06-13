@@ -39,11 +39,14 @@ import { startOpportunityDocumentProcessingWorker } from "./opportunity-document
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
 import { ensureCorePermissions } from "./permissions.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
+import { ensureChatbotSchema } from "./chatbot/schema.js";
+import { startChatbotWorker } from "./routes.chatbot.js";
 
 export async function startServer() {
   validateConfig();
   await ensureCorePermissions();
   await ensureAiUsageSchema();
+  await ensureChatbotSchema();
   await ensureInteractionPermissions();
   await ensureCommercialDevelopmentPermissions();
   await ensureCommercialCalendarPermissions();
@@ -77,6 +80,7 @@ export async function startServer() {
   await startProposalExecutiveSummaryGenerationWorker();
   await startOpportunityStageAnswerSuggestionWorker();
   await startOpportunityStageValidationWorker();
+  await startChatbotWorker();
   return app.listen(config.port, () => {
     console.log(`API running on http://localhost:${config.port}`);
   });

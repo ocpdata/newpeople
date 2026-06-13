@@ -3,6 +3,8 @@ import { query, withTransaction } from "./db.js";
 
 let ensureCompanyProfileTablePromise;
 let ensureTemporaryFeatureSettingsTablePromise;
+let ensureChatbotSettingsTablePromise;
+let ensureCommercialSettingsTablePromise;
 let ensureAiParametersSchemaPromise;
 let ensureInstitutionalAssetsSchemaPromise;
 let ensureProposalContentSchemaPromise;
@@ -2377,6 +2379,42 @@ function normalizeTemporaryFeatureSettingsRow(row) {
   };
 }
 
+function buildFallbackChatbotSettings() {
+  return {
+    id: null,
+    singletonKey: "default",
+    requestTimeoutMs: 60000,
+    createdAt: null,
+    updatedAt: null,
+    createdByUserId: null,
+    updatedByUserId: null,
+    createdByUserName: "",
+    updatedByUserName: "",
+  };
+}
+
+function normalizeChatbotSettingsRow(row) {
+  if (!row) {
+    return buildFallbackChatbotSettings();
+  }
+
+  return {
+    id: Number(row.id),
+    singletonKey: asText(row.singleton_key),
+    requestTimeoutMs: Math.max(5000, Number(row.request_timeout_ms || 60000)),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    createdByUserId: row.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
+    updatedByUserId: row.updated_by_user_id
+      ? Number(row.updated_by_user_id)
+      : null,
+    createdByUserName: asText(row.created_by_user_name),
+    updatedByUserName: asText(row.updated_by_user_name),
+  };
+}
+
 function getAiParameterCapabilityDefinition(capabilityKey) {
   return (
     AI_PARAMETER_CAPABILITY_DEFINITIONS.find(
@@ -2596,6 +2634,30 @@ async function ensureTemporaryFeatureSettingsTable() {
   await ensureTemporaryFeatureSettingsTablePromise;
 }
 
+async function ensureChatbotSettingsTable() {
+  if (!ensureChatbotSettingsTablePromise) {
+    ensureChatbotSettingsTablePromise = query(
+      `CREATE TABLE IF NOT EXISTS chatbot_settings (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        singleton_key VARCHAR(40) NOT NULL,
+        request_timeout_ms INT UNSIGNED NOT NULL DEFAULT 60000,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(3) NOT NULL,
+        updated_at DATETIME(3) NOT NULL,
+        CONSTRAINT uq_chatbot_settings_singleton UNIQUE (singleton_key),
+        CONSTRAINT fk_chatbot_settings_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+        CONSTRAINT fk_chatbot_settings_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+      )`,
+    ).catch((error) => {
+      ensureChatbotSettingsTablePromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureChatbotSettingsTablePromise;
+}
+
 async function ensureAiParametersSchema() {
   if (!ensureAiParametersSchemaPromise) {
     ensureAiParametersSchemaPromise = (async () => {
@@ -2724,6 +2786,20 @@ async function ensureDefaultTemporaryFeatureSettings() {
   );
 }
 
+async function ensureDefaultChatbotSettings() {
+  await ensureChatbotSettingsTable();
+  await query(
+    `INSERT INTO chatbot_settings
+      (singleton_key, request_timeout_ms, created_by_user_id, updated_by_user_id,
+       created_at, updated_at)
+     SELECT 'default', 60000, NULL, NULL, NOW(3), NOW(3)
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM chatbot_settings cs
+       WHERE cs.singleton_key = 'default'
+     )`,
+  );
+}
 async function ensureDefaultAiParameterSettings() {
   await ensureAiParametersSchema();
 
@@ -2815,6 +2891,189 @@ function buildAddressLines(profile) {
   return lines;
 }
 
+// ---------------------------------------------------------------------------
+// Commercial settings – stage SLA days
+// ---------------------------------------------------------------------------
+
+const STAGE_SLA_DEFAULTS = {
+  contacto_inicial: 3,
+  identificacion_oportunidad: 3,
+  desarrollo: 5,
+  cotizacion: 5,
+  demostracion: 6,
+  negociacion: 4,
+  waiting: 3,
+};
+
+function buildFallbackCommercialSettings() {
+  return {
+    id: null,
+    singletonKey: "default",
+    stageSlaMap: { ...STAGE_SLA_DEFAULTS },
+    updatedAt: null,
+    updatedByUserId: null,
+    updatedByUserName: "",
+    createdAt: null,
+    createdByUserId: null,
+    createdByUserName: "",
+  };
+}
+
+function normalizeCommercialSettingsRow(row) {
+  if (!row) {
+    return buildFallbackCommercialSettings();
+  }
+
+  let stageSlaMap;
+  try {
+    const parsed =
+      typeof row.stage_sla_days_json === "string"
+        ? JSON.parse(row.stage_sla_days_json)
+        : row.stage_sla_days_json;
+    stageSlaMap = { ...STAGE_SLA_DEFAULTS };
+    if (parsed && typeof parsed === "object") {
+      Object.entries(parsed).forEach(([code, days]) => {
+        const parsed_days = Number(days);
+        if (
+          Object.prototype.hasOwnProperty.call(STAGE_SLA_DEFAULTS, code) &&
+          Number.isInteger(parsed_days) &&
+          parsed_days >= 1 &&
+          parsed_days <= 90
+        ) {
+          stageSlaMap[code] = parsed_days;
+        }
+      });
+    }
+  } catch {
+    stageSlaMap = { ...STAGE_SLA_DEFAULTS };
+  }
+
+  return {
+    id: Number(row.id),
+    singletonKey: String(row.singleton_key || "default"),
+    stageSlaMap,
+    updatedAt: row.updated_at || null,
+    updatedByUserId: row.updated_by_user_id
+      ? Number(row.updated_by_user_id)
+      : null,
+    updatedByUserName: String(row.updated_by_user_name || ""),
+    createdAt: row.created_at || null,
+    createdByUserId: row.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
+    createdByUserName: String(row.created_by_user_name || ""),
+  };
+}
+
+async function ensureCommercialSettingsTable() {
+  if (!ensureCommercialSettingsTablePromise) {
+    ensureCommercialSettingsTablePromise = query(
+      `CREATE TABLE IF NOT EXISTS commercial_settings (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        singleton_key VARCHAR(40) NOT NULL,
+        stage_sla_days_json JSON NOT NULL,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(3) NOT NULL,
+        updated_at DATETIME(3) NOT NULL,
+        CONSTRAINT uq_commercial_settings_singleton UNIQUE (singleton_key),
+        CONSTRAINT fk_commercial_settings_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+        CONSTRAINT fk_commercial_settings_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+      )`,
+    ).catch((error) => {
+      ensureCommercialSettingsTablePromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureCommercialSettingsTablePromise;
+}
+
+async function ensureDefaultCommercialSettings() {
+  await ensureCommercialSettingsTable();
+  await query(
+    `INSERT INTO commercial_settings
+      (singleton_key, stage_sla_days_json, created_by_user_id, updated_by_user_id,
+       created_at, updated_at)
+     SELECT 'default', ?, NULL, NULL, NOW(3), NOW(3)
+     WHERE NOT EXISTS (
+       SELECT 1 FROM commercial_settings WHERE singleton_key = 'default'
+     )`,
+    [JSON.stringify(STAGE_SLA_DEFAULTS)],
+  );
+}
+
+export async function getCommercialSettings() {
+  await ensureCommercialSettingsTable();
+
+  const selectSettings = () =>
+    query(
+      `SELECT cs.*, uc.full_name AS created_by_user_name,
+              uu.full_name AS updated_by_user_name
+       FROM commercial_settings cs
+       LEFT JOIN users uc ON uc.id = cs.created_by_user_id
+       LEFT JOIN users uu ON uu.id = cs.updated_by_user_id
+       WHERE cs.singleton_key = 'default'
+       LIMIT 1`,
+    );
+
+  let rows = await selectSettings();
+  if (!rows.length) {
+    await ensureDefaultCommercialSettings();
+    rows = await selectSettings();
+  }
+
+  return normalizeCommercialSettingsRow(rows[0] || null);
+}
+
+export async function saveCommercialSettings(settings, actorUserId) {
+  const current = await getCommercialSettings();
+  const existingId = current.id ? Number(current.id) : null;
+  const now = new Date();
+
+  const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
+  if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
+    Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
+      const parsed = Number(days);
+      if (
+        Object.prototype.hasOwnProperty.call(STAGE_SLA_DEFAULTS, code) &&
+        Number.isInteger(parsed) &&
+        parsed >= 1 &&
+        parsed <= 90
+      ) {
+        nextSlaMap[code] = parsed;
+      }
+    });
+  }
+
+  if (existingId) {
+    await query(
+      `UPDATE commercial_settings
+       SET stage_sla_days_json = ?, updated_by_user_id = ?, updated_at = ?
+       WHERE id = ?`,
+      [JSON.stringify(nextSlaMap), actorUserId || null, now, existingId],
+    );
+  } else {
+    await query(
+      `INSERT INTO commercial_settings
+        (singleton_key, stage_sla_days_json, created_by_user_id, updated_by_user_id,
+         created_at, updated_at)
+       VALUES ('default', ?, ?, ?, ?, ?)`,
+      [
+        JSON.stringify(nextSlaMap),
+        actorUserId || null,
+        actorUserId || null,
+        now,
+        now,
+      ],
+    );
+  }
+
+  return getCommercialSettings();
+}
+
+export { STAGE_SLA_DEFAULTS };
+
 export async function getCompanyProfile() {
   await ensureCompanyProfileTable();
 
@@ -2861,6 +3120,66 @@ export async function getTemporaryFeatureSettings() {
   }
 
   return normalizeTemporaryFeatureSettingsRow(rows[0] || null);
+}
+
+export async function getChatbotSettings() {
+  await ensureChatbotSettingsTable();
+
+  const selectSettings = () =>
+    query(
+      `SELECT cs.*, uc.full_name AS created_by_user_name,
+              uu.full_name AS updated_by_user_name
+       FROM chatbot_settings cs
+       LEFT JOIN users uc ON uc.id = cs.created_by_user_id
+       LEFT JOIN users uu ON uu.id = cs.updated_by_user_id
+       WHERE cs.singleton_key = 'default'
+       LIMIT 1`,
+    );
+
+  let rows = await selectSettings();
+  if (!rows.length) {
+    await ensureDefaultChatbotSettings();
+    rows = await selectSettings();
+  }
+
+  return normalizeChatbotSettingsRow(rows[0] || null);
+}
+
+export async function saveChatbotSettings(settings, actorUserId) {
+  const current = await getChatbotSettings();
+  const existingId = current.id ? Number(current.id) : null;
+  const now = new Date();
+  const payload = {
+    requestTimeoutMs: Math.max(
+      5000,
+      Number(settings.requestTimeoutMs || current.requestTimeoutMs || 60000),
+    ),
+  };
+
+  if (existingId) {
+    await query(
+      `UPDATE chatbot_settings
+       SET request_timeout_ms = ?, updated_by_user_id = ?, updated_at = ?
+       WHERE id = ?`,
+      [payload.requestTimeoutMs, actorUserId || null, now, existingId],
+    );
+  } else {
+    await query(
+      `INSERT INTO chatbot_settings
+        (singleton_key, request_timeout_ms, created_by_user_id, updated_by_user_id,
+         created_at, updated_at)
+       VALUES ('default', ?, ?, ?, ?, ?)`,
+      [
+        payload.requestTimeoutMs,
+        actorUserId || null,
+        actorUserId || null,
+        now,
+        now,
+      ],
+    );
+  }
+
+  return getChatbotSettings();
 }
 
 export async function saveTemporaryFeatureSettings(settings, actorUserId) {

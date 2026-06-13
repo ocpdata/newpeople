@@ -1,4 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import AccountQuotationsModal from "../accounts/AccountQuotationsModal";
+import AccountProposalsModal from "../accounts/AccountProposalsModal";
+import { useAccountRelatedRecords } from "../accounts/useAccountRelatedRecords";
+import { api, getApiErrorMessage } from "../api";
 
 function OpportunitiesListSection({
   canCreateOrRequestOpportunities,
@@ -35,6 +40,175 @@ function OpportunitiesListSection({
   setOpportunitiesPerPage,
 }) {
   const helpRef = useRef(null);
+  const navigate = useNavigate();
+  const [accountModalAccount, setAccountModalAccount] = useState(null);
+  const [accountModalDetail, setAccountModalDetail] = useState(null);
+  const [accountModalLoading, setAccountModalLoading] = useState(false);
+  const [accountModalError, setAccountModalError] = useState("");
+  const [accountModalStatusFilter, setAccountModalStatusFilter] =
+    useState("all");
+  const [contactModalContact, setContactModalContact] = useState(null);
+  const [contactModalDetail, setContactModalDetail] = useState(null);
+  const [contactModalLoading, setContactModalLoading] = useState(false);
+  const [contactModalError, setContactModalError] = useState("");
+  const [contactModalStatusFilter, setContactModalStatusFilter] =
+    useState("all");
+  const {
+    accountQuotationsModalAccount,
+    accountProposalsModalAccount,
+    editAccountQuotations,
+    editAccountProposals,
+    loadingAccountQuotations,
+    loadingAccountProposals,
+    quotationModalStatusFilter,
+    proposalModalStatusFilter,
+    setQuotationModalStatusFilter,
+    setProposalModalStatusFilter,
+    openAccountQuotationsModal,
+    closeAccountQuotationsModal,
+    openAccountProposalsModal,
+    closeAccountProposalsModal,
+    getQuotationStatusBadgeClass,
+    getProposalStatusBadgeClass,
+  } = useAccountRelatedRecords();
+
+  function toOpportunityAccount(opportunity) {
+    const accountId = Number(opportunity?.account_id || 0);
+    return {
+      id: accountId,
+      name:
+        String(opportunity?.account_name || "").trim() ||
+        `Cuenta #${accountId}`,
+    };
+  }
+
+  function toOpportunityContact(opportunity) {
+    const contactId = Number(opportunity?.contact_id || 0);
+    return {
+      id: contactId,
+      name:
+        String(opportunity?.contact_name || "").trim() ||
+        `Contacto #${contactId}`,
+    };
+  }
+
+  function normalizeSpanishStatus(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function getAccountModalStatusCode(accountDetail) {
+    const status = normalizeSpanishStatus(
+      accountDetail?.activation_status || accountDetail?.activationStatus || "",
+    );
+    if (status.includes("desactiv")) return "inactive";
+    if (status.includes("pendiente")) return "pending";
+    return "active";
+  }
+
+  function getAccountModalStatusLabel(accountDetail) {
+    const statusCode = getAccountModalStatusCode(accountDetail);
+    if (statusCode === "inactive") return "Desactivada";
+    if (statusCode === "pending") return "Pendiente";
+    return "Activada";
+  }
+
+  function getAccountModalStatusBadgeClass(accountDetail) {
+    const statusCode = getAccountModalStatusCode(accountDetail);
+    if (statusCode === "inactive") return "user-status-badge inactive";
+    if (statusCode === "pending") return "user-status-badge pending";
+    return "user-status-badge active";
+  }
+
+  function getContactModalStatusCode(contactDetail) {
+    const status = normalizeSpanishStatus(
+      contactDetail?.activation_status || contactDetail?.activationStatus || "",
+    );
+    if (status.includes("desactiv")) return "inactive";
+    if (status.includes("pendiente")) return "pending";
+    return "active";
+  }
+
+  function getContactModalStatusLabel(contactDetail) {
+    const statusCode = getContactModalStatusCode(contactDetail);
+    if (statusCode === "inactive") return "Desactivado";
+    if (statusCode === "pending") return "Pendiente";
+    return "Activado";
+  }
+
+  function getContactModalStatusBadgeClass(contactDetail) {
+    const statusCode = getContactModalStatusCode(contactDetail);
+    if (statusCode === "inactive") return "user-status-badge inactive";
+    if (statusCode === "pending") return "user-status-badge pending";
+    return "user-status-badge active";
+  }
+
+  async function openOpportunityAccountModal(opportunity) {
+    const account = toOpportunityAccount(opportunity);
+    if (!Number(account.id || 0)) return;
+
+    setAccountModalAccount(account);
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/accounts/${Number(account.id)}`);
+      setAccountModalDetail(data || null);
+    } catch (err) {
+      setAccountModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle de la cuenta",
+        ),
+      );
+    } finally {
+      setAccountModalLoading(false);
+    }
+  }
+
+  function closeOpportunityAccountModal() {
+    setAccountModalAccount(null);
+    setAccountModalDetail(null);
+    setAccountModalError("");
+    setAccountModalStatusFilter("all");
+    setAccountModalLoading(false);
+  }
+
+  async function openOpportunityContactModal(opportunity) {
+    const contact = toOpportunityContact(opportunity);
+    if (!Number(contact.id || 0)) return;
+
+    setContactModalContact(contact);
+    setContactModalDetail(null);
+    setContactModalError("");
+    setContactModalStatusFilter("all");
+    setContactModalLoading(true);
+    try {
+      const { data } = await api.get(`/api/contacts/${Number(contact.id)}`);
+      setContactModalDetail(data || null);
+    } catch (err) {
+      setContactModalError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar el detalle del contacto",
+        ),
+      );
+    } finally {
+      setContactModalLoading(false);
+    }
+  }
+
+  function closeOpportunityContactModal() {
+    setContactModalContact(null);
+    setContactModalDetail(null);
+    setContactModalError("");
+    setContactModalStatusFilter("all");
+    setContactModalLoading(false);
+  }
 
   useEffect(() => {
     function handlePointerDown(event) {
@@ -235,6 +409,317 @@ function OpportunitiesListSection({
         />
       </div>
 
+      {accountModalAccount && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Cuenta ${accountModalAccount.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeOpportunityAccountModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Cuenta -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {accountModalAccount.name}
+                </span>
+              </h3>
+            </div>
+
+            {!accountModalLoading &&
+              !accountModalError &&
+              accountModalDetail && (
+                <div className="account-opps-filters">
+                  <div
+                    className="account-opps-pills"
+                    role="group"
+                    aria-label="Filtrar por estado"
+                  >
+                    {[
+                      { value: "active", label: "Activas", tone: "active" },
+                      {
+                        value: "inactive",
+                        label: "Desactivadas",
+                        tone: "inactive",
+                      },
+                      { value: "all", label: "Todas", tone: "all" },
+                    ].map((status) => (
+                      <button
+                        key={status.value}
+                        type="button"
+                        className={`account-opps-pill account-opps-pill--${status.tone}${
+                          accountModalStatusFilter === status.value
+                            ? " is-active"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          setAccountModalStatusFilter(status.value)
+                        }
+                      >
+                        {status.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            {(() => {
+              const accountItems = accountModalDetail
+                ? [accountModalDetail]
+                : [];
+              const visibleAccounts =
+                accountModalStatusFilter === "all"
+                  ? accountItems
+                  : accountItems.filter((item) => {
+                      const inactive =
+                        getAccountModalStatusCode(item) === "inactive";
+                      return accountModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (accountModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando cuentas...</p>
+                );
+              }
+              if (accountModalError) {
+                return (
+                  <p className="account-opps-empty">{accountModalError}</p>
+                );
+              }
+              if (accountItems.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay cuentas registradas para esta oportunidad.
+                  </p>
+                );
+              }
+              if (visibleAccounts.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleAccounts.map((item) => (
+                    <div
+                      key={item.id || accountModalAccount.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.name || accountModalAccount.name}
+                        </span>
+                        <span className={getAccountModalStatusBadgeClass(item)}>
+                          {getAccountModalStatusLabel(item)}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Tipo: {item.account_type || "-"}</span>
+                        <span>Sector: {item.economic_sector || "-"}</span>
+                        <span>Pais: {item.country || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeOpportunityAccountModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contactModalContact && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Contacto ${contactModalContact.name}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeOpportunityContactModal();
+            }
+          }}
+        >
+          <div className="modal-dialog modal-dialog-wide modal-dialog-account-opps">
+            <div className="modal-header">
+              <h3 className="modal-title">
+                Contacto -{" "}
+                <span style={{ fontWeight: 400 }}>
+                  {contactModalContact.name}
+                </span>
+              </h3>
+            </div>
+
+            {!contactModalLoading &&
+              !contactModalError &&
+              contactModalDetail && (
+                <div className="account-opps-filters">
+                  <div
+                    className="account-opps-pills"
+                    role="group"
+                    aria-label="Filtrar por estado"
+                  >
+                    {[
+                      { value: "active", label: "Activas", tone: "active" },
+                      {
+                        value: "inactive",
+                        label: "Desactivadas",
+                        tone: "inactive",
+                      },
+                      { value: "all", label: "Todas", tone: "all" },
+                    ].map((status) => (
+                      <button
+                        key={status.value}
+                        type="button"
+                        className={`account-opps-pill account-opps-pill--${status.tone}${
+                          contactModalStatusFilter === status.value
+                            ? " is-active"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          setContactModalStatusFilter(status.value)
+                        }
+                      >
+                        {status.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            {(() => {
+              const contactItems = contactModalDetail
+                ? [contactModalDetail]
+                : [];
+              const visibleContacts =
+                contactModalStatusFilter === "all"
+                  ? contactItems
+                  : contactItems.filter((item) => {
+                      const inactive =
+                        getContactModalStatusCode(item) === "inactive";
+                      return contactModalStatusFilter === "inactive"
+                        ? inactive
+                        : !inactive;
+                    });
+
+              if (contactModalLoading) {
+                return (
+                  <p className="account-opps-empty">Cargando contactos...</p>
+                );
+              }
+              if (contactModalError) {
+                return (
+                  <p className="account-opps-empty">{contactModalError}</p>
+                );
+              }
+              if (contactItems.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    No hay contactos registrados para esta oportunidad.
+                  </p>
+                );
+              }
+              if (visibleContacts.length === 0) {
+                return (
+                  <p className="account-opps-empty">
+                    Sin resultados para el filtro seleccionado.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="account-opps-list">
+                  {visibleContacts.map((item) => (
+                    <div
+                      key={item.id || contactModalContact.id}
+                      className="account-opp-row"
+                    >
+                      <div className="account-opp-main">
+                        <span className="account-opp-name">
+                          {item.full_name || contactModalContact.name}
+                        </span>
+                        <span className={getContactModalStatusBadgeClass(item)}>
+                          {getContactModalStatusLabel(item)}
+                        </span>
+                      </div>
+                      <div className="account-opp-meta">
+                        <span>Cargo: {item.position_title || "-"}</span>
+                        <span>E-mail: {item.email || "-"}</span>
+                        <span>Movil: {item.mobile || "-"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="modal-buttons" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeOpportunityContactModal}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AccountQuotationsModal
+        account={accountQuotationsModalAccount}
+        loading={loadingAccountQuotations}
+        quotations={editAccountQuotations}
+        statusFilter={quotationModalStatusFilter}
+        setStatusFilter={setQuotationModalStatusFilter}
+        onClose={closeAccountQuotationsModal}
+        onQuotationSelect={(quotation) => {
+          closeAccountQuotationsModal();
+          const opportunityId = Number(
+            quotation?.opportunityId || quotation?.opportunity_id || 0,
+          );
+          if (opportunityId) {
+            navigate(`/quotations?opportunityId=${opportunityId}`);
+            return;
+          }
+          navigate("/quotations");
+        }}
+        getQuotationStatusBadgeClass={getQuotationStatusBadgeClass}
+      />
+
+      <AccountProposalsModal
+        account={accountProposalsModalAccount}
+        loading={loadingAccountProposals}
+        proposals={editAccountProposals}
+        statusFilter={proposalModalStatusFilter}
+        setStatusFilter={setProposalModalStatusFilter}
+        onClose={closeAccountProposalsModal}
+        onProposalSelect={(proposalId) => {
+          closeAccountProposalsModal();
+          navigate(`/proposals?proposalId=${Number(proposalId || 0)}`);
+        }}
+        getProposalStatusBadgeClass={getProposalStatusBadgeClass}
+      />
+
       <table>
         <thead>
           <tr>
@@ -385,6 +870,58 @@ function OpportunitiesListSection({
                     </button>
                     {openOpportunityMenuId === opportunity.id && (
                       <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          disabled={!Number(opportunity.account_id || 0)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            runOpportunityAction(() =>
+                              openOpportunityAccountModal(opportunity),
+                            );
+                          }}
+                        >
+                          Cuentas
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!Number(opportunity.contact_id || 0)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            runOpportunityAction(() =>
+                              openOpportunityContactModal(opportunity),
+                            );
+                          }}
+                        >
+                          Contacto
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!Number(opportunity.account_id || 0)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            runOpportunityAction(() =>
+                              openAccountQuotationsModal(
+                                toOpportunityAccount(opportunity),
+                              ),
+                            );
+                          }}
+                        >
+                          Cotizaciones
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!Number(opportunity.account_id || 0)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            runOpportunityAction(() =>
+                              openAccountProposalsModal(
+                                toOpportunityAccount(opportunity),
+                              ),
+                            );
+                          }}
+                        >
+                          Propuestas
+                        </button>
                         <button
                           type="button"
                           onClick={(event) => {

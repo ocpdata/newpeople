@@ -32,10 +32,29 @@ import {
 } from "./opportunity-workspace/service.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
-import { getCompanyDocumentBranding } from "./settings.js";
+import {
+  getCommercialSettings,
+  getCompanyDocumentBranding,
+  STAGE_SLA_DEFAULTS,
+} from "./settings.js";
 import { sendCommercialActionEmail } from "./utils.js";
 
 const router = express.Router();
+
+let _stageSlaCache = null;
+let _stageSlaExpiry = 0;
+
+async function loadStageSlaMap() {
+  if (_stageSlaCache && Date.now() < _stageSlaExpiry) {
+    return _stageSlaCache;
+  }
+  const settings = await getCommercialSettings().catch(() => null);
+  _stageSlaCache = settings?.stageSlaMap
+    ? { ...STAGE_SLA_DEFAULTS, ...settings.stageSlaMap }
+    : { ...STAGE_SLA_DEFAULTS };
+  _stageSlaExpiry = Date.now() + 60000;
+  return _stageSlaCache;
+}
 
 const STAGE_SLA_DAYS = {
   contacto_inicial: 3,
@@ -45,10 +64,6 @@ const STAGE_SLA_DAYS = {
   demostracion: 6,
   negociacion: 4,
   waiting: 3,
-  descubrimiento: 5,
-  validacion_valor: 5,
-  propuesta: 6,
-  cierre: 3,
 };
 
 const LATE_STAGE_CODES = new Set([
@@ -56,8 +71,6 @@ const LATE_STAGE_CODES = new Set([
   "demostracion",
   "negociacion",
   "waiting",
-  "propuesta",
-  "cierre",
 ]);
 
 const CADENCE_VISIBLE_LIMIT = 10;
@@ -540,10 +553,6 @@ function getStageConfidence(stageCode, stageOrder = 0, maxStageOrder = 6) {
     demostracion: 0.65,
     negociacion: 0.85,
     waiting: 1,
-    descubrimiento: 0.2,
-    validacion_valor: 0.45,
-    propuesta: 0.65,
-    cierre: 1,
   }[stageCode];
 
   if (mapped !== undefined) {
@@ -566,7 +575,7 @@ function isCommittedStage(stageCode) {
 }
 
 function isRealWonStage(stageCode) {
-  return stageCode === "cierre";
+  return stageCode === "ganada";
 }
 
 function isRealWonOpportunity(item = {}) {
@@ -1810,7 +1819,8 @@ async function buildExecutionNarrativeItem({ user, opportunity }) {
     (opportunity?.updated_at ? new Date(opportunity.updated_at) : null) ||
     new Date();
   const daysSinceActivity = getDiffDays(lastActivityAt);
-  const slaDays = STAGE_SLA_DAYS[opportunity?.sales_stage_code] || 5;
+  const stageSlaMap = await loadStageSlaMap();
+  const slaDays = stageSlaMap[opportunity?.sales_stage_code] || 5;
   const risk = buildRiskSummary({
     workspace,
     nextStep: mappedNextStep,
@@ -3032,16 +3042,15 @@ async function listCalendarSellerOptions(user) {
   const rows = await query(
     `SELECT DISTINCT u.id, u.full_name
      FROM users u
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE u.status = 'active'
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+      AND u.id != ?
      ORDER BY u.full_name ASC, u.id ASC`,
+    [Number(user.id)],
   ).catch(() => []);
 
   return rows.map((row) => ({
     id: Number(row.id),
-    fullName: row.full_name || `Vendedor ${row.id}`,
+    fullName: row.full_name || `Usuario ${row.id}`,
   }));
 }
 
@@ -6647,6 +6656,7 @@ router.get(
       },
       new Map(),
     );
+    const stageSlaMap = await loadStageSlaMap();
     let executionItems = await Promise.all(
       opportunityRows.map(async (row) => {
         const opportunityState = {
@@ -6674,7 +6684,7 @@ router.get(
           (row.updated_at ? new Date(row.updated_at) : null) ||
           new Date();
         const daysSinceActivity = getDiffDays(lastActivityAt);
-        const slaDays = STAGE_SLA_DAYS[row.sales_stage_code] || 5;
+        const slaDays = stageSlaMap[row.sales_stage_code] || 5;
         const dependencies =
           dependenciesByOpportunity.get(Number(row.id)) || [];
         const risk = buildRiskSummary({
@@ -7389,6 +7399,68 @@ router.post(
           "No fue posible generar la narrativa IA",
       });
     }
+  },
+);
+
+router.get(
+  "/opportunities/:id/activities/:activityId",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+    "calendario_comercial.read",
+    "calendario_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    const activityId = Number(req.params.activityId);
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(activityId) ||
+      activityId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const activity = await loadCommercialActivityAction(
+      opportunityId,
+      activityId,
+    );
+    if (!activity) {
+      return res.status(404).json({ message: "Actividad no encontrada" });
+    }
+
+    const parsedDetails = parseCommercialActionDetails(activity.details_json);
+    const entryKind = getCommercialEntryKind(activity.action_type);
+    const nextStatus = String(activity.status || "pending").trim();
+
+    return res.json({
+      id: Number(activity.id),
+      opportunityId,
+      opportunityName: opportunity.name || "",
+      accountName: opportunity.accountName || "",
+      entryKind,
+      activityType: String(activity.action_type || "other").trim() || "other",
+      status: nextStatus || "pending",
+      scheduledAt: activity.scheduled_at || null,
+      dueDate: activity.due_date || null,
+      objective: String(activity.title || "").trim(),
+      note: String(activity.notes || "").trim(),
+      priority: String(activity.priority || "medium").trim() || "medium",
+      successCriteria: String(activity.success_criteria || "").trim(),
+      isPrimaryNextStep: Boolean(activity.is_primary_next_step),
+      details: parsedDetails,
+      readonlyByStatus: ["done", "cancelled"].includes(nextStatus),
+    });
   },
 );
 

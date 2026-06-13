@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
 
@@ -94,6 +94,18 @@ function coalesceUsageFromOpenAiResponse(responseData) {
     cachedTokens,
     totalTokens,
   };
+}
+
+function normalizeInternalRequestId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return randomUUID();
+  if (raw.length <= 36) {
+    return raw;
+  }
+
+  // Keep deterministic idempotency without lossy truncation collisions.
+  const digest = createHash("sha1").update(raw).digest("hex");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
 }
 
 function calculateCostMicros({ usage, rate }) {
@@ -362,7 +374,7 @@ export async function recordAiUsageFromOpenAiResponse({
   const safeModel = String(model || config.openai.model || "").trim();
   const safeFeatureCode =
     String(featureCode || "unspecified").trim() || "unspecified";
-  const requestId = String(internalRequestId || randomUUID()).slice(0, 36);
+  const requestId = normalizeInternalRequestId(internalRequestId);
   const usage = coalesceUsageFromOpenAiResponse(openAiResponse);
   const openAiRequestId = String(
     openAiResponse?.id || openAiResponse?.response_id || "",
@@ -391,79 +403,128 @@ export async function recordAiUsageFromOpenAiResponse({
     const balanceAfter = balanceBefore - costMicros;
     const now = nowDate();
 
-    const [txResult] = await conn.query(
-      `INSERT INTO ai_wallet_transactions
-         (user_id, transaction_type, amount_micros,
-          balance_before_micros, balance_after_micros,
-          reason_code, reason_text, idempotency_key,
-          reference_type, reference_id, created_by_user_id,
-          created_at_utc)
-       VALUES (?, 'charge', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        safeUserId,
-        -Math.abs(costMicros),
-        balanceBefore,
-        balanceAfter,
-        "ai_usage_charge",
-        `Cargo IA por ${safeFeatureCode}`,
-        requestId,
-        jobType ? "ai_job" : "ai_usage",
-        jobId ? Number(jobId) : null,
-        safeUserId,
-        now,
-      ],
-    );
+    let transactionId = null;
+    let effectiveCostMicros = costMicros;
+    let effectiveBalanceMicros = balanceAfter;
+    let shouldApplyWalletUpdate = true;
 
-    const transactionId = Number(txResult.insertId || 0);
+    try {
+      const [txResult] = await conn.query(
+        `INSERT INTO ai_wallet_transactions
+           (user_id, transaction_type, amount_micros,
+            balance_before_micros, balance_after_micros,
+            reason_code, reason_text, idempotency_key,
+            reference_type, reference_id, created_by_user_id,
+            created_at_utc)
+         VALUES (?, 'charge', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          safeUserId,
+          -Math.abs(costMicros),
+          balanceBefore,
+          balanceAfter,
+          "ai_usage_charge",
+          `Cargo IA por ${safeFeatureCode}`,
+          requestId,
+          jobType ? "ai_job" : "ai_usage",
+          jobId ? Number(jobId) : null,
+          safeUserId,
+          now,
+        ],
+      );
+      transactionId = Number(txResult.insertId || 0);
+    } catch (error) {
+      if (error?.code !== "ER_DUP_ENTRY") {
+        throw error;
+      }
 
-    await conn.query(
-      `UPDATE ai_user_wallets
-       SET balance_micros = ?,
-           lifetime_consumed_micros = lifetime_consumed_micros + ?,
-           version = version + 1,
-           updated_at_utc = ?
-       WHERE user_id = ?`,
-      [balanceAfter, Math.abs(costMicros), now, safeUserId],
-    );
+      shouldApplyWalletUpdate = false;
+      const [existingTxRows] = await conn.query(
+        `SELECT id, amount_micros, balance_after_micros
+         FROM ai_wallet_transactions
+         WHERE idempotency_key = ?
+           AND user_id = ?
+         LIMIT 1`,
+        [requestId, safeUserId],
+      );
+      const existingTx = existingTxRows[0] || null;
+      if (!existingTx) {
+        throw error;
+      }
 
-    await conn.query(
-      `INSERT INTO ai_usage_ledger
-         (internal_request_id, user_id, provider, model, feature_code,
-          api_key_alias, prompt_tokens, completion_tokens, cached_tokens,
-          total_tokens, pricing_rate_id, cost_micros, wallet_transaction_id,
-          openai_request_id, job_type, job_id, status, error_code,
-          error_message, started_at_utc, completed_at_utc, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success', NULL,
-               NULL, ?, ?, ?)`,
-      [
-        requestId,
-        safeUserId,
-        PROVIDER_OPENAI,
-        safeModel,
-        safeFeatureCode,
-        apiKeyAlias,
-        usage.promptTokens,
-        usage.completionTokens,
-        usage.cachedTokens,
-        usage.totalTokens,
-        Number(rate.id),
-        costMicros,
-        transactionId || null,
-        openAiRequestId || null,
-        jobType || null,
-        jobId ? Number(jobId) : null,
-        startedAt ? new Date(startedAt) : now,
-        now,
-        now,
-      ],
-    );
+      transactionId = Number(existingTx.id || 0);
+      effectiveCostMicros = Math.abs(Number(existingTx.amount_micros || 0));
+      effectiveBalanceMicros = Number(existingTx.balance_after_micros || 0);
+    }
+
+    if (shouldApplyWalletUpdate) {
+      await conn.query(
+        `UPDATE ai_user_wallets
+         SET balance_micros = ?,
+             lifetime_consumed_micros = lifetime_consumed_micros + ?,
+             version = version + 1,
+             updated_at_utc = ?
+         WHERE user_id = ?`,
+        [balanceAfter, Math.abs(costMicros), now, safeUserId],
+      );
+    } else {
+      const [walletRowsCurrent] = await conn.query(
+        `SELECT balance_micros
+         FROM ai_user_wallets
+         WHERE user_id = ?
+         LIMIT 1`,
+        [safeUserId],
+      );
+      if (walletRowsCurrent[0]) {
+        effectiveBalanceMicros = Number(
+          walletRowsCurrent[0].balance_micros || 0,
+        );
+      }
+    }
+
+    try {
+      await conn.query(
+        `INSERT INTO ai_usage_ledger
+           (internal_request_id, user_id, provider, model, feature_code,
+            api_key_alias, prompt_tokens, completion_tokens, cached_tokens,
+            total_tokens, pricing_rate_id, cost_micros, wallet_transaction_id,
+            openai_request_id, job_type, job_id, status, error_code,
+            error_message, started_at_utc, completed_at_utc, created_at_utc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success', NULL,
+                 NULL, ?, ?, ?)`,
+        [
+          requestId,
+          safeUserId,
+          PROVIDER_OPENAI,
+          safeModel,
+          safeFeatureCode,
+          apiKeyAlias,
+          usage.promptTokens,
+          usage.completionTokens,
+          usage.cachedTokens,
+          usage.totalTokens,
+          Number(rate.id),
+          effectiveCostMicros,
+          transactionId || null,
+          openAiRequestId || null,
+          jobType || null,
+          jobId ? Number(jobId) : null,
+          startedAt ? new Date(startedAt) : now,
+          now,
+          now,
+        ],
+      );
+    } catch (error) {
+      if (error?.code !== "ER_DUP_ENTRY") {
+        throw error;
+      }
+    }
 
     return {
       requestId,
-      costMicros,
-      costUsd: toUsdFromMicros(costMicros),
-      balanceMicros: balanceAfter,
-      balanceUsd: toUsdFromMicros(balanceAfter),
+      costMicros: effectiveCostMicros,
+      costUsd: toUsdFromMicros(effectiveCostMicros),
+      balanceMicros: effectiveBalanceMicros,
+      balanceUsd: toUsdFromMicros(effectiveBalanceMicros),
       usage,
     };
   });

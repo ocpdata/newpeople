@@ -10,6 +10,8 @@ import Dashboard from "./Dashboard";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
 import { api } from "./api";
 import { HelpDrawer, HelpFabButton, HelpTourCoach } from "./help/HelpWidgets";
+import { ChatbotContextProvider } from "./chatbot/context.jsx";
+import ChatbotWidget from "./chatbot/ChatbotWidget";
 
 const OpportunityQuestionAdminPage = lazy(
   () => import("./OpportunityQuestionAdminPage"),
@@ -173,10 +175,8 @@ export default function AppShell({
   ].some(can);
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
-  const canReadAccounts =
-    can("cuentas.read") || can("cuentas.read_all");
-  const canReadContacts =
-    can("contactos.read") || can("contactos.read_all");
+  const canReadAccounts = can("cuentas.read") || can("cuentas.read_all");
+  const canReadContacts = can("contactos.read") || can("contactos.read_all");
   const canReadOpportunities =
     can("oportunidades.read") || can("oportunidades.read_all");
   const canAccessCommercialDevelopment =
@@ -437,273 +437,279 @@ export default function AppShell({
   }
 
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <h1>NewPeople CRM</h1>
-        <nav>
-          <SidebarNavGroup title="General">
-            <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
-              Dashboard
-            </GuardedNavLink>
-          </SidebarNavGroup>
-
-          {(canReadAccounts ||
-            canReadContacts ||
-            canReadOpportunities ||
-            canAccessQuotations ||
-            canAccessManufacturerRegistrations) && (
-            <SidebarNavGroup title="Comercial">
-              {canReadAccounts && (
-                <GuardedNavLink
-                  to="/accounts"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Cuentas
-                </GuardedNavLink>
-              )}
-              {canReadContacts && (
-                <GuardedNavLink
-                  to="/contacts"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Contactos
-                </GuardedNavLink>
-              )}
-              {canReadOpportunities && (
-                <GuardedNavLink
-                  to="/opportunities"
-                  end
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Oportunidades
-                </GuardedNavLink>
-              )}
-              {canAccessQuotations && (
-                <GuardedNavLink
-                  to="/quotations"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Cotizaciones
-                </GuardedNavLink>
-              )}
-              {canAccessProposals && (
-                <GuardedNavLink
-                  to="/proposals"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Propuestas
-                </GuardedNavLink>
-              )}
-            </SidebarNavGroup>
-          )}
-
-          {canAccessInteractions && (
-            <SidebarNavGroup title="Marketing">
-              {canAccessInteractions && (
-                <GuardedNavLink
-                  to="/interactions"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Leads
-                </GuardedNavLink>
-              )}
-            </SidebarNavGroup>
-          )}
-
-          {(canAccessCommercialDevelopment ||
-            canAccessCommercialCalendar ||
-            canAccessCommercialTracking ||
-            canAccessCommercialPlanning ||
-            canAccessCommercialEnablement ||
-            canReadContacts) && (
-            <SidebarNavGroup title="Desarrollo">
-              {canAccessCommercialTracking ? (
-                <GuardedNavLink
-                  to="/commercial-tracking"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Pipeline
-                </GuardedNavLink>
-              ) : null}
-              {canAccessCommercialPlanning ? (
-                <GuardedNavLink
-                  to="/commercial-planning"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Planeación Comercial
-                </GuardedNavLink>
-              ) : null}
-              {canAccessCommercialCalendar ? (
-                <GuardedNavLink
-                  to="/calendar"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Calendario
-                </GuardedNavLink>
-              ) : null}
-              {canReadContacts ? (
-                <GuardedNavLink
-                  to="/contact-mapping"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Mapeo de contactos
-                </GuardedNavLink>
-              ) : null}
-              {canAccessCommercialEnablement ? (
-                <GuardedNavLink
-                  to="/commercial-enablement"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Biblioteca Comercial
-                </GuardedNavLink>
-              ) : null}
-            </SidebarNavGroup>
-          )}
-
-          {(can("proveedores.read") ||
-            (canAccessManufacturerRegistrations && canReadOpportunities)) && (
-            <SidebarNavGroup title="Operacion comercial">
-              {can("proveedores.read") && (
-                <GuardedNavLink
-                  to="/providers"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Proveedores
-                </GuardedNavLink>
-              )}
-              {canAccessManufacturerRegistrations &&
-              canReadOpportunities ? (
-                <GuardedNavLink
-                  to="/manufacturer-registrations"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Registros de fabricantes
-                </GuardedNavLink>
-              ) : null}
-            </SidebarNavGroup>
-          )}
-
-          {(can("usuarios.read") ||
-            can("roles.read") ||
-            canAccessProcessCommercialConfig ||
-            can("configuracion.read") ||
-            can("herramientas.read")) && (
-            <SidebarNavGroup title="Administracion">
-              {can("usuarios.read") && (
-                <GuardedNavLink
-                  to="/users"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Usuarios
-                </GuardedNavLink>
-              )}
-              {can("roles.read") && (
-                <GuardedNavLink
-                  to="/roles"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Roles
-                </GuardedNavLink>
-              )}
-              {canAccessProcessCommercialConfig && (
-                <GuardedNavLink
-                  to="/opportunities/questions"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Configuración del proceso comercial
-                </GuardedNavLink>
-              )}
-              {can("configuracion.read") && (
-                <GuardedNavLink
-                  to="/settings"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Configuración
-                </GuardedNavLink>
-              )}
-              {can("herramientas.read") && (
-                <GuardedNavLink
-                  to="/tools"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Herramientas
-                </GuardedNavLink>
-              )}
-            </SidebarNavGroup>
-          )}
-
-          {can("audit.read") && (
-            <SidebarNavGroup title="Control">
-              <GuardedNavLink to="/audit" onBeforeNavigate={confirmRouteChange}>
-                Auditoría
+    <ChatbotContextProvider pathname={location.pathname}>
+      <div className="app">
+        <aside className="sidebar">
+          <h1>NewPeople CRM</h1>
+          <nav>
+            <SidebarNavGroup title="General">
+              <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
+                Dashboard
               </GuardedNavLink>
             </SidebarNavGroup>
-          )}
-        </nav>
-        <button
-          className="logout"
-          onClick={() => {
-            if (!confirmRouteChange()) {
-              return;
-            }
 
-            onLogout();
-          }}
-        >
-          Salir
-        </button>
-        <div className="sidebar-version">
-          Version {appVersion} · {appCommit}
-        </div>
-      </aside>
-      <main className="content">
-        <header className="topbar">
-          <div className="topbar-user">
-            <UserAvatar
-              src={currentUser.avatar_url}
-              fullName={currentUser.full_name}
-              size="lg"
-            />
-            <div className="topbar-user-meta">
-              <div className="topbar-user-info">
-                <strong>{currentUser.full_name}</strong>
-                <p>{currentUser.email}</p>
-              </div>
-              {aiCreditSummary ? (
-                <div
-                  className="topbar-ai-credit"
-                  title="Consumo acumulado de IA"
+            {(canReadAccounts ||
+              canReadContacts ||
+              canReadOpportunities ||
+              canAccessQuotations ||
+              canAccessManufacturerRegistrations) && (
+              <SidebarNavGroup title="Comercial">
+                {canReadAccounts && (
+                  <GuardedNavLink
+                    to="/accounts"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Cuentas
+                  </GuardedNavLink>
+                )}
+                {canReadContacts && (
+                  <GuardedNavLink
+                    to="/contacts"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Contactos
+                  </GuardedNavLink>
+                )}
+                {canReadOpportunities && (
+                  <GuardedNavLink
+                    to="/opportunities"
+                    end
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Oportunidades
+                  </GuardedNavLink>
+                )}
+                {canAccessQuotations && (
+                  <GuardedNavLink
+                    to="/quotations"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Cotizaciones
+                  </GuardedNavLink>
+                )}
+                {canAccessProposals && (
+                  <GuardedNavLink
+                    to="/proposals"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Propuestas
+                  </GuardedNavLink>
+                )}
+              </SidebarNavGroup>
+            )}
+
+            {canAccessInteractions && (
+              <SidebarNavGroup title="Marketing">
+                {canAccessInteractions && (
+                  <GuardedNavLink
+                    to="/interactions"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Leads
+                  </GuardedNavLink>
+                )}
+              </SidebarNavGroup>
+            )}
+
+            {(canAccessCommercialDevelopment ||
+              canAccessCommercialCalendar ||
+              canAccessCommercialTracking ||
+              canAccessCommercialPlanning ||
+              canAccessCommercialEnablement ||
+              canReadContacts) && (
+              <SidebarNavGroup title="Desarrollo">
+                {canAccessCommercialTracking ? (
+                  <GuardedNavLink
+                    to="/commercial-tracking"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Pipeline
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessCommercialPlanning ? (
+                  <GuardedNavLink
+                    to="/commercial-planning"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Planeación Comercial
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessCommercialCalendar ? (
+                  <GuardedNavLink
+                    to="/calendar"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Calendario
+                  </GuardedNavLink>
+                ) : null}
+                {canReadContacts ? (
+                  <GuardedNavLink
+                    to="/contact-mapping"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Mapeo de contactos
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessCommercialEnablement ? (
+                  <GuardedNavLink
+                    to="/commercial-enablement"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Biblioteca Comercial
+                  </GuardedNavLink>
+                ) : null}
+              </SidebarNavGroup>
+            )}
+
+            {(can("proveedores.read") ||
+              (canAccessManufacturerRegistrations && canReadOpportunities)) && (
+              <SidebarNavGroup title="Operacion comercial">
+                {can("proveedores.read") && (
+                  <GuardedNavLink
+                    to="/providers"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Proveedores
+                  </GuardedNavLink>
+                )}
+                {canAccessManufacturerRegistrations && canReadOpportunities ? (
+                  <GuardedNavLink
+                    to="/manufacturer-registrations"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Registros de fabricantes
+                  </GuardedNavLink>
+                ) : null}
+              </SidebarNavGroup>
+            )}
+
+            {(can("usuarios.read") ||
+              can("roles.read") ||
+              canAccessProcessCommercialConfig ||
+              can("configuracion.read") ||
+              can("herramientas.read")) && (
+              <SidebarNavGroup title="Administracion">
+                {can("usuarios.read") && (
+                  <GuardedNavLink
+                    to="/users"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Usuarios
+                  </GuardedNavLink>
+                )}
+                {can("roles.read") && (
+                  <GuardedNavLink
+                    to="/roles"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Roles
+                  </GuardedNavLink>
+                )}
+                {canAccessProcessCommercialConfig && (
+                  <GuardedNavLink
+                    to="/opportunities/questions"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Configuración del proceso comercial
+                  </GuardedNavLink>
+                )}
+                {can("configuracion.read") && (
+                  <GuardedNavLink
+                    to="/settings"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Configuración
+                  </GuardedNavLink>
+                )}
+                {can("herramientas.read") && (
+                  <GuardedNavLink
+                    to="/tools"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Herramientas
+                  </GuardedNavLink>
+                )}
+              </SidebarNavGroup>
+            )}
+
+            {can("audit.read") && (
+              <SidebarNavGroup title="Control">
+                <GuardedNavLink
+                  to="/audit"
+                  onBeforeNavigate={confirmRouteChange}
                 >
-                  <div className="topbar-ai-credit-head">
-                    <span>Credito IA</span>
-                    <span>
-                      {formatUsd(aiCreditSummary?.lifetimeConsumedUsd || 0)} /{" "}
-                      {formatUsd(aiCreditSummary?.lifetimeGrantedUsd || 0)}
-                    </span>
-                  </div>
-                  <div className="topbar-ai-credit-track" aria-hidden="true">
-                    <span
-                      className={`topbar-ai-credit-fill state-${aiCreditState}`}
-                      style={{ width: `${aiCreditPercent}%` }}
-                    />
-                  </div>
-                  <div className="topbar-ai-credit-foot">
-                    <span>{aiCreditPercent}% consumido</span>
-                    <span>
-                      Disponible: {formatUsd(aiCreditSummary?.balanceUsd || 0)}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </header>
+                  Auditoría
+                </GuardedNavLink>
+              </SidebarNavGroup>
+            )}
+          </nav>
+          <button
+            className="logout"
+            onClick={() => {
+              if (!confirmRouteChange()) {
+                return;
+              }
 
-        {appRoutes}
-      </main>
-      <HelpDrawer />
-      <HelpTourCoach />
-      <HelpFabButton />
-    </div>
+              onLogout();
+            }}
+          >
+            Salir
+          </button>
+          <div className="sidebar-version">
+            Version {appVersion} · {appCommit}
+          </div>
+        </aside>
+        <main className="content">
+          <header className="topbar">
+            <div className="topbar-user">
+              <UserAvatar
+                src={currentUser.avatar_url}
+                fullName={currentUser.full_name}
+                size="lg"
+              />
+              <div className="topbar-user-meta">
+                <div className="topbar-user-info">
+                  <strong>{currentUser.full_name}</strong>
+                  <p>{currentUser.email}</p>
+                </div>
+                {aiCreditSummary ? (
+                  <div
+                    className="topbar-ai-credit"
+                    title="Consumo acumulado de IA"
+                  >
+                    <div className="topbar-ai-credit-head">
+                      <span>Credito IA</span>
+                      <span>
+                        {formatUsd(aiCreditSummary?.lifetimeConsumedUsd || 0)} /{" "}
+                        {formatUsd(aiCreditSummary?.lifetimeGrantedUsd || 0)}
+                      </span>
+                    </div>
+                    <div className="topbar-ai-credit-track" aria-hidden="true">
+                      <span
+                        className={`topbar-ai-credit-fill state-${aiCreditState}`}
+                        style={{ width: `${aiCreditPercent}%` }}
+                      />
+                    </div>
+                    <div className="topbar-ai-credit-foot">
+                      <span>{aiCreditPercent}% consumido</span>
+                      <span>
+                        Disponible:{" "}
+                        {formatUsd(aiCreditSummary?.balanceUsd || 0)}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          {appRoutes}
+        </main>
+        <HelpDrawer />
+        <HelpTourCoach />
+        <HelpFabButton />
+        <ChatbotWidget currentUser={currentUser} />
+      </div>
+    </ChatbotContextProvider>
   );
 }
