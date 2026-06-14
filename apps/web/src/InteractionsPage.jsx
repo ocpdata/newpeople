@@ -1260,7 +1260,7 @@ function InteractionDetailModal({
     ? options.contacts.filter(
         (contact) => Number(contact.account_id) === resolvedAccountId,
       )
-    : options.contacts;
+    : [];
   const availableOpportunities = resolvedAccountId
     ? options.opportunities.filter(
         (opportunity) => Number(opportunity.account_id) === resolvedAccountId,
@@ -1788,6 +1788,16 @@ function InteractionDetailModal({
                         const isMaterializedContactSuggestion = Boolean(
                           contact.selectedContactId,
                         );
+                        const hasExistingContactOptions =
+                          Boolean(resolvedAccountId) &&
+                          availableContacts.length > 0;
+                        const displayedContactMode =
+                          isMaterializedContactSuggestion
+                            ? "link_existing"
+                            : resolution.mode === "link_existing" &&
+                                !hasExistingContactOptions
+                              ? "ignore"
+                              : resolution.mode;
                         return (
                           <article
                             key={contact.suggestionId}
@@ -1813,7 +1823,7 @@ function InteractionDetailModal({
                                   </div>
                                 ) : (
                                   <select
-                                    value={resolution.mode}
+                                    value={displayedContactMode}
                                     onChange={(event) =>
                                       setResolutionForm((prev) => ({
                                         ...prev,
@@ -1830,7 +1840,10 @@ function InteractionDetailModal({
                                       }))
                                     }
                                   >
-                                    <option value="link_existing">
+                                    <option
+                                      value="link_existing"
+                                      disabled={!hasExistingContactOptions}
+                                    >
                                       Vincular existente
                                     </option>
                                     <option value="ignore">Ignorar</option>
@@ -1840,7 +1853,7 @@ function InteractionDetailModal({
                                   </select>
                                 )}
                               </div>
-                              {resolution.mode === "link_existing" ? (
+                              {displayedContactMode === "link_existing" ? (
                                 <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
                                   <label>Contacto existente</label>
                                   {isMaterializedContactSuggestion ? (
