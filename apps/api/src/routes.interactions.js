@@ -2092,23 +2092,31 @@ async function createAccountFromDraft(
   const normalizedDraftAccountName = normalizeOpportunityDuplicateText(
     draft.name,
   );
-  const exactAccountDuplicateRows =
-    countryId && !forceDuplicate
-      ? await query(
-          `SELECT a.id, a.name
+  // Buscar todos los duplicados (activos y desactivados)
+  const exactAccountDuplicateRows = countryId
+    ? await query(
+        `SELECT a.id, a.name, aas.code as activation_code
          FROM accounts a
          INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
-         WHERE a.country_id = ? AND aas.code = 'activada'`,
-          [countryId],
-        )
-      : [];
-  const exactAccountDuplicates = exactAccountDuplicateRows
-    .filter(
-      (row) =>
-        normalizeOpportunityDuplicateText(row.name) ===
-        normalizedDraftAccountName,
-    )
-    .map((row) => ({
+         WHERE a.country_id = ?`,
+        [countryId],
+      )
+    : [];
+
+  const matchedDuplicates = exactAccountDuplicateRows.filter(
+    (row) =>
+      normalizeOpportunityDuplicateText(row.name) ===
+      normalizedDraftAccountName,
+  );
+
+  // Separar por estado de activación
+  const activeDuplicates = matchedDuplicates.filter(
+    (row) => row.activation_code === "activada",
+  );
+
+  // Si hay duplicados ACTIVOS, bloquear siempre
+  if (activeDuplicates.length) {
+    const exactAccountDuplicates = activeDuplicates.map((row) => ({
       accountId: Number(row.id),
       accountName: row.name,
       matchReason: "normalized_name_same_country",
@@ -2117,7 +2125,6 @@ async function createAccountFromDraft(
       severityMessage:
         "Coincidencia fuerte. Conviene detener la creacion y revisar si la cuenta ya existe.",
     }));
-  if (exactAccountDuplicates.length && !forceDuplicate) {
     throw Object.assign(
       new Error(
         "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado.",
@@ -2136,24 +2143,31 @@ async function createAccountFromDraft(
       },
     );
   }
-  if (!forceDuplicate) {
-    const duplicateValidation = await validateAccountDuplicates({
-      draft: {
-        name: draft.name,
-        registrationCode: "",
-        phone: draft.phone || "",
-        website: draft.website || "",
-        city: draft.city || "",
-        stateRegion: draft.stateRegion || "",
-        countryId,
-        companyDescription: draft.description || "",
-        description: draft.description || "",
-        addressLine: "",
-        postalCode: "",
-      },
-      user,
-    });
-    if (duplicateValidation.duplicateDecision !== "clear") {
+  // Solo validar duplicados de Zod si no hay duplicados exactos activos encontrados
+  // Si solo hay desactivados, permanecer crear la cuenta
+  const duplicateValidation = await validateAccountDuplicates({
+    draft: {
+      name: draft.name,
+      registrationCode: "",
+      phone: draft.phone || "",
+      website: draft.website || "",
+      city: draft.city || "",
+      stateRegion: draft.stateRegion || "",
+      countryId,
+      companyDescription: draft.description || "",
+      description: draft.description || "",
+      addressLine: "",
+      postalCode: "",
+    },
+    user,
+  });
+  // Si validateAccountDuplicates encontró duplicados activos, bloquear
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    // Filtrar para mostrar solo duplicados activos en el error
+    const activeDuplicates = duplicateValidation.duplicateWarnings || [];
+    // Si realmente no hay duplicados activos en esta validación, permitir
+    // Solo si validateAccountDuplicates dice que hay alguno, entonces bloquear
+    if (activeDuplicates.length > 0) {
       throw Object.assign(
         new Error(buildAccountDuplicateResponse(duplicateValidation).message),
         {
@@ -2201,13 +2215,7 @@ async function createAccountFromDraft(
   return Number(insertResult.insertId);
 }
 
-async function createContactFromDraft(
-  conn,
-  user,
-  accountId,
-  draft,
-  forceDuplicate = false,
-) {
+async function createContactFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = hasPermission(user, "contactos.create")
     ? "activado"
     : null;
@@ -2234,41 +2242,39 @@ async function createContactFromDraft(
   ]);
   const [accountRows] = accountQueryResult;
   const accountCountryId = accountRows[0]?.country_id || null;
-  if (!forceDuplicate) {
-    const duplicateValidation = await validateContactDuplicates({
-      draft: {
-        firstName: draft.firstName,
-        lastName: draft.lastName,
-        accountId: Number(accountId),
-        positionTitle: draft.positionTitle || "",
-        phone: draft.phone || "",
-        phoneExtension: "",
-        mobile: draft.mobile || "",
-        email: draft.email || "",
-        department: draft.department || "",
-        countryId: draft.countryId || accountCountryId,
-        stateRegion: draft.stateRegion || "",
-        city: draft.city || "",
-        addressLine: "",
-        postalCode: "",
-        purchaseParticipationId,
-        relationshipTypeId,
-        employmentStatusId,
-        activationStatusId,
-        managerContactId: null,
-        influencesContactId: null,
+  const duplicateValidation = await validateContactDuplicates({
+    draft: {
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      accountId: Number(accountId),
+      positionTitle: draft.positionTitle || "",
+      phone: draft.phone || "",
+      phoneExtension: "",
+      mobile: draft.mobile || "",
+      email: draft.email || "",
+      department: draft.department || "",
+      countryId: draft.countryId || accountCountryId,
+      stateRegion: draft.stateRegion || "",
+      city: draft.city || "",
+      addressLine: "",
+      postalCode: "",
+      purchaseParticipationId,
+      relationshipTypeId,
+      employmentStatusId,
+      activationStatusId,
+      managerContactId: null,
+      influencesContactId: null,
+    },
+    user,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(buildContactDuplicateResponse(duplicateValidation).message),
+      {
+        status: 409,
+        payload: buildContactDuplicateResponse(duplicateValidation),
       },
-      user,
-    });
-    if (duplicateValidation.duplicateDecision !== "clear") {
-      throw Object.assign(
-        new Error(buildContactDuplicateResponse(duplicateValidation).message),
-        {
-          status: 409,
-          payload: buildContactDuplicateResponse(duplicateValidation),
-        },
-      );
-    }
+    );
   }
   const now = new Date();
 
@@ -2578,13 +2584,7 @@ function buildOpportunityDuplicateResponse(validation) {
   };
 }
 
-async function createOpportunityFromDraft(
-  conn,
-  user,
-  accountId,
-  draft,
-  forceDuplicate = false,
-) {
+async function createOpportunityFromDraft(conn, user, accountId, draft) {
   const creationStatusCode = resolveCreationStatusCode(
     user,
     "oportunidades.create",
@@ -2604,23 +2604,18 @@ async function createOpportunityFromDraft(
         ? Promise.resolve(Number(draft.businessLineId))
         : getIdByCode("opportunity_business_lines", "otros"),
     ]);
-  if (!forceDuplicate) {
-    const duplicateValidation =
-      await validateOpportunityDuplicatesForLeadCreate({
-        accountId,
-        draft,
-      });
-    if (duplicateValidation.duplicateDecision !== "clear") {
-      throw Object.assign(
-        new Error(
-          buildOpportunityDuplicateResponse(duplicateValidation).message,
-        ),
-        {
-          status: 409,
-          payload: buildOpportunityDuplicateResponse(duplicateValidation),
-        },
-      );
-    }
+  const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
+    accountId,
+    draft,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(buildOpportunityDuplicateResponse(duplicateValidation).message),
+      {
+        status: 409,
+        payload: buildOpportunityDuplicateResponse(duplicateValidation),
+      },
+    );
   }
   const now = new Date();
 
@@ -3554,7 +3549,6 @@ router.post(
             conn,
             req.user,
             parsed.data.accountResolution.draft,
-            Boolean(parsed.data.accountResolution.forceDuplicate),
           );
         }
 
@@ -3607,7 +3601,6 @@ router.post(
               req.user,
               resolvedAccountId,
               resolution.draft,
-              Boolean(resolution.forceDuplicate),
             );
           }
           if (contactId) {
@@ -3910,7 +3903,6 @@ router.post(
               req.user,
               resolvedAccountId,
               effectiveDraft,
-              Boolean(resolution.forceDuplicate),
             );
             createdOpportunityIds.push(opportunityId);
           }
