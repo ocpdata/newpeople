@@ -1046,20 +1046,59 @@ async function fetchInteractionDetail(interactionId, user = null) {
     fetchInteractionDocuments(interactionId),
   ]);
 
-  const suggestedAccount = parseJsonField(row.suggested_account_json, null);
+  const suggestedAccountRaw = parseJsonField(row.suggested_account_json, null);
+  const linkedAccountId = Number(row.account_id || 0);
+  const suggestedAccount = suggestedAccountRaw
+    ? (() => {
+        const selectedAccountId = Number(
+          suggestedAccountRaw?.selectedAccountId || 0,
+        );
+        const persistedMode = String(
+          suggestedAccountRaw?.resolutionMode || "",
+        ).trim();
+        const isLinkedMaterialized =
+          selectedAccountId > 0 &&
+          linkedAccountId > 0 &&
+          selectedAccountId === linkedAccountId;
+        return {
+          ...suggestedAccountRaw,
+          resolutionMode: isLinkedMaterialized
+            ? "link_existing"
+            : persistedMode || suggestedAccountRaw?.resolutionMode || null,
+        };
+      })()
+    : null;
   const accountSelectedId = Number(suggestedAccount?.selectedAccountId || 0);
   const suggestedContactsRaw = parseJsonField(row.suggested_contacts_json, []);
   const suggestedOpportunitiesRaw = parseJsonField(
     row.suggested_opportunities_json,
     [],
   );
+  const linkedContactIds = new Set(
+    contacts
+      .map((contact) => Number(contact.id))
+      .filter((contactId) => Number.isInteger(contactId) && contactId > 0),
+  );
 
   const suggestedContacts = (
     Array.isArray(suggestedContactsRaw) ? suggestedContactsRaw : []
   ).map((contact) => {
     const persistedMode = String(contact?.resolutionMode || "").trim();
-    if (accountSelectedId > 0 || persistedMode === "link_existing") {
-      return contact;
+    const selectedContactId = Number(contact?.selectedContactId || 0);
+    const isLinkedMaterialized =
+      selectedContactId > 0 && linkedContactIds.has(selectedContactId);
+    const effectiveMode = isLinkedMaterialized
+      ? "link_existing"
+      : persistedMode;
+
+    if (accountSelectedId > 0 || effectiveMode === "link_existing") {
+      return {
+        ...contact,
+        selectedContactId: isLinkedMaterialized
+          ? selectedContactId
+          : contact?.selectedContactId || null,
+        resolutionMode: effectiveMode || contact?.resolutionMode || null,
+      };
     }
 
     return {

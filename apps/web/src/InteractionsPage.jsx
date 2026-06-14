@@ -544,7 +544,11 @@ function buildInitialResolutionForm(detail, options, currentUser) {
       : "";
   const accountResolution =
     suggestedAccount?.selectedAccountId &&
-    persistedAccountMode === "link_existing"
+    (persistedAccountMode === "link_existing" ||
+      (Number(suggestedAccount?.selectedAccountId || 0) > 0 &&
+        Number(detail?.accountId || 0) > 0 &&
+        Number(suggestedAccount?.selectedAccountId) ===
+          Number(detail?.accountId)))
       ? {
           mode: "link_existing",
           accountId: String(suggestedAccount.selectedAccountId),
@@ -1700,9 +1704,15 @@ function InteractionDetailModal({
                 </div>
                 <div className="interaction-resolution-grid interaction-account-suggestion-grid">
                   {(() => {
-                    const isMaterializedAccountSuggestion = Boolean(
-                      editForm.suggestedAccount?.selectedAccountId,
+                    const materializedAccountId = Number(
+                      editForm.suggestedAccount?.selectedAccountId || 0,
                     );
+                    const isMaterializedAccountSuggestion = Boolean(
+                      materializedAccountId,
+                    );
+                    const displayedAccountMode = isMaterializedAccountSuggestion
+                      ? "link_existing"
+                      : resolutionForm.accountResolution.mode;
 
                     return (
                       <div className="field-group interaction-resolution-action-field">
@@ -1715,7 +1725,7 @@ function InteractionDetailModal({
                           </div>
                         ) : (
                           <select
-                            value={resolutionForm.accountResolution.mode}
+                            value={displayedAccountMode}
                             onChange={(event) =>
                               setResolutionForm((currentValue) => ({
                                 ...currentValue,
@@ -1736,7 +1746,10 @@ function InteractionDetailModal({
                       </div>
                     );
                   })()}
-                  {resolutionForm.accountResolution.mode === "link_existing" ? (
+                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
+                    ? "link_existing"
+                    : resolutionForm.accountResolution.mode) ===
+                  "link_existing" ? (
                     <div className="field-group interaction-grid-span-2 interaction-account-existing-field">
                       <label>Cuenta existente</label>
                       {Boolean(editForm.suggestedAccount?.selectedAccountId) ? (
@@ -1744,7 +1757,11 @@ function InteractionDetailModal({
                           <span className="interaction-readonly-value-title">
                             {getOptionLabel(
                               activeAccounts,
-                              resolutionForm.accountResolution.accountId,
+                              resolutionForm.accountResolution.accountId ||
+                                String(
+                                  editForm.suggestedAccount
+                                    ?.selectedAccountId || "",
+                                ),
                               ["name"],
                             ) || "Cuenta vinculada"}
                           </span>
@@ -1783,7 +1800,10 @@ function InteractionDetailModal({
                       </span>
                     </div>
                   ) : null}
-                  {resolutionForm.accountResolution.mode !== "link_existing" ? (
+                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
+                    ? "link_existing"
+                    : resolutionForm.accountResolution.mode) !==
+                  "link_existing" ? (
                     <div className="field-group interaction-account-name-field">
                       <label>Nombre</label>
                       <input
@@ -1803,7 +1823,10 @@ function InteractionDetailModal({
                       />
                     </div>
                   ) : null}
-                  {resolutionForm.accountResolution.mode !== "link_existing" ? (
+                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
+                    ? "link_existing"
+                    : resolutionForm.accountResolution.mode) !==
+                  "link_existing" ? (
                     <>
                       <div className="field-group">
                         <label>Website</label>
