@@ -120,6 +120,7 @@ const resolutionSchema = editableInteractionSchema.extend({
     .object({
       mode: z.enum(["link_existing", "create_new", "ignore"]),
       accountId: z.number().int().positive().optional().nullable(),
+      forceDuplicate: z.boolean().optional().default(false),
       draft: z
         .object({
           name: z.string().trim().min(2).max(180),
@@ -140,6 +141,7 @@ const resolutionSchema = editableInteractionSchema.extend({
         suggestionId: z.string().trim().min(1).max(120),
         mode: z.enum(["link_existing", "create_new", "ignore"]),
         contactId: z.number().int().positive().optional().nullable(),
+        forceDuplicate: z.boolean().optional().default(false),
         draft: z
           .object({
             firstName: z.string().trim().min(1).max(120),
@@ -166,6 +168,7 @@ const resolutionSchema = editableInteractionSchema.extend({
         mode: z.enum(["link_existing", "create_new", "ignore"]),
         opportunityId: z.number().int().positive().optional().nullable(),
         isPrimary: z.boolean().optional().default(false),
+        forceDuplicate: z.boolean().optional().default(false),
         draft: z
           .object({
             name: z.string().trim().min(2).max(180),
@@ -2059,7 +2062,12 @@ export async function startInteractionAnalysisWorker() {
   await tick();
 }
 
-async function createAccountFromDraft(conn, user, draft) {
+async function createAccountFromDraft(
+  conn,
+  user,
+  draft,
+  forceDuplicate = false,
+) {
   const creationStatusCode = resolveCreationStatusCode(user, "cuentas.create");
   if (!creationStatusCode) {
     throw Object.assign(new Error("No autorizado para crear cuentas"), {
@@ -2084,14 +2092,16 @@ async function createAccountFromDraft(conn, user, draft) {
   const normalizedDraftAccountName = normalizeOpportunityDuplicateText(
     draft.name,
   );
-  const exactAccountDuplicateRows = countryId
-    ? await query(
-        `SELECT id, name
-         FROM accounts
-         WHERE country_id = ?`,
-        [countryId],
-      )
-    : [];
+  const exactAccountDuplicateRows =
+    countryId && !forceDuplicate
+      ? await query(
+          `SELECT a.id, a.name
+         FROM accounts a
+         INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+         WHERE a.country_id = ? AND aas.code = 'activada'`,
+          [countryId],
+        )
+      : [];
   const exactAccountDuplicates = exactAccountDuplicateRows
     .filter(
       (row) =>
@@ -2107,7 +2117,7 @@ async function createAccountFromDraft(conn, user, draft) {
       severityMessage:
         "Coincidencia fuerte. Conviene detener la creacion y revisar si la cuenta ya existe.",
     }));
-  if (exactAccountDuplicates.length) {
+  if (exactAccountDuplicates.length && !forceDuplicate) {
     throw Object.assign(
       new Error(
         "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado.",
@@ -2189,7 +2199,13 @@ async function createAccountFromDraft(conn, user, draft) {
   return Number(insertResult.insertId);
 }
 
-async function createContactFromDraft(conn, user, accountId, draft) {
+async function createContactFromDraft(
+  conn,
+  user,
+  accountId,
+  draft,
+  forceDuplicate = false,
+) {
   const creationStatusCode = hasPermission(user, "contactos.create")
     ? "activado"
     : null;
@@ -2216,39 +2232,41 @@ async function createContactFromDraft(conn, user, accountId, draft) {
   ]);
   const [accountRows] = accountQueryResult;
   const accountCountryId = accountRows[0]?.country_id || null;
-  const duplicateValidation = await validateContactDuplicates({
-    draft: {
-      firstName: draft.firstName,
-      lastName: draft.lastName,
-      accountId: Number(accountId),
-      positionTitle: draft.positionTitle || "",
-      phone: draft.phone || "",
-      phoneExtension: "",
-      mobile: draft.mobile || "",
-      email: draft.email || "",
-      department: draft.department || "",
-      countryId: draft.countryId || accountCountryId,
-      stateRegion: draft.stateRegion || "",
-      city: draft.city || "",
-      addressLine: "",
-      postalCode: "",
-      purchaseParticipationId,
-      relationshipTypeId,
-      employmentStatusId,
-      activationStatusId,
-      managerContactId: null,
-      influencesContactId: null,
-    },
-    user,
-  });
-  if (duplicateValidation.duplicateDecision !== "clear") {
-    throw Object.assign(
-      new Error(buildContactDuplicateResponse(duplicateValidation).message),
-      {
-        status: 409,
-        payload: buildContactDuplicateResponse(duplicateValidation),
+  if (!forceDuplicate) {
+    const duplicateValidation = await validateContactDuplicates({
+      draft: {
+        firstName: draft.firstName,
+        lastName: draft.lastName,
+        accountId: Number(accountId),
+        positionTitle: draft.positionTitle || "",
+        phone: draft.phone || "",
+        phoneExtension: "",
+        mobile: draft.mobile || "",
+        email: draft.email || "",
+        department: draft.department || "",
+        countryId: draft.countryId || accountCountryId,
+        stateRegion: draft.stateRegion || "",
+        city: draft.city || "",
+        addressLine: "",
+        postalCode: "",
+        purchaseParticipationId,
+        relationshipTypeId,
+        employmentStatusId,
+        activationStatusId,
+        managerContactId: null,
+        influencesContactId: null,
       },
-    );
+      user,
+    });
+    if (duplicateValidation.duplicateDecision !== "clear") {
+      throw Object.assign(
+        new Error(buildContactDuplicateResponse(duplicateValidation).message),
+        {
+          status: 409,
+          payload: buildContactDuplicateResponse(duplicateValidation),
+        },
+      );
+    }
   }
   const now = new Date();
 
@@ -2558,7 +2576,13 @@ function buildOpportunityDuplicateResponse(validation) {
   };
 }
 
-async function createOpportunityFromDraft(conn, user, accountId, draft) {
+async function createOpportunityFromDraft(
+  conn,
+  user,
+  accountId,
+  draft,
+  forceDuplicate = false,
+) {
   const creationStatusCode = resolveCreationStatusCode(
     user,
     "oportunidades.create",
@@ -2578,18 +2602,23 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
         ? Promise.resolve(Number(draft.businessLineId))
         : getIdByCode("opportunity_business_lines", "otros"),
     ]);
-  const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
-    accountId,
-    draft,
-  });
-  if (duplicateValidation.duplicateDecision !== "clear") {
-    throw Object.assign(
-      new Error(buildOpportunityDuplicateResponse(duplicateValidation).message),
-      {
-        status: 409,
-        payload: buildOpportunityDuplicateResponse(duplicateValidation),
-      },
-    );
+  if (!forceDuplicate) {
+    const duplicateValidation =
+      await validateOpportunityDuplicatesForLeadCreate({
+        accountId,
+        draft,
+      });
+    if (duplicateValidation.duplicateDecision !== "clear") {
+      throw Object.assign(
+        new Error(
+          buildOpportunityDuplicateResponse(duplicateValidation).message,
+        ),
+        {
+          status: 409,
+          payload: buildOpportunityDuplicateResponse(duplicateValidation),
+        },
+      );
+    }
   }
   const now = new Date();
 
@@ -3523,6 +3552,7 @@ router.post(
             conn,
             req.user,
             parsed.data.accountResolution.draft,
+            Boolean(parsed.data.accountResolution.forceDuplicate),
           );
         }
 
@@ -3575,6 +3605,7 @@ router.post(
               req.user,
               resolvedAccountId,
               resolution.draft,
+              Boolean(resolution.forceDuplicate),
             );
           }
           if (contactId) {
@@ -3877,6 +3908,7 @@ router.post(
               req.user,
               resolvedAccountId,
               effectiveDraft,
+              Boolean(resolution.forceDuplicate),
             );
             createdOpportunityIds.push(opportunityId);
           }
