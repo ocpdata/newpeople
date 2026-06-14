@@ -2654,9 +2654,10 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
 
   // Buscar duplicados exactos por nombre normalizado
   const [matchedOppDuplicatesResult] = await conn.query(
-    `SELECT o.id, o.name, oas.code as activation_code
+    `SELECT o.id, o.name, oas.code as activation_code, ocs.code as commercial_status_code
      FROM opportunities o
      INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      WHERE o.account_id = ?
        AND LOWER(TRIM(o.name)) = LOWER(TRIM(?))
      LIMIT 10`,
@@ -2664,7 +2665,9 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
   );
   const matchedOppDuplicates = matchedOppDuplicatesResult || [];
   const activeOppDuplicates = matchedOppDuplicates.filter(
-    (d) => d.activation_code === "en_proceso",
+    (d) =>
+      d.activation_code === "activada" &&
+      d.commercial_status_code === "en_proceso",
   );
 
   // Si hay duplicados EXACTOS activos, bloquear
@@ -2690,25 +2693,28 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
 
   // Si hay duplicados EXACTOS pero SOLO desactivados, permitir crear
   const hasOnlyDeactivatedOppDuplicates =
-    matchedOppDuplicates.length > 0 &&
-    activeOppDuplicates.length === 0;
+    matchedOppDuplicates.length > 0 && activeOppDuplicates.length === 0;
 
   if (hasOnlyDeactivatedOppDuplicates) {
     // Saltar validación - permitir crear
   } else {
     // Solo validar con validateOpportunityDuplicatesForLeadCreate si no hay duplicados exactos
-    const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
-    accountId,
-    draft,
-  });
-  if (duplicateValidation.duplicateDecision !== "clear") {
-    throw Object.assign(
-      new Error(buildOpportunityDuplicateResponse(duplicateValidation).message),
-      {
-        status: 409,
-        payload: buildOpportunityDuplicateResponse(duplicateValidation),
-      },
-    );
+    const duplicateValidation =
+      await validateOpportunityDuplicatesForLeadCreate({
+        accountId,
+        draft,
+      });
+    if (duplicateValidation.duplicateDecision !== "clear") {
+      throw Object.assign(
+        new Error(
+          buildOpportunityDuplicateResponse(duplicateValidation).message,
+        ),
+        {
+          status: 409,
+          payload: buildOpportunityDuplicateResponse(duplicateValidation),
+        },
+      );
+    }
   }
   const now = new Date();
 
@@ -3017,7 +3023,6 @@ router.post(
             ? buildSuggestedInteractionTitleFromFiles(files)
             : buildSuggestedInteractionTitleFromSourceNotes(sourceNotes));
       const interactionPublicId = buildInteractionPublicId();
-      }
       const now = new Date();
 
       const interactionId = await withTransaction(async (conn) => {
