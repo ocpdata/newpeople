@@ -7836,6 +7836,59 @@ button:disabled {
   grid-column: span 1;
 }
 
+.interaction-commercial-assignment-section {
+  gap: 12px;
+}
+
+.interaction-commercial-assignment-section .interaction-resolution-header {
+  margin-bottom: 2px;
+}
+
+.interaction-commercial-assignment-grid {
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 10px 14px;
+}
+
+.interaction-commercial-assignment-grid .interaction-grid-span-2 {
+  grid-column: 1 / -1;
+  max-width: 420px;
+}
+
+.interaction-commercial-assignment-grid .interaction-materialized-hint-field {
+  max-width: 560px;
+}
+
+.interaction-commercial-assignment-grid .field-hint {
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
+.interaction-primary-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #294868;
+}
+
+.interaction-primary-checkbox input {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  padding: 0;
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.interaction-primary-checkbox-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
 .interaction-opportunity-suggestion-section .interaction-resolution-card {
   padding: 8px 10px;
 }
@@ -7946,6 +7999,10 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .interaction-commercial-assignment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .interaction-opportunity-suggestion-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -7958,6 +8015,16 @@ button:disabled {
 
   .interaction-contact-suggestion-grid {
     grid-template-columns: 1fr;
+  }
+
+  .interaction-commercial-assignment-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .interaction-commercial-assignment-grid .interaction-grid-span-2,
+  .interaction-commercial-assignment-grid .interaction-materialized-hint-field {
+    max-width: none;
   }
 
   .interaction-opportunity-suggestion-grid {

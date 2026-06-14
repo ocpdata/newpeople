@@ -1265,7 +1265,7 @@ function InteractionDetailModal({
     ? options.opportunities.filter(
         (opportunity) => Number(opportunity.account_id) === resolvedAccountId,
       )
-    : options.opportunities;
+    : [];
   const hasPersistedLinkedOpportunity = Boolean(
     detail?.primaryOpportunityId ||
     (editForm?.suggestedOpportunities || []).some(
@@ -1778,7 +1778,7 @@ function InteractionDetailModal({
 
               {showDependentResolutionSections ? (
                 <>
-                  <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section">
+                  <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section interaction-commercial-assignment-section">
                     <h4>Contactos sugeridos</h4>
                     {(editForm.suggestedContacts || []).map(
                       (contact, index) => {
@@ -2021,7 +2021,7 @@ function InteractionDetailModal({
                         </p>
                       </div>
                     </div>
-                    <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
+                    <div className="interaction-resolution-grid interaction-contact-suggestion-grid interaction-commercial-assignment-grid">
                       <div className="field-group interaction-grid-span-2">
                         <label>Vendedor asignado</label>
                         {canEditCommercialAssignment ? (
@@ -2077,10 +2077,12 @@ function InteractionDetailModal({
                                       }))
                                     }
                                   />
-                                  {resolutionForm.accountResolution.mode ===
-                                  "create_new"
-                                    ? "Asignarme como owner vendedor de la nueva cuenta"
-                                    : "Asignarme como owner vendedor de esta cuenta"}
+                                  <span className="interaction-primary-checkbox-text">
+                                    {resolutionForm.accountResolution.mode ===
+                                    "create_new"
+                                      ? "Asignarme como owner vendedor de la nueva cuenta"
+                                      : "Asignarme como owner vendedor de esta cuenta"}
+                                  </span>
                                 </label>
                                 <span className="field-hint">
                                   {resolutionForm.accountResolution.mode ===
@@ -2166,6 +2168,8 @@ function InteractionDetailModal({
                           const isMaterializedOpportunitySuggestion = Boolean(
                             opportunity.selectedOpportunityId,
                           );
+                          const hasExistingOpportunityOptions =
+                            availableOpportunities.length > 0;
                           const displayedOpportunityMode =
                             isMaterializedOpportunitySuggestion
                               ? "link_existing"
@@ -2218,7 +2222,12 @@ function InteractionDetailModal({
                                       }
                                       disabled={!canSelectOpportunityResolution}
                                     >
-                                      <option value="link_existing">
+                                      <option
+                                        value="link_existing"
+                                        disabled={
+                                          !hasExistingOpportunityOptions
+                                        }
+                                      >
                                         Vincular existente (recomendado)
                                       </option>
                                       <option value="ignore">Ignorar</option>

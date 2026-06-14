@@ -453,10 +453,14 @@ async function validateLinkedContactForAccount(contactId, accountId) {
 
 async function validateLinkedOpportunityForAccount(opportunityId, accountId) {
   const rows = await query(
-    `SELECT id
-     FROM opportunities
-     WHERE id = ?
-       AND account_id = ?
+    `SELECT o.id
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     WHERE o.id = ?
+       AND o.account_id = ?
+       AND oas.code = 'activada'
+       AND ocs.code = 'en_proceso'
      LIMIT 1`,
     [Number(opportunityId), Number(accountId)],
   );
@@ -762,11 +766,14 @@ async function loadAccessibleOpportunities(user) {
 
   return query(
     `SELECT DISTINCT o.id, o.account_id, o.contact_id, o.name, o.amount_usd, o.close_date,
-            oas.code AS activation_status_code
+            oas.code AS activation_status_code,
+            ocs.code AS commercial_status_code
      FROM opportunities o
      INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      ${ownershipJoin}
      WHERE oas.code = 'activada'
+       AND ocs.code = 'en_proceso'
      ORDER BY o.name`,
     params,
   );
