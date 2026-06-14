@@ -1072,6 +1072,32 @@ async function fetchInteractionDetail(interactionId, user = null) {
     };
   });
 
+  const hydratedSuggestedContacts =
+    suggestedContacts.length || !contacts.length
+      ? suggestedContacts
+      : contacts.map((contact) => {
+          const fullName = String(contact.full_name || "").trim();
+          const nameParts = fullName.split(/\s+/).filter(Boolean);
+          return {
+            suggestionId: `linked_contact_${Number(contact.id)}`,
+            fullName,
+            firstName: nameParts[0] || fullName,
+            lastName: nameParts.slice(1).join(" "),
+            email: contact.email || "",
+            phone: contact.phone || "",
+            mobile: contact.mobile || "",
+            positionTitle: contact.position_title || "",
+            department: "",
+            confidence: "high",
+            reason:
+              "Contacto previamente vinculado y materializado desde este lead.",
+            candidates: [],
+            selectedContactId: Number(contact.id),
+            matchStatus: "single_match",
+            resolutionMode: "link_existing",
+          };
+        });
+
   const suggestedOpportunities = (
     Array.isArray(suggestedOpportunitiesRaw) ? suggestedOpportunitiesRaw : []
   ).map((opportunity) => {
@@ -1104,7 +1130,7 @@ async function fetchInteractionDetail(interactionId, user = null) {
     actionsTaken: parseJsonField(row.actions_taken_json, []),
     nextSteps: parseJsonField(row.next_steps_json, []),
     suggestedAccount,
-    suggestedContacts,
+    suggestedContacts: hydratedSuggestedContacts,
     suggestedOpportunities,
     accountId: row.account_id === null ? null : Number(row.account_id),
     accountName: row.account_name || "",
