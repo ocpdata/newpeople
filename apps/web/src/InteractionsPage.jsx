@@ -3461,6 +3461,7 @@ function InteractionsPage({ can, currentUser }) {
         contactResolutions: effectiveResolutionForm.contactResolutions.map(
           (item) => ({
             ...item,
+            forceDuplicate: item.mode === "create_new",
             contactId: item.contactId ? Number(item.contactId) : null,
             draft:
               item.mode === "create_new"
@@ -3476,6 +3477,7 @@ function InteractionsPage({ can, currentUser }) {
         opportunityResolutions:
           effectiveResolutionForm.opportunityResolutions.map((item) => ({
             ...item,
+            forceDuplicate: item.mode === "create_new",
             opportunityId: item.opportunityId
               ? Number(item.opportunityId)
               : null,
@@ -3503,6 +3505,8 @@ function InteractionsPage({ can, currentUser }) {
           })),
         accountResolution: {
           ...effectiveResolutionForm.accountResolution,
+          forceDuplicate:
+            effectiveResolutionForm.accountResolution.mode === "create_new",
           accountId: effectiveResolutionForm.accountResolution.accountId
             ? Number(effectiveResolutionForm.accountResolution.accountId)
             : null,

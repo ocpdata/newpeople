@@ -2136,30 +2136,32 @@ async function createAccountFromDraft(
       },
     );
   }
-  const duplicateValidation = await validateAccountDuplicates({
-    draft: {
-      name: draft.name,
-      registrationCode: "",
-      phone: draft.phone || "",
-      website: draft.website || "",
-      city: draft.city || "",
-      stateRegion: draft.stateRegion || "",
-      countryId,
-      companyDescription: draft.description || "",
-      description: draft.description || "",
-      addressLine: "",
-      postalCode: "",
-    },
-    user,
-  });
-  if (duplicateValidation.duplicateDecision !== "clear") {
-    throw Object.assign(
-      new Error(buildAccountDuplicateResponse(duplicateValidation).message),
-      {
-        status: 409,
-        payload: buildAccountDuplicateResponse(duplicateValidation),
+  if (!forceDuplicate) {
+    const duplicateValidation = await validateAccountDuplicates({
+      draft: {
+        name: draft.name,
+        registrationCode: "",
+        phone: draft.phone || "",
+        website: draft.website || "",
+        city: draft.city || "",
+        stateRegion: draft.stateRegion || "",
+        countryId,
+        companyDescription: draft.description || "",
+        description: draft.description || "",
+        addressLine: "",
+        postalCode: "",
       },
-    );
+      user,
+    });
+    if (duplicateValidation.duplicateDecision !== "clear") {
+      throw Object.assign(
+        new Error(buildAccountDuplicateResponse(duplicateValidation).message),
+        {
+          status: 409,
+          payload: buildAccountDuplicateResponse(duplicateValidation),
+        },
+      );
+    }
   }
   const now = new Date();
   const registrationCode =
