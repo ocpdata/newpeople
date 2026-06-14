@@ -590,7 +590,7 @@ export async function analyzeInteractionEvidence({
           Number(contact.account_id) ===
           Number(analysis.suggestedAccount.selectedAccountId),
       )
-    : accessibleContext.contacts;
+    : [];
 
   analysis.suggestedContacts = analysis.suggestedContacts.map((contact) => {
     const seed = `${contact.email || ""} ${contact.fullName || ""}`.trim();
@@ -615,7 +615,7 @@ export async function analyzeInteractionEvidence({
           Number(opportunity.account_id) ===
           Number(analysis.suggestedAccount.selectedAccountId),
       )
-    : accessibleContext.opportunities;
+    : [];
 
   analysis.suggestedOpportunities = analysis.suggestedOpportunities.map(
     (opportunity) => {

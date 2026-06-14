@@ -542,68 +542,71 @@ function buildInitialResolutionForm(detail, options, currentUser) {
     typeof suggestedAccount?.resolutionMode === "string"
       ? suggestedAccount.resolutionMode
       : "";
-  const accountResolution = suggestedAccount?.selectedAccountId
-    ? {
-        mode: "link_existing",
-        accountId: String(suggestedAccount.selectedAccountId),
-        draft: {
-          name: suggestedAccount.name || "",
-          website: suggestedAccount.website || "",
-          phone: suggestedAccount.phone || "",
-          city: suggestedAccount.city || "",
-          stateRegion: suggestedAccount.stateRegion || "",
-          countryId: suggestedAccount.countryId
-            ? String(suggestedAccount.countryId)
-            : "",
-          description: suggestedAccount.description || "",
-        },
-      }
-    : persistedAccountMode === "ignore"
+  const accountResolution =
+    suggestedAccount?.selectedAccountId &&
+    persistedAccountMode === "link_existing"
       ? {
-          mode: "ignore",
-          accountId: "",
+          mode: "link_existing",
+          accountId: String(suggestedAccount.selectedAccountId),
           draft: {
-            name: suggestedAccount?.name || "",
-            website: suggestedAccount?.website || "",
-            phone: suggestedAccount?.phone || "",
-            city: suggestedAccount?.city || "",
-            stateRegion: suggestedAccount?.stateRegion || "",
-            countryId: suggestedAccount?.countryId
+            name: suggestedAccount.name || "",
+            website: suggestedAccount.website || "",
+            phone: suggestedAccount.phone || "",
+            city: suggestedAccount.city || "",
+            stateRegion: suggestedAccount.stateRegion || "",
+            countryId: suggestedAccount.countryId
               ? String(suggestedAccount.countryId)
               : "",
-            description: suggestedAccount?.description || detail?.summary || "",
+            description: suggestedAccount.description || "",
           },
         }
-      : suggestedAccount?.name
+      : persistedAccountMode === "ignore"
         ? {
-            mode: "create_new",
-            accountId: "",
-            draft: {
-              name: suggestedAccount.name || "",
-              website: suggestedAccount.website || "",
-              phone: suggestedAccount.phone || "",
-              city: suggestedAccount.city || "",
-              stateRegion: suggestedAccount.stateRegion || "",
-              countryId: suggestedAccount.countryId
-                ? String(suggestedAccount.countryId)
-                : "",
-              description:
-                suggestedAccount.description || detail?.summary || "",
-            },
-          }
-        : {
             mode: "ignore",
             accountId: "",
             draft: {
-              name: "",
-              website: "",
-              phone: "",
-              city: "",
-              stateRegion: "",
-              countryId: "",
-              description: "",
+              name: suggestedAccount?.name || "",
+              website: suggestedAccount?.website || "",
+              phone: suggestedAccount?.phone || "",
+              city: suggestedAccount?.city || "",
+              stateRegion: suggestedAccount?.stateRegion || "",
+              countryId: suggestedAccount?.countryId
+                ? String(suggestedAccount.countryId)
+                : "",
+              description:
+                suggestedAccount?.description || detail?.summary || "",
             },
-          };
+          }
+        : suggestedAccount?.name
+          ? {
+              mode: "create_new",
+              accountId: "",
+              draft: {
+                name: suggestedAccount.name || "",
+                website: suggestedAccount.website || "",
+                phone: suggestedAccount.phone || "",
+                city: suggestedAccount.city || "",
+                stateRegion: suggestedAccount.stateRegion || "",
+                countryId: suggestedAccount.countryId
+                  ? String(suggestedAccount.countryId)
+                  : "",
+                description:
+                  suggestedAccount.description || detail?.summary || "",
+              },
+            }
+          : {
+              mode: "ignore",
+              accountId: "",
+              draft: {
+                name: "",
+                website: "",
+                phone: "",
+                city: "",
+                stateRegion: "",
+                countryId: "",
+                description: "",
+              },
+            };
 
   const contactResolutions = (detail?.suggestedContacts || []).map(
     (contact) => {
@@ -613,16 +616,18 @@ function buildInitialResolutionForm(detail, options, currentUser) {
           : "";
       return {
         suggestionId: contact.suggestionId,
-        mode: contact.selectedContactId
-          ? "link_existing"
-          : persistedMode === "ignore"
-            ? "ignore"
-            : contact.fullName
-              ? "create_new"
-              : "ignore",
-        contactId: contact.selectedContactId
-          ? String(contact.selectedContactId)
-          : "",
+        mode:
+          persistedMode === "link_existing" && contact.selectedContactId
+            ? "link_existing"
+            : persistedMode === "ignore"
+              ? "ignore"
+              : contact.fullName
+                ? "create_new"
+                : "ignore",
+        contactId:
+          persistedMode === "link_existing" && contact.selectedContactId
+            ? String(contact.selectedContactId)
+            : "",
         draft: {
           firstName: contact.firstName || "",
           lastName: contact.lastName || "",
@@ -647,16 +652,18 @@ function buildInitialResolutionForm(detail, options, currentUser) {
           : "";
       return {
         suggestionId: opportunity.suggestionId,
-        mode: opportunity.selectedOpportunityId
-          ? "link_existing"
-          : persistedMode === "ignore"
-            ? "ignore"
-            : detail?.sellerUserId && opportunity.name
-              ? "create_new"
-              : "ignore",
-        opportunityId: opportunity.selectedOpportunityId
-          ? String(opportunity.selectedOpportunityId)
-          : "",
+        mode:
+          persistedMode === "link_existing" && opportunity.selectedOpportunityId
+            ? "link_existing"
+            : persistedMode === "ignore"
+              ? "ignore"
+              : detail?.sellerUserId && opportunity.name
+                ? "create_new"
+                : "ignore",
+        opportunityId:
+          persistedMode === "link_existing" && opportunity.selectedOpportunityId
+            ? String(opportunity.selectedOpportunityId)
+            : "",
         isPrimary: index === 0,
         draft: buildDefaultOpportunityDraft(opportunity, options, currentUser),
       };
@@ -1786,7 +1793,9 @@ function InteractionDetailModal({
                           resolutionForm.contactResolutions[index];
                         if (!resolution) return null;
                         const isMaterializedContactSuggestion = Boolean(
-                          contact.selectedContactId,
+                          contact.selectedContactId &&
+                          String(contact?.resolutionMode || "").trim() ===
+                            "link_existing",
                         );
                         const hasExistingContactOptions =
                           Boolean(resolvedAccountId) &&

@@ -370,7 +370,13 @@ function assertFrozenSuggestedAccountResolution(
   persistedSuggestion,
   accountResolution,
 ) {
-  if (!persistedSuggestion?.selectedAccountId) {
+  const persistedMode = String(
+    persistedSuggestion?.resolutionMode || "",
+  ).trim();
+  if (
+    persistedMode !== "link_existing" ||
+    !persistedSuggestion?.selectedAccountId
+  ) {
     return;
   }
 
@@ -393,7 +399,13 @@ function assertFrozenSuggestedContactResolution(
   persistedSuggestion,
   contactResolution,
 ) {
-  if (!persistedSuggestion?.selectedContactId) {
+  const persistedMode = String(
+    persistedSuggestion?.resolutionMode || "",
+  ).trim();
+  if (
+    persistedMode !== "link_existing" ||
+    !persistedSuggestion?.selectedContactId
+  ) {
     return;
   }
 
@@ -416,7 +428,13 @@ function assertFrozenSuggestedOpportunityResolution(
   persistedSuggestion,
   opportunityResolution,
 ) {
-  if (!persistedSuggestion?.selectedOpportunityId) {
+  const persistedMode = String(
+    persistedSuggestion?.resolutionMode || "",
+  ).trim();
+  if (
+    persistedMode !== "link_existing" ||
+    !persistedSuggestion?.selectedOpportunityId
+  ) {
     return;
   }
 
@@ -1028,6 +1046,50 @@ async function fetchInteractionDetail(interactionId, user = null) {
     fetchInteractionDocuments(interactionId),
   ]);
 
+  const suggestedAccount = parseJsonField(row.suggested_account_json, null);
+  const accountSelectedId = Number(suggestedAccount?.selectedAccountId || 0);
+  const suggestedContactsRaw = parseJsonField(row.suggested_contacts_json, []);
+  const suggestedOpportunitiesRaw = parseJsonField(
+    row.suggested_opportunities_json,
+    [],
+  );
+
+  const suggestedContacts = (
+    Array.isArray(suggestedContactsRaw) ? suggestedContactsRaw : []
+  ).map((contact) => {
+    const persistedMode = String(contact?.resolutionMode || "").trim();
+    if (accountSelectedId > 0 || persistedMode === "link_existing") {
+      return contact;
+    }
+
+    return {
+      ...contact,
+      selectedContactId: null,
+      matchStatus:
+        contact?.matchStatus === "single_match"
+          ? "multiple_matches"
+          : contact?.matchStatus,
+    };
+  });
+
+  const suggestedOpportunities = (
+    Array.isArray(suggestedOpportunitiesRaw) ? suggestedOpportunitiesRaw : []
+  ).map((opportunity) => {
+    const persistedMode = String(opportunity?.resolutionMode || "").trim();
+    if (accountSelectedId > 0 || persistedMode === "link_existing") {
+      return opportunity;
+    }
+
+    return {
+      ...opportunity,
+      selectedOpportunityId: null,
+      matchStatus:
+        opportunity?.matchStatus === "single_match"
+          ? "multiple_matches"
+          : opportunity?.matchStatus,
+    };
+  });
+
   const detail = {
     id: Number(row.id),
     publicId: row.public_id,
@@ -1041,12 +1103,9 @@ async function fetchInteractionDetail(interactionId, user = null) {
     topics: parseJsonField(row.topics_json, []),
     actionsTaken: parseJsonField(row.actions_taken_json, []),
     nextSteps: parseJsonField(row.next_steps_json, []),
-    suggestedAccount: parseJsonField(row.suggested_account_json, null),
-    suggestedContacts: parseJsonField(row.suggested_contacts_json, []),
-    suggestedOpportunities: parseJsonField(
-      row.suggested_opportunities_json,
-      [],
-    ),
+    suggestedAccount,
+    suggestedContacts,
+    suggestedOpportunities,
     accountId: row.account_id === null ? null : Number(row.account_id),
     accountName: row.account_name || "",
     primaryOpportunityId:
