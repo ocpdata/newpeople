@@ -3505,7 +3505,13 @@ router.post(
             parsed.data.accountResolution.accountId || 0,
           );
         } else if (parsed.data.accountResolution.mode === "create_new") {
-          if (existingSuggestedAccount?.selectedAccountId) {
+          const existingSuggestedAccountMode = String(
+            existingSuggestedAccount?.resolutionMode || "",
+          ).trim();
+          if (
+            existingSuggestedAccountMode === "link_existing" &&
+            existingSuggestedAccount?.selectedAccountId
+          ) {
             throw Object.assign(
               new Error(
                 "La cuenta sugerida ya fue materializada y no puede crearse nuevamente",
@@ -3550,7 +3556,13 @@ router.post(
               );
             }
           } else if (resolution.mode === "create_new") {
-            if (persistedSuggestion?.selectedContactId) {
+            const persistedSuggestionMode = String(
+              persistedSuggestion?.resolutionMode || "",
+            ).trim();
+            if (
+              persistedSuggestionMode === "link_existing" &&
+              persistedSuggestion?.selectedContactId
+            ) {
               throw Object.assign(
                 new Error(
                   "El contacto sugerido ya fue materializado y no puede crearse nuevamente",
@@ -3799,7 +3811,13 @@ router.post(
             }
             linkedExistingOpportunityIds.push(opportunityId);
           } else if (resolution.mode === "create_new") {
-            if (persistedSuggestion?.selectedOpportunityId) {
+            const persistedSuggestionMode = String(
+              persistedSuggestion?.resolutionMode || "",
+            ).trim();
+            if (
+              persistedSuggestionMode === "link_existing" &&
+              persistedSuggestion?.selectedOpportunityId
+            ) {
               throw Object.assign(
                 new Error(
                   "La oportunidad sugerida ya fue materializada y no puede crearse nuevamente",
