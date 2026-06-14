@@ -644,6 +644,26 @@ function buildInitialResolutionForm(detail, options, currentUser) {
     },
   );
 
+  if (!contactResolutions.length) {
+    contactResolutions.push({
+      suggestionId: "manual_contact_1",
+      mode: "ignore",
+      contactId: "",
+      draft: {
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        mobile: "",
+        positionTitle: "",
+        department: "",
+        countryId: "",
+        stateRegion: "",
+        city: "",
+      },
+    });
+  }
+
   const opportunityResolutions = (detail?.suggestedOpportunities || []).map(
     (opportunity, index) => {
       const persistedMode =
@@ -1319,6 +1339,22 @@ function InteractionDetailModal({
   const hasResolvedSuggestedContact = resolutionForm.contactResolutions.some(
     (resolution) => resolution.mode !== "ignore",
   );
+  const contactSuggestionCards = (editForm.suggestedContacts || []).length
+    ? editForm.suggestedContacts
+    : [
+        {
+          suggestionId:
+            resolutionForm.contactResolutions[0]?.suggestionId ||
+            "manual_contact_1",
+          fullName: "Contacto manual",
+          firstName: "",
+          lastName: "",
+          reason:
+            "No se detectaron contactos en el analisis. Puedes crear uno nuevo o vincular uno existente.",
+          selectedContactId: null,
+          resolutionMode: null,
+        },
+      ];
   const hasMinimumCommercialLinks = Boolean(
     resolutionForm.accountResolution.mode !== "ignore" &&
     hasResolvedSuggestedContact,
@@ -1782,52 +1818,100 @@ function InteractionDetailModal({
                 <>
                   <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section interaction-commercial-assignment-section">
                     <h4>Contactos sugeridos</h4>
-                    {(editForm.suggestedContacts || []).map(
-                      (contact, index) => {
-                        const resolution =
-                          resolutionForm.contactResolutions[index];
-                        if (!resolution) return null;
-                        const isMaterializedContactSuggestion = Boolean(
-                          contact.selectedContactId &&
-                          String(contact?.resolutionMode || "").trim() ===
-                            "link_existing",
-                        );
-                        const hasExistingContactOptions =
-                          Boolean(resolvedAccountId) &&
-                          availableContacts.length > 0;
-                        const displayedContactMode =
-                          isMaterializedContactSuggestion
-                            ? "link_existing"
-                            : resolution.mode === "link_existing" &&
-                                !hasExistingContactOptions
-                              ? "ignore"
-                              : resolution.mode;
-                        return (
-                          <article
-                            key={contact.suggestionId}
-                            className="interaction-resolution-card"
-                          >
-                            <div className="interaction-resolution-card-head">
-                              <strong>
-                                {contact.fullName ||
-                                  `${contact.firstName} ${contact.lastName}`}
-                              </strong>
-                              <span className="field-hint">
-                                {contact.reason || "Sugerido por análisis"}
-                              </span>
+                    {contactSuggestionCards.map((contact, index) => {
+                      const resolution =
+                        resolutionForm.contactResolutions[index];
+                      if (!resolution) return null;
+                      const isMaterializedContactSuggestion = Boolean(
+                        contact.selectedContactId &&
+                        String(contact?.resolutionMode || "").trim() ===
+                          "link_existing",
+                      );
+                      const hasExistingContactOptions =
+                        Boolean(resolvedAccountId) &&
+                        availableContacts.length > 0;
+                      const displayedContactMode =
+                        isMaterializedContactSuggestion
+                          ? "link_existing"
+                          : resolution.mode === "link_existing" &&
+                              !hasExistingContactOptions
+                            ? "ignore"
+                            : resolution.mode;
+                      return (
+                        <article
+                          key={contact.suggestionId}
+                          className="interaction-resolution-card"
+                        >
+                          <div className="interaction-resolution-card-head">
+                            <strong>
+                              {contact.fullName ||
+                                `${contact.firstName} ${contact.lastName}`.trim() ||
+                                "Contacto"}
+                            </strong>
+                            <span className="field-hint">
+                              {contact.reason || "Sugerido por análisis"}
+                            </span>
+                          </div>
+                          <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
+                            <div className="field-group interaction-resolution-action-field">
+                              <label>Acción</label>
+                              {isMaterializedContactSuggestion ? (
+                                <div className="interaction-readonly-field interaction-readonly-field-compact">
+                                  <span className="interaction-readonly-pill">
+                                    Vincular existente
+                                  </span>
+                                </div>
+                              ) : (
+                                <select
+                                  value={displayedContactMode}
+                                  onChange={(event) =>
+                                    setResolutionForm((prev) => ({
+                                      ...prev,
+                                      contactResolutions:
+                                        prev.contactResolutions.map(
+                                          (item, itemIndex) =>
+                                            itemIndex === index
+                                              ? {
+                                                  ...item,
+                                                  mode: event.target.value,
+                                                }
+                                              : item,
+                                        ),
+                                    }))
+                                  }
+                                >
+                                  <option
+                                    value="link_existing"
+                                    disabled={!hasExistingContactOptions}
+                                  >
+                                    Vincular existente
+                                  </option>
+                                  <option value="ignore">Ignorar</option>
+                                  <option value="create_new">
+                                    Crear contacto
+                                  </option>
+                                </select>
+                              )}
                             </div>
-                            <div className="interaction-resolution-grid interaction-contact-suggestion-grid">
-                              <div className="field-group interaction-resolution-action-field">
-                                <label>Acción</label>
+                            {displayedContactMode === "link_existing" ? (
+                              <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
+                                <label>Contacto existente</label>
                                 {isMaterializedContactSuggestion ? (
-                                  <div className="interaction-readonly-field interaction-readonly-field-compact">
-                                    <span className="interaction-readonly-pill">
-                                      Vincular existente
+                                  <div className="interaction-readonly-field interaction-readonly-link-field">
+                                    <span className="interaction-readonly-value-title">
+                                      {getOptionLabel(
+                                        availableContacts,
+                                        resolution.contactId,
+                                        ["full_name", "name"],
+                                      ) || "Contacto vinculado"}
+                                    </span>
+                                    <span className="interaction-readonly-value-subtitle">
+                                      Vinculo materializado desde este lead
                                     </span>
                                   </div>
                                 ) : (
                                   <select
-                                    value={displayedContactMode}
+                                    value={resolution.contactId}
                                     onChange={(event) =>
                                       setResolutionForm((prev) => ({
                                         ...prev,
@@ -1837,194 +1921,141 @@ function InteractionDetailModal({
                                               itemIndex === index
                                                 ? {
                                                     ...item,
-                                                    mode: event.target.value,
+                                                    contactId:
+                                                      event.target.value,
                                                   }
                                                 : item,
                                           ),
                                       }))
                                     }
                                   >
-                                    <option
-                                      value="link_existing"
-                                      disabled={!hasExistingContactOptions}
-                                    >
-                                      Vincular existente
+                                    <option value="">
+                                      Selecciona contacto
                                     </option>
-                                    <option value="ignore">Ignorar</option>
-                                    <option value="create_new">
-                                      Crear contacto
-                                    </option>
+                                    {availableContacts.map((option) => (
+                                      <option key={option.id} value={option.id}>
+                                        {option.full_name}
+                                      </option>
+                                    ))}
                                   </select>
                                 )}
                               </div>
-                              {displayedContactMode === "link_existing" ? (
-                                <div className="field-group interaction-grid-span-2 interaction-contact-existing-field">
-                                  <label>Contacto existente</label>
-                                  {isMaterializedContactSuggestion ? (
-                                    <div className="interaction-readonly-field interaction-readonly-link-field">
-                                      <span className="interaction-readonly-value-title">
-                                        {getOptionLabel(
-                                          availableContacts,
-                                          resolution.contactId,
-                                          ["full_name", "name"],
-                                        ) || "Contacto vinculado"}
-                                      </span>
-                                      <span className="interaction-readonly-value-subtitle">
-                                        Vinculo materializado desde este lead
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <select
-                                      value={resolution.contactId}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          contactResolutions:
-                                            prev.contactResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      contactId:
+                            ) : null}
+                            {isMaterializedContactSuggestion ? (
+                              <div className="field-group interaction-materialized-hint-field">
+                                <span className="field-hint">
+                                  Esta sugerencia ya genero un contacto y no
+                                  puede modificarse desde este lead.
+                                </span>
+                              </div>
+                            ) : null}
+                            {resolution.mode !== "link_existing" ? (
+                              <>
+                                <div className="field-group interaction-contact-name-field">
+                                  <label>Nombre</label>
+                                  <input
+                                    value={resolution.draft.firstName}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      firstName:
                                                         event.target.value,
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    >
-                                      <option value="">
-                                        Selecciona contacto
-                                      </option>
-                                      {availableContacts.map((option) => (
-                                        <option
-                                          key={option.id}
-                                          value={option.id}
-                                        >
-                                          {option.full_name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
                                 </div>
-                              ) : null}
-                              {isMaterializedContactSuggestion ? (
-                                <div className="field-group interaction-materialized-hint-field">
-                                  <span className="field-hint">
-                                    Esta sugerencia ya genero un contacto y no
-                                    puede modificarse desde este lead.
-                                  </span>
+                                <div className="field-group">
+                                  <label>Apellido</label>
+                                  <input
+                                    value={resolution.draft.lastName}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      lastName:
+                                                        event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
                                 </div>
-                              ) : null}
-                              {resolution.mode !== "link_existing" ? (
-                                <>
-                                  <div className="field-group interaction-contact-name-field">
-                                    <label>Nombre</label>
-                                    <input
-                                      value={resolution.draft.firstName}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          contactResolutions:
-                                            prev.contactResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        firstName:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    />
-                                  </div>
-                                  <div className="field-group">
-                                    <label>Apellido</label>
-                                    <input
-                                      value={resolution.draft.lastName}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          contactResolutions:
-                                            prev.contactResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        lastName:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    />
-                                  </div>
-                                  <div className="field-group">
-                                    <label>Email</label>
-                                    <input
-                                      value={resolution.draft.email}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          contactResolutions:
-                                            prev.contactResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        email:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    />
-                                  </div>
-                                  <div className="field-group">
-                                    <label>Cargo</label>
-                                    <input
-                                      value={resolution.draft.positionTitle}
-                                      onChange={(event) =>
-                                        setResolutionForm((prev) => ({
-                                          ...prev,
-                                          contactResolutions:
-                                            prev.contactResolutions.map(
-                                              (item, itemIndex) =>
-                                                itemIndex === index
-                                                  ? {
-                                                      ...item,
-                                                      draft: {
-                                                        ...item.draft,
-                                                        positionTitle:
-                                                          event.target.value,
-                                                      },
-                                                    }
-                                                  : item,
-                                            ),
-                                        }))
-                                      }
-                                    />
-                                  </div>
-                                </>
-                              ) : null}
-                            </div>
-                          </article>
-                        );
-                      },
-                    )}
+                                <div className="field-group">
+                                  <label>Email</label>
+                                  <input
+                                    value={resolution.draft.email}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      email: event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div className="field-group">
+                                  <label>Cargo</label>
+                                  <input
+                                    value={resolution.draft.positionTitle}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      positionTitle:
+                                                        event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        </article>
+                      );
+                    })}
                   </section>
 
                   <section className="account-form-section account-modal-section interaction-detail-section interaction-contact-suggestion-section">
