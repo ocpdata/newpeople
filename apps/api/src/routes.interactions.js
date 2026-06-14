@@ -2717,11 +2717,19 @@ router.get(
   async (req, res) => {
     const accountId = Number(req.query.accountId || 0);
     const accessibleContext = await loadAccessibleContext(req.user);
-    const filteredContacts = accountId
+    const activeAccounts = (accessibleContext.accounts || []).filter(
+      (account) =>
+        String(account?.activation_status_code || "").trim() === "activada",
+    );
+    const filteredContactsByAccount = accountId
       ? accessibleContext.contacts.filter(
           (contact) => Number(contact.account_id) === accountId,
         )
       : accessibleContext.contacts;
+    const filteredContacts = (filteredContactsByAccount || []).filter(
+      (contact) =>
+        String(contact?.activation_status_code || "").trim() === "activado",
+    );
     const filteredOpportunities = accountId
       ? accessibleContext.opportunities.filter(
           (opportunity) => Number(opportunity.account_id) === accountId,
@@ -2733,7 +2741,7 @@ router.get(
         ? accessibleContext.sellerUsers
         : [];
     return res.json({
-      accounts: accessibleContext.accounts,
+      accounts: activeAccounts,
       contacts: filteredContacts,
       opportunities: filteredOpportunities,
       businessLines: accessibleContext.businessLines,

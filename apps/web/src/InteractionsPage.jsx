@@ -690,6 +690,16 @@ function buildInitialResolutionForm(detail, options, currentUser) {
     },
   );
 
+  if (!opportunityResolutions.length) {
+    opportunityResolutions.push({
+      suggestionId: "manual_opportunity_1",
+      mode: "ignore",
+      opportunityId: "",
+      isPrimary: true,
+      draft: buildDefaultOpportunityDraft(null, options, currentUser),
+    });
+  }
+
   return {
     sellerUserId: detail?.sellerUserId
       ? String(detail.sellerUserId)
@@ -1274,13 +1284,19 @@ function InteractionDetailModal({
       : "Estamos cargando los archivos nuevos al lead.";
 
   const statusMeta = getInteractionStatusMeta(detail.analysisStatus);
+  const activeAccounts = (options.accounts || []).filter(
+    (account) =>
+      String(account?.activation_status_code || "").trim() === "activada",
+  );
   const resolvedAccountId =
     resolutionForm.accountResolution.mode === "link_existing"
       ? Number(resolutionForm.accountResolution.accountId || 0) || null
       : null;
   const availableContacts = resolvedAccountId
     ? options.contacts.filter(
-        (contact) => Number(contact.account_id) === resolvedAccountId,
+        (contact) =>
+          Number(contact.account_id) === resolvedAccountId &&
+          String(contact?.activation_status_code || "").trim() === "activado",
       )
     : [];
   const availableOpportunities = resolvedAccountId
@@ -1352,6 +1368,22 @@ function InteractionDetailModal({
           reason:
             "No se detectaron contactos en el analisis. Puedes crear uno nuevo o vincular uno existente.",
           selectedContactId: null,
+          resolutionMode: null,
+        },
+      ];
+  const opportunitySuggestionCards = (editForm.suggestedOpportunities || [])
+    .length
+    ? editForm.suggestedOpportunities
+    : [
+        {
+          suggestionId:
+            resolutionForm.opportunityResolutions[0]?.suggestionId ||
+            "manual_opportunity_1",
+          name: "Oportunidad manual",
+          summary: "",
+          reason:
+            "No se detectaron oportunidades en el analisis. Puedes crear una nueva o vincular una existente.",
+          selectedOpportunityId: null,
           resolutionMode: null,
         },
       ];
@@ -1711,7 +1743,7 @@ function InteractionDetailModal({
                         <div className="interaction-readonly-field interaction-readonly-link-field">
                           <span className="interaction-readonly-value-title">
                             {getOptionLabel(
-                              options.accounts,
+                              activeAccounts,
                               resolutionForm.accountResolution.accountId,
                               ["name"],
                             ) || "Cuenta vinculada"}
@@ -1734,7 +1766,7 @@ function InteractionDetailModal({
                           }
                         >
                           <option value="">Selecciona cuenta</option>
-                          {options.accounts.map((account) => (
+                          {activeAccounts.map((account) => (
                             <option key={account.id} value={account.id}>
                               {account.name}
                             </option>
@@ -2208,51 +2240,105 @@ function InteractionDetailModal({
                           disponibles para vincular.
                         </p>
                       ) : null}
-                      {(editForm.suggestedOpportunities || []).map(
-                        (opportunity, index) => {
-                          const resolution =
-                            resolutionForm.opportunityResolutions[index];
-                          if (!resolution) return null;
-                          const isMaterializedOpportunitySuggestion = Boolean(
-                            opportunity.selectedOpportunityId,
-                          );
-                          const hasExistingOpportunityOptions =
-                            availableOpportunities.length > 0;
-                          const displayedOpportunityMode =
-                            isMaterializedOpportunitySuggestion
-                              ? "link_existing"
-                              : canSelectOpportunityResolution
-                                ? resolution.mode
-                                : "ignore";
-                          return (
-                            <article
-                              key={opportunity.suggestionId}
-                              className="interaction-resolution-card"
-                            >
-                              <div className="interaction-resolution-card-head interaction-resolution-card-head-split">
-                                <div>
-                                  <strong>
-                                    {opportunity.name ||
-                                      `Oportunidad ${index + 1}`}
-                                  </strong>
-                                  <p className="field-hint">
-                                    {opportunity.reason ||
-                                      "Sugerida por análisis"}
-                                  </p>
-                                </div>
+                      {opportunitySuggestionCards.map((opportunity, index) => {
+                        const resolution =
+                          resolutionForm.opportunityResolutions[index];
+                        if (!resolution) return null;
+                        const isMaterializedOpportunitySuggestion = Boolean(
+                          opportunity.selectedOpportunityId,
+                        );
+                        const hasExistingOpportunityOptions =
+                          availableOpportunities.length > 0;
+                        const displayedOpportunityMode =
+                          isMaterializedOpportunitySuggestion
+                            ? "link_existing"
+                            : canSelectOpportunityResolution
+                              ? resolution.mode
+                              : "ignore";
+                        return (
+                          <article
+                            key={opportunity.suggestionId}
+                            className="interaction-resolution-card"
+                          >
+                            <div className="interaction-resolution-card-head interaction-resolution-card-head-split">
+                              <div>
+                                <strong>
+                                  {opportunity.name ||
+                                    `Oportunidad ${index + 1}`}
+                                </strong>
+                                <p className="field-hint">
+                                  {opportunity.reason ||
+                                    "Sugerida por análisis"}
+                                </p>
                               </div>
-                              <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
-                                <div className="field-group interaction-resolution-action-field">
-                                  <label>Acción</label>
+                            </div>
+                            <div className="interaction-resolution-grid interaction-opportunity-suggestion-grid">
+                              <div className="field-group interaction-resolution-action-field">
+                                <label>Acción</label>
+                                {isMaterializedOpportunitySuggestion ? (
+                                  <div className="interaction-readonly-field interaction-readonly-field-compact">
+                                    <span className="interaction-readonly-pill">
+                                      Vincular existente
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <select
+                                    value={displayedOpportunityMode}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        opportunityResolutions:
+                                          prev.opportunityResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    mode: event.target.value,
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                    disabled={!canSelectOpportunityResolution}
+                                  >
+                                    <option
+                                      value="link_existing"
+                                      disabled={!hasExistingOpportunityOptions}
+                                    >
+                                      Vincular existente (recomendado)
+                                    </option>
+                                    <option value="ignore">Ignorar</option>
+                                    <option value="create_new">
+                                      Crear oportunidad
+                                    </option>
+                                  </select>
+                                )}
+                                {!canSelectOpportunityResolution ? (
+                                  <span className="field-hint">
+                                    El vendedor de la oportunidad se define en
+                                    Asignación comercial.
+                                  </span>
+                                ) : null}
+                              </div>
+                              {displayedOpportunityMode === "link_existing" ? (
+                                <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
+                                  <label>Oportunidad existente</label>
                                   {isMaterializedOpportunitySuggestion ? (
-                                    <div className="interaction-readonly-field interaction-readonly-field-compact">
-                                      <span className="interaction-readonly-pill">
-                                        Vincular existente
+                                    <div className="interaction-readonly-field interaction-readonly-link-field">
+                                      <span className="interaction-readonly-value-title">
+                                        {getOptionLabel(
+                                          availableOpportunities,
+                                          resolution.opportunityId,
+                                          ["name"],
+                                        ) || "Oportunidad vinculada"}
+                                      </span>
+                                      <span className="interaction-readonly-value-subtitle">
+                                        Vinculo materializado desde este lead
                                       </span>
                                     </div>
                                   ) : (
                                     <select
-                                      value={displayedOpportunityMode}
+                                      value={resolution.opportunityId}
                                       onChange={(event) =>
                                         setResolutionForm((prev) => ({
                                           ...prev,
@@ -2262,259 +2348,196 @@ function InteractionDetailModal({
                                                 itemIndex === index
                                                   ? {
                                                       ...item,
-                                                      mode: event.target.value,
+                                                      opportunityId:
+                                                        event.target.value,
                                                     }
                                                   : item,
                                             ),
                                         }))
                                       }
-                                      disabled={!canSelectOpportunityResolution}
                                     >
-                                      <option
-                                        value="link_existing"
-                                        disabled={
-                                          !hasExistingOpportunityOptions
-                                        }
-                                      >
-                                        Vincular existente (recomendado)
+                                      <option value="">
+                                        Selecciona oportunidad
                                       </option>
-                                      <option value="ignore">Ignorar</option>
-                                      <option value="create_new">
-                                        Crear oportunidad
-                                      </option>
+                                      {availableOpportunities.map((option) => (
+                                        <option
+                                          key={option.id}
+                                          value={option.id}
+                                        >
+                                          {option.name}
+                                        </option>
+                                      ))}
                                     </select>
                                   )}
-                                  {!canSelectOpportunityResolution ? (
-                                    <span className="field-hint">
-                                      El vendedor de la oportunidad se define en
-                                      Asignación comercial.
-                                    </span>
-                                  ) : null}
                                 </div>
-                                {displayedOpportunityMode ===
-                                "link_existing" ? (
-                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-existing-field">
-                                    <label>Oportunidad existente</label>
-                                    {isMaterializedOpportunitySuggestion ? (
-                                      <div className="interaction-readonly-field interaction-readonly-link-field">
-                                        <span className="interaction-readonly-value-title">
-                                          {getOptionLabel(
-                                            availableOpportunities,
-                                            resolution.opportunityId,
-                                            ["name"],
-                                          ) || "Oportunidad vinculada"}
-                                        </span>
-                                        <span className="interaction-readonly-value-subtitle">
-                                          Vinculo materializado desde este lead
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <select
-                                        value={resolution.opportunityId}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        opportunityId:
+                              ) : null}
+                              {isMaterializedOpportunitySuggestion ? (
+                                <div className="field-group interaction-materialized-hint-field">
+                                  <span className="field-hint">
+                                    Esta sugerencia ya genero una oportunidad y
+                                    no puede modificarse desde este lead.
+                                  </span>
+                                </div>
+                              ) : null}
+                              {displayedOpportunityMode === "create_new" ? (
+                                <>
+                                  <div className="field-group interaction-grid-span-3 interaction-opportunity-name-field">
+                                    <label>Nombre</label>
+                                    <input
+                                      value={resolution.draft.name}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      draft: {
+                                                        ...item.draft,
+                                                        name: event.target
+                                                          .value,
+                                                      },
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                  <div className="field-group">
+                                    <label>Monto USD</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={resolution.draft.amountUsd}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      draft: {
+                                                        ...item.draft,
+                                                        amountUsd:
                                                           event.target.value,
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      >
-                                        <option value="">
-                                          Selecciona oportunidad
-                                        </option>
-                                        {availableOpportunities.map(
-                                          (option) => (
-                                            <option
-                                              key={option.id}
-                                              value={option.id}
-                                            >
-                                              {option.name}
-                                            </option>
-                                          ),
-                                        )}
-                                      </select>
-                                    )}
+                                                      },
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    />
                                   </div>
-                                ) : null}
-                                {isMaterializedOpportunitySuggestion ? (
-                                  <div className="field-group interaction-materialized-hint-field">
-                                    <span className="field-hint">
-                                      Esta sugerencia ya genero una oportunidad
-                                      y no puede modificarse desde este lead.
-                                    </span>
+                                  <div className="field-group">
+                                    <label>Fecha estimada de cierre</label>
+                                    <input
+                                      type="date"
+                                      value={resolution.draft.closeDate}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      draft: {
+                                                        ...item.draft,
+                                                        closeDate:
+                                                          event.target.value,
+                                                      },
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    />
                                   </div>
-                                ) : null}
-                                {displayedOpportunityMode === "create_new" ? (
-                                  <>
-                                    <div className="field-group interaction-grid-span-3 interaction-opportunity-name-field">
-                                      <label>Nombre</label>
-                                      <input
-                                        value={resolution.draft.name}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          name: event.target
-                                                            .value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      />
-                                    </div>
-                                    <div className="field-group">
-                                      <label>Monto USD</label>
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        value={resolution.draft.amountUsd}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          amountUsd:
-                                                            event.target.value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      />
-                                    </div>
-                                    <div className="field-group">
-                                      <label>Fecha estimada de cierre</label>
-                                      <input
-                                        type="date"
-                                        value={resolution.draft.closeDate}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          closeDate:
-                                                            event.target.value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      />
-                                    </div>
-                                    <div className="field-group">
-                                      <label>Línea de negocio</label>
-                                      <select
-                                        value={resolution.draft.businessLineId}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          businessLineId:
-                                                            event.target.value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      >
-                                        <option value="">
-                                          Selecciona línea
+                                  <div className="field-group">
+                                    <label>Línea de negocio</label>
+                                    <select
+                                      value={resolution.draft.businessLineId}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      draft: {
+                                                        ...item.draft,
+                                                        businessLineId:
+                                                          event.target.value,
+                                                      },
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    >
+                                      <option value="">Selecciona línea</option>
+                                      {options.businessLines.map((line) => (
+                                        <option key={line.id} value={line.id}>
+                                          {line.name}
                                         </option>
-                                        {options.businessLines.map((line) => (
-                                          <option key={line.id} value={line.id}>
-                                            {line.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                    <div className="field-group">
-                                      <label>Vendedor</label>
-                                      <input
-                                        value={commercialSellerLabel}
-                                        disabled
-                                        placeholder="El vendedor de la oportunidad se define en Asignación comercial"
-                                      />
-                                    </div>
-                                    <div className="field-group">
-                                      <label>Preventa</label>
-                                      <select
-                                        value={resolution.draft.presalesUserId}
-                                        onChange={(event) =>
-                                          setResolutionForm((prev) => ({
-                                            ...prev,
-                                            opportunityResolutions:
-                                              prev.opportunityResolutions.map(
-                                                (item, itemIndex) =>
-                                                  itemIndex === index
-                                                    ? {
-                                                        ...item,
-                                                        draft: {
-                                                          ...item.draft,
-                                                          presalesUserId:
-                                                            event.target.value,
-                                                        },
-                                                      }
-                                                    : item,
-                                              ),
-                                          }))
-                                        }
-                                      >
-                                        <option value="">Sin preventa</option>
-                                        {options.presalesUsers.map((user) => (
-                                          <option key={user.id} value={user.id}>
-                                            {user.full_name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                  </>
-                                ) : null}
-                              </div>
-                            </article>
-                          );
-                        },
-                      )}
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="field-group">
+                                    <label>Vendedor</label>
+                                    <input
+                                      value={commercialSellerLabel}
+                                      disabled
+                                      placeholder="El vendedor de la oportunidad se define en Asignación comercial"
+                                    />
+                                  </div>
+                                  <div className="field-group">
+                                    <label>Preventa</label>
+                                    <select
+                                      value={resolution.draft.presalesUserId}
+                                      onChange={(event) =>
+                                        setResolutionForm((prev) => ({
+                                          ...prev,
+                                          opportunityResolutions:
+                                            prev.opportunityResolutions.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      draft: {
+                                                        ...item.draft,
+                                                        presalesUserId:
+                                                          event.target.value,
+                                                      },
+                                                    }
+                                                  : item,
+                                            ),
+                                        }))
+                                      }
+                                    >
+                                      <option value="">Sin preventa</option>
+                                      {options.presalesUsers.map((user) => (
+                                        <option key={user.id} value={user.id}>
+                                          {user.full_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
+                          </article>
+                        );
+                      })}
                     </section>
                   ) : null}
                 </>
