@@ -2143,31 +2143,31 @@ async function createAccountFromDraft(
       },
     );
   }
-  // Solo validar duplicados de Zod si no hay duplicados exactos activos encontrados
-  // Si solo hay desactivados, permanecer crear la cuenta
-  const duplicateValidation = await validateAccountDuplicates({
-    draft: {
-      name: draft.name,
-      registrationCode: "",
-      phone: draft.phone || "",
-      website: draft.website || "",
-      city: draft.city || "",
-      stateRegion: draft.stateRegion || "",
-      countryId,
-      companyDescription: draft.description || "",
-      description: draft.description || "",
-      addressLine: "",
-      postalCode: "",
-    },
-    user,
-  });
-  // Si validateAccountDuplicates encontró duplicados activos, bloquear
-  if (duplicateValidation.duplicateDecision !== "clear") {
-    // Filtrar para mostrar solo duplicados activos en el error
-    const activeDuplicates = duplicateValidation.duplicateWarnings || [];
-    // Si realmente no hay duplicados activos en esta validación, permitir
-    // Solo si validateAccountDuplicates dice que hay alguno, entonces bloquear
-    if (activeDuplicates.length > 0) {
+  // Si hay duplicados EXACTOS pero SOLO desactivados, permitir crear
+  const hasOnlyDeactivatedDuplicates =
+    matchedDuplicates.length > 0 && activeDuplicates.length === 0;
+
+  if (hasOnlyDeactivatedDuplicates) {
+    // Saltar validación - permitir crear
+  } else {
+    // Solo validar con validateAccountDuplicates si no hay duplicados exactos
+    const duplicateValidation = await validateAccountDuplicates({
+      draft: {
+        name: draft.name,
+        registrationCode: "",
+        phone: draft.phone || "",
+        website: draft.website || "",
+        city: draft.city || "",
+        stateRegion: draft.stateRegion || "",
+        countryId,
+        companyDescription: draft.description || "",
+        description: draft.description || "",
+        addressLine: "",
+        postalCode: "",
+      },
+      user,
+    });
+    if (duplicateValidation.duplicateDecision !== "clear") {
       throw Object.assign(
         new Error(buildAccountDuplicateResponse(duplicateValidation).message),
         {
