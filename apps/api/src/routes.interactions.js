@@ -2242,39 +2242,86 @@ async function createContactFromDraft(conn, user, accountId, draft) {
   ]);
   const [accountRows] = accountQueryResult;
   const accountCountryId = accountRows[0]?.country_id || null;
-  const duplicateValidation = await validateContactDuplicates({
-    draft: {
-      firstName: draft.firstName,
-      lastName: draft.lastName,
-      accountId: Number(accountId),
-      positionTitle: draft.positionTitle || "",
-      phone: draft.phone || "",
-      phoneExtension: "",
-      mobile: draft.mobile || "",
-      email: draft.email || "",
-      department: draft.department || "",
-      countryId: draft.countryId || accountCountryId,
-      stateRegion: draft.stateRegion || "",
-      city: draft.city || "",
-      addressLine: "",
-      postalCode: "",
-      purchaseParticipationId,
-      relationshipTypeId,
-      employmentStatusId,
-      activationStatusId,
-      managerContactId: null,
-      influencesContactId: null,
-    },
-    user,
-  });
-  if (duplicateValidation.duplicateDecision !== "clear") {
+
+  // Buscar duplicados exactos por nombre completo normalizado
+  const [matchedDuplicatesResult] = await conn.query(
+    `SELECT c.id, c.first_name, c.last_name, cas.code as activation_code
+     FROM contacts c
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+     WHERE c.account_id = ?
+       AND CONCAT(LOWER(TRIM(c.first_name)), ' ', LOWER(TRIM(c.last_name))) 
+         = CONCAT(LOWER(TRIM(?)), ' ', LOWER(TRIM(?)))
+     LIMIT 10`,
+    [accountId, draft.firstName, draft.lastName],
+  );
+  const matchedDuplicates = matchedDuplicatesResult || [];
+  const activeDuplicates = matchedDuplicates.filter(
+    (d) => d.activation_code === "activado",
+  );
+
+  // Si hay duplicados EXACTOS activos, bloquear
+  if (activeDuplicates.length > 0) {
     throw Object.assign(
-      new Error(buildContactDuplicateResponse(duplicateValidation).message),
+      new Error(
+        "Detectamos una coincidencia fuerte con contactos existentes. Antes de crear un contacto nuevo, revisa si en realidad estas frente a un duplicado.",
+      ),
       {
         status: 409,
-        payload: buildContactDuplicateResponse(duplicateValidation),
+        payload: {
+          code: "CONTACT_DUPLICATE_REVIEW_REQUIRED",
+          message:
+            "Detectamos una coincidencia fuerte con contactos existentes. Antes de crear un contacto nuevo, revisa si en realidad estas frente a un duplicado.",
+          duplicateDecision: "review_required",
+          duplicateWarnings: activeDuplicates,
+          duplicateReview: null,
+          duplicateValidationSource: "heuristic",
+        },
       },
     );
+  }
+
+  // Si hay duplicados EXACTOS pero SOLO desactivados, permitir crear
+  const hasOnlyDeactivatedDuplicates =
+    matchedDuplicates.length > 0 && activeDuplicates.length === 0;
+
+  if (hasOnlyDeactivatedDuplicates) {
+    // Saltar validación - permitir crear
+  } else {
+    // Solo validar con validateContactDuplicates si no hay duplicados exactos
+    const duplicateValidation = await validateContactDuplicates({
+      draft: {
+        firstName: draft.firstName,
+        lastName: draft.lastName,
+        accountId: Number(accountId),
+        positionTitle: draft.positionTitle || "",
+        phone: draft.phone || "",
+        phoneExtension: "",
+        mobile: draft.mobile || "",
+        email: draft.email || "",
+        department: draft.department || "",
+        countryId: draft.countryId || accountCountryId,
+        stateRegion: draft.stateRegion || "",
+        city: draft.city || "",
+        addressLine: "",
+        postalCode: "",
+        purchaseParticipationId,
+        relationshipTypeId,
+        employmentStatusId,
+        activationStatusId,
+        managerContactId: null,
+        influencesContactId: null,
+      },
+      user,
+    });
+    if (duplicateValidation.duplicateDecision !== "clear") {
+      throw Object.assign(
+        new Error(buildContactDuplicateResponse(duplicateValidation).message),
+        {
+          status: 409,
+          payload: buildContactDuplicateResponse(duplicateValidation),
+        },
+      );
+    }
   }
   const now = new Date();
 
@@ -2604,7 +2651,53 @@ async function createOpportunityFromDraft(conn, user, accountId, draft) {
         ? Promise.resolve(Number(draft.businessLineId))
         : getIdByCode("opportunity_business_lines", "otros"),
     ]);
-  const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
+
+  // Buscar duplicados exactos por nombre normalizado
+  const [matchedOppDuplicatesResult] = await conn.query(
+    `SELECT o.id, o.name, oas.code as activation_code
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE o.account_id = ?
+       AND LOWER(TRIM(o.name)) = LOWER(TRIM(?))
+     LIMIT 10`,
+    [accountId, draft.name],
+  );
+  const matchedOppDuplicates = matchedOppDuplicatesResult || [];
+  const activeOppDuplicates = matchedOppDuplicates.filter(
+    (d) => d.activation_code === "en_proceso",
+  );
+
+  // Si hay duplicados EXACTOS activos, bloquear
+  if (activeOppDuplicates.length > 0) {
+    throw Object.assign(
+      new Error(
+        "Detectamos una coincidencia fuerte con oportunidades existentes. Antes de crear una oportunidad nueva, revisa si en realidad estas frente a un duplicado.",
+      ),
+      {
+        status: 409,
+        payload: {
+          code: "OPPORTUNITY_DUPLICATE_REVIEW_REQUIRED",
+          message:
+            "Detectamos una coincidencia fuerte con oportunidades existentes. Antes de crear una oportunidad nueva, revisa si en realidad estas frente a un duplicado.",
+          duplicateDecision: "review_required",
+          duplicateWarnings: activeOppDuplicates,
+          duplicateReview: null,
+          duplicateValidationSource: "heuristic",
+        },
+      },
+    );
+  }
+
+  // Si hay duplicados EXACTOS pero SOLO desactivados, permitir crear
+  const hasOnlyDeactivatedOppDuplicates =
+    matchedOppDuplicates.length > 0 &&
+    activeOppDuplicates.length === 0;
+
+  if (hasOnlyDeactivatedOppDuplicates) {
+    // Saltar validación - permitir crear
+  } else {
+    // Solo validar con validateOpportunityDuplicatesForLeadCreate si no hay duplicados exactos
+    const duplicateValidation = await validateOpportunityDuplicatesForLeadCreate({
     accountId,
     draft,
   });
@@ -2924,6 +3017,7 @@ router.post(
             ? buildSuggestedInteractionTitleFromFiles(files)
             : buildSuggestedInteractionTitleFromSourceNotes(sourceNotes));
       const interactionPublicId = buildInteractionPublicId();
+      }
       const now = new Date();
 
       const interactionId = await withTransaction(async (conn) => {
