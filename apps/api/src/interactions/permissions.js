@@ -49,6 +49,12 @@ const INTERACTION_PERMISSIONS = [
     action: "resolve_assign_any",
     description: "Resolver interacciones asignando cualquier vendedor",
   },
+  {
+    code: "comercial.seller.eligible",
+    module: "comercial",
+    action: "seller_eligible",
+    description: "Usuario elegible para ser asignado como vendedor",
+  },
 ];
 
 export async function ensureInteractionPermissions() {

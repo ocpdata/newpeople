@@ -7,6 +7,53 @@ const INTERACTION_FILE_ACCEPT =
 const INTERACTION_ANALYSIS_TIMEOUT_MS = 60000;
 const INTERACTION_ANALYSIS_JOB_POLL_INTERVAL_MS = 3000;
 const INTERACTION_ANALYSIS_TOTAL_POLL_TIMEOUT_MS = 120000;
+const LEAD_SOURCE_OPTIONS = [
+  { value: "fabricante", label: "Fabricante" },
+  { value: "mayorista", label: "Mayorista" },
+  { value: "empresa_marketing", label: "Empresa de Marketing" },
+  { value: "vendedor", label: "Vendedor" },
+  { value: "campana", label: "Campaña" },
+  { value: "web", label: "Web" },
+  { value: "correo", label: "Correo" },
+  { value: "redes", label: "Redes" },
+  { value: "consultor", label: "Consultor" },
+  { value: "webinar", label: "Webinar" },
+  { value: "evento", label: "Evento" },
+  { value: "otro", label: "Otro" },
+];
+const LEAD_STATUS_FILTER_OPTIONS = [
+  { value: "created", label: "Creado" },
+  { value: "lead_unassigned", label: "Lead no asignado" },
+  { value: "lead_assigned", label: "Lead asignado" },
+  { value: "lead_qualified", label: "Lead calificado" },
+  { value: "lead_disqualified", label: "Lead descalificado" },
+];
+const LEAD_STATUS_FILTER_VALUES = LEAD_STATUS_FILTER_OPTIONS.map(
+  (option) => option.value,
+);
+
+function sortLeadStatusFilters(values) {
+  if (!Array.isArray(values)) return [];
+  const selected = new Set(
+    values
+      .map((value) => String(value || "").trim())
+      .filter((value) => LEAD_STATUS_FILTER_VALUES.includes(value)),
+  );
+  return LEAD_STATUS_FILTER_VALUES.filter((value) => selected.has(value));
+}
+
+function normalizeLeadStatusFilters(values) {
+  const sorted = sortLeadStatusFilters(values);
+  return sorted.length ? sorted : [...LEAD_STATUS_FILTER_VALUES];
+}
+
+function getLeadStatusFilterButtonLabel(selectedStatuses) {
+  const selectedCount = normalizeLeadStatusFilters(selectedStatuses).length;
+  if (selectedCount === LEAD_STATUS_FILTER_VALUES.length) {
+    return "Estado: Todas";
+  }
+  return `Estado: ${selectedCount} seleccionado${selectedCount === 1 ? "" : "s"}`;
+}
 
 function buildPastedTextFileName(label) {
   const normalizedLabel = String(label || "")
@@ -68,17 +115,6 @@ function formatContactName(contactDraft, fallbackLabel) {
     .join(" ")
     .trim();
   return fullName || fallbackLabel;
-}
-
-function isSellerUser(user) {
-  return Array.isArray(user?.roles)
-    ? user.roles.some(
-        (role) =>
-          String(role?.name || "")
-            .trim()
-            .toLowerCase() === "vendedor",
-      )
-    : false;
 }
 
 function buildLegacySellerOption(detail) {
@@ -176,7 +212,7 @@ function buildEffectiveResolutionForm(
   } else if (
     assignCurrentUserAsOwnerSeller &&
     currentUser?.id &&
-    isSellerUser(currentUser)
+    commercialAssignmentPolicy?.currentUserIsSellerEligible
   ) {
     effectiveSellerUserId = String(currentUser.id);
   }
@@ -357,6 +393,14 @@ function isQualifiedLeadStatus(status) {
   return status === "lead_qualified";
 }
 
+function isDisqualifiedLeadStatus(status) {
+  return status === "lead_disqualified";
+}
+
+function isFinalizedLeadStatus(status) {
+  return isQualifiedLeadStatus(status) || isDisqualifiedLeadStatus(status);
+}
+
 function getInteractionStatusMeta(status) {
   switch (status) {
     case "lead_qualified":
@@ -377,6 +421,12 @@ function getInteractionStatusMeta(status) {
         className: "interaction-status-pill is-analyzed",
         toneClassName: "interaction-summary-card is-analyzed",
       };
+    case "lead_disqualified":
+      return {
+        label: "Lead Descalificado",
+        className: "interaction-status-pill is-rejected",
+        toneClassName: "interaction-summary-card is-uploaded",
+      };
     case "created":
       return {
         label: "Creado",
@@ -390,33 +440,6 @@ function getInteractionStatusMeta(status) {
         toneClassName: "interaction-summary-card",
       };
   }
-}
-
-function getInteractionFilterPillClass(filter, selectedFilter) {
-  const isSelected = filter === selectedFilter;
-  if (filter === "lead_unassigned") {
-    return isSelected
-      ? "status-filter-pill interaction-filter-pill-uploaded is-selected"
-      : "status-filter-pill interaction-filter-pill-uploaded";
-  }
-  if (filter === "lead_assigned") {
-    return isSelected
-      ? "status-filter-pill status-filter-pill-active is-selected"
-      : "status-filter-pill status-filter-pill-active";
-  }
-  if (filter === "lead_qualified") {
-    return isSelected
-      ? "status-filter-pill interaction-filter-pill-resolved is-selected"
-      : "status-filter-pill interaction-filter-pill-resolved";
-  }
-  if (filter === "created") {
-    return isSelected
-      ? "status-filter-pill interaction-filter-pill-uploaded is-selected"
-      : "status-filter-pill interaction-filter-pill-uploaded";
-  }
-  return isSelected
-    ? "status-filter-pill status-filter-pill-all is-selected"
-    : "status-filter-pill status-filter-pill-all";
 }
 
 function getDocumentStageLabel(status, labels = {}) {
@@ -477,7 +500,7 @@ function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
         : "",
     sellerUserId: suggestion?.selectedSellerUserId
       ? String(suggestion.selectedSellerUserId)
-      : isSellerUser(currentUser) && currentUser?.id
+      : options.currentUserIsSellerEligible && currentUser?.id
         ? String(currentUser.id)
         : options.sellerUsers[0]?.id
           ? String(options.sellerUsers[0].id)
@@ -635,6 +658,7 @@ function buildInitialResolutionForm(detail, options, currentUser) {
 function buildEditableForm(detail) {
   return {
     title: detail?.title || "",
+    leadSource: detail?.leadSource || "empresa_marketing",
     sourceNotes: detail?.sourceNotes || "",
     summary: detail?.summary || "",
     topics: Array.isArray(detail?.topics) ? detail.topics : [],
@@ -677,6 +701,8 @@ function CreateInteractionModal({
   onClose,
   onSubmit,
   creating,
+  leadSource,
+  setLeadSource,
   files,
   setFiles,
   pastedTextName,
@@ -707,18 +733,23 @@ function CreateInteractionModal({
   };
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !creating) onClose();
-      }}
-    >
+    <div className="modal-overlay">
       <div
         className={`modal-dialog modal-dialog-wide interaction-modal modal-dialog-with-scroll-shell${creating ? " modal-dialog-busy" : ""}`}
         aria-busy={creating}
       >
         <div className="modal-dialog-scroll-shell">
-          <div className="modal-header">
+          <div className="modal-header interaction-modal-header-with-close">
+            <button
+              type="button"
+              className="btn-secondary account-modal-close-button interaction-modal-close-left"
+              onClick={onClose}
+              disabled={creating}
+              aria-label="Cerrar modal de crear lead"
+              title="Cerrar"
+            >
+              ×
+            </button>
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
                 <span className="interaction-create-kicker">Nuevo lead</span>
@@ -807,6 +838,24 @@ function CreateInteractionModal({
                       </p>
                     </div>
                   </div>
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section">
+                <div className="field-group">
+                  <label>Fuente del lead</label>
+                  <select
+                    value={leadSource}
+                    onChange={(event) => setLeadSource(event.target.value)}
+                    required
+                  >
+                    <option value="">Selecciona una fuente</option>
+                    {LEAD_SOURCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </section>
 
@@ -900,17 +949,13 @@ function CreateInteractionModal({
               </section>
               <div className="modal-buttons">
                 <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={onClose}
-                  disabled={creating}
-                >
-                  Cancelar
-                </button>
-                <button
                   type="submit"
                   className="btn-primary"
-                  disabled={creating || (!files.length && !pastedText.trim())}
+                  disabled={
+                    creating ||
+                    !leadSource ||
+                    (!files.length && !pastedText.trim())
+                  }
                 >
                   {creating ? "Analizando..." : "Crear lead"}
                 </button>
@@ -1185,12 +1230,13 @@ function InteractionDetailModal({
     locked: true,
     allowedSellerUserId: null,
     reason: null,
+    currentUserIsSellerEligible: false,
   };
   const canEditCommercialAssignment = commercialAssignmentPolicy.mode === "any";
-  const availableSellerUsers = canEditCommercialAssignment
-    ? options.sellerUsers || []
-    : resolvedAccountId
-      ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
+  const availableSellerUsers = resolvedAccountId
+    ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
+    : canEditCommercialAssignment
+      ? options.sellerUsers || []
       : [];
   const legacySellerOption = buildLegacySellerOption(detail);
   const sellerOptionList =
@@ -1215,7 +1261,9 @@ function InteractionDetailModal({
     : "";
   const isCommercialAssignmentSelfOnly =
     commercialAssignmentPolicy.mode === "self_only";
-  const currentUserIsSeller = isSellerUser(currentUser);
+  const currentUserIsSellerEligible = Boolean(
+    commercialAssignmentPolicy.currentUserIsSellerEligible,
+  );
   const showDependentResolutionSections =
     resolutionForm.accountResolution.mode !== "ignore";
   const hasResolvedSuggestedContact = resolutionForm.contactResolutions.some(
@@ -1228,7 +1276,7 @@ function InteractionDetailModal({
   const canSelfAssignCurrentUserAsOwnerSeller = Boolean(
     canEditCommercialAssignment &&
     hasResolvedSuggestedContact &&
-    currentUserIsSeller &&
+    currentUserIsSellerEligible &&
     ((resolutionForm.accountResolution.mode === "link_existing" &&
       resolvedAccountId &&
       availableSellerUsers.length === 0) ||
@@ -1264,19 +1312,23 @@ function InteractionDetailModal({
       : "Anexar archivos";
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !isAnalysisLocked)
-          onClose();
-      }}
-    >
+    <div className="modal-overlay">
       <div
         className={`modal-dialog modal-dialog-wide interaction-modal interaction-detail-modal modal-dialog-with-scroll-shell${isAnalysisLocked ? " modal-dialog-busy" : ""}`}
         aria-busy={isAnalysisLocked}
       >
         <div className="modal-dialog-scroll-shell">
-          <div className="modal-header">
+          <div className="modal-header interaction-modal-header-with-close">
+            <button
+              type="button"
+              className="btn-secondary account-modal-close-button interaction-modal-close-left"
+              onClick={onClose}
+              disabled={isAnalysisLocked}
+              aria-label="Cerrar modal de editar lead"
+              title="Cerrar"
+            >
+              ×
+            </button>
             <div className="interaction-detail-header-copy">
               <div className="account-modal-title-row">
                 <h3 className="modal-title">{detail.title}</h3>
@@ -1459,6 +1511,24 @@ function InteractionDetailModal({
                       }))
                     }
                   />
+                </div>
+                <div className="field-group">
+                  <label>Fuente del lead</label>
+                  <select
+                    value={editForm.leadSource}
+                    onChange={(event) =>
+                      setEditForm((currentValue) => ({
+                        ...currentValue,
+                        leadSource: event.target.value,
+                      }))
+                    }
+                  >
+                    {LEAD_SOURCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="field-group">
                   <label>Notas iniciales</label>
@@ -2046,6 +2116,19 @@ function InteractionDetailModal({
                   {hasResolvedSuggestedContact ? (
                     <section className="account-form-section account-modal-section interaction-detail-section interaction-opportunity-suggestion-section">
                       <h4>Oportunidades sugeridas</h4>
+                      <p className="field-hint">
+                        Si la oportunidad ya existe en la cuenta, usa "Vincular
+                        existente" para mantener la trazabilidad del lead hacia
+                        la oportunidad ya creada.
+                      </p>
+                      {availableOpportunities.length ? (
+                        <p className="field-hint">
+                          La cuenta vinculada tiene{" "}
+                          {availableOpportunities.length} oportunidad
+                          {availableOpportunities.length === 1 ? "" : "es"}{" "}
+                          disponibles para vincular.
+                        </p>
+                      ) : null}
                       {(editForm.suggestedOpportunities || []).map(
                         (opportunity, index) => {
                           const resolution =
@@ -2107,7 +2190,7 @@ function InteractionDetailModal({
                                       disabled={!canSelectOpportunityResolution}
                                     >
                                       <option value="link_existing">
-                                        Vincular existente
+                                        Vincular existente (recomendado)
                                       </option>
                                       <option value="ignore">Ignorar</option>
                                       <option value="create_new">
@@ -2353,14 +2436,6 @@ function InteractionDetailModal({
             </div>
 
             <div className="modal-buttons interaction-detail-modal-buttons">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={onClose}
-                disabled={isAnalysisLocked}
-              >
-                Cerrar
-              </button>
               {canResolve ? (
                 <button
                   type="button"
@@ -2557,12 +2632,20 @@ function ResolveInteractionConfirmationModal({
 function InteractionsPage({ can, currentUser }) {
   const helpRef = useRef(null);
   const interactionMenuRef = useRef(null);
+  const statusFilterRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilters, setStatusFilters] = useState([
+    ...LEAD_STATUS_FILTER_VALUES,
+  ]);
+  const [statusFilterMenuOpen, setStatusFilterMenuOpen] = useState(false);
+  const [statusFilterDraft, setStatusFilterDraft] = useState([
+    ...LEAD_STATUS_FILTER_VALUES,
+  ]);
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -2570,6 +2653,7 @@ function InteractionsPage({ can, currentUser }) {
   const [createInfoMessage, setCreateInfoMessage] = useState("");
   const [creating, setCreating] = useState(false);
   const [createFiles, setCreateFiles] = useState([]);
+  const [createLeadSource, setCreateLeadSource] = useState("");
   const [createPastedTextName, setCreatePastedTextName] = useState("");
   const [createPastedText, setCreatePastedText] = useState("");
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -2584,6 +2668,7 @@ function InteractionsPage({ can, currentUser }) {
     sellerUsers: [],
     sellerUsersByAccountId: {},
     presalesUsers: [],
+    currentUserIsSellerEligible: false,
   });
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving] = useState(false);
@@ -2630,6 +2715,44 @@ function InteractionsPage({ can, currentUser }) {
     );
   }
 
+  function openStatusFilterMenu() {
+    setStatusFilterDraft(statusFilters);
+    setStatusFilterMenuOpen(true);
+  }
+
+  function closeStatusFilterMenu({ restoreDraft = false } = {}) {
+    if (restoreDraft) {
+      setStatusFilterDraft(statusFilters);
+    }
+    setStatusFilterMenuOpen(false);
+  }
+
+  function toggleStatusFilterDraft(statusValue) {
+    if (statusValue === "all") {
+      setStatusFilterDraft([...LEAD_STATUS_FILTER_VALUES]);
+      return;
+    }
+    setStatusFilterDraft((currentValues) => {
+      const currentSet = new Set(sortLeadStatusFilters(currentValues));
+      if (currentSet.has(statusValue)) {
+        currentSet.delete(statusValue);
+      } else {
+        currentSet.add(statusValue);
+      }
+      return LEAD_STATUS_FILTER_VALUES.filter((value) => currentSet.has(value));
+    });
+  }
+
+  function applyStatusFilters() {
+    const normalized = sortLeadStatusFilters(statusFilterDraft);
+    if (!normalized.length) {
+      return;
+    }
+    setPage(1);
+    setStatusFilters(normalized);
+    closeStatusFilterMenu();
+  }
+
   useEffect(() => {
     if (!openInteractionMenuId) return undefined;
 
@@ -2657,6 +2780,33 @@ function InteractionsPage({ can, currentUser }) {
     };
   }, [openInteractionMenuId]);
 
+  useEffect(() => {
+    if (!statusFilterMenuOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (
+        statusFilterRef.current &&
+        !statusFilterRef.current.contains(event.target)
+      ) {
+        closeStatusFilterMenu({ restoreDraft: true });
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        closeStatusFilterMenu({ restoreDraft: true });
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [statusFilterMenuOpen, statusFilters]);
+
   async function loadInteractions(overrides = {}) {
     const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
     const effectivePageSize = Math.min(
@@ -2664,7 +2814,17 @@ function InteractionsPage({ can, currentUser }) {
       Math.max(1, Number(overrides.pageSize ?? pageSize) || 10),
     );
     const effectiveQuery = String(overrides.query ?? query);
-    const effectiveStatus = String(overrides.status ?? statusFilter);
+    const rawEffectiveStatuses = overrides.statuses ?? statusFilters;
+    const effectiveStatuses = normalizeLeadStatusFilters(
+      Array.isArray(rawEffectiveStatuses)
+        ? rawEffectiveStatuses
+        : [rawEffectiveStatuses],
+    );
+    const statusesParam =
+      effectiveStatuses.length === LEAD_STATUS_FILTER_VALUES.length
+        ? "all"
+        : effectiveStatuses.join(",");
+    const effectiveSource = String(overrides.source ?? sourceFilter);
 
     setLoading(true);
     try {
@@ -2673,7 +2833,8 @@ function InteractionsPage({ can, currentUser }) {
           page: effectivePage,
           pageSize: effectivePageSize,
           query: effectiveQuery,
-          status: effectiveStatus,
+          statuses: statusesParam,
+          source: effectiveSource,
         },
       });
       setItems(Array.isArray(data?.items) ? data.items : []);
@@ -2689,7 +2850,7 @@ function InteractionsPage({ can, currentUser }) {
     // Reloading the list on pagination/filter changes is intentional.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInteractions();
-  }, [page, pageSize, query, statusFilter]);
+  }, [page, pageSize, query, statusFilters, sourceFilter]);
 
   useEffect(() => {
     if (!error && !success) return undefined;
@@ -2731,6 +2892,7 @@ function InteractionsPage({ can, currentUser }) {
   function resetCreateForm() {
     setShowCreateModal(false);
     setCreateFiles([]);
+    setCreateLeadSource("");
     setCreatePastedTextName("");
     setCreatePastedText("");
   }
@@ -2764,6 +2926,7 @@ function InteractionsPage({ can, currentUser }) {
 
   async function handleCreate() {
     const trimmedPastedText = createPastedText.trim();
+    if (!createLeadSource) return;
     if (!createFiles.length && !trimmedPastedText) return;
     setCreating(true);
     setError("");
@@ -2779,6 +2942,7 @@ function InteractionsPage({ can, currentUser }) {
           }),
         );
       }
+      formData.append("leadSource", createLeadSource);
       filesToUpload.forEach((file) => formData.append("files", file));
       await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -2787,9 +2951,16 @@ function InteractionsPage({ can, currentUser }) {
       resetCreateForm();
       setPage(1);
       setQuery("");
-      setStatusFilter("all");
+      setStatusFilters([...LEAD_STATUS_FILTER_VALUES]);
+      setStatusFilterDraft([...LEAD_STATUS_FILTER_VALUES]);
+      setSourceFilter("all");
       setSuccess("Lead creado.");
-      await loadInteractions({ page: 1, query: "", status: "all" });
+      await loadInteractions({
+        page: 1,
+        query: "",
+        statuses: LEAD_STATUS_FILTER_VALUES,
+        source: "all",
+      });
     } catch (err) {
       setCreateInfoMessage(
         getApiErrorMessage(err, "No fue posible crear el lead"),
@@ -2862,7 +3033,7 @@ function InteractionsPage({ can, currentUser }) {
 
   async function handleDeleteInteraction(interaction) {
     if (!interaction?.id) return;
-    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
+    if (isFinalizedLeadStatus(interaction.analysisStatus)) {
       return;
     }
     if (
@@ -2889,6 +3060,46 @@ function InteractionsPage({ can, currentUser }) {
       await loadInteractions();
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible eliminar el lead"));
+    } finally {
+      setDeletingInteractionId(null);
+    }
+  }
+
+  async function handleDisqualifyInteraction(interaction) {
+    if (!interaction?.id) return;
+    if (
+      isQualifiedLeadStatus(interaction.analysisStatus) ||
+      isDisqualifiedLeadStatus(interaction.analysisStatus)
+    ) {
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Este lead quedará marcado como descalificado. ¿Quieres continuar?",
+      )
+    ) {
+      return;
+    }
+
+    setDeletingInteractionId(interaction.id);
+    setOpenInteractionMenuId(null);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/interactions/${interaction.id}/disqualify`,
+      );
+      if (detail && Number(detail.id) === Number(interaction.id)) {
+        setDetail(data);
+        setEditForm(buildEditableForm(data));
+        setResolutionForm(
+          buildInitialResolutionForm(data, options, currentUser),
+        );
+      }
+      setSuccess("Lead descalificado");
+      await loadInteractions();
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible descalificar el lead"));
     } finally {
       setDeletingInteractionId(null);
     }
@@ -3162,16 +3373,12 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
-  const statusCounts = useMemo(() => {
-    return items.reduce(
-      (accumulator, item) => ({
-        ...accumulator,
-        [item.analysisStatus]:
-          Number(accumulator[item.analysisStatus] || 0) + 1,
-      }),
-      {},
-    );
-  }, [items]);
+  const statusFilterLabel = useMemo(
+    () => getLeadStatusFilterButtonLabel(statusFilters),
+    [statusFilters],
+  );
+  const allDraftStatusesSelected =
+    statusFilterDraft.length === LEAD_STATUS_FILTER_VALUES.length;
 
   return (
     <section className="panel">
@@ -3185,6 +3392,8 @@ function InteractionsPage({ can, currentUser }) {
         onClose={resetCreateForm}
         onSubmit={handleCreate}
         creating={creating}
+        leadSource={createLeadSource}
+        setLeadSource={setCreateLeadSource}
         files={createFiles}
         setFiles={setCreateFiles}
         pastedTextName={createPastedTextName}
@@ -3210,19 +3419,27 @@ function InteractionsPage({ can, currentUser }) {
         reanalyzing={reanalyzing}
         addingDocuments={addingDocuments}
         canUpdate={canUpdate}
-        canAnalyze={canAnalyze}
-        canResolve={canResolve}
         canAddDocuments={Boolean(
-          canUpdate && detail && !isQualifiedLeadStatus(detail.analysisStatus),
+          canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
         )}
         deletingDocumentPublicId={deletingDocumentPublicId}
         canDeleteDocuments={Boolean(
-          canUpdate && detail && !isQualifiedLeadStatus(detail.analysisStatus),
+          canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
         )}
         onAddDocuments={handleAddDocuments}
         onDeleteDocument={handleDeleteDocument}
         onResolve={openResolveConfirmation}
         onReanalyze={handleReanalyze}
+        canAnalyze={Boolean(
+          canAnalyze &&
+          detail &&
+          !isDisqualifiedLeadStatus(detail.analysisStatus),
+        )}
+        canResolve={Boolean(
+          canResolve &&
+          detail &&
+          !isDisqualifiedLeadStatus(detail.analysisStatus),
+        )}
       />
 
       <ResolveInteractionConfirmationModal
@@ -3284,11 +3501,16 @@ function InteractionsPage({ can, currentUser }) {
                     <strong>Lead calificado:</strong> ya tiene cuenta, contacto,
                     vendedor y oportunidad.
                   </li>
+                  <li>
+                    <strong>Lead descalificado:</strong> se determinó que no es
+                    una oportunidad comercial viable.
+                  </li>
                 </ul>
                 <strong>Regla rápida</strong>
                 <p>
                   La progresion normal es: Creado → Lead no asignado → Lead
-                  asignado → Lead calificado.
+                  asignado → Lead calificado. Un lead también puede terminar
+                  como descalificado.
                 </p>
               </div>
             </details>
@@ -3309,105 +3531,114 @@ function InteractionsPage({ can, currentUser }) {
         ) : null}
       </div>
 
-      <div className="roles-pills-bar accounts-pills-bar-row">
-        <div
-          className="accounts-status-pills"
-          role="group"
-          aria-label="Filtrar leads por estado"
-        >
+      <div className="roles-pills-bar accounts-pills-bar-row interaction-leads-toolbar">
+        <div className="interaction-leads-status-filter" ref={statusFilterRef}>
           <button
             type="button"
-            className={getInteractionFilterPillClass(
-              "lead_unassigned",
-              statusFilter,
-            )}
-            aria-pressed={statusFilter === "lead_unassigned"}
+            className="accounts-search-inline interaction-leads-status-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={statusFilterMenuOpen}
             onClick={() => {
-              setPage(1);
-              setStatusFilter("lead_unassigned");
+              if (statusFilterMenuOpen) {
+                closeStatusFilterMenu({ restoreDraft: true });
+                return;
+              }
+              openStatusFilterMenu();
             }}
           >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Lead no asignado</span>
-            <span className="status-filter-pill-count">
-              {statusCounts.lead_unassigned || 0}
-            </span>
+            <span>{statusFilterLabel}</span>
+            <span aria-hidden="true">▾</span>
           </button>
-          <button
-            type="button"
-            className={getInteractionFilterPillClass(
-              "lead_assigned",
-              statusFilter,
-            )}
-            aria-pressed={statusFilter === "lead_assigned"}
-            onClick={() => {
-              setPage(1);
-              setStatusFilter("lead_assigned");
-            }}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Lead Asignado</span>
-            <span className="status-filter-pill-count">
-              {statusCounts.lead_assigned || 0}
-            </span>
-          </button>
-          <button
-            type="button"
-            className={getInteractionFilterPillClass("created", statusFilter)}
-            aria-pressed={statusFilter === "created"}
-            onClick={() => {
-              setPage(1);
-              setStatusFilter("created");
-            }}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Creado</span>
-            <span className="status-filter-pill-count">
-              {statusCounts.created || 0}
-            </span>
-          </button>
-          <button
-            type="button"
-            className={getInteractionFilterPillClass(
-              "lead_qualified",
-              statusFilter,
-            )}
-            aria-pressed={statusFilter === "lead_qualified"}
-            onClick={() => {
-              setPage(1);
-              setStatusFilter("lead_qualified");
-            }}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Lead Calificado</span>
-            <span className="status-filter-pill-count">
-              {statusCounts.lead_qualified || 0}
-            </span>
-          </button>
-          <button
-            type="button"
-            className={getInteractionFilterPillClass("all", statusFilter)}
-            aria-pressed={statusFilter === "all"}
-            onClick={() => {
-              setPage(1);
-              setStatusFilter("all");
-            }}
-          >
-            <span className="status-filter-pill-dot" aria-hidden="true" />
-            <span className="status-filter-pill-text">Todas</span>
-            <span className="status-filter-pill-count">{total}</span>
-          </button>
+
+          {statusFilterMenuOpen ? (
+            <div
+              className="interaction-leads-status-menu"
+              role="dialog"
+              aria-label="Filtrar leads por estado"
+            >
+              <p className="interaction-leads-status-menu-title">
+                Filtrar por estado
+              </p>
+
+              <label className="interaction-leads-status-option">
+                <input
+                  type="checkbox"
+                  checked={allDraftStatusesSelected}
+                  onChange={() => toggleStatusFilterDraft("all")}
+                />
+                <span>Todas</span>
+              </label>
+
+              {LEAD_STATUS_FILTER_OPTIONS.map((option) => (
+                <label
+                  className="interaction-leads-status-option"
+                  key={option.value}
+                >
+                  <input
+                    type="checkbox"
+                    checked={statusFilterDraft.includes(option.value)}
+                    onChange={() => toggleStatusFilterDraft(option.value)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+
+              {!statusFilterDraft.length ? (
+                <p className="interaction-leads-status-validation">
+                  Selecciona al menos un estado.
+                </p>
+              ) : null}
+
+              <div className="interaction-leads-status-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setStatusFilterDraft([...LEAD_STATUS_FILTER_VALUES]);
+                  }}
+                >
+                  Seleccionar todas
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={applyStatusFilters}
+                  disabled={!statusFilterDraft.length}
+                >
+                  Aplicar
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
-        <input
-          className="accounts-search-inline interaction-search-input"
-          type="text"
-          placeholder="Buscar por ID, título, cuenta, oportunidad o resumen"
-          value={query}
-          onChange={(event) => {
-            setPage(1);
-            setQuery(event.target.value);
-          }}
-        />
+        <div className="interaction-leads-toolbar-controls">
+          <input
+            className="accounts-search-inline interaction-search-input interaction-leads-search-input"
+            type="text"
+            placeholder="Buscar por ID, título, cuenta, oportunidad o resumen"
+            value={query}
+            onChange={(event) => {
+              setPage(1);
+              setQuery(event.target.value);
+            }}
+          />
+          <select
+            className="accounts-search-inline interaction-leads-source-filter"
+            value={sourceFilter}
+            onChange={(event) => {
+              setPage(1);
+              setSourceFilter(event.target.value);
+            }}
+            aria-label="Filtrar leads por tipo de fuente"
+          >
+            <option value="all">Todas las fuentes</option>
+            {LEAD_SOURCE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {error ? <div className="toast toast-error">{error}</div> : null}
@@ -3423,9 +3654,10 @@ function InteractionsPage({ can, currentUser }) {
             <thead>
               <tr>
                 <th>#</th>
-                <th className="interaction-title-column">Título</th>
+                <th className="interaction-title-column">Lead</th>
                 <th>Cuenta</th>
                 <th>Oportunidad</th>
+                <th>Vendedor</th>
                 <th>Archivos</th>
                 <th>Estado</th>
                 <th>Creada</th>
@@ -3439,7 +3671,11 @@ function InteractionsPage({ can, currentUser }) {
                 );
                 const displayIndex = (page - 1) * pageSize + index + 1;
                 const canDeleteInteraction =
-                  canUpdate && !isQualifiedLeadStatus(item.analysisStatus);
+                  canUpdate && !isFinalizedLeadStatus(item.analysisStatus);
+                const canDisqualifyInteraction =
+                  canUpdate &&
+                  !isQualifiedLeadStatus(item.analysisStatus) &&
+                  !isDisqualifiedLeadStatus(item.analysisStatus);
                 return (
                   <tr key={item.id}>
                     <td title={item.publicId}>{displayIndex}</td>
@@ -3455,6 +3691,7 @@ function InteractionsPage({ can, currentUser }) {
                     </td>
                     <td>{item.accountName || "-"}</td>
                     <td>{item.primaryOpportunityName || "-"}</td>
+                    <td>{item.sellerName || item.sellerEmail || "-"}</td>
                     <td>{item.documentCount}</td>
                     <td>
                       <span className={statusMeta.className}>
@@ -3492,8 +3729,21 @@ function InteractionsPage({ can, currentUser }) {
                                 deletingInteractionId === item.id
                               }
                             >
-                              Abrir lead
+                              Editar
                             </button>
+                            {canDisqualifyInteraction ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleDisqualifyInteraction(item);
+                                }}
+                                disabled={deletingInteractionId === item.id}
+                              >
+                                {deletingInteractionId === item.id
+                                  ? "Guardando..."
+                                  : "Marcar descalificado"}
+                              </button>
+                            ) : null}
                             {canDeleteInteraction ? (
                               <button
                                 type="button"

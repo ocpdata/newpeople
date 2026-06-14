@@ -53,6 +53,32 @@ async function ensureInteractionLeadColumns() {
     );
   }
 
+  if (!(await columnExists("interactions", "lead_source"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_source VARCHAR(64) NOT NULL DEFAULT 'otro'
+       AFTER title`,
+    );
+  }
+
+  const leadSourceBackfillRows = await query(
+    `SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN lead_source IN ('otro', '') OR lead_source IS NULL THEN 1 ELSE 0 END) AS placeholder_total
+     FROM interactions`,
+  );
+  const totalInteractions = Number(leadSourceBackfillRows[0]?.total || 0);
+  const placeholderSourceTotal = Number(
+    leadSourceBackfillRows[0]?.placeholder_total || 0,
+  );
+  if (totalInteractions > 0 && totalInteractions === placeholderSourceTotal) {
+    await query(
+      `UPDATE interactions
+       SET lead_source = 'empresa_marketing'
+       WHERE lead_source IN ('otro', '') OR lead_source IS NULL`,
+    );
+  }
+
   if (!(await columnExists("interactions", "seller_user_id"))) {
     await query(
       `ALTER TABLE interactions
@@ -61,7 +87,9 @@ async function ensureInteractionLeadColumns() {
     );
   }
 
-  if (!(await indexExists("interactions", "idx_interactions_processing_created"))) {
+  if (
+    !(await indexExists("interactions", "idx_interactions_processing_created"))
+  ) {
     await query(
       `ALTER TABLE interactions
        ADD INDEX idx_interactions_processing_created (processing_status, created_at)`,
@@ -118,7 +146,7 @@ async function ensureInteractionLeadColumns() {
        ) THEN 'lead_unassigned'
        ELSE 'created'
      END
-     WHERE analysis_status NOT IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified')`,
+     WHERE analysis_status NOT IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')`,
   );
 }
 
@@ -127,6 +155,7 @@ const INTERACTION_SCHEMA_STATEMENTS = [
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     public_id VARCHAR(64) NOT NULL,
     title VARCHAR(255) NOT NULL,
+    lead_source VARCHAR(64) NOT NULL DEFAULT 'otro',
     source_notes LONGTEXT NULL,
     summary LONGTEXT NULL,
     analysis_status VARCHAR(40) NOT NULL DEFAULT 'created',

@@ -51,6 +51,30 @@ const interactionResolveAssignSelfPermission =
   "interacciones.resolve.assign_self";
 const interactionResolveAssignAnyPermission =
   "interacciones.resolve.assign_any";
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
+const LEAD_SOURCE_CODE_LIST = [
+  "fabricante",
+  "mayorista",
+  "empresa_marketing",
+  "vendedor",
+  "campana",
+  "web",
+  "correo",
+  "redes",
+  "consultor",
+  "webinar",
+  "evento",
+  "otro",
+];
+const LEAD_SOURCE_CODES = new Set(LEAD_SOURCE_CODE_LIST);
+const LEAD_STATUS_FILTER_LIST = [
+  "created",
+  "lead_unassigned",
+  "lead_assigned",
+  "lead_qualified",
+  "lead_disqualified",
+];
+const LEAD_STATUS_FILTER_CODES = new Set(LEAD_STATUS_FILTER_LIST);
 const INTERACTION_ANALYSIS_JOB_LEASE_SECONDS = 30;
 const INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES = 15;
 const INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS = 3000;
@@ -60,6 +84,7 @@ let interactionAnalysisWorkerStarted = false;
 
 const editableInteractionSchema = z.object({
   title: z.string().trim().min(2).max(255),
+  leadSource: z.enum(LEAD_SOURCE_CODE_LIST).optional().default("otro"),
   sourceNotes: z.string().max(20000).optional().default(""),
   summary: z.string().max(20000).optional().default(""),
   topics: z
@@ -156,6 +181,14 @@ const resolutionSchema = editableInteractionSchema.extend({
 
 function isQualifiedLeadStatus(status) {
   return status === "lead_qualified";
+}
+
+function isDisqualifiedLeadStatus(status) {
+  return status === "lead_disqualified";
+}
+
+function isFinalizedLeadStatus(status) {
+  return isQualifiedLeadStatus(status) || isDisqualifiedLeadStatus(status);
 }
 
 function resolveLeadCommercialStatus({
@@ -435,28 +468,46 @@ async function validateSellerOwnerForAccount(
         `SELECT u.id
          FROM account_owners ao
          INNER JOIN users u ON u.id = ao.user_id
-         INNER JOIN user_roles ur ON ur.user_id = u.id
-         INNER JOIN roles r ON r.id = ur.role_id
          WHERE ao.account_id = ?
            AND ao.user_id = ?
            AND u.status = 'active'
-           AND LOWER(TRIM(r.name)) = 'vendedor'
+           AND EXISTS (
+             SELECT 1
+             FROM user_roles ur
+             INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+             INNER JOIN permissions p ON p.id = rp.permission_id
+             WHERE ur.user_id = u.id
+               AND p.code = ?
+           )
          LIMIT 1`,
-        [Number(accountId), Number(sellerUserId)],
+        [
+          Number(accountId),
+          Number(sellerUserId),
+          commercialSellerEligibilityPermission,
+        ],
       )
     : [
         await executor.query(
           `SELECT u.id
            FROM account_owners ao
            INNER JOIN users u ON u.id = ao.user_id
-           INNER JOIN user_roles ur ON ur.user_id = u.id
-           INNER JOIN roles r ON r.id = ur.role_id
            WHERE ao.account_id = ?
              AND ao.user_id = ?
              AND u.status = 'active'
-             AND LOWER(TRIM(r.name)) = 'vendedor'
+             AND EXISTS (
+               SELECT 1
+               FROM user_roles ur
+               INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+               INNER JOIN permissions p ON p.id = rp.permission_id
+               WHERE ur.user_id = u.id
+                 AND p.code = ?
+             )
            LIMIT 1`,
-          [Number(accountId), Number(sellerUserId)],
+          [
+            Number(accountId),
+            Number(sellerUserId),
+            commercialSellerEligibilityPermission,
+          ],
         ),
       ];
   return rows.length > 0;
@@ -468,25 +519,35 @@ async function validateActiveSellerUser(sellerUserId, conn = null) {
     ? await executor.query(
         `SELECT u.id
          FROM users u
-         INNER JOIN user_roles ur ON ur.user_id = u.id
-         INNER JOIN roles r ON r.id = ur.role_id
          WHERE u.id = ?
            AND u.status = 'active'
-           AND LOWER(TRIM(r.name)) = 'vendedor'
+           AND EXISTS (
+             SELECT 1
+             FROM user_roles ur
+             INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+             INNER JOIN permissions p ON p.id = rp.permission_id
+             WHERE ur.user_id = u.id
+               AND p.code = ?
+           )
          LIMIT 1`,
-        [Number(sellerUserId)],
+        [Number(sellerUserId), commercialSellerEligibilityPermission],
       )
     : [
         await executor.query(
           `SELECT u.id
            FROM users u
-           INNER JOIN user_roles ur ON ur.user_id = u.id
-           INNER JOIN roles r ON r.id = ur.role_id
            WHERE u.id = ?
              AND u.status = 'active'
-             AND LOWER(TRIM(r.name)) = 'vendedor'
+             AND EXISTS (
+               SELECT 1
+               FROM user_roles ur
+               INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+               INNER JOIN permissions p ON p.id = rp.permission_id
+               WHERE ur.user_id = u.id
+                 AND p.code = ?
+             )
            LIMIT 1`,
-          [Number(sellerUserId)],
+          [Number(sellerUserId), commercialSellerEligibilityPermission],
         ),
       ];
   return rows.length > 0;
@@ -509,19 +570,19 @@ function getFormField(fields, key) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
 }
 
+function normalizeLeadSourceCode(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized || null;
+}
+
 function hasPermission(user, permission) {
   return user?.permissionSet?.has(permission);
 }
 
-function hasSellerRole(user) {
-  return Array.isArray(user?.roles)
-    ? user.roles.some(
-        (role) =>
-          String(role?.name || "")
-            .trim()
-            .toLowerCase() === "vendedor",
-      )
-    : false;
+function hasSellerEligibilityPermission(user) {
+  return hasPermission(user, commercialSellerEligibilityPermission);
 }
 
 function hasGlobalReadScope(user) {
@@ -552,12 +613,15 @@ function buildInteractionListAccessCondition(user, alias = "i") {
 }
 
 function buildInteractionCommercialAssignmentPolicy(user, detail) {
+  const currentUserIsSellerEligible = hasSellerEligibilityPermission(user);
+
   if (!detail || !user) {
     return {
       mode: "none",
       locked: true,
       allowedSellerUserId: null,
       reason: "missing_context",
+      currentUserIsSellerEligible,
     };
   }
 
@@ -567,6 +631,7 @@ function buildInteractionCommercialAssignmentPolicy(user, detail) {
       locked: false,
       allowedSellerUserId: null,
       reason: null,
+      currentUserIsSellerEligible,
     };
   }
 
@@ -580,6 +645,7 @@ function buildInteractionCommercialAssignmentPolicy(user, detail) {
       locked: true,
       allowedSellerUserId: Number(user.id),
       reason: "creator_self_only",
+      currentUserIsSellerEligible,
     };
   }
 
@@ -588,6 +654,7 @@ function buildInteractionCommercialAssignmentPolicy(user, detail) {
     locked: true,
     allowedSellerUserId: null,
     reason: "no_assignment_permission",
+    currentUserIsSellerEligible,
   };
 }
 
@@ -712,11 +779,17 @@ async function loadSellerUsers() {
   return query(
     `SELECT DISTINCT u.id, u.full_name, u.email
      FROM users u
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE u.status = 'active'
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+       AND EXISTS (
+         SELECT 1
+         FROM user_roles ur
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.user_id = u.id
+           AND p.code = ?
+       )
      ORDER BY u.full_name`,
+    [commercialSellerEligibilityPermission],
   );
 }
 
@@ -749,13 +822,18 @@ async function loadSellerUsersByAccountIds(accountIds) {
     `SELECT ao.account_id, u.id, u.full_name, u.email
      FROM account_owners ao
      INNER JOIN users u ON u.id = ao.user_id
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE ao.account_id IN (${uniqueAccountIds.map(() => "?").join(", ")})
        AND u.status = 'active'
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+       AND EXISTS (
+         SELECT 1
+         FROM user_roles ur
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.user_id = u.id
+           AND p.code = ?
+       )
      ORDER BY ao.account_id, u.full_name`,
-    uniqueAccountIds,
+    [...uniqueAccountIds, commercialSellerEligibilityPermission],
   );
 
   return rows.reduce((accumulator, row) => {
@@ -796,6 +874,7 @@ async function loadAccessibleContext(user) {
     sellerUsersByAccountId,
     sellerUsers,
     presalesUsers,
+    currentUserIsSellerEligible: hasSellerEligibilityPermission(user),
   };
 }
 
@@ -940,6 +1019,7 @@ async function fetchInteractionDetail(interactionId, user = null) {
     id: Number(row.id),
     publicId: row.public_id,
     title: row.title,
+    leadSource: row.lead_source || "",
     sourceNotes: row.source_notes || "",
     summary: row.summary || "",
     analysisStatus: row.analysis_status,
@@ -1897,13 +1977,18 @@ async function listSellerOwnersForAccount(conn, accountId) {
     `SELECT DISTINCT u.id, u.full_name, u.email
      FROM account_owners ao
      INNER JOIN users u ON u.id = ao.user_id
-     INNER JOIN user_roles ur ON ur.user_id = u.id
-     INNER JOIN roles r ON r.id = ur.role_id
      WHERE ao.account_id = ?
        AND u.status = 'active'
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+       AND EXISTS (
+         SELECT 1
+         FROM user_roles ur
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.user_id = u.id
+           AND p.code = ?
+       )
      ORDER BY u.full_name`,
-    [Number(accountId)],
+    [Number(accountId), commercialSellerEligibilityPermission],
   );
   return rows.map((row) => ({
     id: Number(row.id),
@@ -2272,7 +2357,25 @@ router.get(
       Math.max(1, Number(req.query.pageSize || 10) || 10),
     );
     const queryText = String(req.query.query || "").trim();
-    const statusFilter = String(req.query.status || "all").trim();
+    const rawStatusesParam = String(req.query.statuses || "").trim();
+    const legacyStatusFilter = String(req.query.status || "all").trim();
+    const statusFilters = Array.from(
+      new Set(
+        (rawStatusesParam
+          ? rawStatusesParam.split(",")
+          : legacyStatusFilter && legacyStatusFilter !== "all"
+            ? [legacyStatusFilter]
+            : []
+        )
+          .map((value) => String(value || "").trim())
+          .filter((value) => LEAD_STATUS_FILTER_CODES.has(value)),
+      ),
+    );
+    const rawSourceFilter = String(req.query.source || "all").trim();
+    const sourceFilter =
+      rawSourceFilter === "all" || LEAD_SOURCE_CODES.has(rawSourceFilter)
+        ? rawSourceFilter
+        : "all";
     const params = [];
     const accessJoin = buildInteractionAccessJoin(req.user, "i");
     const accessCondition = buildInteractionListAccessCondition(req.user, "i");
@@ -2287,9 +2390,15 @@ router.get(
       where.push("(i.title LIKE ? OR i.summary LIKE ? OR a.name LIKE ?)");
       params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
     }
-    if (statusFilter && statusFilter !== "all") {
-      where.push("i.analysis_status = ?");
-      params.push(statusFilter);
+    if (statusFilters.length) {
+      where.push(
+        `i.analysis_status IN (${statusFilters.map(() => "?").join(", ")})`,
+      );
+      params.push(...statusFilters);
+    }
+    if (sourceFilter && sourceFilter !== "all") {
+      where.push("i.lead_source = ?");
+      params.push(sourceFilter);
     }
 
     const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -2303,18 +2412,22 @@ router.get(
     );
 
     const rows = await query(
-      `SELECT i.id, i.public_id, i.title, i.summary, i.analysis_status, i.account_id,
-              i.primary_opportunity_id, i.created_at, a.name AS account_name,
+      `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
+              i.primary_opportunity_id, i.seller_user_id, i.created_at, a.name AS account_name,
               po.name AS primary_opportunity_name,
+              su.full_name AS seller_user_name,
+              su.email AS seller_user_email,
               COUNT(DISTINCT d.id) AS document_count
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
        LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
+       LEFT JOIN users su ON su.id = i.seller_user_id
        LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
       ${accessJoin}
        ${whereClause}
-       GROUP BY i.id, i.public_id, i.title, i.summary, i.analysis_status, i.account_id,
-                i.primary_opportunity_id, i.created_at, a.name, po.name
+      GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
+                i.primary_opportunity_id, i.seller_user_id, i.created_at, a.name, po.name,
+                su.full_name, su.email
        ORDER BY i.created_at DESC
        LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize],
@@ -2325,6 +2438,7 @@ router.get(
         id: Number(row.id),
         publicId: row.public_id,
         title: row.title,
+        leadSource: row.lead_source || "",
         summary: row.summary || "",
         analysisStatus: row.analysis_status,
         accountId: row.account_id === null ? null : Number(row.account_id),
@@ -2334,6 +2448,10 @@ router.get(
             ? null
             : Number(row.primary_opportunity_id),
         primaryOpportunityName: row.primary_opportunity_name || "",
+        sellerUserId:
+          row.seller_user_id === null ? null : Number(row.seller_user_id),
+        sellerName: row.seller_user_name || "",
+        sellerEmail: row.seller_user_email || "",
         documentCount: Number(row.document_count || 0),
         createdAt: row.created_at,
       })),
@@ -2360,13 +2478,10 @@ router.get(
           (opportunity) => Number(opportunity.account_id) === accountId,
         )
       : accessibleContext.opportunities;
-    const sellerUsers = hasPermission(
-      req.user,
-      interactionResolveAssignAnyPermission,
-    )
-      ? accessibleContext.sellerUsers
-      : accountId
-        ? accessibleContext.sellerUsersByAccountId[String(accountId)] || []
+    const sellerUsers = accountId
+      ? accessibleContext.sellerUsersByAccountId[String(accountId)] || []
+      : hasPermission(req.user, interactionResolveAssignAnyPermission)
+        ? accessibleContext.sellerUsers
         : [];
     return res.json({
       accounts: accessibleContext.accounts,
@@ -2376,6 +2491,8 @@ router.get(
       sellerUsers,
       sellerUsersByAccountId: accessibleContext.sellerUsersByAccountId,
       presalesUsers: accessibleContext.presalesUsers,
+      currentUserIsSellerEligible:
+        accessibleContext.currentUserIsSellerEligible,
     });
   },
 );
@@ -2389,6 +2506,14 @@ router.post(
       const { fields, files } = await parseMultipartFiles(req);
       parsedFiles = files;
       const sourceNotes = getFormField(fields, "sourceNotes");
+      const leadSource = normalizeLeadSourceCode(
+        getFormField(fields, "leadSource"),
+      );
+      if (!leadSource || !LEAD_SOURCE_CODES.has(leadSource)) {
+        return res.status(400).json({
+          message: "Debes seleccionar una fuente valida para el lead",
+        });
+      }
       if (!files.length && !sourceNotes.trim()) {
         return res
           .status(400)
@@ -2413,14 +2538,15 @@ router.post(
       const interactionId = await withTransaction(async (conn) => {
         const [insertResult] = await conn.query(
           `INSERT INTO interactions
-             (public_id, title, source_notes, summary, analysis_status, processing_status,
+             (public_id, title, lead_source, source_notes, summary, analysis_status, processing_status,
               warnings_json, topics_json, actions_taken_json, next_steps_json,
               suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
               created_by, updated_by, created_at, updated_at, analyzed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             interactionPublicId,
             title,
+            leadSource,
             sourceNotes || null,
             analysis.summary || null,
             "created",
@@ -2517,9 +2643,9 @@ router.post(
       if (!detail) {
         return res.status(404).json({ message: "Interaccion no encontrada" });
       }
-      if (isQualifiedLeadStatus(detail.analysisStatus)) {
+      if (isFinalizedLeadStatus(detail.analysisStatus)) {
         return res.status(409).json({
-          message: "No puedes agregar archivos a un lead calificado",
+          message: "No puedes agregar archivos a un lead finalizado",
         });
       }
 
@@ -2618,9 +2744,9 @@ router.delete(
     if (!interaction) {
       return res.status(404).json({ message: "Interaccion no encontrada" });
     }
-    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
+    if (isFinalizedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
-        message: "No puedes eliminar archivos de un lead calificado",
+        message: "No puedes eliminar archivos de un lead finalizado",
       });
     }
 
@@ -2683,9 +2809,9 @@ router.delete(
     if (!interaction) {
       return res.status(404).json({ message: "Interaccion no encontrada" });
     }
-    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
+    if (isFinalizedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
-        message: "No puedes eliminar un lead calificado",
+        message: "No puedes eliminar un lead finalizado",
       });
     }
 
@@ -2735,6 +2861,62 @@ router.delete(
   },
 );
 
+router.post(
+  "/:interactionId/disqualify",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const interaction = await fetchInteractionDetail(interactionId, req.user);
+    if (!interaction) {
+      return res.status(404).json({ message: "Interaccion no encontrada" });
+    }
+
+    if (isQualifiedLeadStatus(interaction.analysisStatus)) {
+      return res.status(409).json({
+        message:
+          "No puedes descalificar un lead calificado porque ya tiene oportunidad",
+      });
+    }
+
+    if (isDisqualifiedLeadStatus(interaction.analysisStatus)) {
+      return res.json(interaction);
+    }
+
+    await query(
+      `UPDATE interactions
+       SET analysis_status = 'lead_disqualified',
+           resolved_at = NOW(3),
+           updated_by = ?,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [Number(req.user.id), interactionId],
+    );
+
+    await logAuditEvent({
+      req,
+      module: "interacciones",
+      action: "updated",
+      entityType: "interaction",
+      entityId: interactionId,
+      detail: "Lead descalificado",
+    });
+
+    return res.json(await fetchInteractionDetail(interactionId, req.user));
+  },
+);
+
 router.put(
   "/:interactionId",
   requireAnyPermission(interactionUpdatePermissions),
@@ -2759,13 +2941,14 @@ router.put(
 
     await query(
       `UPDATE interactions
-       SET title = ?, source_notes = ?, summary = ?, topics_json = ?,
+       SET title = ?, lead_source = ?, source_notes = ?, summary = ?, topics_json = ?,
            actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
            suggested_contacts_json = ?, suggested_opportunities_json = ?,
            updated_by = ?, updated_at = NOW(3)
        WHERE id = ?`,
       [
         parsed.data.title,
+        parsed.data.leadSource,
         parsed.data.sourceNotes || null,
         parsed.data.summary || null,
         normalizeForStorage(parsed.data.topics),
@@ -2914,6 +3097,11 @@ router.post(
 
     const options = await loadAccessibleContext(req.user);
     const detail = await fetchInteractionDetail(interactionId);
+    if (isDisqualifiedLeadStatus(detail?.analysisStatus)) {
+      return res.status(409).json({
+        message: "No puedes resolver un lead descalificado",
+      });
+    }
     const commercialAssignmentPolicy =
       buildInteractionCommercialAssignmentPolicy(req.user, detail);
 
@@ -3119,7 +3307,7 @@ router.post(
         } else if (
           shouldAssignCurrentUserAsOwnerSeller &&
           !assignedSellerUserId &&
-          hasSellerRole(req.user)
+          hasSellerEligibilityPermission(req.user)
         ) {
           assignedSellerUserId = Number(req.user.id);
         }
@@ -3134,10 +3322,10 @@ router.post(
             Number(assignedSellerUserId) === Number(req.user.id) &&
             shouldAssignCurrentUserAsOwnerSeller
           ) {
-            if (!hasSellerRole(req.user)) {
+            if (!hasSellerEligibilityPermission(req.user)) {
               throw Object.assign(
                 new Error(
-                  "Solo un usuario con rol de vendedor puede asignarse como owner vendedor",
+                  "Solo un usuario elegible para ventas puede asignarse como owner vendedor",
                 ),
                 { status: 400 },
               );
@@ -3174,20 +3362,7 @@ router.post(
             }
           }
 
-          if (commercialAssignmentPolicy.mode === "any") {
-            const preservesExistingSeller =
-              detail.sellerUserId &&
-              Number(detail.sellerUserId) === Number(assignedSellerUserId);
-            const isValidActiveSeller = preservesExistingSeller
-              ? true
-              : await validateActiveSellerUser(assignedSellerUserId, conn);
-            if (!isValidActiveSeller) {
-              throw Object.assign(
-                new Error("El vendedor asignado debe ser un vendedor activo"),
-                { status: 400 },
-              );
-            }
-          } else {
+          if (resolvedAccountId) {
             const isValidSellerOwner = await validateSellerOwnerForAccount(
               resolvedAccountId,
               assignedSellerUserId,
@@ -3201,10 +3376,27 @@ router.post(
                 { status: 400 },
               );
             }
+          } else {
+            const preservesExistingSeller =
+              detail.sellerUserId &&
+              Number(detail.sellerUserId) === Number(assignedSellerUserId);
+            const isValidActiveSeller = preservesExistingSeller
+              ? true
+              : await validateActiveSellerUser(assignedSellerUserId, conn);
+            if (!isValidActiveSeller) {
+              throw Object.assign(
+                new Error(
+                  "El vendedor asignado debe ser un usuario elegible para ventas y activo",
+                ),
+                { status: 400 },
+              );
+            }
           }
         }
 
         let primaryOpportunityId = null;
+        const linkedExistingOpportunityIds = [];
+        const createdOpportunityIds = [];
         const effectiveOpportunityResolutions =
           parsed.data.opportunityResolutions.filter(
             (resolution) => resolution.mode !== "ignore",
@@ -3254,6 +3446,7 @@ router.post(
                 { status: 400 },
               );
             }
+            linkedExistingOpportunityIds.push(opportunityId);
           } else if (resolution.mode === "create_new") {
             if (persistedSuggestion?.selectedOpportunityId) {
               throw Object.assign(
@@ -3316,6 +3509,7 @@ router.post(
               resolvedAccountId,
               effectiveDraft,
             );
+            createdOpportunityIds.push(opportunityId);
           }
 
           if (opportunityId) {
@@ -3366,7 +3560,7 @@ router.post(
 
         await conn.query(
           `UPDATE interactions
-           SET title = ?, source_notes = ?, summary = ?, analysis_status = ?,
+           SET title = ?, lead_source = ?, source_notes = ?, summary = ?, analysis_status = ?,
                warnings_json = ?, topics_json = ?, actions_taken_json = ?, next_steps_json = ?,
                suggested_account_json = ?, suggested_contacts_json = ?, suggested_opportunities_json = ?,
                account_id = ?, primary_opportunity_id = ?, seller_user_id = ?,
@@ -3375,6 +3569,7 @@ router.post(
            WHERE id = ?`,
           [
             parsed.data.title,
+            parsed.data.leadSource,
             parsed.data.sourceNotes || null,
             parsed.data.summary || null,
             leadStatus,
@@ -3430,6 +3625,8 @@ router.post(
           resolvedAccountId,
           assignedSellerUserId,
           primaryOpportunityId,
+          linkedExistingOpportunityIds,
+          createdOpportunityIds,
           opportunityIds: resolvedOpportunityIds.map(
             (opportunity) => opportunity.id,
           ),
@@ -3442,7 +3639,11 @@ router.post(
         action: "updated",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Lead actualizado",
+        detail:
+          result.linkedExistingOpportunityIds.length ||
+          result.createdOpportunityIds.length
+            ? `Lead actualizado (vinculadas existentes: ${result.linkedExistingOpportunityIds.length}; creadas: ${result.createdOpportunityIds.length})`
+            : "Lead actualizado",
         after: result,
       });
 
