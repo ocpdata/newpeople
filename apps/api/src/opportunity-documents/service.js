@@ -35,6 +35,7 @@ const FILE_LIMITS = {
   ".mp3": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
   ".wav": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
   ".m4a": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
+  ".mp4": { maxBytes: 80 * 1024 * 1024, kind: "audio" },
 };
 
 function normalizeText(value) {
@@ -470,7 +471,11 @@ async function analyzeStructuredDocument({
   return mergeAnalysisWithHeuristics(parsed, trimmedText, fileName);
 }
 
-export async function extractImageText(buffer, mimeType, aiUsageContext = null) {
+export async function extractImageText(
+  buffer,
+  mimeType,
+  aiUsageContext = null,
+) {
   if (!config.openai.apiKey) {
     throw new Error("OpenAI no configurado para OCR de imagenes");
   }
@@ -751,7 +756,8 @@ export async function extractContentFromBuffer({
   if (
     resolvedExtension === ".mp3" ||
     resolvedExtension === ".wav" ||
-    resolvedExtension === ".m4a"
+    resolvedExtension === ".m4a" ||
+    resolvedExtension === ".mp4"
   ) {
     const metadata = await parseAudioBuffer(buffer, mimeType, {
       duration: true,
@@ -1135,7 +1141,10 @@ async function extractAndAnalyzeDocument({
       extracted: {
         extractionStatus: "failed",
         transcriptionStatus:
-          extension === ".mp3" || extension === ".wav" || extension === ".m4a"
+          extension === ".mp3" ||
+          extension === ".wav" ||
+          extension === ".m4a" ||
+          extension === ".mp4"
             ? "failed"
             : "pending",
         detectedFormat: extension.replace(/^\./, "") || mimeType || "unknown",
@@ -2062,6 +2071,48 @@ export async function transferUploadSessionToOpportunity({
 }) {
   if (!sessionPublicId) return;
 
+  await transferUploadSession({
+    conn,
+    sessionPublicId,
+    entityType: "opportunity",
+    entityId: opportunityId,
+    userId,
+    linkTable: "opportunity_document_links",
+    linkColumn: "opportunity_id",
+    sessionStatus: "applied",
+  });
+}
+
+export async function transferUploadSessionToInteraction({
+  conn,
+  sessionPublicId,
+  interactionId,
+  userId,
+}) {
+  if (!sessionPublicId) return;
+
+  await transferUploadSession({
+    conn,
+    sessionPublicId,
+    entityType: "interaction",
+    entityId: interactionId,
+    userId,
+    linkTable: null,
+    linkColumn: null,
+    sessionStatus: "applied",
+  });
+}
+
+async function transferUploadSession({
+  conn,
+  sessionPublicId,
+  entityType,
+  entityId,
+  userId,
+  linkTable,
+  linkColumn,
+  sessionStatus,
+}) {
   const [sessionRows] = await conn.query(
     `SELECT *
      FROM opportunity_document_upload_sessions
@@ -2078,10 +2129,10 @@ export async function transferUploadSessionToOpportunity({
 
   await conn.query(
     `UPDATE documents
-     SET entity_type = 'opportunity', entity_id = ?, updated_at = NOW(3)
+     SET entity_type = ?, entity_id = ?, updated_at = NOW(3)
      WHERE upload_session_id = ?
        AND is_deleted = 0`,
-    [opportunityId, session.id],
+    [entityType, entityId, session.id],
   );
 
   const [documents] = await conn.query(
@@ -2091,20 +2142,23 @@ export async function transferUploadSessionToOpportunity({
        AND is_deleted = 0`,
     [session.id],
   );
-  for (const document of documents) {
-    await conn.query(
-      `INSERT IGNORE INTO opportunity_document_links
-         (opportunity_id, document_id, link_type, created_by_user_id, created_at)
-       VALUES (?, ?, 'source_document', ?, NOW(3))`,
-      [opportunityId, Number(document.id), Number(userId)],
-    );
+
+  if (linkTable && linkColumn) {
+    for (const document of documents) {
+      await conn.query(
+        `INSERT IGNORE INTO ${linkTable}
+           (${linkColumn}, document_id, link_type, created_by_user_id, created_at)
+         VALUES (?, ?, 'source_document', ?, NOW(3))`,
+        [entityId, Number(document.id), Number(userId)],
+      );
+    }
   }
 
   await conn.query(
     `UPDATE opportunity_document_upload_sessions
-     SET entity_type = 'opportunity', entity_id = ?, status = 'applied', updated_at = NOW(3)
+     SET entity_type = ?, entity_id = ?, status = ?, updated_at = NOW(3)
      WHERE id = ?`,
-    [opportunityId, session.id],
+    [entityType, entityId, sessionStatus, session.id],
   );
 }
 

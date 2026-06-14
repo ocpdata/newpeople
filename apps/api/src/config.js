@@ -118,6 +118,8 @@ export const config = {
           "audio/x-wav",
           "audio/mp4",
           "audio/x-m4a",
+          "video/mp4",
+          "application/mp4",
         ].join(",")
       )
         .split(",")

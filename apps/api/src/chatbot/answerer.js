@@ -7,6 +7,28 @@ import { buildAnswererSystemPrompt } from "./prompts.js";
 import { answerOutputSchema } from "./schemas.js";
 import { loadEntitySnapshot } from "./snapshots.js";
 
+function isGenericInsufficientAnswer(text) {
+  const value = String(text || "")
+    .trim()
+    .toLowerCase();
+  if (!value) return true;
+  return (
+    value.includes("no se encontro informacion") ||
+    value.includes("no se encontró información") ||
+    value.includes("no tengo suficientes datos") ||
+    value.includes("podrias especificar") ||
+    value.includes("podrías especificar")
+  );
+}
+
+function buildInternalKnowledgeFallbackAnswer(items) {
+  const lines = [
+    "Con base en la configuracion interna de la aplicacion:",
+    ...items.map((item) => `- ${String(item.excerpt || "").split("\n")[0]}`),
+  ];
+  return lines.join("\n");
+}
+
 export async function generateChatbotAnswerWithAi({
   user,
   prompt,
@@ -86,20 +108,45 @@ export async function generateChatbotAnswerWithAi({
 
   const content = String(data?.choices?.[0]?.message?.content || "").trim();
   const parsed = extractJsonObject(content) || {};
+  const normalizedParsedReferences = Array.isArray(parsed.references)
+    ? parsed.references.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const hasDocumentationEvidence = Array.isArray(
+    evidencePackage?.evidence?.documentation,
+  )
+    ? evidencePackage.evidence.documentation.length > 0
+    : false;
+  const hasInternalAppKnowledge = Array.isArray(
+    evidencePackage?.evidence?.applicationKnowledge,
+  )
+    ? evidencePackage.evidence.applicationKnowledge.length > 0
+    : false;
+
+  const fallbackAnswer =
+    hasInternalAppKnowledge && isGenericInsufficientAnswer(parsed.answer)
+      ? buildInternalKnowledgeFallbackAnswer(
+          evidencePackage.evidence.applicationKnowledge,
+        )
+      : "";
 
   return answerOutputSchema.parse({
     answer:
-      String(parsed.answer || "").trim() ||
+      String(fallbackAnswer || parsed.answer || "").trim() ||
       "No tengo suficientes datos para responder con precision. Reformula la pregunta indicando el modulo y objetivo.",
     sourceType:
       String(
-        parsed.sourceType || (references?.length ? "crm_data" : "knowledge"),
+        parsed.sourceType ||
+          (hasInternalAppKnowledge
+            ? "mixed"
+            : hasDocumentationEvidence
+              ? "mixed"
+              : references?.length
+                ? "crm_data"
+                : "knowledge"),
       ).trim() || "knowledge",
     confidence: Number(parsed.confidence || 0.5),
-    references: Array.isArray(parsed.references)
-      ? parsed.references
-          .map((item) => String(item || "").trim())
-          .filter(Boolean)
+    references: normalizedParsedReferences.length
+      ? normalizedParsedReferences
       : references?.length
         ? references
         : ["chatbot"],

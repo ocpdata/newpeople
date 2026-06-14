@@ -1586,6 +1586,71 @@
   gap: 0.75rem;
 }
 
+.ai-pricing-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.ai-pricing-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ai-pricing-preview {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.ai-pricing-preview-item {
+  border: 1px solid #d5dfe6;
+  border-radius: 14px;
+  background: #f9fbfd;
+  padding: 0.8rem 0.9rem;
+}
+
+.ai-pricing-preview-item strong,
+.ai-pricing-preview-item span {
+  display: block;
+}
+
+.ai-pricing-preview-item span {
+  margin-top: 0.2rem;
+  color: #607585;
+}
+
+.ai-pricing-preview-item.change-create {
+  border-color: #7cb28d;
+  background: #e9f7ee;
+}
+
+.ai-pricing-preview-item.change-update {
+  border-color: #d4ab57;
+  background: #fff6e6;
+}
+
+.ai-pricing-table-wrap {
+  overflow: auto;
+  border: 1px solid #d5dfe6;
+  border-radius: 16px;
+}
+
+.ai-pricing-state-active {
+  background: #e8f6ef;
+  color: #1d6b43;
+}
+
+.ai-pricing-state-scheduled {
+  background: #e8f1fb;
+  color: #2f5d88;
+}
+
+.ai-pricing-state-expired {
+  background: #f3f5f8;
+  color: #5d6f7f;
+}
+
 .configuration-toggle-row {
   display: flex;
   justify-content: space-between;
@@ -1948,6 +2013,11 @@
   }
 
   .ai-credit-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-pricing-toolbar {
     flex-direction: column;
     align-items: stretch;
   }

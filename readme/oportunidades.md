@@ -179,3 +179,11 @@ Las APIs especificas del modulo de cotizaciones se documentan en `cotizaciones.m
 - Las respuestas por etapa se guardan con histórico; una nueva captura no sobrescribe la anterior.
 - `commercial-context` devuelve la etapa actual junto con el resumen de todas las etapas para pintar el stepper inicial.
 - `stage-view/:salesStageId` devuelve la vista de cualquier etapa activa de la oportunidad, manteniendo visible cuál sigue siendo la etapa actual.
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

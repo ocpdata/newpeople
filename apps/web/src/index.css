@@ -7517,6 +7517,13 @@ button:disabled {
   color: #166534;
 }
 
+.interaction-status-stack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .interaction-detail-header-copy {
   min-width: 0;
   flex: 1;
@@ -7615,6 +7622,29 @@ button:disabled {
   gap: 12px;
 }
 
+.interaction-document-card-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.interaction-document-card-head strong {
+  display: block;
+  min-width: 0;
+  color: #17385d;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.interaction-document-card-head .field-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .interaction-documents-toolbar {
   display: flex;
   align-items: flex-start;
@@ -7701,7 +7731,52 @@ button:disabled {
 }
 
 .interaction-synopsis-section .interaction-resolution-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 2px;
+}
+
+.interaction-synopsis-analyze-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border: 1px solid #cbd9ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #33527c;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.interaction-synopsis-analyze-btn:hover:not(:disabled) {
+  background: #eef5ff;
+  border-color: #a9c2ea;
+  color: #1d4f91;
+  transform: translateY(-1px);
+}
+
+.interaction-synopsis-analyze-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.interaction-synopsis-analyze-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex: 0 0 auto;
 }
 
 .interaction-account-suggestion-section {
@@ -8285,6 +8360,18 @@ button:disabled {
   border-radius: 999px;
   background: #1f6fb2;
   color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.interaction-create-dropzone-selected {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #e8f2ff;
+  color: #1f5d98;
   font-size: 12px;
   font-weight: 700;
 }

@@ -95,3 +95,11 @@ Convertir el bloque actual de proceso comercial de la edición de oportunidades 
 1. Recomendación: cachear en frontend las vistas de etapa ya cargadas dentro del modal para evitar refetch al volver entre steps, invalidando esa cache después de guardar respuestas, avanzar, retroceder o cerrar.
 2. Recomendación: deshabilitar visualmente acciones cuando el step seleccionado no coincide con la etapa actual, en lugar de ocultarlas, para mantener claro el modelo del flujo.
 3. Riesgo a vigilar: si se permiten ver etapas futuras con preguntas activas pero sin respuestas, el copy debe dejar claro que es una vista previa, no una etapa alcanzada.
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

@@ -92,6 +92,7 @@ export const plannerOutputSchema = z.object({
       "opportunities",
       "quotations",
       "proposals",
+      "documentation",
     ]),
   ),
   filters: plannerFiltersSchema.default({}),

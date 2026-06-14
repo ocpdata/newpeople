@@ -24,5 +24,13 @@ export function buildEvidenceReferences(evidence) {
   for (const account of evidence?.accounts || []) {
     references.push(`account:${account.id}`);
   }
+  for (const doc of evidence?.documentation || []) {
+    references.push(
+      `doc:${doc.filePath}${typeof doc.chunkIndex === "number" ? `#${doc.chunkIndex}` : ""}`,
+    );
+  }
+  for (const item of evidence?.applicationKnowledge || []) {
+    references.push(`app:${item.id}`);
+  }
   return [...new Set(references)].slice(0, 20);
 }

@@ -573,6 +573,12 @@ function AiCreditConfigurationPanel({
   loading,
   error,
   latestUpdateText,
+  pricingRates,
+  pricingRatesLoading,
+  pricingRatesError,
+  latestPricingUpdateText,
+  pricingActionKey,
+  pricingSyncPreview,
   selectedUserId,
   selectedDetail,
   detailLoading,
@@ -581,6 +587,9 @@ function AiCreditConfigurationPanel({
   onGrantCredit,
   onAdjustCredit,
   onUpdatePolicy,
+  onCreatePricingRate,
+  onClosePricingRate,
+  onSyncPricingRates,
 }) {
   const [filterText, setFilterText] = useState("");
   const [grantAmountUsd, setGrantAmountUsd] = useState("5.00");
@@ -596,6 +605,23 @@ function AiCreditConfigurationPanel({
     warningThresholdPercent: 80,
     criticalThresholdPercent: 95,
   });
+  const [newPricingModel, setNewPricingModel] = useState("");
+  const [newPricingInputMicros, setNewPricingInputMicros] = useState("300000");
+  const [newPricingOutputMicros, setNewPricingOutputMicros] =
+    useState("1200000");
+  const [newPricingCachedMicros, setNewPricingCachedMicros] = useState("30000");
+  const [newPricingValidFromUtc, setNewPricingValidFromUtc] = useState("");
+
+  const moneyMicrosFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat("es-MX", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 6,
+      }),
+    [],
+  );
 
   const currencyFormatter = useMemo(
     () =>
@@ -665,6 +691,43 @@ function AiCreditConfigurationPanel({
       },
     );
   }, [filteredItems]);
+
+  const groupedPricingRates = useMemo(() => {
+    if (!Array.isArray(pricingRates)) return [];
+    const byModel = new Map();
+    pricingRates.forEach((rate) => {
+      const key = `${rate.provider}:${rate.model}`;
+      if (!byModel.has(key)) {
+        byModel.set(key, {
+          provider: rate.provider,
+          model: rate.model,
+          rows: [],
+        });
+      }
+      byModel.get(key).rows.push(rate);
+    });
+    return Array.from(byModel.values());
+  }, [pricingRates]);
+
+  async function submitNewPricingRate(event) {
+    event.preventDefault();
+    const payload = {
+      provider: "openai",
+      model: String(newPricingModel || "").trim(),
+      inputUsdPerMillionMicros: Number(newPricingInputMicros || 0),
+      outputUsdPerMillionMicros: Number(newPricingOutputMicros || 0),
+      cachedInputUsdPerMillionMicros: Number(newPricingCachedMicros || 0),
+      validFromUtc:
+        newPricingValidFromUtc && String(newPricingValidFromUtc).trim()
+          ? new Date(newPricingValidFromUtc).toISOString()
+          : undefined,
+      source: "manual_admin",
+      sourceReference: "configuration_ui",
+    };
+    await onCreatePricingRate(payload);
+    setNewPricingModel("");
+    setNewPricingValidFromUtc("");
+  }
 
   async function submitGrant(event) {
     event.preventDefault();
@@ -1069,6 +1132,236 @@ function AiCreditConfigurationPanel({
             </div>
           </div>
         )}
+      </section>
+
+      <section className="configuration-card ai-pricing-card">
+        <div className="configuration-card-heading">
+          <div>
+            <h4>Tarifas IA por modelo</h4>
+            <p>
+              Controla costos por millon de tokens y su vigencia para cada
+              modelo.
+            </p>
+          </div>
+          <span className="configuration-inline-pill">
+            {latestPricingUpdateText}
+          </span>
+        </div>
+
+        <div className="ai-pricing-toolbar">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={pricingActionKey === "sync-preview"}
+            onClick={() => {
+              void onSyncPricingRates({ dryRun: true });
+            }}
+          >
+            {pricingActionKey === "sync-preview"
+              ? "Consultando..."
+              : "⟳ Obtener automaticamente"}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={
+              pricingActionKey === "sync-apply" || !pricingSyncPreview.length
+            }
+            onClick={() => {
+              void onSyncPricingRates({ dryRun: false });
+            }}
+          >
+            {pricingActionKey === "sync-apply"
+              ? "Aplicando..."
+              : "Aplicar sincronizacion"}
+          </button>
+        </div>
+
+        {pricingRatesLoading ? (
+          <p className="field-hint">Cargando tarifas IA...</p>
+        ) : null}
+        {pricingRatesError ? (
+          <p className="field-error-text">{pricingRatesError}</p>
+        ) : null}
+
+        {pricingSyncPreview.length ? (
+          <div className="ai-pricing-preview">
+            {pricingSyncPreview.map((item) => (
+              <article
+                key={`${item.provider}:${item.model}`}
+                className={`ai-pricing-preview-item change-${item.changeType}`}
+              >
+                <strong>
+                  {item.provider} · {item.model}
+                </strong>
+                <span>
+                  {item.changeType === "unchanged"
+                    ? "Sin cambios"
+                    : item.changeType === "create"
+                      ? "Nueva tarifa"
+                      : "Actualizacion de tarifa"}
+                </span>
+              </article>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="ai-pricing-table-wrap">
+          <table className="configuration-table ai-pricing-table">
+            <thead>
+              <tr>
+                <th>Modelo</th>
+                <th>Input / M</th>
+                <th>Output / M</th>
+                <th>Cached / M</th>
+                <th>Vigencia</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupedPricingRates.map((group) =>
+                group.rows.map((rate) => (
+                  <tr key={rate.id}>
+                    <td>
+                      <strong>{rate.model}</strong>
+                      <span>{rate.provider}</span>
+                    </td>
+                    <td>
+                      {moneyMicrosFormatter.format(
+                        (rate.inputUsdPerMillionMicros || 0) / 1000000,
+                      )}
+                    </td>
+                    <td>
+                      {moneyMicrosFormatter.format(
+                        (rate.outputUsdPerMillionMicros || 0) / 1000000,
+                      )}
+                    </td>
+                    <td>
+                      {moneyMicrosFormatter.format(
+                        (rate.cachedInputUsdPerMillionMicros || 0) / 1000000,
+                      )}
+                    </td>
+                    <td>
+                      <strong>
+                        {rate.validFromUtc
+                          ? new Date(rate.validFromUtc).toLocaleString()
+                          : "-"}
+                      </strong>
+                      <span>
+                        {rate.validToUtc
+                          ? `Hasta ${new Date(rate.validToUtc).toLocaleString()}`
+                          : "Sin fin"}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={`configuration-status-pill ai-pricing-state-${rate.state}`}
+                      >
+                        {rate.state}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={
+                          rate.state !== "active" ||
+                          pricingActionKey === `close:${rate.id}`
+                        }
+                        onClick={() => {
+                          void onClosePricingRate(rate.id, {});
+                        }}
+                      >
+                        {pricingActionKey === `close:${rate.id}`
+                          ? "Cerrando..."
+                          : "Cerrar vigencia"}
+                      </button>
+                    </td>
+                  </tr>
+                )),
+              )}
+              {!groupedPricingRates.length ? (
+                <tr>
+                  <td colSpan="7">
+                    <p className="field-hint">No hay tarifas registradas.</p>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <form className="ai-credit-form" onSubmit={submitNewPricingRate}>
+          <h5>Nueva tarifa manual</h5>
+          <div className="configuration-form-grid">
+            <div className="field-group">
+              <label>Modelo</label>
+              <input
+                type="text"
+                value={newPricingModel}
+                onChange={(event) => setNewPricingModel(event.target.value)}
+                placeholder="gpt-4.1-mini"
+                required
+              />
+            </div>
+            <div className="field-group">
+              <label>Vigente desde</label>
+              <input
+                type="datetime-local"
+                value={newPricingValidFromUtc}
+                onChange={(event) =>
+                  setNewPricingValidFromUtc(event.target.value)
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label>Input micros por millon</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newPricingInputMicros}
+                onChange={(event) =>
+                  setNewPricingInputMicros(event.target.value)
+                }
+                required
+              />
+            </div>
+            <div className="field-group">
+              <label>Output micros por millon</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newPricingOutputMicros}
+                onChange={(event) =>
+                  setNewPricingOutputMicros(event.target.value)
+                }
+                required
+              />
+            </div>
+            <div className="field-group configuration-grid-span-full">
+              <label>Cached input micros por millon</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newPricingCachedMicros}
+                onChange={(event) =>
+                  setNewPricingCachedMicros(event.target.value)
+                }
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={pricingActionKey === "create"}
+          >
+            {pricingActionKey === "create" ? "Guardando..." : "Crear tarifa"}
+          </button>
+        </form>
       </section>
     </div>
   );
@@ -3850,6 +4143,11 @@ export default function ConfigurationPage() {
     aiWalletSummaries,
     aiWalletSummariesLoading,
     aiWalletSummariesError,
+    aiPricingRates,
+    aiPricingRatesLoading,
+    aiPricingRatesError,
+    aiPricingActionKey,
+    aiPricingSyncPreview,
     selectedAiWalletUserId,
     selectedAiWalletDetail,
     selectedAiWalletDetailLoading,
@@ -3881,6 +4179,7 @@ export default function ConfigurationPage() {
     latestChatbotSettingsUpdateText,
     latestCommercialSettingsUpdateText,
     latestAiWalletUpdateText,
+    latestAiPricingUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
     sectionItems,
@@ -3912,6 +4211,9 @@ export default function ConfigurationPage() {
     grantAiWalletCredit,
     adjustAiWalletCredit,
     updateAiWalletPolicy,
+    createAiPricingRate,
+    closeAiPricingRate,
+    syncAiPricingRates,
     saveProposalContentComponent,
     createProposalContentComponent,
     reorderProposalContent,
@@ -4723,6 +5025,12 @@ export default function ConfigurationPage() {
               loading={aiWalletSummariesLoading}
               error={aiWalletSummariesError}
               latestUpdateText={latestAiWalletUpdateText}
+              pricingRates={aiPricingRates}
+              pricingRatesLoading={aiPricingRatesLoading}
+              pricingRatesError={aiPricingRatesError}
+              latestPricingUpdateText={latestAiPricingUpdateText}
+              pricingActionKey={aiPricingActionKey}
+              pricingSyncPreview={aiPricingSyncPreview}
               selectedUserId={selectedAiWalletUserId}
               selectedDetail={selectedAiWalletDetail}
               detailLoading={selectedAiWalletDetailLoading}
@@ -4739,6 +5047,11 @@ export default function ConfigurationPage() {
               onUpdatePolicy={(userId, payload) =>
                 updateAiWalletPolicy(userId, payload)
               }
+              onCreatePricingRate={(payload) => createAiPricingRate(payload)}
+              onClosePricingRate={(rateId, payload) =>
+                closeAiPricingRate(rateId, payload)
+              }
+              onSyncPricingRates={(payload) => syncAiPricingRates(payload)}
             />
           ) : null}
 

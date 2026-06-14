@@ -4,11 +4,15 @@ import { requireAnyPermission } from "./auth.js";
 import {
   adjustWalletCredit,
   aggregateAiUsage,
+  closeAdminPricingRate,
+  createAdminPricingRate,
   getAdminWalletByUserId,
   getAiCreditSummaryByUserId,
   grantWalletCredit,
+  listAdminPricingRates,
   listAiUsageByUserId,
   listAdminWalletSummaries,
+  syncOpenAiPricingRates,
   updateWalletPolicy,
 } from "./ai-usage/service.js";
 
@@ -48,6 +52,26 @@ const policyBodySchema = z
     },
   );
 
+const pricingRateBodySchema = z.object({
+  provider: z.string().trim().min(2).max(20),
+  model: z.string().trim().min(2).max(120),
+  inputUsdPerMillionMicros: z.number().int().min(0),
+  outputUsdPerMillionMicros: z.number().int().min(0),
+  cachedInputUsdPerMillionMicros: z.number().int().min(0).optional(),
+  validFromUtc: z.string().datetime({ offset: true }).optional(),
+  validToUtc: z.string().datetime({ offset: true }).optional().nullable(),
+  source: z.string().trim().min(2).max(80).optional(),
+  sourceReference: z.string().trim().max(255).optional(),
+});
+
+const closePricingRateBodySchema = z.object({
+  validToUtc: z.string().datetime({ offset: true }).optional(),
+});
+
+const pricingSyncBodySchema = z.object({
+  dryRun: z.boolean().optional().default(true),
+});
+
 function toPositiveId(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
@@ -59,6 +83,120 @@ function parseCommonError(error, fallbackMessage) {
   const message = String(error?.message || "").trim() || fallbackMessage;
   return { status, body: { code: code || "UNEXPECTED_ERROR", message } };
 }
+
+router.get(
+  "/admin/ai/pricing-rates",
+  requireAnyPermission(["ia.budget.read_all", "configuracion.read"]),
+  async (req, res) => {
+    const activeOnly =
+      String(req.query.activeOnly || "")
+        .trim()
+        .toLowerCase() === "true";
+    try {
+      const items = await listAdminPricingRates({
+        provider: req.query.provider ? String(req.query.provider) : undefined,
+        model: req.query.model ? String(req.query.model) : undefined,
+        activeOnly,
+      });
+      return res.json({ items });
+    } catch (error) {
+      const parsed = parseCommonError(
+        error,
+        "No fue posible listar las tarifas de IA",
+      );
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.post(
+  "/admin/ai/pricing-rates",
+  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
+  async (req, res) => {
+    const parsedBody = pricingRateBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsedBody.error.flatten(),
+      });
+    }
+
+    try {
+      const rate = await createAdminPricingRate({
+        ...parsedBody.data,
+        actorUserId: Number(req.user.id),
+      });
+      return res.status(201).json({ rate });
+    } catch (error) {
+      const parsed = parseCommonError(
+        error,
+        "No fue posible crear la tarifa de IA",
+      );
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.post(
+  "/admin/ai/pricing-rates/:rateId/close",
+  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
+  async (req, res) => {
+    const rateId = toPositiveId(req.params.rateId);
+    if (!rateId) {
+      return res.status(400).json({ message: "rateId invalido" });
+    }
+
+    const parsedBody = closePricingRateBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsedBody.error.flatten(),
+      });
+    }
+
+    try {
+      const rate = await closeAdminPricingRate({
+        rateId,
+        validToUtc: parsedBody.data.validToUtc,
+      });
+      return res.json({ rate });
+    } catch (error) {
+      const parsed = parseCommonError(
+        error,
+        "No fue posible cerrar la vigencia de la tarifa",
+      );
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.post(
+  "/admin/ai/pricing-rates/sync-openai",
+  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
+  async (req, res) => {
+    const parsedBody = pricingSyncBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsedBody.error.flatten(),
+      });
+    }
+
+    try {
+      const result = await syncOpenAiPricingRates({
+        dryRun: parsedBody.data.dryRun,
+        actorUserId: Number(req.user.id),
+      });
+      return res.json(result);
+    } catch (error) {
+      const parsed = parseCommonError(
+        error,
+        "No fue posible sincronizar las tarifas de IA",
+      );
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
 
 router.get(
   "/admin/ai/wallets",

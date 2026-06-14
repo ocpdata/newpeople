@@ -15,6 +15,7 @@ export function getReadableDomainHints(user) {
     opportunities: hasAnyPermission(user, CHATBOT_OPPORTUNITY_READ_PERMISSIONS),
     quotations: hasAnyPermission(user, CHATBOT_QUOTATION_READ_PERMISSIONS),
     proposals: hasAnyPermission(user, CHATBOT_PROPOSAL_READ_PERMISSIONS),
+    documentation: true,
   };
 }
 
@@ -36,6 +37,9 @@ export function getDomainSuggestions(user) {
   }
   if (hints.proposals) {
     suggestions.push("Dame un resumen de mis propuestas recientes");
+  }
+  if (hints.documentation) {
+    suggestions.push("Que significa cada tipo de lead en esta aplicacion");
   }
 
   return suggestions.slice(0, 8);
@@ -125,6 +129,10 @@ export async function loadChatbotPlannerMetadata(user) {
         statusCodes: proposalStatusCodes,
         quotationVersionStatusCodes: quotationStatusCodes,
         filterableFields: ["statusCodes", "quotationVersionStatusCodes"],
+      },
+      documentation: {
+        enabled: true,
+        filterableFields: [],
       },
     },
   };

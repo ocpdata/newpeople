@@ -54,6 +54,13 @@ function parseDateOrNull(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function normalizeUtcDateInput(value, fallback = null) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  return parseDateOrNull(value);
+}
+
 function buildBudgetExceededError(message) {
   const error = new Error(
     message || "No tienes saldo disponible para ejecutar funciones de IA.",
@@ -70,6 +77,42 @@ function buildRateNotFoundError(model) {
   error.code = "AI_RATE_NOT_FOUND";
   error.status = 500;
   return error;
+}
+
+function normalizePricingRateRow(row) {
+  const now = Date.now();
+  const validFrom = parseDateOrNull(row?.valid_from_utc);
+  const validTo = parseDateOrNull(row?.valid_to_utc);
+  let state = "active";
+
+  if (validFrom && validFrom.getTime() > now) {
+    state = "scheduled";
+  } else if (validTo && validTo.getTime() <= now) {
+    state = "expired";
+  }
+
+  return {
+    id: Number(row?.id || 0),
+    provider: String(row?.provider || ""),
+    model: String(row?.model || ""),
+    inputUsdPerMillionMicros: Number(row?.input_usd_per_million_micros || 0),
+    outputUsdPerMillionMicros: Number(row?.output_usd_per_million_micros || 0),
+    cachedInputUsdPerMillionMicros: Number(
+      row?.cached_input_usd_per_million_micros || 0,
+    ),
+    validFromUtc: toUtcIso(row?.valid_from_utc),
+    validToUtc: toUtcIso(row?.valid_to_utc),
+    source: String(row?.source || ""),
+    sourceReference: row?.source_reference
+      ? String(row.source_reference)
+      : null,
+    createdByUserId: row?.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
+    createdAtUtc: toUtcIso(row?.created_at_utc),
+    updatedAtUtc: toUtcIso(row?.updated_at_utc),
+    state,
+  };
 }
 
 function coalesceUsageFromOpenAiResponse(responseData) {
@@ -282,34 +325,44 @@ export async function ensureAiUsageSchema() {
       );
 
       const now = nowDate();
-      const defaultModel = String(config.openai.model || "gpt-4o-mini").trim();
-      await query(
-        `INSERT INTO ai_pricing_rates
-           (provider, model, input_usd_per_million_micros,
-            output_usd_per_million_micros,
-            cached_input_usd_per_million_micros,
-            valid_from_utc, valid_to_utc,
-            source, source_reference, created_by_user_id,
-            created_at_utc, updated_at_utc)
-         SELECT ?, ?, ?, ?, ?, ?, NULL, 'seed_default', 'env_default', NULL, ?, ?
-         WHERE NOT EXISTS (
-           SELECT 1
-           FROM ai_pricing_rates
-           WHERE provider = ? AND model = ?
-         )`,
-        [
-          PROVIDER_OPENAI,
-          defaultModel,
-          Math.max(0, Math.round(DEFAULT_INPUT_USD_PER_MILLION_MICROS)),
-          Math.max(0, Math.round(DEFAULT_OUTPUT_USD_PER_MILLION_MICROS)),
-          Math.max(0, Math.round(DEFAULT_CACHED_USD_PER_MILLION_MICROS)),
-          now,
-          now,
-          now,
-          PROVIDER_OPENAI,
-          defaultModel,
-        ],
+      const modelsToSeed = Array.from(
+        new Set(
+          [
+            String(config.openai.model || "gpt-4o-mini").trim(),
+            String(config.openai.transcriptionModel || "").trim(),
+          ].filter(Boolean),
+        ),
       );
+
+      for (const modelToSeed of modelsToSeed) {
+        await query(
+          `INSERT INTO ai_pricing_rates
+             (provider, model, input_usd_per_million_micros,
+              output_usd_per_million_micros,
+              cached_input_usd_per_million_micros,
+              valid_from_utc, valid_to_utc,
+              source, source_reference, created_by_user_id,
+              created_at_utc, updated_at_utc)
+           SELECT ?, ?, ?, ?, ?, ?, NULL, 'seed_default', 'env_default', NULL, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM ai_pricing_rates
+             WHERE provider = ? AND model = ?
+           )`,
+          [
+            PROVIDER_OPENAI,
+            modelToSeed,
+            Math.max(0, Math.round(DEFAULT_INPUT_USD_PER_MILLION_MICROS)),
+            Math.max(0, Math.round(DEFAULT_OUTPUT_USD_PER_MILLION_MICROS)),
+            Math.max(0, Math.round(DEFAULT_CACHED_USD_PER_MILLION_MICROS)),
+            now,
+            now,
+            now,
+            PROVIDER_OPENAI,
+            modelToSeed,
+          ],
+        );
+      }
     })().catch((error) => {
       ensureAiUsageSchemaPromise = undefined;
       throw error;
@@ -1036,6 +1089,349 @@ export async function updateWalletPolicy({
   });
 
   return getAiCreditSummaryByUserId(safeUserId);
+}
+
+export async function listAdminPricingRates({
+  provider,
+  model,
+  activeOnly = false,
+}) {
+  await ensureAiUsageSchema();
+
+  const where = ["1 = 1"];
+  const params = [];
+
+  const safeProvider = String(provider || "")
+    .trim()
+    .toLowerCase();
+  if (safeProvider) {
+    where.push("provider = ?");
+    params.push(safeProvider);
+  }
+
+  const safeModel = String(model || "").trim();
+  if (safeModel) {
+    where.push("model = ?");
+    params.push(safeModel);
+  }
+
+  if (activeOnly) {
+    where.push("valid_from_utc <= NOW(3)");
+    where.push("(valid_to_utc IS NULL OR valid_to_utc > NOW(3))");
+  }
+
+  const rows = await query(
+    `SELECT id, provider, model,
+            input_usd_per_million_micros,
+            output_usd_per_million_micros,
+            cached_input_usd_per_million_micros,
+            valid_from_utc, valid_to_utc,
+            source, source_reference,
+            created_by_user_id, created_at_utc, updated_at_utc
+     FROM ai_pricing_rates
+     WHERE ${where.join(" AND ")}
+     ORDER BY provider ASC, model ASC, valid_from_utc DESC, id DESC`,
+    params,
+  );
+
+  return rows.map(normalizePricingRateRow);
+}
+
+export async function createAdminPricingRate({
+  provider,
+  model,
+  inputUsdPerMillionMicros,
+  outputUsdPerMillionMicros,
+  cachedInputUsdPerMillionMicros,
+  validFromUtc,
+  validToUtc,
+  source,
+  sourceReference,
+  actorUserId,
+}) {
+  await ensureAiUsageSchema();
+
+  const safeProvider = String(provider || "")
+    .trim()
+    .toLowerCase();
+  const safeModel = String(model || "").trim();
+  const safeInput = Math.max(0, Math.round(Number(inputUsdPerMillionMicros)));
+  const safeOutput = Math.max(
+    0,
+    Math.round(Number(outputUsdPerMillionMicros || 0)),
+  );
+  const safeCached = Math.max(
+    0,
+    Math.round(Number(cachedInputUsdPerMillionMicros || 0)),
+  );
+  const safeValidFrom =
+    normalizeUtcDateInput(validFromUtc, nowDate()) || nowDate();
+  const safeValidTo = normalizeUtcDateInput(validToUtc, null);
+  const safeSource = String(source || "manual_admin").trim() || "manual_admin";
+  const safeSourceReference = String(sourceReference || "").trim() || null;
+
+  if (!safeProvider || !safeModel) {
+    const error = new Error("provider y model son obligatorios");
+    error.status = 400;
+    throw error;
+  }
+
+  if (safeValidTo && safeValidTo <= safeValidFrom) {
+    const error = new Error("validToUtc debe ser posterior a validFromUtc");
+    error.status = 400;
+    throw error;
+  }
+
+  return withTransaction(async (conn) => {
+    const [overlapRows] = await conn.query(
+      `SELECT id
+       FROM ai_pricing_rates
+       WHERE provider = ?
+         AND model = ?
+         AND valid_from_utc < COALESCE(?, '9999-12-31 23:59:59.999')
+         AND COALESCE(valid_to_utc, '9999-12-31 23:59:59.999') > ?
+       LIMIT 1
+       FOR UPDATE`,
+      [safeProvider, safeModel, safeValidTo, safeValidFrom],
+    );
+
+    if (overlapRows[0]) {
+      const error = new Error(
+        "Ya existe una tarifa con vigencia superpuesta para este proveedor y modelo",
+      );
+      error.code = "AI_RATE_OVERLAP";
+      error.status = 409;
+      throw error;
+    }
+
+    const now = nowDate();
+    const [insertResult] = await conn.query(
+      `INSERT INTO ai_pricing_rates
+         (provider, model,
+          input_usd_per_million_micros,
+          output_usd_per_million_micros,
+          cached_input_usd_per_million_micros,
+          valid_from_utc, valid_to_utc,
+          source, source_reference,
+          created_by_user_id,
+          created_at_utc, updated_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        safeProvider,
+        safeModel,
+        safeInput,
+        safeOutput,
+        safeCached,
+        safeValidFrom,
+        safeValidTo,
+        safeSource,
+        safeSourceReference,
+        Number(actorUserId || 0) || null,
+        now,
+        now,
+      ],
+    );
+
+    const [rows] = await conn.query(
+      `SELECT *
+       FROM ai_pricing_rates
+       WHERE id = ?
+       LIMIT 1`,
+      [Number(insertResult.insertId || 0)],
+    );
+
+    return normalizePricingRateRow(rows[0] || null);
+  });
+}
+
+export async function closeAdminPricingRate({ rateId, validToUtc }) {
+  await ensureAiUsageSchema();
+
+  const safeRateId = Number(rateId || 0);
+  if (!Number.isInteger(safeRateId) || safeRateId <= 0) {
+    const error = new Error("rateId invalido");
+    error.status = 400;
+    throw error;
+  }
+
+  const safeValidTo = normalizeUtcDateInput(validToUtc, nowDate()) || nowDate();
+
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query(
+      `SELECT *
+       FROM ai_pricing_rates
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [safeRateId],
+    );
+
+    const current = rows[0] || null;
+    if (!current) {
+      const error = new Error("Tarifa no encontrada");
+      error.status = 404;
+      throw error;
+    }
+
+    const currentValidFrom = normalizeUtcDateInput(
+      current.valid_from_utc,
+      null,
+    );
+    if (currentValidFrom && safeValidTo <= currentValidFrom) {
+      const error = new Error(
+        "validToUtc debe ser posterior al inicio de vigencia",
+      );
+      error.status = 400;
+      throw error;
+    }
+
+    const now = nowDate();
+    await conn.query(
+      `UPDATE ai_pricing_rates
+       SET valid_to_utc = ?,
+           updated_at_utc = ?
+       WHERE id = ?`,
+      [safeValidTo, now, safeRateId],
+    );
+
+    const [nextRows] = await conn.query(
+      `SELECT *
+       FROM ai_pricing_rates
+       WHERE id = ?
+       LIMIT 1`,
+      [safeRateId],
+    );
+
+    return normalizePricingRateRow(nextRows[0] || null);
+  });
+}
+
+export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
+  await ensureAiUsageSchema();
+
+  const now = nowDate();
+  const modelsToSync = Array.from(
+    new Set(
+      [
+        String(config.openai.model || "").trim(),
+        String(config.openai.transcriptionModel || "").trim(),
+      ].filter(Boolean),
+    ),
+  );
+
+  const desiredRate = {
+    inputUsdPerMillionMicros: Math.max(
+      0,
+      Math.round(DEFAULT_INPUT_USD_PER_MILLION_MICROS),
+    ),
+    outputUsdPerMillionMicros: Math.max(
+      0,
+      Math.round(DEFAULT_OUTPUT_USD_PER_MILLION_MICROS),
+    ),
+    cachedInputUsdPerMillionMicros: Math.max(
+      0,
+      Math.round(DEFAULT_CACHED_USD_PER_MILLION_MICROS),
+    ),
+  };
+
+  const preview = [];
+  const applied = [];
+
+  for (const model of modelsToSync) {
+    const activeRows = await query(
+      `SELECT *
+       FROM ai_pricing_rates
+       WHERE provider = ?
+         AND model = ?
+         AND valid_from_utc <= NOW(3)
+         AND (valid_to_utc IS NULL OR valid_to_utc > NOW(3))
+       ORDER BY valid_from_utc DESC, id DESC
+       LIMIT 1`,
+      [PROVIDER_OPENAI, model],
+    );
+
+    const current = activeRows[0] || null;
+    const hasChanges =
+      !current ||
+      Number(current.input_usd_per_million_micros || 0) !==
+        desiredRate.inputUsdPerMillionMicros ||
+      Number(current.output_usd_per_million_micros || 0) !==
+        desiredRate.outputUsdPerMillionMicros ||
+      Number(current.cached_input_usd_per_million_micros || 0) !==
+        desiredRate.cachedInputUsdPerMillionMicros;
+
+    preview.push({
+      provider: PROVIDER_OPENAI,
+      model,
+      changeType: hasChanges ? (current ? "update" : "create") : "unchanged",
+      current: current ? normalizePricingRateRow(current) : null,
+      desired: {
+        provider: PROVIDER_OPENAI,
+        model,
+        ...desiredRate,
+      },
+    });
+
+    if (dryRun || !hasChanges) {
+      continue;
+    }
+
+    const created = await withTransaction(async (conn) => {
+      if (current) {
+        await conn.query(
+          `UPDATE ai_pricing_rates
+           SET valid_to_utc = ?,
+               updated_at_utc = ?
+           WHERE id = ?`,
+          [now, now, Number(current.id)],
+        );
+      }
+
+      const [insertResult] = await conn.query(
+        `INSERT INTO ai_pricing_rates
+           (provider, model,
+            input_usd_per_million_micros,
+            output_usd_per_million_micros,
+            cached_input_usd_per_million_micros,
+            valid_from_utc, valid_to_utc,
+            source, source_reference,
+            created_by_user_id,
+            created_at_utc, updated_at_utc)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 'sync_openai_defaults', 'env_defaults', ?, ?, ?)`,
+        [
+          PROVIDER_OPENAI,
+          model,
+          desiredRate.inputUsdPerMillionMicros,
+          desiredRate.outputUsdPerMillionMicros,
+          desiredRate.cachedInputUsdPerMillionMicros,
+          now,
+          Number(actorUserId || 0) || null,
+          now,
+          now,
+        ],
+      );
+
+      const [rows] = await conn.query(
+        `SELECT *
+         FROM ai_pricing_rates
+         WHERE id = ?
+         LIMIT 1`,
+        [Number(insertResult.insertId || 0)],
+      );
+
+      return normalizePricingRateRow(rows[0] || null);
+    });
+
+    applied.push(created);
+  }
+
+  return {
+    dryRun: Boolean(dryRun),
+    source: "openai_env_defaults",
+    generatedAtUtc: now.toISOString(),
+    preview,
+    applied,
+  };
 }
 
 export async function aggregateAiUsage({ fromUtc, toUtc, groupBy }) {

@@ -270,3 +270,10 @@ Si el usuario confirma, el frontend reintenta el guardado con `allowDuplicateOve
 - El flujo de creación comparte parte de la infraestructura del modal de edición, pero su comportamiento no es idéntico.
 - El asistente IA y la revisión de duplicados solo forman parte del modo creación.
 - El cambio manual de estado no es parte de este flujo; ocurre después y depende de permisos adicionales.
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

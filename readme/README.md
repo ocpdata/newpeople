@@ -50,6 +50,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Cotizaciones: modulo documentado con workflow propio, guardado completo por version,
   bundles de catalogo y manuales, vista previa oficial en PDF generada por backend,
   y separacion entre precio original del proveedor y precio convertido por tipo de cambio.
+- IA/Configuracion: documentada la administracion de tarifas por modelo desde
+  Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
 - Comisiones: documento nuevo para reglas trimestrales de configuracion y seguimiento en Planeacion Comercial, con umbral de cuota, margen minimo por cotizacion y calculo por item.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
@@ -60,3 +62,11 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 1. Inicia en este archivo para ubicar el modulo.
 2. Abre el README especifico del tema y revisa primero su seccion `Logica de negocio`.
 3. Actualiza el archivo del modulo cuando se hagan cambios relevantes.
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

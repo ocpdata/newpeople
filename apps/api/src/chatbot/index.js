@@ -141,6 +141,7 @@ export async function runChatbotPipeline({
     user,
     plannerOutput,
     resolverOutput,
+    prompt,
   });
   const references = buildEvidenceReferences(evidence);
   const evidencePackage = {

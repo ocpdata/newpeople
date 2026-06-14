@@ -683,6 +683,11 @@ export function useConfigurationPage() {
   const [aiWalletSummariesLoading, setAiWalletSummariesLoading] =
     useState(true);
   const [aiWalletSummariesError, setAiWalletSummariesError] = useState("");
+  const [aiPricingRates, setAiPricingRates] = useState([]);
+  const [aiPricingRatesLoading, setAiPricingRatesLoading] = useState(true);
+  const [aiPricingRatesError, setAiPricingRatesError] = useState("");
+  const [aiPricingActionKey, setAiPricingActionKey] = useState("");
+  const [aiPricingSyncPreview, setAiPricingSyncPreview] = useState([]);
   const [selectedAiWalletUserId, setSelectedAiWalletUserId] = useState(null);
   const [selectedAiWalletDetail, setSelectedAiWalletDetail] = useState(null);
   const [selectedAiWalletDetailLoading, setSelectedAiWalletDetailLoading] =
@@ -728,6 +733,7 @@ export function useConfigurationPage() {
           institutionalAssetsResponse,
           aiParametersResponse,
           aiWalletsResponse,
+          aiPricingResponse,
         ] = await Promise.all([
           api.get("/api/settings/company-profile"),
           api
@@ -758,6 +764,9 @@ export function useConfigurationPage() {
             data: { config: EMPTY_AI_PARAMETERS_CONFIG },
           })),
           api.get("/api/admin/ai/wallets").catch(() => ({
+            data: { items: [] },
+          })),
+          api.get("/api/admin/ai/pricing-rates").catch(() => ({
             data: { items: [] },
           })),
         ]);
@@ -827,6 +836,9 @@ export function useConfigurationPage() {
         )
           ? aiWalletsResponse.data.items
           : [];
+        const nextAiPricingRates = Array.isArray(aiPricingResponse.data?.items)
+          ? aiPricingResponse.data.items
+          : [];
         const nextAiEntry =
           nextAiParametersConfig.entries.find(
             (entry) =>
@@ -837,6 +849,9 @@ export function useConfigurationPage() {
         setAiParametersConfig(nextAiParametersConfig);
         setAiWalletSummaries(nextAiWalletSummaries);
         setAiWalletSummariesError("");
+        setAiPricingRates(nextAiPricingRates);
+        setAiPricingRatesError("");
+        setAiPricingSyncPreview([]);
         const nextAiWalletUserId = nextAiWalletSummaries[0]?.userId || null;
         setSelectedAiWalletUserId(nextAiWalletUserId);
         if (nextAiWalletUserId) {
@@ -868,11 +883,15 @@ export function useConfigurationPage() {
           setAiWalletSummariesError(
             getApiErrorMessage(err, "No fue posible cargar el credito IA"),
           );
+          setAiPricingRatesError(
+            getApiErrorMessage(err, "No fue posible cargar las tarifas IA"),
+          );
         }
       } finally {
         if (!cancelled) {
           setLoading(false);
           setAiWalletSummariesLoading(false);
+          setAiPricingRatesLoading(false);
         }
       }
     }
@@ -1419,6 +1438,22 @@ export function useConfigurationPage() {
     return `${formatDateTime(latestWallet.asOfUtc)} por sistema`;
   }, [aiWalletSummaries, formatDateTime]);
 
+  const latestAiPricingUpdateText = useMemo(() => {
+    if (!aiPricingRates.length) {
+      return "Sin tarifas configuradas";
+    }
+
+    const latestRate = [...aiPricingRates].sort((left, right) => {
+      return String(right.updatedAtUtc || "").localeCompare(
+        String(left.updatedAtUtc || ""),
+      );
+    })[0];
+
+    return latestRate?.updatedAtUtc
+      ? formatDateTime(latestRate.updatedAtUtc)
+      : "Sin cambios registrados";
+  }, [aiPricingRates, formatDateTime]);
+
   async function reloadAiParametersConfig(
     nextCapabilityKey = selectedAiCapabilityKey,
   ) {
@@ -1694,6 +1729,28 @@ export function useConfigurationPage() {
     }
   }, []);
 
+  const reloadAiPricingRates = useCallback(async () => {
+    setAiPricingRatesLoading(true);
+    setAiPricingRatesError("");
+    try {
+      const response = await api.get("/api/admin/ai/pricing-rates");
+      const items = Array.isArray(response.data?.items)
+        ? response.data.items
+        : [];
+      setAiPricingRates(items);
+      return items;
+    } catch (err) {
+      const message = getApiErrorMessage(
+        err,
+        "No fue posible cargar las tarifas IA",
+      );
+      setAiPricingRatesError(message);
+      throw err;
+    } finally {
+      setAiPricingRatesLoading(false);
+    }
+  }, []);
+
   async function selectAiWalletUser(userId) {
     const nextUserId = Number(userId || 0) || null;
     setSelectedAiWalletUserId(nextUserId);
@@ -1768,6 +1825,79 @@ export function useConfigurationPage() {
       throw err;
     } finally {
       setAiWalletActionKey("");
+    }
+  }
+
+  async function createAiPricingRate(payload) {
+    setAiPricingActionKey("create");
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post("/api/admin/ai/pricing-rates", payload);
+      await reloadAiPricingRates();
+      setSuccess("Tarifa IA creada correctamente");
+      return response.data?.rate || null;
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible crear la tarifa IA"));
+      throw err;
+    } finally {
+      setAiPricingActionKey("");
+    }
+  }
+
+  async function closeAiPricingRate(rateId, payload = {}) {
+    setAiPricingActionKey(`close:${rateId}`);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        `/api/admin/ai/pricing-rates/${rateId}/close`,
+        payload,
+      );
+      await reloadAiPricingRates();
+      setSuccess("Vigencia de tarifa IA cerrada");
+      return response.data?.rate || null;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible cerrar la vigencia de tarifa"),
+      );
+      throw err;
+    } finally {
+      setAiPricingActionKey("");
+    }
+  }
+
+  async function syncAiPricingRates({ dryRun = true } = {}) {
+    setAiPricingActionKey(dryRun ? "sync-preview" : "sync-apply");
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post(
+        "/api/admin/ai/pricing-rates/sync-openai",
+        {
+          dryRun,
+        },
+      );
+      const preview = Array.isArray(response.data?.preview)
+        ? response.data.preview
+        : [];
+      setAiPricingSyncPreview(preview);
+      if (!dryRun) {
+        await reloadAiPricingRates();
+      }
+      setSuccess(
+        dryRun
+          ? "Vista previa de sincronizacion generada"
+          : "Tarifas IA sincronizadas correctamente",
+      );
+      return response.data || null;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible sincronizar las tarifas IA"),
+      );
+      throw err;
+    } finally {
+      setAiPricingActionKey("");
     }
   }
 
@@ -2086,6 +2216,11 @@ export function useConfigurationPage() {
     aiWalletSummaries,
     aiWalletSummariesLoading,
     aiWalletSummariesError,
+    aiPricingRates,
+    aiPricingRatesLoading,
+    aiPricingRatesError,
+    aiPricingActionKey,
+    aiPricingSyncPreview,
     selectedAiWalletUserId,
     selectedAiWalletDetail,
     selectedAiWalletDetailLoading,
@@ -2117,6 +2252,7 @@ export function useConfigurationPage() {
     latestChatbotSettingsUpdateText,
     latestCommercialSettingsUpdateText,
     latestAiWalletUpdateText,
+    latestAiPricingUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
     sectionItems,
@@ -2135,11 +2271,15 @@ export function useConfigurationPage() {
     updateCommercialSetting,
     saveCommercialSettings,
     reloadAiWalletSummaries,
+    reloadAiPricingRates,
     loadAiWalletDetail,
     selectAiWalletUser,
     grantAiWalletCredit,
     adjustAiWalletCredit,
     updateAiWalletPolicy,
+    createAiPricingRate,
+    closeAiPricingRate,
+    syncAiPricingRates,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,

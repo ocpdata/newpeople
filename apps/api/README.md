@@ -45,6 +45,25 @@ Si ese archivo no existe, primero debes generarlo con `npm run seed:demo:capture
 - Proveedores y listas de precios con bundles
 - Cotizaciones versionadas con guardado completo y workflow propio
 - Auditoria transversal
+- IA: wallets por usuario, ledger de uso y tarifas por modelo con vigencia
+
+## IA: credito y tarifas
+
+Ademas de la administracion de wallets IA, el API ahora expone tarifas por
+modelo para costeo operativo de consumo.
+
+Endpoints administrativos relevantes:
+
+- `GET /api/admin/ai/pricing-rates`: lista tarifas (filtros opcionales `provider`, `model`, `activeOnly=true`).
+- `POST /api/admin/ai/pricing-rates`: crea una tarifa manual con vigencia.
+- `POST /api/admin/ai/pricing-rates/:rateId/close`: cierra vigencia de una tarifa existente.
+- `POST /api/admin/ai/pricing-rates/sync-openai`: ejecuta sincronizacion con `dryRun` (preview) o aplicacion.
+
+Notas operativas:
+
+- Las tarifas se almacenan en `ai_pricing_rates` con `valid_from_utc` y `valid_to_utc`.
+- El API evita solapes de vigencia para el mismo `provider + model`.
+- La sincronizacion actual usa defaults de entorno/modelos configurados para OpenAI y permite previsualizar cambios antes de aplicarlos.
 
 ## Cotizaciones
 
@@ -124,3 +143,11 @@ Nota operativa:
 - `../../README.md`
 - `../../readme/cotizaciones.md`
 - `../../readme/pruebas.md`
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

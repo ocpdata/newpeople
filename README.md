@@ -11,6 +11,7 @@ Cambios funcionales destacados del estado actual:
 - La vista previa oficial de cotizaciones se genera en backend como PDF inline.
 - El flujo de edicion de cotizaciones soporta cambios locales sin guardar, bundles por seccion y versionado completo.
 - En cotizaciones, cada item conserva moneda y precio lista originales del proveedor, mientras `Precio de lista` se recalcula en la moneda de la cotizacion segun el tipo de cambio vigente.
+- Configuracion ahora incluye administracion de tarifas IA por modelo (listar, alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
 
 ## Setup rapido local
 
@@ -189,6 +190,7 @@ Endpoints relevantes:
 - Proveedores con precios tipificados como `Productos` o `Servicios Propios`.
 - Cotizaciones con versiones, workflow propio, bundles por seccion y vista previa PDF backend.
 - Cotizaciones con separacion entre precio original del proveedor y precio convertido en moneda de cotizacion.
+- Configuracion de IA con wallets por usuario y tarifas por modelo con vigencias para costeo de consumo.
 - Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
 - Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
@@ -216,6 +218,7 @@ Cobertura automatizada:
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
 - Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
+- Administracion de credito y tarifas IA operada desde Configuracion > Credito IA.
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
 - Modulo de cotizaciones: [readme/cotizaciones.md](./readme/cotizaciones.md)
   Politicas de impresion y vista previa PDF incluidas en ese documento.
@@ -324,3 +327,11 @@ Notas:
 - `npm run seed:demo:reset-db` si elimina por completo la base apuntada por `DB_NAME`, reimporta el schema y despues ejecuta el seeder demo.
 - Marca toda la data demo con `DEMO_SEED_V1` para que `--reset` limpie solo esa carga.
 - Si detecta colisiones con usuarios existentes no demo, aborta para no sobrescribir datos reales.
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

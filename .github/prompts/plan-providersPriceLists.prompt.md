@@ -47,3 +47,11 @@ Agregar un nuevo modulo CRUD para proveedores y sus listas de precios, siguiendo
 1. Recomiendo que `registration_code` del proveedor sea unico por ahora, salvo que realmente exista el caso de mismo registro repetido por pais; si ese caso existe, conviene cambiar la unicidad a `country_id + registration_code`.
 2. Recomiendo modelar los precios en `DECIMAL(12,2)` salvo que necesiten mas precision por tipo de proveedor o moneda.
 3. Recomiendo resolver la gestion de la lista de precios dentro de un modal dedicado por proveedor, no incrustada en la tabla principal, para mantener la pagina legible y consistente con el patron actual del CRM.
+
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

@@ -3,7 +3,7 @@ import { api, getApiErrorMessage } from "./api";
 import ModalInlineHelp from "./help/ModalInlineHelp";
 
 const INTERACTION_FILE_ACCEPT =
-  ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
+  ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.mp4";
 const INTERACTION_ANALYSIS_TIMEOUT_MS = 60000;
 const INTERACTION_ANALYSIS_JOB_POLL_INTERVAL_MS = 3000;
 const INTERACTION_ANALYSIS_TOTAL_POLL_TIMEOUT_MS = 120000;
@@ -243,6 +243,26 @@ function buildEffectiveResolutionForm(
   };
 }
 
+function normalizeLeadDisplayText(value) {
+  const text = String(value || "");
+  if (!text) return "";
+
+  return text
+    .replace(
+      /\b(interacciones|interacciónes|ieracciones|ieracciónes)\b/gi,
+      (match) =>
+        match.charAt(0) === match.charAt(0).toUpperCase() ? "Leads" : "leads",
+    )
+    .replace(
+      /\b(interaccion|interacción|iteraccion|iteracción)\b/gi,
+      (match) =>
+        match.charAt(0) === match.charAt(0).toUpperCase() ? "Lead" : "lead",
+    )
+    .replace(/\b[Nn]ueva\s+lead\b/g, (match) =>
+      match.charAt(0) === "N" ? "Nuevo lead" : "nuevo lead",
+    );
+}
+
 function buildResolveConfirmationPreview(
   detail,
   resolutionForm,
@@ -370,7 +390,8 @@ function buildResolveConfirmationPreview(
           : "Lead Asignado";
 
   return {
-    interactionTitle: detail.title || "Interacción sin título",
+    interactionTitle:
+      normalizeLeadDisplayText(detail.title) || "Lead sin título",
     accountToCreate,
     accountToLink,
     contactsToCreate,
@@ -701,10 +722,13 @@ function CreateInteractionModal({
   onClose,
   onSubmit,
   creating,
+  isUploadingFiles,
+  setCreateInfoMessage,
   leadSource,
   setLeadSource,
   files,
   setFiles,
+  onUploadFiles,
   pastedTextName,
   setPastedTextName,
   pastedText,
@@ -712,22 +736,39 @@ function CreateInteractionModal({
 }) {
   if (!isOpen) return null;
 
-  const handleFileChange = (event) => {
+  const handleFileChange = async (event) => {
     const nextFiles = Array.from(event.target.files || []);
-    setFiles(nextFiles);
+    event.target.value = "";
+    if (!nextFiles.length) return;
+
+    try {
+      await onUploadFiles(nextFiles);
+      setFiles((currentFiles) => [...currentFiles, ...nextFiles]);
+    } catch (error) {
+      setCreateInfoMessage?.(
+        getApiErrorMessage(error, "No fue posible subir los archivos"),
+      );
+    }
   };
 
-  const handleAddPastedText = () => {
+  const handleAddPastedText = async () => {
     const trimmedText = String(pastedText || "").trim();
     if (!trimmedText) return;
 
-    setFiles((currentFiles) => [
-      ...currentFiles,
-      buildPastedTextFile({
-        fileName: buildPastedTextFileName(pastedTextName),
-        text: trimmedText,
-      }),
-    ]);
+    const pastedTextFile = buildPastedTextFile({
+      fileName: buildPastedTextFileName(pastedTextName),
+      text: trimmedText,
+    });
+
+    try {
+      await onUploadFiles([pastedTextFile]);
+      setFiles((currentFiles) => [...currentFiles, pastedTextFile]);
+    } catch (error) {
+      setCreateInfoMessage?.(
+        getApiErrorMessage(error, "No fue posible subir el texto al lead"),
+      );
+      return;
+    }
     setPastedTextName("");
     setPastedText("");
   };
@@ -736,7 +777,7 @@ function CreateInteractionModal({
     <div className="modal-overlay">
       <div
         className={`modal-dialog modal-dialog-wide interaction-modal modal-dialog-with-scroll-shell${creating ? " modal-dialog-busy" : ""}`}
-        aria-busy={creating}
+        aria-busy={creating || isUploadingFiles}
       >
         <div className="modal-dialog-scroll-shell">
           <div className="modal-header interaction-modal-header-with-close">
@@ -773,7 +814,7 @@ function CreateInteractionModal({
           </div>
           <fieldset
             className="interaction-detail-lock-shell"
-            disabled={creating}
+            disabled={creating || isUploadingFiles}
           >
             <form
               className="account-create-form interaction-create-form"
@@ -789,7 +830,9 @@ function CreateInteractionModal({
                       type="file"
                       multiple
                       accept={INTERACTION_FILE_ACCEPT}
-                      onChange={handleFileChange}
+                      onChange={(event) => {
+                        void handleFileChange(event);
+                      }}
                     />
                     <span
                       className="interaction-create-dropzone-icon"
@@ -803,15 +846,26 @@ function CreateInteractionModal({
                     <strong>Selecciona uno o varios archivos</strong>
                     <span className="interaction-create-dropzone-copy">
                       Adjunta correos, cotizaciones, minutas, audios o archivos
-                      de soporte. Si prefieres, también puedes crear la lead
+                      de soporte. Si prefieres, también puedes crear el lead
                       solo con texto pegado.
                     </span>
                     <span className="interaction-create-dropzone-action">
                       Elegir archivos
                     </span>
+                    {files.length ? (
+                      <span className="interaction-create-dropzone-selected">
+                        {files.length} archivo{files.length === 1 ? "" : "s"}
+                        seleccionado{files.length === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                    {isUploadingFiles ? (
+                      <span className="interaction-create-dropzone-selected interaction-create-dropzone-selected-uploading">
+                        Subiendo archivos...
+                      </span>
+                    ) : null}
                     <span className="interaction-create-dropzone-footnote">
                       Formatos soportados: PDF, DOCX, XLSX, XLS, CSV, TXT, EML,
-                      PNG, JPG, JPEG, MP3, WAV y M4A.
+                      PNG, JPG, JPEG, MP3, WAV, M4A y MP4.
                     </span>
                   </label>
 
@@ -824,17 +878,17 @@ function CreateInteractionModal({
                       </p>
                     </div>
                     <div className="interaction-create-guidance-card">
-                      <strong>2. Análisis inicial</strong>
+                      <strong>2. Crea el lead</strong>
                       <p>
-                        El sistema extrae contenido y detecta cuenta, contactos
-                        y oportunidades sugeridas.
+                        El lead se guarda con la evidencia documental que
+                        cargaste.
                       </p>
                     </div>
                     <div className="interaction-create-guidance-card">
-                      <strong>3. Resolución</strong>
+                      <strong>3. Analiza y resuelve</strong>
                       <p>
-                        Luego podrás revisar sugerencias y confirmar los
-                        vínculos correctos en el CRM.
+                        Abre el lead y usa "Analizar documentos para llenar
+                        información" antes de resolver vínculos en el CRM.
                       </p>
                     </div>
                   </div>
@@ -866,7 +920,7 @@ function CreateInteractionModal({
                       <span className="interaction-create-kicker">
                         Texto de referencia
                       </span>
-                      <strong>Agrega más fuentes de texto al análisis</strong>
+                      <strong>Agrega más fuentes de texto al lead</strong>
                       <p className="section-helper-text interaction-create-text-card-hint">
                         Convierte correos, minutas o notas en archivos `.txt`
                         para analizarlos junto con el resto de la evidencia.
@@ -893,7 +947,7 @@ function CreateInteractionModal({
                         onClick={handleAddPastedText}
                         disabled={creating || !String(pastedText || "").trim()}
                       >
-                        Agregar texto al análisis
+                        Agregar texto como evidencia
                       </button>
                     </div>
                   </div>
@@ -905,13 +959,13 @@ function CreateInteractionModal({
                         className="interaction-create-textarea"
                         value={pastedText}
                         onChange={(event) => setPastedText(event.target.value)}
-                        placeholder="Pega aquí el contenido que quieres añadir al análisis del lead."
+                        placeholder="Pega aquí el contenido que quieres añadir como evidencia del lead."
                       />
                     </div>
                   </div>
 
                   <span className="field-hint interaction-create-text-footnote">
-                    Se agregará como un archivo `.txt` al análisis.
+                    Se agregará como un archivo `.txt` al repositorio del lead.
                   </span>
                 </div>
               </section>
@@ -953,11 +1007,12 @@ function CreateInteractionModal({
                   className="btn-primary"
                   disabled={
                     creating ||
+                    isUploadingFiles ||
                     !leadSource ||
                     (!files.length && !pastedText.trim())
                   }
                 >
-                  {creating ? "Analizando..." : "Crear lead"}
+                  {creating ? "Creando..." : "Crear lead"}
                 </button>
               </div>
             </form>
@@ -974,11 +1029,8 @@ function CreateInteractionModal({
                 className="interaction-progress-spinner"
                 aria-hidden="true"
               />
-              <strong>Creando interacción</strong>
-              <span>
-                Estamos cargando los archivos y esperando a que termine el
-                análisis inicial.
-              </span>
+              <strong>Creando lead</strong>
+              <span>Estamos guardando la evidencia del lead.</span>
             </div>
           </div>
         ) : null}
@@ -1001,7 +1053,7 @@ function InteractionInfoModal({ message, onClose }) {
         className="modal-dialog interaction-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Información de interacción"
+        aria-label="Información de lead"
       >
         <div className="modal-header">
           <h3 className="modal-title">Información</h3>
@@ -1178,13 +1230,9 @@ function InteractionDetailModal({
   onResolve,
   onReanalyze,
 }) {
-  const [additionalFiles, setAdditionalFiles] = useState([]);
   const [uploadInputKey, setUploadInputKey] = useState(0);
 
   useEffect(() => {
-    // Reset staged uploads when the modal changes interaction context.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAdditionalFiles([]);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUploadInputKey((currentValue) => currentValue + 1);
   }, [detail?.id, isOpen]);
@@ -1195,13 +1243,13 @@ function InteractionDetailModal({
   const analysisProgressTitle = resolving
     ? "Guardando lead"
     : reanalyzing
-      ? "Reanalizando interacción"
-      : "Analizando archivos anexados";
+      ? "Reanalizando lead"
+      : "Subiendo archivos";
   const analysisProgressMessage = resolving
     ? "Estamos validando duplicados y guardando los cambios del lead."
     : reanalyzing
       ? "Estamos actualizando la sinopsis, sugerencias y relaciones detectadas."
-      : "Estamos procesando los archivos nuevos y actualizando el análisis de la interacción.";
+      : "Estamos cargando los archivos nuevos al lead.";
 
   const statusMeta = getInteractionStatusMeta(detail.analysisStatus);
   const resolvedAccountId =
@@ -1286,15 +1334,13 @@ function InteractionDetailModal({
     hasMinimumCommercialLinks && commercialSellerUserId,
   );
 
-  const handleAdditionalFileChange = (event) => {
-    setAdditionalFiles(Array.from(event.target.files || []));
-  };
+  const handleAdditionalFileChange = async (event) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!selectedFiles.length || !onAddDocuments) return;
 
-  const handleAddDocumentsClick = async () => {
-    if (!additionalFiles.length || !onAddDocuments) return;
-    const added = await onAddDocuments(additionalFiles);
+    const added = await onAddDocuments(selectedFiles);
     if (added) {
-      setAdditionalFiles([]);
       setUploadInputKey((currentValue) => currentValue + 1);
     }
   };
@@ -1302,14 +1348,6 @@ function InteractionDetailModal({
   const interactionDocumentCount = Array.isArray(detail?.documents)
     ? detail.documents.length
     : 0;
-  const pendingAdditionalFilesCount = additionalFiles.length;
-  const addDocumentsButtonLabel = addingDocuments
-    ? "Anexando archivos..."
-    : pendingAdditionalFilesCount
-      ? `Anexar ${pendingAdditionalFilesCount} archivo${
-          pendingAdditionalFilesCount === 1 ? "" : "s"
-        }`
-      : "Anexar archivos";
 
   return (
     <div className="modal-overlay">
@@ -1331,7 +1369,9 @@ function InteractionDetailModal({
             </button>
             <div className="interaction-detail-header-copy">
               <div className="account-modal-title-row">
-                <h3 className="modal-title">{detail.title}</h3>
+                <h3 className="modal-title">
+                  {normalizeLeadDisplayText(detail.title)}
+                </h3>
                 <ModalInlineHelp helpKey="lead.edit" />
               </div>
               <p className="roles-subtitle">
@@ -1340,29 +1380,6 @@ function InteractionDetailModal({
             </div>
             <div className="interaction-detail-header-actions">
               <span className={statusMeta.className}>{statusMeta.label}</span>
-              {canAnalyze ? (
-                <button
-                  type="button"
-                  className="interaction-detail-icon-btn"
-                  onClick={onReanalyze}
-                  disabled={isAnalysisLocked}
-                  aria-label={
-                    reanalyzing
-                      ? "Reanalizando interacción"
-                      : "Reanalizar interacción"
-                  }
-                  title={
-                    reanalyzing ? "Reanalizando..." : "Reanalizar interacción"
-                  }
-                >
-                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                    <path d="M20 11a8 8 0 0 0-14.9-4" />
-                    <path d="M4 4v4h4" />
-                    <path d="M4 13a8 8 0 0 0 14.9 4" />
-                    <path d="M20 20v-4h-4" />
-                  </svg>
-                </button>
-              ) : null}
             </div>
           </div>
           <fieldset
@@ -1383,13 +1400,13 @@ function InteractionDetailModal({
                         <div>
                           <label>Agregar más archivos</label>
                           <p className="field-hint interaction-documents-step-hint">
-                            1. Selecciona los archivos. 2. Haz clic en anexar.
+                            Selecciona los archivos para subirlos de inmediato
+                            al lead.
                           </p>
                         </div>
                         <span className="interaction-documents-count-badge">
                           {interactionDocumentCount} archivo
-                          {interactionDocumentCount === 1 ? "" : "s"} en la
-                          interaccion
+                          {interactionDocumentCount === 1 ? "" : "s"} en el lead
                         </span>
                       </div>
                       <div className="interaction-documents-toolbar-row">
@@ -1404,37 +1421,15 @@ function InteractionDetailModal({
                       </div>
                       <div className="interaction-documents-upload-meta">
                         <p className="field-hint interaction-documents-auto-note">
-                          Se reanalizara automaticamente al agregar archivos.
+                          Luego usa "Analizar documentos para llenar
+                          información" para actualizar sugerencias.
                         </p>
-                        {pendingAdditionalFilesCount ? (
+                        {addingDocuments ? (
                           <span className="interaction-documents-pending-note">
-                            {pendingAdditionalFilesCount} archivo
-                            {pendingAdditionalFilesCount === 1 ? "" : "s"} listo
-                            {pendingAdditionalFilesCount === 1 ? "" : "s"} para
-                            anexar
+                            Subiendo archivos...
                           </span>
                         ) : null}
-                        <button
-                          type="button"
-                          className="btn-secondary interaction-documents-submit-button"
-                          onClick={handleAddDocumentsClick}
-                          disabled={addingDocuments || !additionalFiles.length}
-                        >
-                          {addDocumentsButtonLabel}
-                        </button>
                       </div>
-                      {additionalFiles.length ? (
-                        <div className="interaction-upload-list">
-                          {additionalFiles.map((file) => (
-                            <span
-                              key={`${file.name}-${file.size}`}
-                              className="account-interaction-contact-chip"
-                            >
-                              {file.name}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -1499,6 +1494,40 @@ function InteractionDetailModal({
                   <div>
                     <h4>Sinopsis</h4>
                   </div>
+                  {canAnalyze ? (
+                    <button
+                      type="button"
+                      className="interaction-synopsis-analyze-btn"
+                      onClick={onReanalyze}
+                      disabled={isAnalysisLocked}
+                      aria-label={
+                        reanalyzing
+                          ? "Analizando documentos para llenar información"
+                          : "Analizar documentos para llenar información"
+                      }
+                      title={
+                        reanalyzing
+                          ? "Analizando documentos..."
+                          : "Analizar documentos para llenar información"
+                      }
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 4.5l1.64 3.86L17.5 10l-3.86 1.64L12 15.5l-1.64-3.86L6.5 10l3.86-1.64L12 4.5Z" />
+                        <path d="M18.5 5.5l.62 1.38 1.38.62-1.38.62-.62 1.38-.62-1.38-1.38-.62 1.38-.62.62-1.38Z" />
+                        <circle cx="6.2" cy="6.2" r="1" />
+                        <circle cx="17.7" cy="17.7" r="1" />
+                      </svg>
+                      <span>
+                        {reanalyzing
+                          ? "Analizando documentos..."
+                          : "Analizar documentos para llenar información"}
+                      </span>
+                    </button>
+                  ) : null}
                 </div>
                 <div className="field-group">
                   <label>Título</label>
@@ -1594,8 +1623,8 @@ function InteractionDetailModal({
                   <div>
                     <h4>Cuenta sugerida</h4>
                     <p className="field-hint">
-                      Define si la interacción se vincula a una cuenta existente
-                      o crea una nueva.
+                      Define si el lead se vincula a una cuenta existente o crea
+                      una nueva.
                     </p>
                   </div>
                 </div>
@@ -2656,6 +2685,9 @@ function InteractionsPage({ can, currentUser }) {
   const [createLeadSource, setCreateLeadSource] = useState("");
   const [createPastedTextName, setCreatePastedTextName] = useState("");
   const [createPastedText, setCreatePastedText] = useState("");
+  const [createUploadSessionPublicId, setCreateUploadSessionPublicId] =
+    useState("");
+  const [createUploadingFilesCount, setCreateUploadingFilesCount] = useState(0);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detail, setDetail] = useState(null);
   const [editForm, setEditForm] = useState(null);
@@ -2702,6 +2734,51 @@ function InteractionsPage({ can, currentUser }) {
     setShowResolveConfirmation(false);
     setResolveDuplicateReview(null);
     setShowDetailModal(false);
+  }
+
+  async function ensureCreateUploadSession() {
+    if (createUploadSessionPublicId) {
+      return createUploadSessionPublicId;
+    }
+
+    const { data } = await api.post(
+      "/api/interactions/document-upload-sessions",
+    );
+    const nextSessionPublicId = String(data?.session?.publicId || "").trim();
+    if (!nextSessionPublicId) {
+      throw new Error("No fue posible crear la sesion documental del lead");
+    }
+
+    setCreateUploadSessionPublicId(nextSessionPublicId);
+    return nextSessionPublicId;
+  }
+
+  async function uploadCreateFilesToSession(filesToUpload) {
+    const nextFiles = Array.isArray(filesToUpload) ? filesToUpload : [];
+    if (!nextFiles.length) return null;
+
+    const sessionPublicId = await ensureCreateUploadSession();
+    const formData = new FormData();
+    nextFiles.forEach((file) => formData.append("files", file));
+
+    setCreateUploadingFilesCount(
+      (currentCount) => currentCount + nextFiles.length,
+    );
+    try {
+      const { data } = await api.post(
+        `/api/interactions/document-upload-sessions/${sessionPublicId}/files`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 120000,
+        },
+      );
+      return data;
+    } finally {
+      setCreateUploadingFilesCount((currentCount) =>
+        Math.max(0, currentCount - nextFiles.length),
+      );
+    }
   }
 
   function openResolveConfirmation() {
@@ -2895,6 +2972,8 @@ function InteractionsPage({ can, currentUser }) {
     setCreateLeadSource("");
     setCreatePastedTextName("");
     setCreatePastedText("");
+    setCreateUploadSessionPublicId("");
+    setCreateUploadingFilesCount(0);
   }
 
   async function openDetail(itemId) {
@@ -2918,7 +2997,7 @@ function InteractionsPage({ can, currentUser }) {
       setResolveDuplicateReview(null);
       setShowDetailModal(true);
     } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible abrir la interacción"));
+      setError(getApiErrorMessage(err, "No fue posible abrir el lead"));
     } finally {
       setLoadingDetail(false);
     }
@@ -2927,23 +3006,33 @@ function InteractionsPage({ can, currentUser }) {
   async function handleCreate() {
     const trimmedPastedText = createPastedText.trim();
     if (!createLeadSource) return;
-    if (!createFiles.length && !trimmedPastedText) return;
+    if (
+      !createFiles.length &&
+      !trimmedPastedText &&
+      !createUploadSessionPublicId
+    ) {
+      return;
+    }
     setCreating(true);
     setError("");
     setCreateInfoMessage("");
     try {
       const formData = new FormData();
-      const filesToUpload = [...createFiles];
-      if (trimmedPastedText) {
-        filesToUpload.push(
-          buildPastedTextFile({
-            fileName: buildPastedTextFileName(createPastedTextName),
-            text: trimmedPastedText,
-          }),
-        );
-      }
       formData.append("leadSource", createLeadSource);
-      filesToUpload.forEach((file) => formData.append("files", file));
+      if (createUploadSessionPublicId) {
+        formData.append("uploadSessionPublicId", createUploadSessionPublicId);
+      } else {
+        const filesToUpload = [...createFiles];
+        if (trimmedPastedText) {
+          filesToUpload.push(
+            buildPastedTextFile({
+              fileName: buildPastedTextFileName(createPastedTextName),
+              text: trimmedPastedText,
+            }),
+          );
+        }
+        filesToUpload.forEach((file) => formData.append("files", file));
+      }
       await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 120000,
@@ -2954,7 +3043,9 @@ function InteractionsPage({ can, currentUser }) {
       setStatusFilters([...LEAD_STATUS_FILTER_VALUES]);
       setStatusFilterDraft([...LEAD_STATUS_FILTER_VALUES]);
       setSourceFilter("all");
-      setSuccess("Lead creado.");
+      setSuccess(
+        'Lead creado. Abre el lead y pulsa "Analizar documentos para llenar información".',
+      );
       await loadInteractions({
         page: 1,
         query: "",
@@ -2974,9 +3065,7 @@ function InteractionsPage({ can, currentUser }) {
     if (!detail?.id || !documentPublicId) return;
     if (
       typeof window !== "undefined" &&
-      !window.confirm(
-        "Este archivo se eliminará de la interacción. ¿Quieres continuar?",
-      )
+      !window.confirm("Este archivo se eliminará del lead. ¿Quieres continuar?")
     ) {
       return;
     }
@@ -2989,7 +3078,7 @@ function InteractionsPage({ can, currentUser }) {
       setDetail(data);
       setEditForm(buildEditableForm(data));
       setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
-      setSuccess("Archivo eliminado de la interacción");
+      setSuccess("Archivo eliminado del lead");
       await loadInteractions();
     } catch (err) {
       setError(getApiErrorMessage(err, "No fue posible eliminar el archivo"));
@@ -3015,15 +3104,14 @@ function InteractionsPage({ can, currentUser }) {
       setDetail(data);
       setEditForm(buildEditableForm(data));
       setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
-      setSuccess("Archivos agregados y análisis actualizado");
+      setSuccess(
+        'Archivos subidos. Usa "Analizar documentos para llenar información" para actualizar sugerencias.',
+      );
       await loadInteractions();
       return true;
     } catch (err) {
       setError(
-        getApiErrorMessage(
-          err,
-          "No fue posible agregar archivos a la interacción",
-        ),
+        getApiErrorMessage(err, "No fue posible subir archivos al lead"),
       );
       return false;
     } finally {
@@ -3039,7 +3127,7 @@ function InteractionsPage({ can, currentUser }) {
     if (
       typeof window !== "undefined" &&
       !window.confirm(
-        "Esta interacción se eliminará de forma permanente. ¿Quieres continuar?",
+        "Este lead se eliminará de forma permanente. ¿Quieres continuar?",
       )
     ) {
       return;
@@ -3191,7 +3279,7 @@ function InteractionsPage({ can, currentUser }) {
       if (!resolvedData?.result) {
         setError(
           String(resolvedData?.error?.message || "").trim() ||
-            "No fue posible reanalizar la interacción",
+            "No fue posible reanalizar el lead",
         );
         return;
       }
@@ -3202,12 +3290,10 @@ function InteractionsPage({ can, currentUser }) {
       setResolutionForm(
         buildInitialResolutionForm(refreshed.data, options, currentUser),
       );
-      setSuccess("Interacción reanalizada");
+      setSuccess("Lead reanalizado");
       await loadInteractions();
     } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible reanalizar la interacción"),
-      );
+      setError(getApiErrorMessage(err, "No fue posible reanalizar el lead"));
     } finally {
       if (interactionAnalysisPollingTokenRef.current === pollingToken) {
         setReanalyzing(false);
@@ -3379,6 +3465,7 @@ function InteractionsPage({ can, currentUser }) {
   );
   const allDraftStatusesSelected =
     statusFilterDraft.length === LEAD_STATUS_FILTER_VALUES.length;
+  const createIsUploadingFiles = createUploadingFilesCount > 0;
 
   return (
     <section className="panel">
@@ -3392,10 +3479,13 @@ function InteractionsPage({ can, currentUser }) {
         onClose={resetCreateForm}
         onSubmit={handleCreate}
         creating={creating}
+        isUploadingFiles={createUploadingFilesCount > 0}
+        setCreateInfoMessage={setCreateInfoMessage}
         leadSource={createLeadSource}
         setLeadSource={setCreateLeadSource}
         files={createFiles}
         setFiles={setCreateFiles}
+        onUploadFiles={uploadCreateFilesToSession}
         pastedTextName={createPastedTextName}
         setPastedTextName={setCreatePastedTextName}
         pastedText={createPastedText}
@@ -3683,9 +3773,9 @@ function InteractionsPage({ can, currentUser }) {
                       <div className="interaction-table-title-cell">
                         <strong
                           className="interaction-table-title-text"
-                          title={item.title}
+                          title={normalizeLeadDisplayText(item.title)}
                         >
-                          {item.title}
+                          {normalizeLeadDisplayText(item.title)}
                         </strong>
                       </div>
                     </td>
@@ -3694,9 +3784,16 @@ function InteractionsPage({ can, currentUser }) {
                     <td>{item.sellerName || item.sellerEmail || "-"}</td>
                     <td>{item.documentCount}</td>
                     <td>
-                      <span className={statusMeta.className}>
-                        {statusMeta.label}
-                      </span>
+                      <div className="interaction-status-stack">
+                        <span className={statusMeta.className}>
+                          {statusMeta.label}
+                        </span>
+                        {item.analysisStatus === "created" ? (
+                          <span className="interaction-status-pill is-review">
+                            Sin analizar
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td>{formatDate(item.createdAt)}</td>
                     <td className="accounts-actions-cell">

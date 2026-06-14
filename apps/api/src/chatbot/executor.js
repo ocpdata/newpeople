@@ -1,5 +1,7 @@
 import { query } from "../db.js";
 import { getOpportunityRecommendedStrategy } from "./opportunity-strategy.js";
+import { searchInternalAppKnowledge } from "./app-knowledge.js";
+import { searchMarkdownKnowledge } from "./knowledge-base.js";
 import {
   CHATBOT_ACCOUNT_READ_PERMISSIONS,
   CHATBOT_CONTACT_READ_PERMISSIONS,
@@ -790,38 +792,105 @@ export async function executeChatbotPlan({
   user,
   plannerOutput,
   resolverOutput,
+  prompt,
 }) {
   const requestedDomains = Array.isArray(plannerOutput?.requestedDomains)
     ? plannerOutput.requestedDomains
     : [];
   const filters = plannerOutput?.filters || {};
 
+  const appKnowledge = String(prompt || "").trim()
+    ? await searchInternalAppKnowledge({ user, prompt, limit: 6 })
+    : [];
+
   if (resolverOutput?.resolutionStatus === "resolved") {
     if (resolverOutput.selectedEntityType === "account") {
-      return fetchAccountBundle({
+      const result = await fetchAccountBundle({
         user,
         accountId: Number(resolverOutput.selectedEntityId),
         requestedDomains,
         filters,
       });
+      if (
+        result &&
+        requestedDomains.includes("documentation") &&
+        String(prompt || "").trim()
+      ) {
+        result.documentation = await searchMarkdownKnowledge({
+          prompt,
+          limit: 6,
+        });
+      }
+      if (result && appKnowledge.length) {
+        result.applicationKnowledge = appKnowledge;
+      }
+      return result;
     }
     if (resolverOutput.selectedEntityType === "contact") {
-      return fetchContactBundle({
+      const result = await fetchContactBundle({
         user,
         contactId: Number(resolverOutput.selectedEntityId),
         requestedDomains,
         filters,
       });
+      if (
+        result &&
+        requestedDomains.includes("documentation") &&
+        String(prompt || "").trim()
+      ) {
+        result.documentation = await searchMarkdownKnowledge({
+          prompt,
+          limit: 6,
+        });
+      }
+      if (result && appKnowledge.length) {
+        result.applicationKnowledge = appKnowledge;
+      }
+      return result;
     }
     if (resolverOutput.selectedEntityType === "opportunity") {
-      return fetchOpportunityBundle({
+      const result = await fetchOpportunityBundle({
         user,
         opportunityId: Number(resolverOutput.selectedEntityId),
         requestedDomains,
         filters,
       });
+      if (
+        result &&
+        requestedDomains.includes("documentation") &&
+        String(prompt || "").trim()
+      ) {
+        result.documentation = await searchMarkdownKnowledge({
+          prompt,
+          limit: 6,
+        });
+      }
+      if (result && appKnowledge.length) {
+        result.applicationKnowledge = appKnowledge;
+      }
+      return result;
     }
   }
 
-  return fetchRecentDomainRecords(user, requestedDomains, filters);
+  const fallbackEvidence = await fetchRecentDomainRecords(
+    user,
+    requestedDomains,
+    filters,
+  );
+
+  if (
+    requestedDomains.includes("documentation") &&
+    String(prompt || "").trim()
+  ) {
+    fallbackEvidence.documentation = await searchMarkdownKnowledge({
+      prompt,
+      limit: 6,
+    });
+  }
+
+  if (appKnowledge.length) {
+    fallbackEvidence.applicationKnowledge = appKnowledge;
+  }
+
+  return fallbackEvidence;
 }

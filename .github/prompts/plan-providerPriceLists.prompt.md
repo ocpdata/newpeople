@@ -40,3 +40,10 @@ Introducir una entidad cabecera `provider_price_lists` para que cada proveedor p
 **Further Considerations**
 1. Conviene definir un nombre estable para la lista legacy, por ejemplo `Legacy importada` o `Lista inicial`, porque ese texto aparecera en UI y pruebas.
 2. Si luego quieres cerrar listas en lugar de solo activarlas/desactivarlas, probablemente haga falta un segundo estado de lista (`cerrada`) ademas de `is_active`; en esta peticion solo quedo claro el control de activa/inactiva y creacion desde kebab.
+## Estado actual de la aplicacion (2026-06)
+
+- Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.
+- Configuracion > Credito IA: ahora gestiona tambien tarifas IA por modelo (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- API IA: expone administracion de tarifas en `/api/admin/ai/pricing-rates`, cierre de vigencia en `/api/admin/ai/pricing-rates/:rateId/close` y sincronizacion en `/api/admin/ai/pricing-rates/sync-openai`.
+- Costeo IA: las tarifas se resuelven por vigencia (`valid_from_utc` / `valid_to_utc`) y el esquema semilla contempla modelo principal y de transcripcion configurados.
+- Frontend: build web validado en estado actual (`npm run build:web`) tras los cambios de configuracion de tarifas IA.

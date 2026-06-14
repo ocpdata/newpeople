@@ -32,6 +32,12 @@ import {
   extractContentFromBuffer,
   parseMultipartFiles,
 } from "./opportunity-documents/service.js";
+import {
+  createUploadSession,
+  getUploadSessionReview,
+  transferUploadSessionToInteraction,
+  uploadFilesToSession,
+} from "./opportunity-documents/service.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
 import { createDocumentStorage } from "./opportunity-documents/storage.js";
 
@@ -677,8 +683,8 @@ function buildSuggestedInteractionTitleFromFiles(files) {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!rawName) return "Nueva interaccion";
-  if (rawName.length <= 2) return "Interaccion cargada";
+  if (!rawName) return "Nuevo lead";
+  if (rawName.length <= 2) return "Lead cargado";
   return rawName.charAt(0).toUpperCase() + rawName.slice(1);
 }
 
@@ -687,10 +693,10 @@ function buildSuggestedInteractionTitleFromSourceNotes(sourceNotes) {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!text) return "Nueva interaccion";
+  if (!text) return "Nuevo lead";
 
   const suggested = text.slice(0, 80).trim();
-  if (suggested.length <= 2) return "Interaccion cargada";
+  if (suggested.length <= 2) return "Lead cargado";
   return suggested.charAt(0).toUpperCase() + suggested.slice(1);
 }
 
@@ -927,7 +933,7 @@ async function requireAccessibleInteractionOr404({ user, interactionId }) {
   if (!rows.length) {
     return {
       ok: false,
-      response: { status: 404, body: { message: "Interaccion no encontrada" } },
+      response: { status: 404, body: { message: "Lead no encontrado" } },
     };
   }
   return { ok: true };
@@ -1172,7 +1178,10 @@ async function extractFiles(files) {
       extracted = {
         extractionStatus: "failed",
         transcriptionStatus:
-          extension === ".mp3" || extension === ".wav" || extension === ".m4a"
+          extension === ".mp3" ||
+          extension === ".wav" ||
+          extension === ".m4a" ||
+          extension === ".mp4"
             ? "failed"
             : "pending",
         detectedFormat: extension.replace(/^\./, "") || mimeType || "unknown",
@@ -1262,6 +1271,168 @@ async function createInteractionDocuments({
   }
 
   return created;
+}
+
+async function createInteractionUploadedDocuments({
+  conn,
+  interactionId,
+  interactionPublicId,
+  userId,
+  files,
+}) {
+  const now = new Date();
+
+  for (const file of files) {
+    const buffer = await readFile(file.filepath);
+    const originalFileName = String(
+      file.originalFilename || file.newFilename || "archivo",
+    );
+    const mimeType = String(file.mimetype || "application/octet-stream")
+      .trim()
+      .toLowerCase();
+    const extension = String(
+      path.extname(originalFileName || "") || "",
+    ).toLowerCase();
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    const storageKey = buildStorageKey({
+      entityType: "interaction",
+      publicId: interactionPublicId,
+      sha256,
+      fileName: originalFileName,
+      createdAt: now,
+    });
+    const stored = await storage.save({ buffer, storageKey });
+
+    await conn.query(
+      `INSERT INTO documents
+         (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+          storage_bucket, storage_key, original_file_name, stored_file_name,
+          mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+          processing_status, processing_error, duration_seconds, is_deleted,
+          uploaded_by_user_id, created_at, updated_at)
+       VALUES (?, NULL, 'interaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, NOW(3), NOW(3))`,
+      [
+        buildDocumentPublicId(),
+        interactionId,
+        stored.storageProvider,
+        stored.storageBucket,
+        stored.storageKey,
+        originalFileName,
+        stored.storedFileName,
+        mimeType,
+        extension || null,
+        Number(file.size || buffer.length || 0),
+        sha256,
+        extension.replace(/^\./, "") || null,
+        "interaction_source",
+        Number(userId),
+      ],
+    );
+  }
+}
+
+async function loadPendingInteractionDocumentsForProcessing(interactionId) {
+  return query(
+    `SELECT d.id, d.storage_bucket, d.storage_key, d.original_file_name,
+            d.mime_type, d.file_extension, d.processing_status
+     FROM documents d
+     WHERE d.entity_type = 'interaction'
+       AND d.entity_id = ?
+       AND d.is_deleted = 0
+       AND d.processing_status IN ('uploaded', 'retry_pending', 'failed')
+     ORDER BY d.created_at ASC`,
+    [interactionId],
+  );
+}
+
+async function processPendingInteractionDocuments({ interactionId, userId }) {
+  const pendingDocuments =
+    await loadPendingInteractionDocumentsForProcessing(interactionId);
+  if (!pendingDocuments.length) {
+    return 0;
+  }
+
+  for (const document of pendingDocuments) {
+    const originalFileName = String(document.original_file_name || "archivo");
+    const mimeType = String(document.mime_type || "application/octet-stream")
+      .trim()
+      .toLowerCase();
+    const extension = String(
+      document.file_extension || path.extname(originalFileName || "") || "",
+    ).toLowerCase();
+
+    let extracted;
+    let extractionError = "";
+
+    try {
+      const buffer = await storage.readBuffer({
+        storageKey: document.storage_key,
+        storageBucket: document.storage_bucket,
+      });
+
+      extracted = await extractContentFromBuffer({
+        buffer,
+        mimeType,
+        fileName: originalFileName,
+        extension,
+        aiUsageContext: userId
+          ? {
+              userId: Number(userId),
+            }
+          : null,
+      });
+    } catch (error) {
+      extractionError = String(
+        error?.message || "No fue posible extraer el contenido",
+      );
+      extracted = {
+        extractionStatus: "failed",
+        transcriptionStatus:
+          extension === ".mp3" ||
+          extension === ".wav" ||
+          extension === ".m4a" ||
+          extension === ".mp4"
+            ? "failed"
+            : "pending",
+        detectedFormat: extension.replace(/^\./, "") || mimeType || "unknown",
+        rawText: "",
+        normalizedText: "",
+        structuredContentJson: null,
+        transcriptText: "",
+        transcriptionLanguage: null,
+        transcriptionConfidence: null,
+        durationSeconds: null,
+        pageCount: null,
+        contentSummary: "",
+      };
+    }
+
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `UPDATE documents
+         SET processing_status = ?,
+             processing_error = ?,
+             duration_seconds = ?,
+             updated_at = NOW(3)
+         WHERE id = ?`,
+        [
+          extractionError ? "failed" : "review_ready",
+          extractionError || null,
+          extracted.durationSeconds,
+          Number(document.id),
+        ],
+      );
+
+      await persistDocumentContent({
+        conn,
+        documentId: Number(document.id),
+        extracted,
+        errorMessage: extractionError,
+      });
+    });
+  }
+
+  return pendingDocuments.length;
 }
 
 function buildStoredDocumentAnalysisInput(document) {
@@ -1373,7 +1544,7 @@ function buildInteractionAnalysisJobResponse(row) {
       code: row.error_code || "analysis_failed",
       message:
         String(row.error_message || "").trim() ||
-        "No fue posible completar el analisis de la interaccion",
+        "No fue posible completar el analisis del lead",
     };
     return response;
   }
@@ -1383,7 +1554,7 @@ function buildInteractionAnalysisJobResponse(row) {
       code: row.error_code || "stale_snapshot",
       message:
         String(row.error_message || "").trim() ||
-        "La interaccion cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
+        "El lead cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
     };
     return response;
   }
@@ -1402,16 +1573,28 @@ function buildInteractionAnalysisJobResponse(row) {
 async function executeInteractionAnalysis({ interactionId, user, req }) {
   const detail = await fetchInteractionDetail(interactionId);
   if (!detail) {
-    const error = new Error("Interaccion no encontrada");
+    const error = new Error("Lead no encontrado");
+    error.status = 404;
+    throw error;
+  }
+
+  await processPendingInteractionDocuments({
+    interactionId,
+    userId: Number(user?.id || 0),
+  });
+
+  const refreshedDetail = await fetchInteractionDetail(interactionId);
+  if (!refreshedDetail) {
+    const error = new Error("Lead no encontrado");
     error.status = 404;
     throw error;
   }
 
   const analysis = await buildInteractionAnalysis({
     user,
-    title: detail.title,
-    sourceNotes: detail.sourceNotes,
-    existingDocuments: detail.documents,
+    title: refreshedDetail.title,
+    sourceNotes: refreshedDetail.sourceNotes,
+    existingDocuments: refreshedDetail.documents,
   });
 
   await query(
@@ -1443,7 +1626,7 @@ async function executeInteractionAnalysis({ interactionId, user, req }) {
     action: "analyzed",
     entityType: "interaction",
     entityId: interactionId,
-    detail: "Interaccion reanalizada",
+    detail: "Lead reanalizado",
   });
 
   return {
@@ -1459,7 +1642,7 @@ async function createOrReuseInteractionAnalysisJob({
 }) {
   const detail = await fetchInteractionDetail(interactionId);
   if (!detail) {
-    const error = new Error("Interaccion no encontrada");
+    const error = new Error("Lead no encontrado");
     error.status = 404;
     throw error;
   }
@@ -1646,7 +1829,7 @@ async function processInteractionAnalysisJob(row) {
         leaseToken: row.lease_token,
         status: "failed",
         errorCode: "interaction_not_found",
-        errorMessage: "Interaccion no encontrada",
+        errorMessage: "Lead no encontrado",
       });
       return;
     }
@@ -1661,7 +1844,7 @@ async function processInteractionAnalysisJob(row) {
         status: "stale",
         errorCode: "stale_snapshot",
         errorMessage:
-          "La interaccion cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
+          "El lead cambio antes de ejecutar el analisis. Solicita un nuevo analisis.",
       });
       return;
     }
@@ -1686,7 +1869,7 @@ async function processInteractionAnalysisJob(row) {
       errorCode: "analysis_failed",
       errorMessage:
         String(error?.message || "").trim() ||
-        "No fue posible completar el analisis de la interaccion",
+        "No fue posible completar el analisis del lead",
     });
   }
 }
@@ -2498,6 +2681,46 @@ router.get(
 );
 
 router.post(
+  "/document-upload-sessions",
+  requireAnyPermission(interactionCreatePermissions),
+  async (req, res) => {
+    try {
+      const session = await createUploadSession({ user: req.user });
+      return res.status(201).json(session);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible crear la sesion documental",
+      });
+    }
+  },
+);
+
+router.post(
+  "/document-upload-sessions/:sessionPublicId/files",
+  requireAnyPermission(interactionCreatePermissions),
+  async (req, res) => {
+    try {
+      const review = await uploadFilesToSession({
+        req,
+        sessionPublicId: req.params.sessionPublicId,
+        user: req.user,
+      });
+      return res.status(201).json(review);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        message:
+          error.status && error.status < 500
+            ? error.message
+            : "No fue posible subir los archivos a la sesion documental",
+      });
+    }
+  },
+);
+
+router.post(
   "/",
   requireAnyPermission(interactionCreatePermissions),
   async (req, res) => {
@@ -2505,6 +2728,10 @@ router.post(
     try {
       const { fields, files } = await parseMultipartFiles(req);
       parsedFiles = files;
+      const uploadSessionPublicId = getFormField(
+        fields,
+        "uploadSessionPublicId",
+      );
       const sourceNotes = getFormField(fields, "sourceNotes");
       const leadSource = normalizeLeadSourceCode(
         getFormField(fields, "leadSource"),
@@ -2514,24 +2741,28 @@ router.post(
           message: "Debes seleccionar una fuente valida para el lead",
         });
       }
-      if (!files.length && !sourceNotes.trim()) {
+      if (!files.length && !sourceNotes.trim() && !uploadSessionPublicId) {
         return res
           .status(400)
           .json({ message: "Debes subir al menos un archivo o pegar texto" });
       }
 
+      const sessionReview = uploadSessionPublicId
+        ? await getUploadSessionReview({
+            sessionPublicId: uploadSessionPublicId,
+            user: req.user,
+          })
+        : null;
+      const sessionDocuments = Array.isArray(sessionReview?.documents)
+        ? sessionReview.documents
+        : [];
       const title =
         getFormField(fields, "title") ||
-        (files.length
-          ? buildSuggestedInteractionTitleFromFiles(files)
-          : buildSuggestedInteractionTitleFromSourceNotes(sourceNotes));
-      const extractedDocuments = await extractFiles(files);
-      const analysis = await buildInteractionAnalysis({
-        user: req.user,
-        title,
-        sourceNotes,
-        extractedDocuments,
-      });
+        (sessionDocuments.length
+          ? buildSuggestedInteractionTitleFromFiles(sessionDocuments)
+          : files.length
+            ? buildSuggestedInteractionTitleFromFiles(files)
+            : buildSuggestedInteractionTitleFromSourceNotes(sourceNotes));
       const interactionPublicId = buildInteractionPublicId();
       const now = new Date();
 
@@ -2548,30 +2779,39 @@ router.post(
             title,
             leadSource,
             sourceNotes || null,
-            analysis.summary || null,
+            null,
             "created",
-            analysis.processingStatus,
-            normalizeForStorage(analysis.warnings),
-            normalizeForStorage(analysis.topics),
-            normalizeForStorage(analysis.actionsTaken),
-            normalizeForStorage(analysis.nextSteps),
-            normalizeForStorage(analysis.suggestedAccount),
-            normalizeForStorage(analysis.suggestedContacts),
-            normalizeForStorage(analysis.suggestedOpportunities),
+            "pending",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
             Number(req.user.id),
             Number(req.user.id),
             now,
             now,
-            analysis.processingStatus === "pending" ? null : now,
+            null,
           ],
         );
-        await createInteractionDocuments({
-          conn,
-          interactionId: Number(insertResult.insertId),
-          interactionPublicId,
-          userId: req.user.id,
-          extractedDocuments,
-        });
+        if (uploadSessionPublicId) {
+          await transferUploadSessionToInteraction({
+            conn,
+            sessionPublicId: uploadSessionPublicId,
+            interactionId: Number(insertResult.insertId),
+            userId: req.user.id,
+          });
+        } else {
+          await createInteractionUploadedDocuments({
+            conn,
+            interactionId: Number(insertResult.insertId),
+            interactionPublicId,
+            userId: req.user.id,
+            files,
+          });
+        }
         return Number(insertResult.insertId);
       });
 
@@ -2581,7 +2821,7 @@ router.post(
         action: "created",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Interaccion creada y analizada",
+        detail: "Lead creado",
       });
 
       return res
@@ -2592,7 +2832,7 @@ router.post(
         message:
           error.status && error.status < 500
             ? error.message
-            : "No fue posible crear la interaccion",
+            : "No fue posible crear el lead",
       });
     } finally {
       await cleanupTempFiles(parsedFiles).catch(() => undefined);
@@ -2641,7 +2881,7 @@ router.post(
 
       const detail = await fetchInteractionDetail(interactionId);
       if (!detail) {
-        return res.status(404).json({ message: "Interaccion no encontrada" });
+        return res.status(404).json({ message: "Lead no encontrado" });
       }
       if (isFinalizedLeadStatus(detail.analysisStatus)) {
         return res.status(409).json({
@@ -2657,44 +2897,21 @@ router.post(
           .json({ message: "Debes subir al menos un archivo" });
       }
 
-      const extractedDocuments = await extractFiles(files);
-      const analysis = await buildInteractionAnalysis({
-        user: req.user,
-        title: detail.title,
-        sourceNotes: detail.sourceNotes,
-        existingDocuments: detail.documents,
-        extractedDocuments,
-      });
-
       await withTransaction(async (conn) => {
-        await createInteractionDocuments({
+        await createInteractionUploadedDocuments({
           conn,
           interactionId,
           interactionPublicId: detail.publicId,
           userId: req.user.id,
-          extractedDocuments,
+          files,
         });
 
         await conn.query(
           `UPDATE interactions
-           SET summary = ?, processing_status = ?, warnings_json = ?, topics_json = ?,
-               actions_taken_json = ?, next_steps_json = ?, suggested_account_json = ?,
-               suggested_contacts_json = ?, suggested_opportunities_json = ?, analyzed_at = NOW(3),
+           SET processing_status = 'pending',
                updated_by = ?, updated_at = NOW(3)
            WHERE id = ?`,
-          [
-            analysis.summary || null,
-            analysis.processingStatus,
-            normalizeForStorage(analysis.warnings),
-            normalizeForStorage(analysis.topics),
-            normalizeForStorage(analysis.actionsTaken),
-            normalizeForStorage(analysis.nextSteps),
-            normalizeForStorage(analysis.suggestedAccount),
-            normalizeForStorage(analysis.suggestedContacts),
-            normalizeForStorage(analysis.suggestedOpportunities),
-            Number(req.user.id),
-            interactionId,
-          ],
+          [Number(req.user.id), interactionId],
         );
       });
 
@@ -2704,7 +2921,7 @@ router.post(
         action: "updated",
         entityType: "interaction",
         entityId: interactionId,
-        detail: "Interaccion creada",
+        detail: "Archivos subidos al lead",
       });
 
       return res
@@ -2715,7 +2932,7 @@ router.post(
         message:
           error.status && error.status < 500
             ? error.message
-            : "No fue posible agregar archivos a la interaccion",
+            : "No fue posible agregar archivos al lead",
       });
     } finally {
       await cleanupTempFiles(parsedFiles).catch(() => undefined);
@@ -2742,7 +2959,7 @@ router.delete(
 
     const interaction = await fetchInteractionDetail(interactionId);
     if (!interaction) {
-      return res.status(404).json({ message: "Interaccion no encontrada" });
+      return res.status(404).json({ message: "Lead no encontrado" });
     }
     if (isFinalizedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
@@ -2781,7 +2998,7 @@ router.delete(
       action: "updated",
       entityType: "interaction",
       entityId: interactionId,
-      detail: `Documento eliminado de la interaccion (${req.params.documentPublicId})`,
+      detail: `Documento eliminado del lead (${req.params.documentPublicId})`,
     });
 
     return res.json(await fetchInteractionDetail(interactionId, req.user));
@@ -2807,7 +3024,7 @@ router.delete(
 
     const interaction = await fetchInteractionDetail(interactionId);
     if (!interaction) {
-      return res.status(404).json({ message: "Interaccion no encontrada" });
+      return res.status(404).json({ message: "Lead no encontrado" });
     }
     if (isFinalizedLeadStatus(interaction.analysisStatus)) {
       return res.status(409).json({
@@ -2854,10 +3071,10 @@ router.delete(
       action: "deleted",
       entityType: "interaction",
       entityId: interactionId,
-      detail: "Interaccion eliminada",
+      detail: "Lead eliminado",
     });
 
-    return res.json({ message: "Interacción eliminada" });
+    return res.json({ message: "Lead eliminado" });
   },
 );
 
@@ -2880,7 +3097,7 @@ router.post(
 
     const interaction = await fetchInteractionDetail(interactionId, req.user);
     if (!interaction) {
-      return res.status(404).json({ message: "Interaccion no encontrada" });
+      return res.status(404).json({ message: "Lead no encontrado" });
     }
 
     if (isQualifiedLeadStatus(interaction.analysisStatus)) {
@@ -2968,7 +3185,7 @@ router.put(
       action: "updated",
       entityType: "interaction",
       entityId: interactionId,
-      detail: "Interaccion actualizada",
+      detail: "Lead actualizado",
     });
 
     return res.json(await fetchInteractionDetail(interactionId, req.user));
@@ -3009,7 +3226,7 @@ router.post(
       return res.status(error?.status || 500).json({
         message:
           String(error?.message || "").trim() ||
-          "No fue posible preparar el analisis de la interaccion",
+          "No fue posible preparar el analisis del lead",
       });
     }
   },
@@ -3487,7 +3704,7 @@ router.post(
             if (!effectiveDraft.contactId) {
               throw Object.assign(
                 new Error(
-                  "Cada oportunidad creada desde interacciones debe seleccionar un contacto",
+                  "Cada oportunidad creada desde leads debe seleccionar un contacto",
                 ),
                 { status: 400 },
               );

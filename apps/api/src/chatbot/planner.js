@@ -130,6 +130,7 @@ function normalizeRequestedDomains(value, allowedDomains) {
         "opportunities",
         "quotations",
         "proposals",
+        "documentation",
       ].includes(item),
     )
     .filter((item) => allowedDomains?.[item] !== false);
@@ -276,6 +277,7 @@ export async function planChatbotRetrievalWithAi({
                   "opportunities",
                   "quotations",
                   "proposals",
+                  "documentation",
                 ],
               },
             },
@@ -345,6 +347,17 @@ export async function planChatbotRetrievalWithAi({
     clarificationQuestion: String(parsed.clarificationQuestion || "").trim(),
     confidence: Number(parsed.confidence || 0.7),
   };
+
+  if (
+    normalized.mode === "knowledge" &&
+    !normalized.requestedDomains.includes("documentation") &&
+    allowedDomains?.documentation !== false
+  ) {
+    normalized.requestedDomains = [
+      ...normalized.requestedDomains,
+      "documentation",
+    ];
+  }
 
   let sourceReason = "ai_retrieval_plan";
 
