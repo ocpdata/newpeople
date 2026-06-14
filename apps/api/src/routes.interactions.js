@@ -2807,11 +2807,6 @@ router.post(
           message: "Debes seleccionar una fuente valida para el lead",
         });
       }
-      if (!files.length && !sourceNotes.trim() && !uploadSessionPublicId) {
-        return res
-          .status(400)
-          .json({ message: "Debes subir al menos un archivo o pegar texto" });
-      }
 
       const sessionReview = uploadSessionPublicId
         ? await getUploadSessionReview({

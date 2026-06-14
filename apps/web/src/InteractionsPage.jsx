@@ -1012,12 +1012,7 @@ function CreateInteractionModal({
                 <button
                   type="submit"
                   className="btn-primary"
-                  disabled={
-                    creating ||
-                    isUploadingFiles ||
-                    !leadSource ||
-                    (!files.length && !pastedText.trim())
-                  }
+                  disabled={creating || isUploadingFiles || !leadSource}
                 >
                   {creating ? "Creando..." : "Crear lead"}
                 </button>
@@ -3037,13 +3032,6 @@ function InteractionsPage({ can, currentUser }) {
   async function handleCreate() {
     const trimmedPastedText = createPastedText.trim();
     if (!createLeadSource) return;
-    if (
-      !createFiles.length &&
-      !trimmedPastedText &&
-      !createUploadSessionPublicId
-    ) {
-      return;
-    }
     setCreating(true);
     setError("");
     setCreateInfoMessage("");
