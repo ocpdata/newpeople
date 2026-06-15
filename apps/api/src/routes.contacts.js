@@ -214,8 +214,12 @@ async function getContactDuplicateCandidates({ draft }) {
             c.position_title, c.email, c.mobile, c.department
      FROM contacts c
      INNER JOIN accounts a ON a.id = c.account_id
-     WHERE c.account_id = ?
-        OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+     WHERE (
+       c.account_id = ?
+       OR (? <> '' AND LOWER(TRIM(COALESCE(c.email, ''))) = ?)
+     )
+       AND cas.code = 'activado'
      ORDER BY c.id DESC
      LIMIT 25`,
     [Number(draft.accountId), normalizedEmail, normalizedEmail],
