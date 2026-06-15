@@ -193,13 +193,13 @@ function buildEffectiveResolutionForm(
       : false),
   );
 
-  if (assignmentMode === "none") {
+  if (!hasResolvedContacts) {
     effectiveSellerUserId = "";
     assignCurrentUserAsOwnerSeller = false;
-  }
-
-  if (!hasResolvedContacts || assignmentMode === "none") {
-    effectiveSellerUserId = "";
+  } else if (assignmentMode === "none") {
+    effectiveSellerUserId = detail?.sellerUserId
+      ? String(detail.sellerUserId)
+      : "";
     assignCurrentUserAsOwnerSeller = false;
   } else if (
     !effectiveSellerUserId &&
@@ -4213,6 +4213,8 @@ function InteractionsPage({ can, currentUser }) {
       detail?.commercialAssignmentPolicy,
       detail,
     );
+    const canSubmitCommercialAssignment =
+      detail?.commercialAssignmentPolicy?.mode !== "none";
     setShowResolveConfirmation(false);
     setResolving(true);
     setError("");
@@ -4220,12 +4222,13 @@ function InteractionsPage({ can, currentUser }) {
     try {
       const payload = {
         ...editForm,
-        sellerUserId: effectiveResolutionForm.sellerUserId
+        sellerUserId:
+          canSubmitCommercialAssignment && effectiveResolutionForm.sellerUserId
           ? Number(effectiveResolutionForm.sellerUserId)
           : null,
-        assignCurrentUserAsOwnerSeller: Boolean(
-          effectiveResolutionForm.assignCurrentUserAsOwnerSeller,
-        ),
+        assignCurrentUserAsOwnerSeller: canSubmitCommercialAssignment
+          ? Boolean(effectiveResolutionForm.assignCurrentUserAsOwnerSeller)
+          : false,
         suggestedAccount: {
           ...(editForm.suggestedAccount || {}),
           ...(effectiveResolutionForm.accountResolution.mode === "create_new"
@@ -4260,7 +4263,9 @@ function InteractionsPage({ can, currentUser }) {
                 resolution.mode === "link_existing" && resolution.opportunityId
                   ? Number(resolution.opportunityId)
                   : null,
-              selectedSellerUserId: effectiveResolutionForm.sellerUserId
+              selectedSellerUserId:
+                canSubmitCommercialAssignment &&
+                effectiveResolutionForm.sellerUserId
                 ? Number(effectiveResolutionForm.sellerUserId)
                 : null,
             };
