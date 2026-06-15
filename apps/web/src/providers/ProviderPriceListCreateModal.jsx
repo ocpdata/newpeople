@@ -1,6 +1,8 @@
 export default function ProviderPriceListCreateModal({
   isOpen,
   provider,
+  editingPriceListId,
+  editingPriceList,
   form,
   catalogs,
   saving,
@@ -20,6 +22,9 @@ export default function ProviderPriceListCreateModal({
     return null;
   }
 
+  const isEditing = editingPriceListId !== null;
+  const canEditStructure = Number(editingPriceList?.total_price_items || 0) === 0;
+
   function formatPreviewPrice(value) {
     return new Intl.NumberFormat("es-MX", {
       minimumFractionDigits: 2,
@@ -35,9 +40,10 @@ export default function ProviderPriceListCreateModal({
   const importDisabledForType = form.itemType === "grupo_productos";
   const validImportRows = importPreview?.validItems.length || 0;
   const invalidImportRows = importPreview?.invalidRows.length || 0;
-  const shouldReviewBeforeSubmit = hasImportFile && !importPreview;
+  const shouldReviewBeforeSubmit = !isEditing && hasImportFile && !importPreview;
   const submitDisabled = saving || (hasImportFile && validImportRows === 0);
   const canReviewImport =
+    !isEditing &&
     !saving &&
     !reviewingImport &&
     Boolean(String(form.name || "").trim()) &&
@@ -47,14 +53,20 @@ export default function ProviderPriceListCreateModal({
   const primaryButtonLabel = hasImportFile
     ? importPreview
       ? saving
-        ? "Creando e importando..."
-        : "Crear lista e importar"
+        ? "Guardando e importando..."
+        : isEditing
+          ? "Guardar cambios"
+          : "Crear lista e importar"
       : reviewingImport
         ? "Revisando..."
         : "Revisar archivo"
     : saving
-      ? "Creando..."
-      : "Crear lista";
+      ? isEditing
+        ? "Guardando..."
+        : "Creando..."
+      : isEditing
+        ? "Guardar cambios"
+        : "Crear lista";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -64,7 +76,9 @@ export default function ProviderPriceListCreateModal({
       >
         <div className="modal-header">
           <div className="opportunity-modal-header-copy">
-            <h3 className="modal-title">Crear lista de precios</h3>
+            <h3 className="modal-title">
+              {isEditing ? "Editar lista de precios" : "Crear lista de precios"}
+            </h3>
             <p className="field-hint opportunity-modal-subtitle">
               {provider.name}
             </p>
@@ -77,8 +91,15 @@ export default function ProviderPriceListCreateModal({
         >
           <section className="account-form-section account-modal-section">
             <p className="field-hint provider-price-list-create-note">
-              La lista se crea inactiva y usa una sola moneda y un solo tipo.
+              {isEditing
+                ? "Actualiza la configuracion base de la lista."
+                : "La lista se crea inactiva y usa una sola moneda y un solo tipo."}
             </p>
+            {isEditing && !canEditStructure ? (
+              <p className="field-hint provider-price-list-import-warning">
+                Moneda y tipo no se pueden cambiar porque la lista ya tiene productos.
+              </p>
+            ) : null}
             <div className="provider-price-list-create-grid">
               <div className="field-group provider-price-list-create-name-field">
                 <label>
@@ -98,6 +119,7 @@ export default function ProviderPriceListCreateModal({
                 <select
                   value={form.currencyId}
                   onChange={(e) => onChange("currencyId", e.target.value)}
+                  disabled={isEditing && !canEditStructure}
                   required
                 >
                   <option value="">Selecciona moneda</option>
@@ -115,6 +137,7 @@ export default function ProviderPriceListCreateModal({
                 <select
                   value={form.itemType}
                   onChange={(e) => onChange("itemType", e.target.value)}
+                  disabled={isEditing && !canEditStructure}
                   required
                 >
                   {catalogs.productTypes.map((productType) => (
@@ -125,13 +148,16 @@ export default function ProviderPriceListCreateModal({
                 </select>
               </div>
             </div>
-            <p className="field-hint provider-price-list-import-helper">
-              Si el Excel no incluye Moneda, Estado o Tipo, se usarán los
-              valores configurados en esta lista. Estado por defecto: Activo.
-            </p>
+            {!isEditing ? (
+              <p className="field-hint provider-price-list-import-helper">
+                Si el Excel no incluye Moneda, Estado o Tipo, se usarán los
+                valores configurados en esta lista. Estado por defecto: Activo.
+              </p>
+            ) : null}
           </section>
 
-          <section className="account-form-section account-modal-section provider-price-list-import-section">
+          {!isEditing ? (
+            <section className="account-form-section account-modal-section provider-price-list-import-section">
             <div className="provider-price-list-import-header">
               <div>
                 <h4>Importación opcional desde Excel</h4>
@@ -318,7 +344,8 @@ export default function ProviderPriceListCreateModal({
                 ) : null}
               </div>
             ) : null}
-          </section>
+            </section>
+          ) : null}
 
           <div className="modal-buttons" style={{ marginTop: 16 }}>
             <button type="button" className="btn-secondary" onClick={onClose}>

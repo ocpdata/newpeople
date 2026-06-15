@@ -9,6 +9,7 @@ export default function ProviderPriceListsTable({
   selectProviderPriceList,
   togglePriceListMenu,
   runPriceListAction,
+  openEditProviderPriceListModal,
   updateProviderPriceListStatus,
 }) {
   if (loadingProviderPriceLists) {
@@ -104,6 +105,17 @@ export default function ProviderPriceListsTable({
                     </button>
                     {openPriceListMenuId === priceList.id && (
                       <div className="user-kebab-menu">
+                        <button
+                          type="button"
+                          disabled={!canUpdateProviderPrices}
+                          onClick={() =>
+                            runPriceListAction(() =>
+                              openEditProviderPriceListModal(priceList),
+                            )
+                          }
+                        >
+                          Editar
+                        </button>
                         <button
                           type="button"
                           disabled={

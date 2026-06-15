@@ -135,6 +135,8 @@ export function useProviderPriceLists({
     useState(false);
   const [showProviderPriceListCreateModal, setShowProviderPriceListCreateModal] =
     useState(false);
+  const [editingProviderPriceListId, setEditingProviderPriceListId] =
+    useState(null);
   const [priceListStatusFilter, setPriceListStatusFilter] = useState("all");
   const [openPriceListMenuId, setOpenPriceListMenuId] = useState(null);
   const [savingProviderPriceList, setSavingProviderPriceList] = useState(false);
@@ -362,6 +364,15 @@ export function useProviderPriceLists({
     [providerPriceLists, selectedProviderPriceListId],
   );
 
+  const editingProviderPriceList = useMemo(
+    () =>
+      providerPriceLists.find(
+        (priceList) =>
+          Number(priceList.id) === Number(editingProviderPriceListId),
+      ) || null,
+    [providerPriceLists, editingProviderPriceListId],
+  );
+
   const priceListStatusCounts = useMemo(
     () =>
       providerPriceLists.reduce(
@@ -519,6 +530,7 @@ export function useProviderPriceLists({
     setSelectedProviderPriceListId(null);
     setProviderPriceListItems([]);
     setShowProviderPriceListCreateModal(false);
+    setEditingProviderPriceListId(null);
     setOpenPriceListMenuId(null);
   }
 
@@ -529,7 +541,23 @@ export function useProviderPriceLists({
     setError("");
     setSuccess("");
     setProviderPriceListModalProvider(targetProvider);
+    setEditingProviderPriceListId(null);
     setProviderPriceListForm(buildDefaultProviderPriceListForm());
+    resetProviderPriceListImportState();
+    setShowProviderPriceListCreateModal(true);
+  }
+
+  function openEditProviderPriceListModal(priceList) {
+    if (!priceList) return;
+
+    setError("");
+    setSuccess("");
+    setEditingProviderPriceListId(Number(priceList.id));
+    setProviderPriceListForm({
+      name: String(priceList.name || ""),
+      currencyId: String(priceList.currency_id || ""),
+      itemType: String(priceList.item_type || "producto"),
+    });
     resetProviderPriceListImportState();
     setShowProviderPriceListCreateModal(true);
   }
@@ -537,6 +565,7 @@ export function useProviderPriceLists({
   function closeProviderPriceListCreateModal() {
     if (savingProviderPriceList) return;
     setShowProviderPriceListCreateModal(false);
+    setEditingProviderPriceListId(null);
     setProviderPriceListForm(buildDefaultProviderPriceListForm());
     resetProviderPriceListImportState();
   }
@@ -682,6 +711,52 @@ export function useProviderPriceLists({
     event.preventDefault();
     if (!providerPriceListModalProvider) return;
 
+    const isEditing = editingProviderPriceListId !== null;
+
+    if (isEditing) {
+      setError("");
+      setSuccess("");
+      setSavingProviderPriceList(true);
+
+      try {
+        const { data } = await api.patch(
+          `/api/providers/${providerPriceListModalProvider.id}/price-lists/${editingProviderPriceListId}`,
+          {
+            name: String(providerPriceListForm.name || "").trim(),
+            currencyId: Number(providerPriceListForm.currencyId),
+            itemType: providerPriceListForm.itemType,
+          },
+        );
+
+        setSuccess(data?.message || "Lista de precios actualizada correctamente");
+        setShowProviderPriceListCreateModal(false);
+        setEditingProviderPriceListId(null);
+        setProviderPriceListForm(buildDefaultProviderPriceListForm());
+        resetProviderPriceListImportState();
+        await refreshProviderPriceLists({ preferredListId: editingProviderPriceListId });
+        await reloadProviders();
+      } catch (err) {
+        const fieldErrors = err?.response?.data?.errors?.fieldErrors;
+        if (fieldErrors?.name?.length) {
+          setError(`name: ${fieldErrors.name[0]}`);
+        } else if (fieldErrors?.currencyId?.length) {
+          setError(`currencyId: ${fieldErrors.currencyId[0]}`);
+        } else if (fieldErrors?.itemType?.length) {
+          setError(`itemType: ${fieldErrors.itemType[0]}`);
+        } else {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible actualizar la lista de precios",
+            ),
+          );
+        }
+      } finally {
+        setSavingProviderPriceList(false);
+      }
+      return;
+    }
+
     if (providerPriceListImportFile && !providerPriceListImportPreview) {
       setError("Revisa el archivo antes de crear la lista e importar.");
       return;
@@ -767,6 +842,7 @@ export function useProviderPriceLists({
           : data?.message || "Lista de precios creada correctamente",
       );
       setShowProviderPriceListCreateModal(false);
+      setEditingProviderPriceListId(null);
       setProviderPriceListForm(buildDefaultProviderPriceListForm());
       resetProviderPriceListImportState();
       await openProviderPriceListModal(
@@ -844,6 +920,8 @@ export function useProviderPriceLists({
     setProviderPriceListItems,
     loadingProviderPriceListItems,
     showProviderPriceListCreateModal,
+    editingProviderPriceListId,
+    editingProviderPriceList,
     priceListStatusFilter,
     priceListStatusCounts,
     openPriceListMenuId,
@@ -859,6 +937,7 @@ export function useProviderPriceLists({
     selectProviderPriceList,
     closeProviderPriceListModal,
     openCreateProviderPriceListModal,
+    openEditProviderPriceListModal,
     closeProviderPriceListCreateModal,
     saveProviderPriceList,
     updateProviderPriceListImportFile,

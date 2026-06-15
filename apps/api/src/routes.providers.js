@@ -1366,6 +1366,123 @@ router.post(
 );
 
 router.patch(
+  "/:id/price-lists/:listId",
+  requirePermission("proveedores_precios.update"),
+  async (req, res) => {
+    const providerId = Number(req.params.id);
+    const listId = Number(req.params.listId);
+    const parsed = priceListSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+
+    const providerAccess = await requireProviderOr404(providerId);
+    if (!providerAccess.ok) {
+      return res
+        .status(providerAccess.response.status)
+        .json(providerAccess.response.body);
+    }
+
+    const listAccess = await requireProviderPriceListOr404(providerId, listId);
+    if (!listAccess.ok) {
+      return res
+        .status(listAccess.response.status)
+        .json(listAccess.response.body);
+    }
+
+    const currencyCode = await getCurrencyCodeById(parsed.data.currencyId);
+    const productType = await getProductTypeByCode(parsed.data.itemType);
+    if (!currencyCode) {
+      return res.status(400).json({ message: "Moneda invalida" });
+    }
+    if (!productType || Number(productType.is_active) !== 1) {
+      return res.status(400).json({ message: "Tipo de producto invalido" });
+    }
+
+    const itemCountRows = await query(
+      `SELECT COUNT(*) AS total_count
+       FROM provider_price_list_items
+       WHERE provider_id = ? AND price_list_id = ?`,
+      [providerId, listId],
+    );
+    const totalItems = Number(itemCountRows[0]?.total_count || 0);
+    const currencyChanged =
+      Number(listAccess.priceList.currency_id || 0) !==
+      Number(parsed.data.currencyId);
+    const itemTypeChanged =
+      String(listAccess.priceList.item_type || "producto") !==
+      String(parsed.data.itemType || "producto");
+
+    if (totalItems > 0 && (currencyChanged || itemTypeChanged)) {
+      return res.status(409).json({
+        message:
+          "No es posible cambiar la moneda o el tipo de una lista que ya tiene productos.",
+      });
+    }
+
+    const now = new Date();
+
+    try {
+      await query(
+        `UPDATE provider_price_lists
+         SET name = ?, currency_id = ?, product_type_id = ?, item_type = ?, updated_by = ?, updated_at = ?
+         WHERE id = ? AND provider_id = ?`,
+        [
+          parsed.data.name,
+          parsed.data.currencyId,
+          Number(productType.id),
+          parsed.data.itemType,
+          req.user.id,
+          now,
+          listId,
+          providerId,
+        ],
+      );
+
+      await logAuditEvent({
+        req,
+        module: "proveedores_precios",
+        action: "updated",
+        entityType: "provider_price_list",
+        entityId: listId,
+        detail: "Lista de precios actualizada",
+        before: {
+          name: String(listAccess.priceList.name || ""),
+          currency_id: Number(listAccess.priceList.currency_id || 0),
+          item_type: String(listAccess.priceList.item_type || "producto"),
+          product_type_id: Number(listAccess.priceList.product_type_id || 0),
+        },
+        after: {
+          name: parsed.data.name,
+          currency_id: parsed.data.currencyId,
+          currency_code: currencyCode,
+          item_type: parsed.data.itemType,
+          item_type_name: String(productType.name),
+          product_type_id: Number(productType.id),
+        },
+      });
+
+      return res.json({
+        id: listId,
+        message: "Lista de precios actualizada",
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, "uq_provider_price_lists_provider_name")) {
+        return res.status(409).json({
+          message:
+            "Ya existe una lista de precios con ese nombre para el proveedor.",
+        });
+      }
+      return res
+        .status(500)
+        .json({ message: "No fue posible actualizar la lista de precios" });
+    }
+  },
+);
+
+router.patch(
   "/:id/price-lists/:listId/status",
   requirePermission("proveedores_precios.update"),
   async (req, res) => {

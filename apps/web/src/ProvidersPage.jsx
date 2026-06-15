@@ -64,6 +64,8 @@ function ProvidersPage({ currentUser }) {
     providerPriceListItems,
     loadingProviderPriceListItems,
     showProviderPriceListCreateModal,
+    editingProviderPriceListId,
+    editingProviderPriceList,
     showPriceItemModal,
     editingPriceItemId,
     priceListStatusFilter,
@@ -116,6 +118,7 @@ function ProvidersPage({ currentUser }) {
     openProviderPriceListModal,
     closeProviderPriceListModal,
     openCreateProviderPriceListModal,
+    openEditProviderPriceListModal,
     closeProviderPriceListCreateModal,
     saveProviderPriceList,
     openCreatePriceItemModal,
@@ -334,6 +337,7 @@ function ProvidersPage({ currentUser }) {
           onClose: closeProviderPriceListModal,
           setPriceListStatusFilter,
           openCreateProviderPriceListModal,
+          openEditProviderPriceListModal,
           exportProviderPriceListToExcel,
           exportingPriceList,
           openCreatePriceItemModal,
@@ -355,6 +359,8 @@ function ProvidersPage({ currentUser }) {
       <ProviderPriceListCreateModal
         isOpen={showProviderPriceListCreateModal}
         provider={providerPriceListModalProvider}
+        editingPriceListId={editingProviderPriceListId}
+        editingPriceList={editingProviderPriceList}
         form={providerPriceListForm}
         catalogs={catalogs}
         saving={savingProviderPriceList}

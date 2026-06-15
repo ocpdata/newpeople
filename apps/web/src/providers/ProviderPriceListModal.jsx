@@ -58,6 +58,7 @@ export default function ProviderPriceListModal({
     onClose,
     setPriceListStatusFilter,
     openCreateProviderPriceListModal,
+    openEditProviderPriceListModal,
     exportProviderPriceListToExcel,
     exportingPriceList,
     openCreatePriceItemModal,
@@ -245,6 +246,7 @@ export default function ProviderPriceListModal({
           selectProviderPriceList={selectProviderPriceList}
           togglePriceListMenu={togglePriceListMenu}
           runPriceListAction={runPriceListAction}
+          openEditProviderPriceListModal={openEditProviderPriceListModal}
           updateProviderPriceListStatus={updateProviderPriceListStatus}
         />
 
