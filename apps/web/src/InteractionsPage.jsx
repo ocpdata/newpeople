@@ -193,7 +193,12 @@ function buildEffectiveResolutionForm(
       : false),
   );
 
-  if (!hasResolvedContacts) {
+  if (assignmentMode === "none") {
+    effectiveSellerUserId = "";
+    assignCurrentUserAsOwnerSeller = false;
+  }
+
+  if (!hasResolvedContacts || assignmentMode === "none") {
     effectiveSellerUserId = "";
     assignCurrentUserAsOwnerSeller = false;
   } else if (
