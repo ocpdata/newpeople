@@ -3584,6 +3584,7 @@ router.post(
     try {
       const result = await withTransaction(async (conn) => {
         let resolvedAccountId = null;
+        let isNewlyCreatedAccount = false;
         const linkedContactIds = [];
         const resolvedOpportunityIds = [];
         const resolvedContactIdsBySuggestionId = new Map();
@@ -3649,6 +3650,7 @@ router.post(
             req.user,
             parsed.data.accountResolution.draft,
           );
+          isNewlyCreatedAccount = true;
         }
 
         const contactsBySuggestionId = new Map();
@@ -3850,7 +3852,7 @@ router.post(
             }
           }
 
-          if (resolvedAccountId) {
+          if (resolvedAccountId && !isNewlyCreatedAccount) {
             const isValidSellerOwner = await validateSellerOwnerForAccount(
               resolvedAccountId,
               assignedSellerUserId,
