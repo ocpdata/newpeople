@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import ModalInlineHelp from "./help/ModalInlineHelp";
+import {
+  getLeadCallOutcomeActionGuide,
+  getLeadCallOutcomeReasonGuide,
+  getLeadCallOutcomeSubstatusGuide,
+} from "./interactions/leadCallOutcomeGuideData";
+import {
+  LeadCallOutcomeInlineGuide,
+  LeadCallOutcomeOptionCards,
+} from "./interactions/LeadCallOutcomeGuides";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.mp4";
@@ -463,6 +472,20 @@ function getInteractionStatusMeta(status) {
   }
 }
 
+function getLeadCatalogEntryByCode(entries, code) {
+  if (!Array.isArray(entries) || !code) return null;
+  return entries.find((entry) => String(entry?.code) === String(code)) || null;
+}
+
+const EMPTY_LEAD_CATALOG = Object.freeze([]);
+
+function formatLeadOutcomeDateLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("es-MX");
+}
+
 function getDocumentStageLabel(status, labels = {}) {
   switch (status) {
     case "completed":
@@ -501,6 +524,28 @@ function getDocumentProcessingSummary(document) {
     : "No aplica";
 
   return `Extracción: ${extractionLabel} | Transcripción: ${transcriptionLabel}`;
+}
+
+function buildLeadCallOutcomeForm(detail, transitionRules) {
+  const initialRule =
+    transitionRules.find(
+      (rule) =>
+        rule.substatusCode === detail?.leadSubstatusCode &&
+        rule.reasonCode === detail?.leadReasonCode &&
+        rule.requiredActionCode === detail?.leadRequiredActionCode,
+    ) || transitionRules[0] || null;
+
+  return {
+    substatusCode: initialRule?.substatusCode || "",
+    reasonCode: initialRule?.reasonCode || "",
+    requiredActionCode: initialRule?.requiredActionCode || "",
+    comment: detail?.leadCommercialComment || "",
+    nextActionDueAt: detail?.leadNextActionDueAt
+      ? String(detail.leadNextActionDueAt).slice(0, 10)
+      : "",
+    referredContactName: detail?.leadReferredContactName || "",
+    referredAreaName: detail?.leadReferredAreaName || "",
+  };
 }
 
 function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
@@ -1265,12 +1310,18 @@ function InteractionDetailModal({
   onDeleteDocument,
   onResolve,
   onReanalyze,
+  leadOutcomeCatalogs,
+  onOpenLeadCallOutcomeModal,
+  canManageLeadCallOutcome,
 }) {
   const [uploadInputKey, setUploadInputKey] = useState(0);
+  const [showDisqualificationReasonModal, setShowDisqualificationReasonModal] =
+    useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUploadInputKey((currentValue) => currentValue + 1);
+    setShowDisqualificationReasonModal(false);
   }, [detail?.id, isOpen]);
 
   if (!isOpen || !detail || !editForm || !resolutionForm) return null;
@@ -1422,6 +1473,65 @@ function InteractionDetailModal({
   const interactionDocumentCount = Array.isArray(detail?.documents)
     ? detail.documents.length
     : 0;
+  const disqualificationReason = String(
+    detail?.disqualificationReason || "",
+  ).trim();
+  const leadSubstatus = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.substatuses,
+    detail?.leadSubstatusCode,
+  );
+  const leadReason = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.reasons,
+    detail?.leadReasonCode,
+  );
+  const leadRequiredAction = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.requiredActions,
+    detail?.leadRequiredActionCode,
+  );
+  const leadSubstatusGuide = getLeadCallOutcomeSubstatusGuide(
+    detail?.leadSubstatusCode,
+  );
+  const leadReasonGuide = getLeadCallOutcomeReasonGuide(
+    detail?.leadReasonCode,
+  );
+  const leadRequiredActionGuide = getLeadCallOutcomeActionGuide(
+    detail?.leadRequiredActionCode,
+  );
+  const leadOutcomeTransitionRules = Array.isArray(
+    leadOutcomeCatalogs?.transitionRules,
+  )
+    ? leadOutcomeCatalogs.transitionRules
+    : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideSubstatusOptions = leadOutcomeTransitionRules.length
+    ? leadOutcomeTransitionRules
+        .map((rule) =>
+          getLeadCatalogEntryByCode(
+            leadOutcomeCatalogs?.substatuses,
+            rule.substatusCode,
+          ),
+        )
+        .filter(Boolean)
+        .filter(
+          (entry, index, entries) =>
+            entries.findIndex((candidate) => candidate.code === entry.code) ===
+            index,
+        )
+    : leadSubstatus
+      ? [leadSubstatus]
+      : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideReasonOptions = leadReason
+    ? [leadReason]
+    : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideActionOptions = leadRequiredAction
+    ? [leadRequiredAction]
+    : EMPTY_LEAD_CATALOG;
+  const materializedSuggestedAccountId = Number(
+    editForm.suggestedAccount?.selectedAccountId || 0,
+  );
+  const hasMaterializedSuggestedAccount = materializedSuggestedAccountId > 0;
+  const displayedAccountResolutionMode = hasMaterializedSuggestedAccount
+    ? "link_existing"
+    : resolutionForm.accountResolution.mode;
 
   return (
     <div className="modal-overlay">
@@ -1453,9 +1563,28 @@ function InteractionDetailModal({
               </p>
             </div>
             <div className="interaction-detail-header-actions">
-              <span className={statusMeta.className}>{statusMeta.label}</span>
+              {isDisqualifiedLeadStatus(detail.analysisStatus) &&
+              disqualificationReason ? (
+                <button
+                  type="button"
+                  className={statusMeta.className}
+                  onClick={() => setShowDisqualificationReasonModal(true)}
+                  title="Ver razón de descalificación"
+                  aria-label="Ver razón de descalificación"
+                >
+                  {statusMeta.label}
+                </button>
+              ) : (
+                <span className={statusMeta.className}>{statusMeta.label}</span>
+              )}
             </div>
           </div>
+          <DisqualificationReasonModal
+            isOpen={showDisqualificationReasonModal}
+            interactionTitle={normalizeLeadDisplayText(detail.title)}
+            reason={disqualificationReason}
+            onClose={() => setShowDisqualificationReasonModal(false)}
+          />
           <fieldset
             className="interaction-detail-lock-shell"
             disabled={isAnalysisLocked}
@@ -1703,65 +1832,43 @@ function InteractionDetailModal({
                   </div>
                 </div>
                 <div className="interaction-resolution-grid interaction-account-suggestion-grid">
-                  {(() => {
-                    const materializedAccountId = Number(
-                      editForm.suggestedAccount?.selectedAccountId || 0,
-                    );
-                    const isMaterializedAccountSuggestion = Boolean(
-                      materializedAccountId,
-                    );
-                    const displayedAccountMode = isMaterializedAccountSuggestion
-                      ? "link_existing"
-                      : resolutionForm.accountResolution.mode;
-
-                    return (
-                      <div className="field-group interaction-resolution-action-field">
-                        <label>Acción</label>
-                        {isMaterializedAccountSuggestion ? (
-                          <div className="interaction-readonly-field interaction-readonly-field-compact">
-                            <span className="interaction-readonly-pill">
-                              Vincular existente
-                            </span>
-                          </div>
-                        ) : (
-                          <select
-                            value={displayedAccountMode}
-                            onChange={(event) =>
-                              setResolutionForm((currentValue) => ({
-                                ...currentValue,
-                                accountResolution: {
-                                  ...currentValue.accountResolution,
-                                  mode: event.target.value,
-                                },
-                              }))
-                            }
-                          >
-                            <option value="link_existing">
-                              Vincular existente
-                            </option>
-                            <option value="ignore">Ignorar</option>
-                            <option value="create_new">Crear cuenta</option>
-                          </select>
-                        )}
+                  <div className="field-group interaction-resolution-action-field">
+                    <label>Acción</label>
+                    {hasMaterializedSuggestedAccount ? (
+                      <div className="interaction-readonly-field interaction-readonly-field-compact">
+                        <span className="interaction-readonly-pill">
+                          Vincular existente
+                        </span>
                       </div>
-                    );
-                  })()}
-                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
-                    ? "link_existing"
-                    : resolutionForm.accountResolution.mode) ===
-                  "link_existing" ? (
+                    ) : (
+                      <select
+                        value={displayedAccountResolutionMode}
+                        onChange={(event) =>
+                          setResolutionForm((currentValue) => ({
+                            ...currentValue,
+                            accountResolution: {
+                              ...currentValue.accountResolution,
+                              mode: event.target.value,
+                            },
+                          }))
+                        }
+                      >
+                        <option value="link_existing">Vincular existente</option>
+                        <option value="ignore">Ignorar</option>
+                        <option value="create_new">Crear cuenta</option>
+                      </select>
+                    )}
+                  </div>
+                  {displayedAccountResolutionMode === "link_existing" ? (
                     <div className="field-group interaction-grid-span-2 interaction-account-existing-field">
                       <label>Cuenta existente</label>
-                      {Boolean(editForm.suggestedAccount?.selectedAccountId) ? (
+                      {hasMaterializedSuggestedAccount ? (
                         <div className="interaction-readonly-field interaction-readonly-link-field">
                           <span className="interaction-readonly-value-title">
                             {getOptionLabel(
                               activeAccounts,
                               resolutionForm.accountResolution.accountId ||
-                                String(
-                                  editForm.suggestedAccount
-                                    ?.selectedAccountId || "",
-                                ),
+                                String(materializedSuggestedAccountId || ""),
                               ["name"],
                             ) || "Cuenta vinculada"}
                           </span>
@@ -1792,7 +1899,7 @@ function InteractionDetailModal({
                       )}
                     </div>
                   ) : null}
-                  {Boolean(editForm.suggestedAccount?.selectedAccountId) ? (
+                  {hasMaterializedSuggestedAccount ? (
                     <div className="field-group interaction-materialized-hint-field">
                       <span className="field-hint">
                         Esta sugerencia ya genero una cuenta y no puede
@@ -1800,10 +1907,7 @@ function InteractionDetailModal({
                       </span>
                     </div>
                   ) : null}
-                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
-                    ? "link_existing"
-                    : resolutionForm.accountResolution.mode) !==
-                  "link_existing" ? (
+                  {displayedAccountResolutionMode !== "link_existing" ? (
                     <div className="field-group interaction-account-name-field">
                       <label>Nombre</label>
                       <input
@@ -1823,10 +1927,7 @@ function InteractionDetailModal({
                       />
                     </div>
                   ) : null}
-                  {(Boolean(editForm.suggestedAccount?.selectedAccountId)
-                    ? "link_existing"
-                    : resolutionForm.accountResolution.mode) !==
-                  "link_existing" ? (
+                  {displayedAccountResolutionMode !== "link_existing" ? (
                     <>
                       <div className="field-group">
                         <label>Website</label>
@@ -2565,6 +2666,129 @@ function InteractionDetailModal({
                   ) : null}
                 </>
               ) : null}
+
+              <section className="account-form-section account-modal-section interaction-detail-section lead-follow-up-section">
+                <div className="interaction-resolution-header lead-follow-up-header">
+                  <div className="lead-follow-up-header-copy">
+                    <span className="lead-follow-up-kicker">
+                      Seguimiento comercial
+                    </span>
+                    <p className="field-hint lead-follow-up-header-description">
+                      Este seguimiento se edita en una ventana aparte y se
+                      guarda por separado del resto del lead.
+                    </p>
+                  </div>
+                  {canManageLeadCallOutcome ? (
+                    <button
+                      type="button"
+                      className="btn-secondary lead-follow-up-secondary-action"
+                      onClick={onOpenLeadCallOutcomeModal}
+                    >
+                      Editar seguimiento
+                    </button>
+                  ) : null}
+                </div>
+
+                {leadSubstatus || leadReason || leadRequiredAction ? (
+                  <div className="lead-follow-up-overview">
+                    <div className="lead-follow-up-status-block">
+                      <strong>Seguimiento comercial actualizado</strong>
+                      <p className="field-hint">
+                        Revisa la situación actual del lead y abre el detalle si
+                        necesitas ajustarlo.
+                      </p>
+                    </div>
+                    <div className="lead-follow-up-grid">
+                      <article className="lead-follow-up-card is-substatus">
+                        <span className="lead-follow-up-card-label">
+                          Situación
+                        </span>
+                        <strong>{leadSubstatus?.name || "-"}</strong>
+                        <p className="field-hint lead-follow-up-card-copy">
+                          {leadSubstatusGuide?.optionHint ||
+                            leadSubstatusGuide?.whenToUse ||
+                            leadSubstatus?.description ||
+                            "Sin detalle adicional"}
+                        </p>
+                      </article>
+
+                      <article className="lead-follow-up-card is-reason">
+                        <span className="lead-follow-up-card-label">
+                          Motivo principal
+                        </span>
+                        <strong>{leadReason?.name || "-"}</strong>
+                        <p className="field-hint lead-follow-up-card-copy">
+                          {leadReasonGuide?.optionHint ||
+                            leadReasonGuide?.whenToUse ||
+                            "Sin detalle adicional"}
+                        </p>
+                      </article>
+
+                      <article className="lead-follow-up-card is-action">
+                        <span className="lead-follow-up-card-label">
+                          Acción obligatoria
+                        </span>
+                        <strong>{leadRequiredAction?.name || "-"}</strong>
+                        <p className="field-hint lead-follow-up-card-copy">
+                          {leadRequiredActionGuide?.optionHint ||
+                            leadRequiredActionGuide?.whenToUse ||
+                            "Sin detalle adicional"}
+                        </p>
+                      </article>
+                    </div>
+
+                    {detail?.leadNextActionDueAt ||
+                    detail?.leadReferredContactName ||
+                    detail?.leadReferredAreaName ? (
+                      <div className="lead-follow-up-meta-row">
+                        {detail?.leadNextActionDueAt ? (
+                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                            Fecha compromiso: {formatLeadOutcomeDateLabel(detail.leadNextActionDueAt)}
+                          </span>
+                        ) : null}
+                        {detail?.leadReferredContactName ? (
+                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                            Persona referida: {detail.leadReferredContactName}
+                          </span>
+                        ) : null}
+                        {detail?.leadReferredAreaName ? (
+                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                            Área objetivo: {detail.leadReferredAreaName}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {detail?.leadCommercialComment ? (
+                      <article className="lead-follow-up-comment-card">
+                        <span className="lead-follow-up-card-label">
+                          Comentario del vendedor
+                        </span>
+                        <p>{detail.leadCommercialComment}</p>
+                      </article>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="lead-follow-up-empty-state">
+                    <strong>Seguimiento comercial pendiente</strong>
+                    <p className="field-hint">
+                      Aún no se ha definido la situación del lead, el motivo ni
+                      la siguiente acción.
+                    </p>
+                  </div>
+                )}
+
+                <div className="lead-follow-up-guide-wrap">
+                  <LeadCallOutcomeInlineGuide
+                    substatusEntries={leadOutcomeGuideSubstatusOptions}
+                    reasonEntries={leadOutcomeGuideReasonOptions}
+                    actionEntries={leadOutcomeGuideActionOptions}
+                    selectedSubstatusCode={detail?.leadSubstatusCode}
+                    selectedReasonCode={detail?.leadReasonCode}
+                    selectedActionCode={detail?.leadRequiredActionCode}
+                  />
+                </div>
+              </section>
             </div>
 
             <div className="modal-buttons interaction-detail-modal-buttons">
@@ -2629,9 +2853,10 @@ function ResolveInteractionConfirmationModal({
         if (event.target === event.currentTarget && !resolving) onClose();
       }}
     >
-      <div className="modal-dialog resolve-confirmation-modal">
+      <div className="modal-dialog resolve-confirmation-modal lead-decision-modal">
         <div className="modal-header">
           <div>
+            <span className="lead-decision-kicker">Resolución comercial</span>
             <h3 className="modal-title">Confirmar cambios del lead</h3>
             <p className="roles-subtitle resolve-confirmation-subtitle">
               Revisa lo que se aplicará al lead {preview.interactionTitle}.
@@ -2639,9 +2864,9 @@ function ResolveInteractionConfirmationModal({
           </div>
         </div>
 
-        <div className="resolve-confirmation-body">
+        <div className="resolve-confirmation-body lead-decision-body">
           {hasRecordsToCreate ? (
-            <section className="resolve-confirmation-section">
+            <section className="resolve-confirmation-section lead-decision-panel">
               <h4>Se crearán</h4>
               <div className="resolve-confirmation-list">
                 {preview.accountToCreate ? (
@@ -2670,7 +2895,7 @@ function ResolveInteractionConfirmationModal({
               </div>
             </section>
           ) : (
-            <section className="resolve-confirmation-section">
+            <section className="resolve-confirmation-section lead-decision-panel">
               <h4>Se crearán</h4>
               <p className="field-hint resolve-confirmation-empty-state">
                 No se crearán registros nuevos con la configuración actual.
@@ -2679,7 +2904,7 @@ function ResolveInteractionConfirmationModal({
           )}
 
           {hasLinks ? (
-            <section className="resolve-confirmation-section">
+            <section className="resolve-confirmation-section lead-decision-panel">
               <h4>También se vincularán</h4>
               <div className="resolve-confirmation-list">
                 {preview.accountToLink ? (
@@ -2707,7 +2932,7 @@ function ResolveInteractionConfirmationModal({
             </section>
           ) : null}
 
-          <section className="resolve-confirmation-section">
+          <section className="resolve-confirmation-section lead-decision-panel lead-decision-panel-highlight">
             <h4>Estado resultante</h4>
             <div className="resolve-confirmation-list">
               <article className="resolve-confirmation-item">
@@ -2738,7 +2963,7 @@ function ResolveInteractionConfirmationModal({
           ) : null}
         </div>
 
-        <div className="modal-buttons">
+        <div className="modal-buttons lead-decision-actions">
           <button
             type="button"
             className="btn-secondary"
@@ -2756,6 +2981,491 @@ function ResolveInteractionConfirmationModal({
             {resolving ? "Guardando..." : "Confirmar y guardar"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DisqualifyInteractionModal({
+  isOpen,
+  interaction,
+  reason,
+  onReasonChange,
+  onClose,
+  onConfirm,
+  saving,
+}) {
+  if (!isOpen || !interaction) return null;
+
+  const trimmedReason = String(reason || "").trim();
+
+  return (
+    <div
+      className="modal-overlay modal-overlay-elevated"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !saving) onClose();
+      }}
+    >
+      <div className="modal-dialog resolve-confirmation-modal lead-decision-modal lead-decision-modal-danger">
+        <div className="modal-header">
+          <div>
+            <span className="lead-decision-kicker is-danger">Descalificación</span>
+            <h3 className="modal-title">Descalificar lead</h3>
+            <p className="roles-subtitle resolve-confirmation-subtitle">
+              Indica el motivo para descalificar {normalizeLeadDisplayText(interaction.title)}.
+            </p>
+          </div>
+        </div>
+
+        <form
+          className="account-create-form in-modal lead-decision-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!trimmedReason || saving) return;
+            onConfirm();
+          }}
+        >
+          <div className="lead-decision-note is-danger">
+            Esta decisión cerrará el lead como no viable y dejará la razón visible para futuras revisiones.
+          </div>
+          <div className="field-group">
+            <label>
+              Razón de descalificación <span className="required-mark">*</span>
+            </label>
+            <textarea
+              value={reason}
+              onChange={(event) => onReasonChange(event.target.value)}
+              placeholder="Explica por qué este lead no es una oportunidad comercial viable."
+              rows={5}
+              disabled={saving}
+              autoFocus
+            />
+            <p className="field-hint">
+              Este motivo quedará registrado en el lead descalificado.
+            </p>
+          </div>
+
+          <div className="modal-buttons lead-decision-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onClose}
+              disabled={saving}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={!trimmedReason || saving}
+            >
+              {saving ? "Guardando..." : "Descalificar lead"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function DisqualificationReasonModal({
+  isOpen,
+  interactionTitle,
+  reason,
+  onClose,
+}) {
+  if (!isOpen || !String(reason || "").trim()) return null;
+
+  return (
+    <div
+      className="modal-overlay modal-overlay-elevated"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="modal-dialog resolve-confirmation-modal lead-decision-modal lead-decision-modal-danger">
+        <div className="modal-header">
+          <div>
+            <span className="lead-decision-kicker is-danger">Historial</span>
+            <h3 className="modal-title">Razón de descalificación</h3>
+            <p className="roles-subtitle resolve-confirmation-subtitle">
+              {interactionTitle}
+            </p>
+          </div>
+        </div>
+
+        <div className="resolve-confirmation-body lead-decision-body">
+          <section className="resolve-confirmation-section lead-decision-panel">
+            <p>{reason}</p>
+          </section>
+        </div>
+
+        <div className="modal-buttons lead-decision-actions">
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeadCallOutcomeModal({
+  isOpen,
+  detail,
+  catalogs,
+  onClose,
+  onSubmit,
+  saving,
+}) {
+  const transitionRules = Array.isArray(catalogs?.transitionRules)
+    ? catalogs.transitionRules
+    : EMPTY_LEAD_CATALOG;
+  const substatuses = Array.isArray(catalogs?.substatuses)
+    ? catalogs.substatuses
+    : EMPTY_LEAD_CATALOG;
+  const reasons = Array.isArray(catalogs?.reasons)
+    ? catalogs.reasons
+    : EMPTY_LEAD_CATALOG;
+  const requiredActions = Array.isArray(catalogs?.requiredActions)
+    ? catalogs.requiredActions
+    : EMPTY_LEAD_CATALOG;
+  const statuses = Array.isArray(catalogs?.statuses)
+    ? catalogs.statuses
+    : EMPTY_LEAD_CATALOG;
+  const [form, setForm] = useState(() =>
+    buildLeadCallOutcomeForm(detail, transitionRules),
+  );
+
+  const substatusOptions = useMemo(
+    () =>
+      transitionRules
+        .map((rule) => getLeadCatalogEntryByCode(substatuses, rule.substatusCode))
+        .filter(Boolean)
+        .filter(
+          (entry, index, entries) =>
+            entries.findIndex((candidate) => candidate.code === entry.code) ===
+            index,
+        ),
+    [substatuses, transitionRules],
+  );
+
+  const selectedSubstatusCode = substatusOptions.some(
+    (entry) => entry.code === form.substatusCode,
+  )
+    ? form.substatusCode
+    : substatusOptions[0]?.code || "";
+
+  const reasonOptions = useMemo(() => {
+    return transitionRules
+      .filter((rule) => rule.substatusCode === selectedSubstatusCode)
+      .map((rule) => getLeadCatalogEntryByCode(reasons, rule.reasonCode))
+      .filter(Boolean)
+      .filter(
+        (entry, index, entries) =>
+          entries.findIndex((candidate) => candidate.code === entry.code) ===
+          index,
+      );
+  }, [reasons, selectedSubstatusCode, transitionRules]);
+
+  const selectedReasonCode = reasonOptions.some(
+    (entry) => entry.code === form.reasonCode,
+  )
+    ? form.reasonCode
+    : reasonOptions[0]?.code || "";
+
+  const requiredActionOptions = useMemo(() => {
+    return transitionRules
+      .filter(
+        (rule) =>
+          rule.substatusCode === selectedSubstatusCode &&
+          rule.reasonCode === selectedReasonCode,
+      )
+      .map((rule) =>
+        getLeadCatalogEntryByCode(requiredActions, rule.requiredActionCode),
+      )
+      .filter(Boolean)
+      .filter(
+        (entry, index, entries) =>
+          entries.findIndex((candidate) => candidate.code === entry.code) ===
+          index,
+      );
+  }, [requiredActions, selectedReasonCode, selectedSubstatusCode, transitionRules]);
+
+  const selectedRequiredActionCode = requiredActionOptions.some(
+    (entry) => entry.code === form.requiredActionCode,
+  )
+    ? form.requiredActionCode
+    : requiredActionOptions[0]?.code || "";
+
+  const selectedRule = useMemo(
+    () =>
+      transitionRules.find(
+        (rule) =>
+          rule.substatusCode === selectedSubstatusCode &&
+          rule.reasonCode === selectedReasonCode &&
+          rule.requiredActionCode === selectedRequiredActionCode,
+      ) || null,
+    [
+      selectedReasonCode,
+      selectedRequiredActionCode,
+      selectedSubstatusCode,
+      transitionRules,
+    ],
+  );
+
+  if (!isOpen || !detail) return null;
+
+  const resultStatus = getLeadCatalogEntryByCode(
+    statuses,
+    selectedRule?.resultStatusCode,
+  );
+  const selectedSubstatus = getLeadCatalogEntryByCode(
+    substatuses,
+    selectedSubstatusCode,
+  );
+  const selectedSubstatusGuide = getLeadCallOutcomeSubstatusGuide(
+    selectedSubstatusCode,
+  );
+  const selectedReason = getLeadCatalogEntryByCode(reasons, selectedReasonCode);
+  const selectedReasonGuide = getLeadCallOutcomeReasonGuide(selectedReasonCode);
+  const selectedRequiredAction = getLeadCatalogEntryByCode(
+    requiredActions,
+    selectedRequiredActionCode,
+  );
+  const selectedActionGuide = getLeadCallOutcomeActionGuide(
+    selectedRequiredActionCode,
+  );
+
+  return (
+    <div
+      className="modal-overlay modal-overlay-elevated"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !saving) onClose();
+      }}
+    >
+      <div className="modal-dialog resolve-confirmation-modal lead-outcome-modal">
+        <div className="modal-header interaction-modal-header-with-close">
+          <button
+            type="button"
+            className="btn-secondary account-modal-close-button interaction-modal-close-left"
+            onClick={onClose}
+            disabled={saving}
+            aria-label="Cerrar modal de resultado de llamada"
+            title="Cerrar"
+          >
+            ×
+          </button>
+          <div>
+            <span className="lead-decision-kicker">Resultado guiado</span>
+            <h3 className="modal-title">Resultado de llamada</h3>
+            <p className="roles-subtitle resolve-confirmation-subtitle">
+              {normalizeLeadDisplayText(detail.title)}
+            </p>
+          </div>
+        </div>
+
+        <form
+          className="account-create-form in-modal lead-outcome-modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!selectedRule || saving) return;
+            onSubmit({
+              ...form,
+              substatusCode: selectedSubstatusCode,
+              reasonCode: selectedReasonCode,
+              requiredActionCode: selectedRequiredActionCode,
+            });
+          }}
+        >
+          <div className="lead-outcome-modal-layout">
+            <div className="lead-outcome-modal-main">
+              <div className="lead-outcome-modal-grid">
+                <section className="lead-outcome-modal-block">
+                  <LeadCallOutcomeOptionCards
+                    label="Situación del lead"
+                    entries={substatusOptions}
+                    selectedCode={selectedSubstatusCode}
+                    disabled={saving}
+                    getGuide={getLeadCallOutcomeSubstatusGuide}
+                    kind="substatus"
+                    onSelect={(code) =>
+                      setForm((currentValue) => ({
+                        ...currentValue,
+                        substatusCode: code,
+                        reasonCode: "",
+                        requiredActionCode: "",
+                      }))
+                    }
+                  />
+                  {selectedSubstatusGuide || selectedSubstatus?.description ? (
+                    <p className="field-hint lead-outcome-modal-selection-hint">
+                      {selectedSubstatusGuide?.whenToUse ||
+                        selectedSubstatus?.description ||
+                        ""}
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="lead-outcome-modal-block">
+                  <LeadCallOutcomeOptionCards
+                    label="Motivo principal"
+                    entries={reasonOptions}
+                    selectedCode={selectedReasonCode}
+                    disabled={saving || !reasonOptions.length}
+                    getGuide={getLeadCallOutcomeReasonGuide}
+                    kind="reason"
+                    onSelect={(code) =>
+                      setForm((currentValue) => ({
+                        ...currentValue,
+                        reasonCode: code,
+                        requiredActionCode: "",
+                      }))
+                    }
+                  />
+                  {selectedReasonGuide || selectedReason ? (
+                    <p className="field-hint lead-outcome-modal-selection-hint">
+                      {selectedReasonGuide?.whenToUse || selectedReason?.name || ""}
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="lead-outcome-modal-block lead-outcome-modal-block-wide">
+                  <LeadCallOutcomeOptionCards
+                    label="Siguiente acción obligatoria"
+                    entries={requiredActionOptions}
+                    selectedCode={selectedRequiredActionCode}
+                    disabled={saving || !requiredActionOptions.length}
+                    getGuide={getLeadCallOutcomeActionGuide}
+                    kind="action"
+                    onSelect={(code) =>
+                      setForm((currentValue) => ({
+                        ...currentValue,
+                        requiredActionCode: code,
+                      }))
+                    }
+                  />
+                  {selectedActionGuide || selectedRequiredAction ? (
+                    <p className="field-hint lead-outcome-modal-selection-hint">
+                      {selectedActionGuide?.whenToUse || selectedRequiredAction?.name || ""}
+                    </p>
+                  ) : null}
+                </section>
+              </div>
+            </div>
+
+            <aside className="lead-outcome-modal-sidebar">
+              <section className="account-form-section account-modal-section lead-outcome-summary-panel">
+                <div className="lead-outcome-summary-head">
+                  <strong>Lectura rápida</strong>
+                  <span className="lead-outcome-summary-pill">
+                    {resultStatus?.name || "Sin transición válida"}
+                  </span>
+                </div>
+                <div className="lead-outcome-summary-list">
+                  <article className="lead-outcome-summary-item">
+                    <span>Situación</span>
+                    <strong>{selectedSubstatus?.name || "Sin definir"}</strong>
+                  </article>
+                  <article className="lead-outcome-summary-item">
+                    <span>Motivo</span>
+                    <strong>{selectedReason?.name || "Sin definir"}</strong>
+                  </article>
+                  <article className="lead-outcome-summary-item">
+                    <span>Acción</span>
+                    <strong>
+                      {selectedRequiredAction?.name || "Sin definir"}
+                    </strong>
+                  </article>
+                </div>
+              </section>
+
+              {(selectedRule?.requiresDueDate ||
+                selectedRule?.requiresReferredContact ||
+                selectedRule?.requiresReferredArea) ? (
+                <section className="account-form-section account-modal-section lead-outcome-side-panel">
+                  <strong>Datos obligatorios para esta ruta</strong>
+                  {selectedRule?.requiresDueDate ? (
+                    <div className="field-group">
+                      <label>Fecha compromiso</label>
+                      <input
+                        type="date"
+                        value={form.nextActionDueAt}
+                        onChange={(event) =>
+                          setForm((currentValue) => ({
+                            ...currentValue,
+                            nextActionDueAt: event.target.value,
+                          }))
+                        }
+                        disabled={saving}
+                      />
+                    </div>
+                  ) : null}
+
+                  {selectedRule?.requiresReferredContact ? (
+                    <div className="field-group">
+                      <label>Persona referida</label>
+                      <input
+                        value={form.referredContactName}
+                        onChange={(event) =>
+                          setForm((currentValue) => ({
+                            ...currentValue,
+                            referredContactName: event.target.value,
+                          }))
+                        }
+                        disabled={saving}
+                        placeholder="Nombre o referencia del nuevo contacto"
+                      />
+                    </div>
+                  ) : null}
+
+                  {selectedRule?.requiresReferredArea ? (
+                    <div className="field-group">
+                      <label>Área objetivo</label>
+                      <input
+                        value={form.referredAreaName}
+                        onChange={(event) =>
+                          setForm((currentValue) => ({
+                            ...currentValue,
+                            referredAreaName: event.target.value,
+                          }))
+                        }
+                        disabled={saving}
+                        placeholder="Ej. Compras, Operaciones, TI"
+                      />
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              <section className="account-form-section account-modal-section lead-outcome-side-panel">
+                <label>Comentario del vendedor</label>
+                <textarea
+                  value={form.comment}
+                  onChange={(event) =>
+                    setForm((currentValue) => ({
+                      ...currentValue,
+                      comment: event.target.value,
+                    }))
+                  }
+                  disabled={saving}
+                  rows={5}
+                  placeholder="Resumen corto de la conversación y contexto de la decisión"
+                />
+              </section>
+            </aside>
+          </div>
+
+          <div className="modal-buttons lead-decision-actions">
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={!selectedRule || saving}
+            >
+              {saving ? "Guardando..." : "Guardar resultado"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -2805,14 +3515,27 @@ function InteractionsPage({ can, currentUser }) {
     presalesUsers: [],
     currentUserIsSellerEligible: false,
   });
+  const [leadOutcomeCatalogs, setLeadOutcomeCatalogs] = useState({
+    statuses: [],
+    substatuses: [],
+    reasons: [],
+    requiredActions: [],
+    transitionRules: [],
+  });
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving] = useState(false);
+  const [savingLeadOutcome, setSavingLeadOutcome] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [addingDocuments, setAddingDocuments] = useState(false);
   const [deletingDocumentPublicId, setDeletingDocumentPublicId] = useState("");
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
+  const [showDisqualifyModal, setShowDisqualifyModal] = useState(false);
+  const [showLeadCallOutcomeModal, setShowLeadCallOutcomeModal] =
+    useState(false);
+  const [disqualifyTarget, setDisqualifyTarget] = useState(null);
+  const [disqualificationReason, setDisqualificationReason] = useState("");
   const [showResolveConfirmation, setShowResolveConfirmation] = useState(false);
   const [resolveDuplicateReview, setResolveDuplicateReview] = useState(null);
   const interactionAnalysisPollingTokenRef = useRef(0);
@@ -2832,11 +3555,59 @@ function InteractionsPage({ can, currentUser }) {
       ),
     [detail, resolutionForm, options, currentUser],
   );
-
   function closeDetailModal() {
     setShowResolveConfirmation(false);
+    setShowLeadCallOutcomeModal(false);
     setResolveDuplicateReview(null);
     setShowDetailModal(false);
+  }
+
+  async function loadLeadOutcomeCatalogs(statusCode) {
+    const { data } = await api.get("/api/interactions/call-outcome-catalogs", {
+      params: { status: statusCode },
+    });
+    setLeadOutcomeCatalogs(
+      data || {
+        statuses: [],
+        substatuses: [],
+        reasons: [],
+        requiredActions: [],
+        transitionRules: [],
+      },
+    );
+    return data;
+  }
+
+  function openLeadCallOutcomeModal() {
+    if (!detail || isFinalizedLeadStatus(detail.analysisStatus)) return;
+    setShowLeadCallOutcomeModal(true);
+  }
+
+  function closeLeadCallOutcomeModal() {
+    if (savingLeadOutcome) return;
+    setShowLeadCallOutcomeModal(false);
+  }
+
+  function openDisqualifyInteractionModal(interaction) {
+    if (!interaction?.id) return;
+    if (
+      isQualifiedLeadStatus(interaction.analysisStatus) ||
+      isDisqualifiedLeadStatus(interaction.analysisStatus)
+    ) {
+      return;
+    }
+
+    setOpenInteractionMenuId(null);
+    setDisqualifyTarget(interaction);
+    setDisqualificationReason("");
+    setShowDisqualifyModal(true);
+  }
+
+  function closeDisqualifyInteractionModal() {
+    if (deletingInteractionId === Number(disqualifyTarget?.id || 0)) return;
+    setShowDisqualifyModal(false);
+    setDisqualifyTarget(null);
+    setDisqualificationReason("");
   }
 
   async function ensureCreateUploadSession() {
@@ -2900,12 +3671,15 @@ function InteractionsPage({ can, currentUser }) {
     setStatusFilterMenuOpen(true);
   }
 
-  function closeStatusFilterMenu({ restoreDraft = false } = {}) {
-    if (restoreDraft) {
-      setStatusFilterDraft(statusFilters);
-    }
-    setStatusFilterMenuOpen(false);
-  }
+  const closeStatusFilterMenu = useCallback(
+    ({ restoreDraft = false } = {}) => {
+      if (restoreDraft) {
+        setStatusFilterDraft(statusFilters);
+      }
+      setStatusFilterMenuOpen(false);
+    },
+    [statusFilters],
+  );
 
   function toggleStatusFilterDraft(statusValue) {
     if (statusValue === "all") {
@@ -2985,9 +3759,9 @@ function InteractionsPage({ can, currentUser }) {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [statusFilterMenuOpen, statusFilters]);
+  }, [closeStatusFilterMenu, statusFilterMenuOpen, statusFilters]);
 
-  async function loadInteractions(overrides = {}) {
+  const loadInteractions = useCallback(async (overrides = {}) => {
     const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
     const effectivePageSize = Math.min(
       50,
@@ -3024,13 +3798,13 @@ function InteractionsPage({ can, currentUser }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, pageSize, query, statusFilters, sourceFilter]);
 
   useEffect(() => {
     // Reloading the list on pagination/filter changes is intentional.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInteractions();
-  }, [page, pageSize, query, statusFilters, sourceFilter]);
+  }, [loadInteractions]);
 
   useEffect(() => {
     if (!error && !success) return undefined;
@@ -3087,6 +3861,7 @@ function InteractionsPage({ can, currentUser }) {
         api.get(`/api/interactions/${itemId}`),
         api.get("/api/interactions/resolution-options"),
       ]);
+      await loadLeadOutcomeCatalogs(detailRes.data?.analysisStatus);
       setDetail(detailRes.data);
       setOptions(optionsRes.data || options);
       setEditForm(buildEditableForm(detailRes.data));
@@ -3103,6 +3878,35 @@ function InteractionsPage({ can, currentUser }) {
       setError(getApiErrorMessage(err, "No fue posible abrir el lead"));
     } finally {
       setLoadingDetail(false);
+    }
+  }
+
+  async function handleSaveLeadCallOutcome(form) {
+    if (!detail?.id) return;
+
+    setSavingLeadOutcome(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/interactions/${detail.id}/call-outcome`,
+        form,
+      );
+      setDetail(data);
+      setEditForm(buildEditableForm(data));
+      setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
+      await loadLeadOutcomeCatalogs(data.analysisStatus);
+      setShowLeadCallOutcomeModal(false);
+      setSuccess("Resultado comercial del lead guardado");
+      await loadInteractions();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible guardar el resultado comercial del lead",
+        ),
+      );
+    } finally {
+      setSavingLeadOutcome(false);
     }
   }
 
@@ -3249,7 +4053,8 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
-  async function handleDisqualifyInteraction(interaction) {
+  async function handleDisqualifyInteraction() {
+    const interaction = disqualifyTarget;
     if (!interaction?.id) return;
     if (
       isQualifiedLeadStatus(interaction.analysisStatus) ||
@@ -3257,22 +4062,18 @@ function InteractionsPage({ can, currentUser }) {
     ) {
       return;
     }
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Este lead quedará marcado como descalificado. ¿Quieres continuar?",
-      )
-    ) {
+    const trimmedReason = String(disqualificationReason || "").trim();
+    if (!trimmedReason) {
+      setError("La razón de descalificación es obligatoria.");
       return;
     }
 
     setDeletingInteractionId(interaction.id);
-    setOpenInteractionMenuId(null);
     setError("");
     try {
-      const { data } = await api.post(
-        `/api/interactions/${interaction.id}/disqualify`,
-      );
+      const { data } = await api.post(`/api/interactions/${interaction.id}/disqualify`, {
+        reason: trimmedReason,
+      });
       if (detail && Number(detail.id) === Number(interaction.id)) {
         setDetail(data);
         setEditForm(buildEditableForm(data));
@@ -3280,6 +4081,8 @@ function InteractionsPage({ can, currentUser }) {
           buildInitialResolutionForm(data, options, currentUser),
         );
       }
+      await loadLeadOutcomeCatalogs(data.analysisStatus);
+      closeDisqualifyInteractionModal();
       setSuccess("Lead descalificado");
       await loadInteractions();
     } catch (err) {
@@ -3575,7 +4378,7 @@ function InteractionsPage({ can, currentUser }) {
         onClose={resetCreateForm}
         onSubmit={handleCreate}
         creating={creating}
-        isUploadingFiles={createUploadingFilesCount > 0}
+        isUploadingFiles={createIsUploadingFiles}
         setCreateInfoMessage={setCreateInfoMessage}
         leadSource={createLeadSource}
         setLeadSource={setCreateLeadSource}
@@ -3616,6 +4419,11 @@ function InteractionsPage({ can, currentUser }) {
         onDeleteDocument={handleDeleteDocument}
         onResolve={openResolveConfirmation}
         onReanalyze={handleReanalyze}
+        leadOutcomeCatalogs={leadOutcomeCatalogs}
+        onOpenLeadCallOutcomeModal={openLeadCallOutcomeModal}
+        canManageLeadCallOutcome={Boolean(
+          canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
+        )}
         canAnalyze={Boolean(
           canAnalyze &&
           detail &&
@@ -3634,6 +4442,26 @@ function InteractionsPage({ can, currentUser }) {
         onConfirm={handleResolve}
         resolving={resolving}
         preview={resolveConfirmationPreview}
+      />
+
+      <LeadCallOutcomeModal
+        key={`${detail?.id || "lead"}-${showLeadCallOutcomeModal ? "open" : "closed"}`}
+        isOpen={showLeadCallOutcomeModal}
+        detail={detail}
+        catalogs={leadOutcomeCatalogs}
+        onClose={closeLeadCallOutcomeModal}
+        onSubmit={handleSaveLeadCallOutcome}
+        saving={savingLeadOutcome}
+      />
+
+      <DisqualifyInteractionModal
+        isOpen={showDisqualifyModal}
+        interaction={disqualifyTarget}
+        reason={disqualificationReason}
+        onReasonChange={setDisqualificationReason}
+        onClose={closeDisqualifyInteractionModal}
+        onConfirm={handleDisqualifyInteraction}
+        saving={deletingInteractionId === Number(disqualifyTarget?.id || 0)}
       />
 
       <div className="roles-page-header">
@@ -3928,7 +4756,7 @@ function InteractionsPage({ can, currentUser }) {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  void handleDisqualifyInteraction(item);
+                                  openDisqualifyInteractionModal(item);
                                 }}
                                 disabled={deletingInteractionId === item.id}
                               >

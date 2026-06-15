@@ -18,6 +18,8 @@ import {
 } from "../ai-usage/service.js";
 import { createDocumentStorage } from "./storage.js";
 
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
+
 const storage = createDocumentStorage();
 const PIPELINE_VERSION = "v1";
 
@@ -1541,9 +1543,10 @@ async function loadSellerUsers() {
          INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
          INNER JOIN permissions p ON p.id = rp.permission_id
          WHERE ur.user_id = u.id
-           AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+           AND p.code = ?
        )
      ORDER BY u.full_name`,
+    [commercialSellerEligibilityPermission],
   );
 }
 

@@ -12,6 +12,13 @@ const ALLOWED_OPPORTUNITY_STAGE_QUESTION_RESPONSE_TYPES = new Set([
 const contactGlobalReadPermission = "contactos.read_all";
 const opportunityGlobalReadPermission = "oportunidades.read_all";
 const accountGlobalReadPermission = "cuentas.read_all";
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
+const opportunityCatalogAccessPermissions = [
+  "oportunidades.read",
+  "oportunidades.read_all",
+  "oportunidades.create",
+  "oportunidades.request",
+];
 let ensureQuotationDeliveryTimesCatalogPromise;
 let ensureQuotationValidityCatalogPromise;
 let ensureQuotationWarrantyCatalogPromise;
@@ -873,7 +880,7 @@ router.get(
 
 router.get(
   "/opportunity-accounts",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (req, res) => {
     const params = [];
     const ownershipJoin = applyOwnedAccountScope({
@@ -897,7 +904,7 @@ router.get(
 
 router.get(
   "/opportunity-contacts",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (req, res) => {
     const params = [];
     const ownershipJoin = applyOwnedAccountScope({
@@ -925,7 +932,7 @@ router.get(
 
 router.get(
   "/opportunity-seller-users",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (req, res) => {
     const restrictToCurrentSeller =
       hasSellerRole(req.user) && !hasGlobalOpportunityReadScope(req.user);
@@ -939,12 +946,14 @@ router.get(
            FROM user_roles ur
            INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
            INNER JOIN permissions p ON p.id = rp.permission_id
-           WHERE ur.user_id = u.id
-               AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+              WHERE ur.user_id = u.id
+               AND p.code = ?
          )
          ${restrictToCurrentSeller ? "AND u.id = ?" : ""}
        ORDER BY u.full_name`,
-      restrictToCurrentSeller ? [Number(req.user.id)] : [],
+      restrictToCurrentSeller
+        ? [commercialSellerEligibilityPermission, Number(req.user.id)]
+        : [commercialSellerEligibilityPermission],
     );
     res.json(rows);
   },
@@ -952,7 +961,7 @@ router.get(
 
 router.get(
   "/opportunity-presales-users",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (_req, res) => {
     const rows = await query(
       `SELECT DISTINCT u.id, u.full_name, u.email
@@ -969,7 +978,7 @@ router.get(
 
 router.get(
   "/opportunity-business-lines",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name FROM opportunity_business_lines WHERE is_active = 1 ORDER BY name",
@@ -980,7 +989,7 @@ router.get(
 
 router.get(
   "/opportunity-sales-stages",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name, stage_order FROM opportunity_sales_stages WHERE is_active = 1 ORDER BY stage_order",
@@ -991,7 +1000,7 @@ router.get(
 
 router.get(
   "/opportunity-commercial-statuses",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name FROM opportunity_commercial_statuses WHERE is_active = 1 ORDER BY id",
@@ -1333,7 +1342,7 @@ router.post(
 
 router.get(
   "/opportunity-activation-statuses",
-  requirePermission("oportunidades.read"),
+  requireAnyPermission(opportunityCatalogAccessPermissions),
   async (_req, res) => {
     const rows = await query(
       "SELECT id, code, name FROM opportunity_activation_statuses WHERE is_active = 1 ORDER BY id",

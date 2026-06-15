@@ -87,6 +87,70 @@ async function ensureInteractionLeadColumns() {
     );
   }
 
+  if (!(await columnExists("interactions", "disqualification_reason"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN disqualification_reason LONGTEXT NULL
+       AFTER resolved_at`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_substatus_code"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_substatus_code VARCHAR(80) NULL
+       AFTER disqualification_reason`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_reason_code"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_reason_code VARCHAR(80) NULL
+       AFTER lead_substatus_code`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_required_action_code"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_required_action_code VARCHAR(80) NULL
+       AFTER lead_reason_code`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_commercial_comment"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_commercial_comment LONGTEXT NULL
+       AFTER lead_required_action_code`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_next_action_due_at"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_next_action_due_at DATETIME(3) NULL
+       AFTER lead_commercial_comment`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_referred_contact_name"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_referred_contact_name VARCHAR(255) NULL
+       AFTER lead_next_action_due_at`,
+    );
+  }
+
+  if (!(await columnExists("interactions", "lead_referred_area_name"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_referred_area_name VARCHAR(255) NULL
+       AFTER lead_referred_contact_name`,
+    );
+  }
+
   if (
     !(await indexExists("interactions", "idx_interactions_processing_created"))
   ) {
@@ -172,6 +236,14 @@ const INTERACTION_SCHEMA_STATEMENTS = [
     seller_user_id BIGINT UNSIGNED NULL,
     analyzed_at DATETIME(3) NULL,
     resolved_at DATETIME(3) NULL,
+    disqualification_reason LONGTEXT NULL,
+    lead_substatus_code VARCHAR(80) NULL,
+    lead_reason_code VARCHAR(80) NULL,
+    lead_required_action_code VARCHAR(80) NULL,
+    lead_commercial_comment LONGTEXT NULL,
+    lead_next_action_due_at DATETIME(3) NULL,
+    lead_referred_contact_name VARCHAR(255) NULL,
+    lead_referred_area_name VARCHAR(255) NULL,
     created_by BIGINT UNSIGNED NOT NULL,
     updated_by BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(3) NOT NULL DEFAULT NOW(3),

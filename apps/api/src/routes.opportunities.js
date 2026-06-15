@@ -285,22 +285,14 @@ const opportunityCreatePermissions = [
   "oportunidades.request",
 ];
 const opportunityGlobalReadPermission = "oportunidades.read_all";
-const sellerCapabilityPermissions = [
-  "oportunidades.read",
-  "oportunidades.read_all",
-  "oportunidades.create",
-  "oportunidades.request",
-  "oportunidades.update",
-];
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 function hasGlobalAccountReadScope(user) {
   return user?.permissionSet?.has(opportunityGlobalReadPermission);
 }
 
 function hasSellerCapability(user) {
-  return sellerCapabilityPermissions.some((permission) =>
-    user?.permissionSet?.has(permission),
-  );
+  return user?.permissionSet?.has(commercialSellerEligibilityPermission);
 }
 
 function applyOwnedAccountScope({ user, accountExpression, params }) {
@@ -1501,17 +1493,17 @@ async function validateOpportunityRelations({
          INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
          INNER JOIN permissions p ON p.id = rp.permission_id
          WHERE ur.user_id = u.id
-           AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+           AND p.code = ?
        )
      LIMIT 1`,
-    [sellerUserId],
+    [sellerUserId, commercialSellerEligibilityPermission],
   );
 
   if (!sellerRows.length) {
     return {
       ok: false,
       status: 400,
-      message: "El vendedor debe tener permisos de oportunidades",
+      message: "El vendedor debe ser elegible comercialmente",
     };
   }
 

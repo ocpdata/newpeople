@@ -22,6 +22,7 @@ const accountInteractionAccessPermissions = [
   ...accountWritePermissions,
 ];
 const opportunityCreatePermissions = ["oportunidades.create"];
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 const interactionSchema = z.object({
   interactionTypeId: z.number().int().positive(),
@@ -371,16 +372,16 @@ async function validateOpportunityRelations({
          INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
          INNER JOIN permissions p ON p.id = rp.permission_id
          WHERE ur.user_id = u.id
-           AND p.code IN ('oportunidades.read', 'oportunidades.read_all', 'oportunidades.create', 'oportunidades.request', 'oportunidades.update')
+           AND p.code = ?
        )
      LIMIT 1`,
-    [Number(sellerUserId)],
+    [Number(sellerUserId), commercialSellerEligibilityPermission],
   );
   if (!sellerRows.length) {
     return {
       ok: false,
       status: 400,
-      message: "El vendedor debe tener permisos de oportunidades",
+      message: "El vendedor debe ser elegible comercialmente",
     };
   }
 

@@ -10,6 +10,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Roles y permisos](./roles.md)
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
+- [Leads](./leads.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Cotizaciones](./cotizaciones.md)
@@ -44,6 +45,9 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
   apertura de edicion por clic en fila, bloqueo visual durante guardado y
   prevencion automatica de duplicados;
   paginacion con selector 10 / 50 / 100 registros por pagina.
+- Leads: documento nuevo del modulo de interacciones con carga documental,
+  analisis manual, resolucion de cuenta/contactos/oportunidad, razon de
+  descalificacion y seguimiento comercial del lead.
 - Proveedores: modulo documentado con reglas de proveedor, listas de precios,
   moneda y tipo unico por lista, y composicion/reactivacion automatica de
   `Bundle`.

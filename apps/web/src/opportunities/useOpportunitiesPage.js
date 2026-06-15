@@ -9,13 +9,8 @@ const DOCUMENT_SESSION_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
-const SELLER_CAPABILITY_PERMISSION_CODES = [
-  "oportunidades.read",
-  "oportunidades.read_all",
-  "oportunidades.create",
-  "oportunidades.request",
-  "oportunidades.update",
-];
+const COMMERCIAL_SELLER_ELIGIBILITY_PERMISSION =
+  "comercial.seller.eligible";
 
 function isDocumentProcessingPending(session, documents) {
   const sessionStatus = normalizeText(session?.status);
@@ -398,10 +393,9 @@ export function useOpportunitiesPage({
   const canRequestOpportunities = explicitOpportunityPermissions.has(
     "oportunidades.request",
   );
-  const currentUserHasSellerCapability =
-    SELLER_CAPABILITY_PERMISSION_CODES.some((permissionCode) =>
-      explicitOpportunityPermissions.has(permissionCode),
-    );
+  const currentUserHasSellerCapability = explicitOpportunityPermissions.has(
+    COMMERCIAL_SELLER_ELIGIBILITY_PERMISSION,
+  );
   const canCreateOrRequestOpportunities =
     canDirectCreateOpportunities ||
     (canRequestOpportunities && opportunitiesPendingEnabled);
@@ -2703,7 +2697,7 @@ export function useOpportunitiesPage({
     }
 
     if (!isPermittedSellerUserId(form.sellerUserId)) {
-      setError("Selecciona un vendedor con permisos vigentes de oportunidades");
+      setError("Selecciona un vendedor elegible comercialmente");
       return;
     }
 
@@ -2928,7 +2922,7 @@ export function useOpportunitiesPage({
       return;
     }
     if (!isPermittedSellerUserId(form.sellerUserId)) {
-      setError("Selecciona un vendedor con permisos vigentes de oportunidades");
+      setError("Selecciona un vendedor elegible comercialmente");
       return;
     }
 
