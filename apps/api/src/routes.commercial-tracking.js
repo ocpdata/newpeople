@@ -30,6 +30,46 @@ const STAGE_SLA_DAYS = {
   waiting: 3,
 };
 
+const FORECAST_STAGE_WEIGHTS = {
+  contacto_inicial: 0.05,
+  identificacion_oportunidad: 0.1,
+  desarrollo: 0.2,
+  cotizacion: 0.4,
+  demostracion: 0.55,
+  negociacion: 0.75,
+  waiting: 0.65,
+  ganada: 1,
+  perdida: 0,
+  anulada: 0,
+};
+
+const FORECAST_QUALITY_FACTORS = {
+  excellent: 1.15,
+  good: 1,
+  medium: 0.75,
+  weak: 0.45,
+  critical: 0.15,
+};
+
+const FORECAST_STAGE_ORDER = {
+  contacto_inicial: 1,
+  identificacion_oportunidad: 2,
+  desarrollo: 3,
+  cotizacion: 4,
+  demostracion: 5,
+  negociacion: 6,
+  waiting: 7,
+  ganada: 8,
+  perdida: 9,
+  anulada: 10,
+};
+
+const FORECAST_CATEGORY_LABELS = {
+  committed: "Comprometido",
+  probable: "Probable",
+  weak: "Debil",
+};
+
 const NEXT_STEP_ACTION_TYPES = [
   "next_step",
   "follow_up",
@@ -214,6 +254,15 @@ function toAmount(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function formatCompactCurrency(value) {
+  return new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
 async function listScopedOpportunities(user, filters = {}) {
   const params = [];
   const ownershipJoin = buildOwnershipJoin(user, params);
@@ -253,10 +302,11 @@ async function listScopedOpportunities(user, filters = {}) {
     `SELECT o.id, o.name, o.account_id, o.amount_usd, o.close_date,
             o.sales_stage_id, o.commercial_status_id, o.activation_status_id,
             o.business_line_id, o.seller_user_id, o.created_at, o.updated_at,
-            o.commercial_closed_at,
+            o.commercial_closed_at, o.commercial_close_reason,
             a.name AS account_name,
             oss.code AS sales_stage_code,
             oss.name AS sales_stage_name,
+            oss.stage_order AS sales_stage_order,
             ocs.code AS commercial_status_code,
             ocs.name AS commercial_status_name,
             oas.code AS activation_status_code,
@@ -274,6 +324,725 @@ async function listScopedOpportunities(user, filters = {}) {
      ORDER BY o.created_at DESC, o.id DESC`,
     params,
   );
+}
+
+async function listOpportunityLeadOrigins(opportunityIds) {
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT related.opportunity_id,
+            MAX(CASE WHEN related.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS from_qualified_lead
+     FROM (
+       SELECT i.primary_opportunity_id AS opportunity_id, i.analysis_status
+       FROM interactions i
+       WHERE i.primary_opportunity_id IN (${placeholders})
+
+       UNION ALL
+
+       SELECT l.opportunity_id, i.analysis_status
+       FROM interaction_opportunity_links l
+       INNER JOIN interactions i ON i.id = l.interaction_id
+       WHERE l.opportunity_id IN (${placeholders})
+     ) related
+     GROUP BY related.opportunity_id`,
+    [...opportunityIds, ...opportunityIds],
+  ).catch(() => []);
+
+  return rows.reduce((map, row) => {
+    const opportunityId = Number(row.opportunity_id || 0);
+    if (!opportunityId) {
+      return map;
+    }
+    map.set(
+      opportunityId,
+      Number(row.from_qualified_lead || 0) > 0 ? "lead_qualified" : "direct",
+    );
+    return map;
+  }, new Map());
+}
+
+function getForecastStageWeight(stageCode) {
+  return FORECAST_STAGE_WEIGHTS[String(stageCode || "")] || 0;
+}
+
+function getForecastStageOrder(stageCode, fallback = 0) {
+  return Number(FORECAST_STAGE_ORDER[String(stageCode || "")]) || fallback;
+}
+
+function buildCloseTimingFlags(stageOrder, monthRange, closeDate) {
+  const closeDateValue = closeDate ? startOfDay(closeDate) : null;
+  const daysToMonthEnd = getDiffDays(new Date(), monthRange.end);
+  const closesThisMonth =
+    closeDateValue &&
+    closeDateValue >= monthRange.start &&
+    closeDateValue <= monthRange.end;
+
+  return {
+    closesThisMonth: Boolean(closesThisMonth),
+    earlyStageMonthlyClose:
+      Boolean(closesThisMonth) && stageOrder > 0 && stageOrder <= 2,
+    midStageLateMonthlyClose:
+      Boolean(closesThisMonth) &&
+      stageOrder === 3 &&
+      Number.isFinite(daysToMonthEnd) &&
+      daysToMonthEnd <= 10,
+  };
+}
+
+function buildForecastQualityAssessment({
+  openItem,
+  row,
+  monthRange,
+  stageOrder,
+}) {
+  const hasNextStep = Boolean(openItem?.nextStep);
+  const blocked = openItem?.executionStateCode === "bloqueada";
+  const stale = Boolean(openItem?.isStale);
+  const highAmountHighRisk =
+    Number(openItem?.amountUsd || row?.amount_usd || 0) >= 100000 &&
+    ["bloqueada", "sin_conduccion", "esperando_interno"].includes(
+      String(openItem?.executionStateCode || ""),
+    );
+  const timingFlags = buildCloseTimingFlags(stageOrder, monthRange, row?.close_date);
+
+  const issueFlags = {
+    noNextStep: !hasNextStep,
+    blocked,
+    stale,
+    highAmountHighRisk,
+    earlyStageMonthlyClose: timingFlags.earlyStageMonthlyClose,
+    midStageLateMonthlyClose: timingFlags.midStageLateMonthlyClose,
+  };
+
+  const issueCount = Object.values(issueFlags).filter(Boolean).length;
+  const severeContradiction =
+    issueFlags.earlyStageMonthlyClose ||
+    (blocked && stale) ||
+    (blocked && highAmountHighRisk);
+
+  let qualityCode = "good";
+  if (severeContradiction || issueCount >= 3) {
+    qualityCode = "critical";
+  } else if (issueCount === 2) {
+    qualityCode = "weak";
+  } else if (issueCount === 1) {
+    qualityCode = "medium";
+  } else if (
+    hasNextStep &&
+    !blocked &&
+    !stale &&
+    stageOrder >= 5 &&
+    timingFlags.closesThisMonth
+  ) {
+    qualityCode = "excellent";
+  }
+
+  const qualityScoreMap = {
+    excellent: 96,
+    good: 84,
+    medium: 63,
+    weak: 38,
+    critical: 14,
+  };
+
+  return {
+    qualityCode,
+    qualityLabel:
+      qualityCode === "excellent"
+        ? "Excelente"
+        : qualityCode === "good"
+          ? "Buena"
+          : qualityCode === "medium"
+            ? "Media"
+            : qualityCode === "weak"
+              ? "Debil"
+              : "Critica",
+    qualityFactor: FORECAST_QUALITY_FACTORS[qualityCode] || 0,
+    qualityScore: qualityScoreMap[qualityCode] || 0,
+    issueFlags,
+  };
+}
+
+function clampForecastWeight({
+  weight,
+  stageOrder,
+  issueFlags,
+}) {
+  let nextWeight = Math.max(0, Math.min(Number(weight || 0), 0.9));
+
+  if (stageOrder >= 1 && stageOrder <= 3) {
+    nextWeight = Math.min(nextWeight, 0.35);
+  }
+  if (issueFlags.blocked) {
+    nextWeight = Math.min(nextWeight, 0.5);
+  }
+  if (issueFlags.noNextStep) {
+    nextWeight = Math.min(nextWeight, 0.45);
+  }
+  if (issueFlags.stale) {
+    nextWeight = Math.min(nextWeight, 0.35);
+  }
+  if (issueFlags.earlyStageMonthlyClose) {
+    nextWeight = Math.min(nextWeight, 0.15);
+  }
+
+  return toAmount(nextWeight);
+}
+
+function getForecastCategory({
+  weight,
+  stageOrder,
+  issueFlags,
+  executionStateCode,
+}) {
+  if (
+    weight >= 0.7 &&
+    stageOrder >= 5 &&
+    !issueFlags.noNextStep &&
+    !issueFlags.blocked &&
+    !issueFlags.stale &&
+    executionStateCode !== "sin_conduccion"
+  ) {
+    return "committed";
+  }
+
+  if (
+    weight >= 0.35 &&
+    stageOrder >= 3 &&
+    !issueFlags.earlyStageMonthlyClose &&
+    !issueFlags.blocked
+  ) {
+    return "probable";
+  }
+
+  return "weak";
+}
+
+function buildOpportunityRecommendedAction(item) {
+  if (item.issueFlags?.blocked) {
+    return "Destrabar dependencia critica y confirmar responsable del siguiente paso.";
+  }
+  if (item.issueFlags?.noNextStep) {
+    return "Definir siguiente paso con fecha antes de sostener el cierre del mes.";
+  }
+  if (item.issueFlags?.stale) {
+    return "Reactivar la oportunidad con actividad ejecutiva y confirmar vigencia del cierre.";
+  }
+  if (item.issueFlags?.earlyStageMonthlyClose) {
+    return "Refechar el cierre o acelerar la calificacion; hoy el mes esta inflado.";
+  }
+  if (item.issueFlags?.highAmountHighRisk) {
+    return "Escalar revision gerencial por alto monto con riesgo operativo.";
+  }
+  return "Proteger el siguiente paso y validar criterio de avance antes del cierre.";
+}
+
+function summarizeTopReasons(items = []) {
+  const counts = new Map();
+  items.forEach((item) => {
+    const reason = String(item.commercial_close_reason || "").trim();
+    if (!reason) {
+      return;
+    }
+    const current = counts.get(reason) || { reason, total: 0, amountUsd: 0 };
+    current.total += 1;
+    current.amountUsd = toAmount(
+      current.amountUsd + Number(item.amount_usd || 0),
+    );
+    counts.set(reason, current);
+  });
+
+  return Array.from(counts.values())
+    .sort((left, right) => {
+      if (right.total !== left.total) {
+        return right.total - left.total;
+      }
+      return right.amountUsd - left.amountUsd;
+    })
+    .slice(0, 3);
+}
+
+function buildStatusBreakdown(items = [], statusCode) {
+  const filtered = items.filter(
+    (item) => String(item.commercial_status_code || "") === statusCode,
+  );
+  const dominantStage = filtered.reduce((accumulator, item) => {
+    const key = String(item.sales_stage_code || "sin_etapa");
+    const current = accumulator.get(key) || {
+      stageCode: key,
+      stageName: item.sales_stage_name || "Sin etapa",
+      total: 0,
+      amountUsd: 0,
+    };
+    current.total += 1;
+    current.amountUsd = toAmount(
+      current.amountUsd + Number(item.amount_usd || 0),
+    );
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  const dominantStageRow = Array.from(dominantStage.values()).sort((left, right) => {
+    if (right.total !== left.total) {
+      return right.total - left.total;
+    }
+    return right.amountUsd - left.amountUsd;
+  })[0] || null;
+
+  return {
+    total: filtered.length,
+    amountUsd: toAmount(sumAmounts(filtered)),
+    dominantStage: dominantStageRow,
+    topReasons: summarizeTopReasons(filtered),
+  };
+}
+
+function buildDashboardMonthlyRecommendations({
+  monthlyQuotaAmount,
+  realWonAmount,
+  forecastCommittedAmount,
+  forecastProbableAmount,
+  weakAmount,
+  qualitySummary,
+  criticalOpportunities,
+}) {
+  const recommendations = [];
+  const remainingGap = Math.max(
+    Number(monthlyQuotaAmount || 0) -
+      (Number(realWonAmount || 0) +
+        Number(forecastCommittedAmount || 0) +
+        Number(forecastProbableAmount || 0)),
+    0,
+  );
+
+  if (qualitySummary.blocked.amountUsd > 0) {
+    recommendations.push({
+      code: "blocked",
+      title: `Destrabar ${qualitySummary.blocked.total} oportunidades por ${formatCompactCurrency(qualitySummary.blocked.amountUsd)}.`,
+      impactLabel: "Protege el forecast comprometido y probable.",
+    });
+  }
+
+  if (qualitySummary.noNextStep.amountUsd > 0) {
+    recommendations.push({
+      code: "next_step",
+      title: `Definir siguiente paso en ${qualitySummary.noNextStep.total} oportunidades por ${formatCompactCurrency(qualitySummary.noNextStep.amountUsd)}.`,
+      impactLabel: "Evita sostener el mes con cierres sin conduccion visible.",
+    });
+  }
+
+  if (weakAmount > 0) {
+    recommendations.push({
+      code: "weak",
+      title: `Depurar o reemplazar ${formatCompactCurrency(weakAmount)} de forecast debil.`,
+      impactLabel: "Reduce inflado del mes y mejora credibilidad ejecutiva.",
+    });
+  }
+
+  if (remainingGap > 0) {
+    recommendations.push({
+      code: "gap",
+      title: `Cerrar una brecha neta de ${formatCompactCurrency(remainingGap)} con rescate o reemplazo de pipeline.`,
+      impactLabel: "El mes no se cubre solo con ganado y forecast defendible actual.",
+    });
+  }
+
+  if (criticalOpportunities.length > 0) {
+    recommendations.push({
+      code: "critical",
+      title: `Intervenir ${Math.min(criticalOpportunities.length, 3)} oportunidades criticas de mayor impacto.`,
+      impactLabel: "Cambian directamente el semaforo del mes.",
+    });
+  }
+
+  return recommendations.slice(0, 5);
+}
+
+function buildMonthlyQuotaStatus({
+  monthlyQuotaAmount,
+  realWonAmount,
+  forecastCommittedAmount,
+  forecastProbableAmount,
+  weakAmount,
+  forecastGrossAmount,
+  criticalOpportunities,
+}) {
+  const conservative = toAmount(realWonAmount + forecastCommittedAmount);
+  const base = toAmount(conservative + forecastProbableAmount);
+  const extended = toAmount(base + weakAmount);
+  const weakShare = forecastGrossAmount > 0 ? weakAmount / forecastGrossAmount : 0;
+  const concentrated = criticalOpportunities.length > 0 && criticalOpportunities
+    .slice(0, 3)
+    .reduce((sum, item) => sum + Number(item.weightedAmountUsd || 0), 0) >=
+      (realWonAmount + forecastCommittedAmount + forecastProbableAmount) * 0.5;
+
+  let code = "red";
+  if (conservative >= monthlyQuotaAmount && weakShare < 0.2 && !concentrated) {
+    code = "green";
+  } else if (base >= monthlyQuotaAmount && weakShare <= 0.35) {
+    code = "yellow";
+  }
+
+  return {
+    code,
+    label: code === "green" ? "Verde" : code === "yellow" ? "Amarillo" : "Rojo",
+    message:
+      code === "green"
+        ? "El mes esta cubierto con una combinacion defendible de ganado y forecast comprometido."
+        : code === "yellow"
+          ? "El mes puede cumplirse, pero depende de correcciones operativas y oportunidades fragiles."
+          : "El mes no esta cubierto con el forecast actual y requiere reemplazo o rescate inmediato.",
+    concentrated,
+    weakShare: toAmount(weakShare * 100),
+    scenarios: {
+      conservative,
+      base,
+      extended,
+    },
+  };
+}
+
+function buildMonthlyQuotaDashboardPayload({
+  monthRange,
+  quarterQuota,
+  scopedOpportunities,
+  openItems,
+  originByOpportunity,
+}) {
+  const monthlyQuotaAmount = quarterQuota?.quotaAmount
+    ? toAmount(Number(quarterQuota.quotaAmount || 0) / 3)
+    : null;
+  const openItemsByOpportunityId = new Map(
+    openItems.map((item) => [Number(item.opportunityId || 0), item]),
+  );
+
+  const monthItems = scopedOpportunities.filter((item) =>
+    isBetween(item.close_date, monthRange.start, monthRange.end),
+  );
+  const wonItems = monthItems.filter(
+    (item) => String(item.commercial_status_code || "") === "ganada",
+  );
+  const forecastItems = monthItems
+    .filter(
+      (item) =>
+        !["ganada", "perdida", "anulada"].includes(
+          String(item.commercial_status_code || ""),
+        ),
+    )
+    .map((row) => {
+      const opportunityId = Number(row.id || 0);
+      const openItem = openItemsByOpportunityId.get(opportunityId) || null;
+      const stageOrder =
+        Number(row.sales_stage_order || 0) ||
+        getForecastStageOrder(row.sales_stage_code, 0);
+      const assessment = buildForecastQualityAssessment({
+        openItem,
+        row,
+        monthRange,
+        stageOrder,
+      });
+      const baseWeight = getForecastStageWeight(row.sales_stage_code);
+      const unclampedWeight = baseWeight * assessment.qualityFactor;
+      const weight = clampForecastWeight({
+        weight: unclampedWeight,
+        stageOrder,
+        issueFlags: assessment.issueFlags,
+      });
+      const category = getForecastCategory({
+        weight,
+        stageOrder,
+        issueFlags: assessment.issueFlags,
+        executionStateCode: openItem?.executionStateCode,
+      });
+      const amountUsd = Number(row.amount_usd || 0);
+      const weightedAmountUsd = toAmount(amountUsd * weight);
+      const origin = originByOpportunity.get(opportunityId) || "direct";
+
+      return {
+        id: opportunityId,
+        opportunityId,
+        name: row.name || "",
+        accountName: row.account_name || "",
+        sellerUserName: row.seller_user_name || "Sin vendedor",
+        amountUsd,
+        weightedAmountUsd,
+        weight,
+        weightPercent: toAmount(weight * 100),
+        category,
+        categoryLabel: FORECAST_CATEGORY_LABELS[category] || category,
+        stageCode: row.sales_stage_code || "",
+        stageName: row.sales_stage_name || "",
+        stageOrder,
+        closeDate: row.close_date || null,
+        commercialStatusCode: row.commercial_status_code || "",
+        executionStateCode: openItem?.executionStateCode || null,
+        qualityCode: assessment.qualityCode,
+        qualityLabel: assessment.qualityLabel,
+        qualityScore: assessment.qualityScore,
+        issueFlags: assessment.issueFlags,
+        hasNextStep: Boolean(openItem?.nextStep),
+        nextStepTitle: openItem?.nextStep?.title || "",
+        isBlocked: assessment.issueFlags.blocked,
+        isStale: assessment.issueFlags.stale,
+        origin,
+        recommendedAction: buildOpportunityRecommendedAction({
+          issueFlags: assessment.issueFlags,
+        }),
+      };
+    });
+
+  const forecastGrossAmount = toAmount(
+    forecastItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+  );
+  const forecastWeightedAmount = toAmount(
+    forecastItems.reduce(
+      (sum, item) => sum + Number(item.weightedAmountUsd || 0),
+      0,
+    ),
+  );
+  const committedItems = forecastItems.filter((item) => item.category === "committed");
+  const probableItems = forecastItems.filter((item) => item.category === "probable");
+  const weakItems = forecastItems.filter((item) => item.category === "weak");
+  const forecastCommittedAmount = toAmount(
+    committedItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+  );
+  const forecastProbableAmount = toAmount(
+    probableItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+  );
+  const weakAmount = toAmount(
+    weakItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+  );
+  const realWonAmount = toAmount(sumAmounts(wonItems));
+  const totalExpectedAmount = toAmount(realWonAmount + forecastWeightedAmount);
+  const gapAmount =
+    monthlyQuotaAmount === null
+      ? null
+      : toAmount(Math.max(monthlyQuotaAmount - totalExpectedAmount, 0));
+
+  const qualityGroups = {
+    noNextStep: forecastItems.filter((item) => item.issueFlags.noNextStep),
+    blocked: forecastItems.filter((item) => item.issueFlags.blocked),
+    stale: forecastItems.filter((item) => item.issueFlags.stale),
+    inconsistentClose: forecastItems.filter(
+      (item) =>
+        item.issueFlags.earlyStageMonthlyClose ||
+        item.issueFlags.midStageLateMonthlyClose,
+    ),
+    highAmountHighRisk: forecastItems.filter(
+      (item) => item.issueFlags.highAmountHighRisk,
+    ),
+  };
+  const qualitySummary = Object.fromEntries(
+    Object.entries(qualityGroups).map(([key, items]) => [
+      key,
+      {
+        total: items.length,
+        amountUsd: toAmount(
+          items.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+        ),
+      },
+    ]),
+  );
+
+  const stageMap = forecastItems.reduce((accumulator, item) => {
+    const key = String(item.stageCode || "sin_etapa");
+    const current = accumulator.get(key) || {
+      stageCode: key,
+      stageName: item.stageName || "Sin etapa",
+      stageOrder: item.stageOrder || 0,
+      opportunities: 0,
+      grossAmountUsd: 0,
+      weightedAmountUsd: 0,
+      committedCount: 0,
+      probableCount: 0,
+      weakCount: 0,
+      riskLabel: "Sin observaciones",
+    };
+    current.opportunities += 1;
+    current.grossAmountUsd = toAmount(
+      current.grossAmountUsd + Number(item.amountUsd || 0),
+    );
+    current.weightedAmountUsd = toAmount(
+      current.weightedAmountUsd + Number(item.weightedAmountUsd || 0),
+    );
+    if (item.category === "committed") current.committedCount += 1;
+    if (item.category === "probable") current.probableCount += 1;
+    if (item.category === "weak") current.weakCount += 1;
+    if (item.issueFlags.blocked) {
+      current.riskLabel = "Bloqueadas";
+    } else if (item.issueFlags.noNextStep) {
+      current.riskLabel = "Sin siguiente paso";
+    } else if (item.issueFlags.stale) {
+      current.riskLabel = "Sin actividad reciente";
+    }
+    accumulator.set(key, current);
+    return accumulator;
+  }, new Map());
+
+  const originMap = new Map();
+  [...wonItems, ...forecastItems].forEach((item) => {
+    const opportunityId = Number(item.id || item.opportunityId || 0);
+    const origin = item.origin || originByOpportunity.get(opportunityId) || "direct";
+    const current = originMap.get(origin) || {
+      origin,
+      label: origin === "lead_qualified" ? "Desde lead calificado" : "Directas",
+      total: 0,
+      grossAmountUsd: 0,
+      weightedAmountUsd: 0,
+      wonAmountUsd: 0,
+      committedCount: 0,
+      probableCount: 0,
+      weakCount: 0,
+      wonCount: 0,
+    };
+    current.total += 1;
+    current.grossAmountUsd = toAmount(
+      current.grossAmountUsd + Number(item.amount_usd || item.amountUsd || 0),
+    );
+    if (item.weightedAmountUsd !== undefined) {
+      current.weightedAmountUsd = toAmount(
+        current.weightedAmountUsd + Number(item.weightedAmountUsd || 0),
+      );
+      if (item.category === "committed") current.committedCount += 1;
+      if (item.category === "probable") current.probableCount += 1;
+      if (item.category === "weak") current.weakCount += 1;
+    }
+    if (String(item.commercial_status_code || item.commercialStatusCode || "") === "ganada") {
+      current.wonCount += 1;
+      current.wonAmountUsd = toAmount(
+        current.wonAmountUsd + Number(item.amount_usd || item.amountUsd || 0),
+      );
+    }
+    originMap.set(origin, current);
+  });
+
+  const criticalOpportunities = [...forecastItems]
+    .sort((left, right) => {
+      const leftRiskScore =
+        Number(left.issueFlags.blocked) * 4 +
+        Number(left.issueFlags.noNextStep) * 3 +
+        Number(left.issueFlags.stale) * 2 +
+        Number(left.issueFlags.highAmountHighRisk) * 2 +
+        Number(left.issueFlags.earlyStageMonthlyClose) * 3;
+      const rightRiskScore =
+        Number(right.issueFlags.blocked) * 4 +
+        Number(right.issueFlags.noNextStep) * 3 +
+        Number(right.issueFlags.stale) * 2 +
+        Number(right.issueFlags.highAmountHighRisk) * 2 +
+        Number(right.issueFlags.earlyStageMonthlyClose) * 3;
+      if (rightRiskScore !== leftRiskScore) {
+        return rightRiskScore - leftRiskScore;
+      }
+      if (Number(right.amountUsd || 0) !== Number(left.amountUsd || 0)) {
+        return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
+      }
+      return Number(right.weightedAmountUsd || 0) - Number(left.weightedAmountUsd || 0);
+    })
+    .slice(0, 8);
+
+  const status = buildMonthlyQuotaStatus({
+    monthlyQuotaAmount: Number(monthlyQuotaAmount || 0),
+    realWonAmount,
+    forecastCommittedAmount,
+    forecastProbableAmount,
+    weakAmount,
+    forecastGrossAmount,
+    criticalOpportunities,
+  });
+  const recommendations = buildDashboardMonthlyRecommendations({
+    monthlyQuotaAmount: Number(monthlyQuotaAmount || 0),
+    realWonAmount,
+    forecastCommittedAmount,
+    forecastProbableAmount,
+    weakAmount,
+    qualitySummary,
+    criticalOpportunities,
+  });
+
+  return {
+    quota: {
+      quarterAmount: quarterQuota?.quotaAmount ?? null,
+      monthAmount: monthlyQuotaAmount,
+      currencyCode: quarterQuota?.currencyCode || "USD",
+    },
+    headline: {
+      realWonAmount,
+      forecastWeightedAmount,
+      totalExpectedAmount,
+      gapAmount,
+      realAttainmentPercent:
+        monthlyQuotaAmount && monthlyQuotaAmount > 0
+          ? toAmount((realWonAmount / monthlyQuotaAmount) * 100)
+          : null,
+      expectedAttainmentPercent:
+        monthlyQuotaAmount && monthlyQuotaAmount > 0
+          ? toAmount((totalExpectedAmount / monthlyQuotaAmount) * 100)
+          : null,
+      coverageRatio:
+        monthlyQuotaAmount && monthlyQuotaAmount > 0
+          ? toAmount(
+              (forecastCommittedAmount + forecastProbableAmount) /
+                Math.max(monthlyQuotaAmount - realWonAmount, 1),
+            )
+          : null,
+    },
+    forecastBuckets: {
+      committed: {
+        amountUsd: forecastCommittedAmount,
+        weightedAmountUsd: toAmount(
+          committedItems.reduce(
+            (sum, item) => sum + Number(item.weightedAmountUsd || 0),
+            0,
+          ),
+        ),
+        total: committedItems.length,
+      },
+      probable: {
+        amountUsd: forecastProbableAmount,
+        weightedAmountUsd: toAmount(
+          probableItems.reduce(
+            (sum, item) => sum + Number(item.weightedAmountUsd || 0),
+            0,
+          ),
+        ),
+        total: probableItems.length,
+      },
+      weak: {
+        amountUsd: weakAmount,
+        weightedAmountUsd: toAmount(
+          weakItems.reduce(
+            (sum, item) => sum + Number(item.weightedAmountUsd || 0),
+            0,
+          ),
+        ),
+        total: weakItems.length,
+      },
+      grossAmountUsd: forecastGrossAmount,
+      weightedAmountUsd: forecastWeightedAmount,
+    },
+    status,
+    scenarios: {
+      conservativeAmount: status.scenarios.conservative,
+      baseAmount: status.scenarios.base,
+      extendedAmount: status.scenarios.extended,
+    },
+    qualitySummary,
+    stageFunnel: Array.from(stageMap.values()).sort(
+      (left, right) => left.stageOrder - right.stageOrder,
+    ),
+    losses: buildStatusBreakdown(monthItems, "perdida"),
+    cancelled: buildStatusBreakdown(monthItems, "anulada"),
+    originSummary: Array.from(originMap.values()).sort((left, right) =>
+      String(left.label).localeCompare(String(right.label), "es", {
+        sensitivity: "base",
+      }),
+    ),
+    criticalOpportunities,
+    recommendations,
+  };
 }
 
 async function listNextSteps(opportunityIds) {
@@ -1115,6 +1884,18 @@ async function buildForecastMonthlyPayload(user, params = {}) {
     referenceDate: monthRange.start,
     sellerUserId,
   });
+  const originByOpportunity = await listOpportunityLeadOrigins(
+    scopedOpportunities
+      .map((item) => Number(item.id || 0))
+      .filter(Boolean),
+  );
+  const dashboardMonthly = buildMonthlyQuotaDashboardPayload({
+    monthRange,
+    quarterQuota,
+    scopedOpportunities,
+    openItems,
+    originByOpportunity,
+  });
 
   return {
     meta: {
@@ -1173,6 +1954,7 @@ async function buildForecastMonthlyPayload(user, params = {}) {
       highAmountHighRisk,
     },
     quarterQuota,
+    dashboardMonthly,
     forecastOpportunities,
     generationTrend,
     pipelineMovement: Array.from(pipelineMovementMap.values()).sort(

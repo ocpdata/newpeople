@@ -7,6 +7,8 @@ import {
   useLocation,
 } from "react-router-dom";
 import Dashboard from "./Dashboard";
+import DashboardHomePage from "./DashboardHomePage";
+import DashboardsPage from "./DashboardsPage";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
 import { api } from "./api";
 import { HelpDrawer, HelpFabButton, HelpTourCoach } from "./help/HelpWidgets";
@@ -203,13 +205,51 @@ export default function AppShell({
     can("enablement_comercial.analytics");
   const canAccessManufacturerRegistrations =
     can("registros_fabricantes.read") || can("registros_fabricantes.read_all");
+  const canAccessAnyDashboard =
+    canAccessCommercialTracking ||
+    canAccessCommercialPlanning ||
+    canAccessCommercialDevelopment ||
+    canAccessInteractions;
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
 
   const appRoutes = (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route
+          path="/"
+          element={
+            <DashboardHomePage
+              canAccessCommercialTracking={canAccessCommercialTracking}
+              canAccessCommercialPlanning={canAccessCommercialPlanning}
+              canAccessInteractions={canAccessInteractions}
+              canReadOpportunities={canReadOpportunities}
+              canReadAccounts={canReadAccounts}
+              canReadContacts={canReadContacts}
+            />
+          }
+        />
+        <Route
+          path="/dashboards"
+          element={
+            <DashboardsPage
+              canAccessCommercialTracking={canAccessCommercialTracking}
+              canAccessCommercialPlanning={canAccessCommercialPlanning}
+              canAccessCommercialDevelopment={canAccessCommercialDevelopment}
+              canAccessInteractions={canAccessInteractions}
+            />
+          }
+        />
+        <Route
+          path="/dashboards/cuota-mensual"
+          element={
+            canAccessCommercialTracking ? (
+              <Dashboard canAccessCommercialTracking={canAccessCommercialTracking} />
+            ) : (
+              <Navigate to="/dashboards" />
+            )
+          }
+        />
         <Route
           path="/settings"
           element={
@@ -444,8 +484,13 @@ export default function AppShell({
           <nav>
             <SidebarNavGroup title="General">
               <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
-                Dashboard
+                Inicio
               </GuardedNavLink>
+              {canAccessAnyDashboard ? (
+                <GuardedNavLink to="/dashboards" onBeforeNavigate={confirmRouteChange}>
+                  Dashboards
+                </GuardedNavLink>
+              ) : null}
             </SidebarNavGroup>
 
             {(canReadAccounts ||
