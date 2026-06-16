@@ -4436,6 +4436,60 @@ router.delete(
   },
 );
 
+router.get(
+  "/:interactionId/documents/:documentPublicId/download",
+  requireAnyPermission(interactionReadPermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const rows = await query(
+      `SELECT storage_bucket, storage_key, original_file_name, mime_type
+       FROM documents
+       WHERE public_id = ?
+         AND entity_type = 'interaction'
+         AND entity_id = ?
+         AND is_deleted = 0
+       LIMIT 1`,
+      [req.params.documentPublicId, interactionId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Documento no encontrado" });
+    }
+
+    const fileName = String(rows[0].original_file_name || "documento")
+      .replace(/[\r\n]/g, " ")
+      .replace(/"/g, "'")
+      .trim();
+    const mimeType = String(rows[0].mime_type || "application/octet-stream")
+      .trim()
+      .toLowerCase();
+
+    const buffer = await storage.readBuffer({
+      storageKey: rows[0].storage_key,
+      storageBucket: rows[0].storage_bucket,
+    });
+
+    res.setHeader("Content-Type", mimeType || "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName || "documento"}"; filename*=UTF-8''${encodeURIComponent(fileName || "documento")}`,
+    );
+    res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+    return res.send(buffer);
+  },
+);
+
 router.delete(
   "/:interactionId",
   requireAnyPermission(interactionUpdatePermissions),

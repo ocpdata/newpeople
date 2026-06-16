@@ -1745,7 +1745,9 @@ function InteractionDetailModal({
   addingDocuments,
   canAddDocuments,
   deletingDocumentPublicId,
+  downloadingDocumentPublicId,
   canDeleteDocuments,
+  onDownloadDocument,
   onAddDocuments,
   onDeleteDocument,
   onResolve,
@@ -2066,22 +2068,90 @@ function InteractionDetailModal({
                           </p>
                         </div>
                         {canDeleteDocuments ? (
+                          <div className="interaction-document-actions">
+                            {onDownloadDocument ? (
+                              <button
+                                type="button"
+                                className="interaction-detail-icon-btn interaction-document-download-btn"
+                                onClick={() => onDownloadDocument(document)}
+                                disabled={
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
+                                }
+                                aria-label={
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
+                                    ? "Descargando archivo"
+                                    : "Descargar archivo"
+                                }
+                                title={
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
+                                    ? "Descargando..."
+                                    : "Descargar archivo"
+                                }
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M12 4v10" />
+                                  <path d="M8.5 10.5 12 14l3.5-3.5" />
+                                  <path d="M5 19h14" />
+                                </svg>
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="interaction-detail-icon-btn interaction-document-delete-btn"
+                              onClick={() =>
+                                onDeleteDocument(document.publicId)
+                              }
+                              disabled={
+                                deletingDocumentPublicId === document.publicId
+                              }
+                              aria-label={
+                                deletingDocumentPublicId === document.publicId
+                                  ? "Eliminando archivo"
+                                  : "Eliminar archivo"
+                              }
+                              title={
+                                deletingDocumentPublicId === document.publicId
+                                  ? "Eliminando..."
+                                  : "Eliminar archivo"
+                              }
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                focusable="false"
+                                aria-hidden="true"
+                              >
+                                <path d="M5 7h14" />
+                                <path d="M9 7V5h6v2" />
+                                <path d="M8 7l1 12h6l1-12" />
+                                <path d="M10 11v5" />
+                                <path d="M14 11v5" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : onDownloadDocument ? (
                           <button
                             type="button"
-                            className="interaction-detail-icon-btn interaction-document-delete-btn"
-                            onClick={() => onDeleteDocument(document.publicId)}
+                            className="interaction-detail-icon-btn interaction-document-download-btn"
+                            onClick={() => onDownloadDocument(document)}
                             disabled={
-                              deletingDocumentPublicId === document.publicId
+                              downloadingDocumentPublicId === document.publicId
                             }
                             aria-label={
-                              deletingDocumentPublicId === document.publicId
-                                ? "Eliminando archivo"
-                                : "Eliminar archivo"
+                              downloadingDocumentPublicId === document.publicId
+                                ? "Descargando archivo"
+                                : "Descargar archivo"
                             }
                             title={
-                              deletingDocumentPublicId === document.publicId
-                                ? "Eliminando..."
-                                : "Eliminar archivo"
+                              downloadingDocumentPublicId === document.publicId
+                                ? "Descargando..."
+                                : "Descargar archivo"
                             }
                           >
                             <svg
@@ -2089,11 +2159,9 @@ function InteractionDetailModal({
                               focusable="false"
                               aria-hidden="true"
                             >
-                              <path d="M5 7h14" />
-                              <path d="M9 7V5h6v2" />
-                              <path d="M8 7l1 12h6l1-12" />
-                              <path d="M10 11v5" />
-                              <path d="M14 11v5" />
+                              <path d="M12 4v10" />
+                              <path d="M8.5 10.5 12 14l3.5-3.5" />
+                              <path d="M5 19h14" />
                             </svg>
                           </button>
                         ) : null}
@@ -3856,6 +3924,8 @@ function InteractionsPage({ can, currentUser }) {
   const [reanalyzing, setReanalyzing] = useState(false);
   const [addingDocuments, setAddingDocuments] = useState(false);
   const [deletingDocumentPublicId, setDeletingDocumentPublicId] = useState("");
+  const [downloadingDocumentPublicId, setDownloadingDocumentPublicId] =
+    useState("");
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
   const [showLeadCallOutcomeModal, setShowLeadCallOutcomeModal] =
@@ -4482,6 +4552,55 @@ function InteractionsPage({ can, currentUser }) {
       setError(getApiErrorMessage(err, "No fue posible eliminar el archivo"));
     } finally {
       setDeletingDocumentPublicId("");
+    }
+  }
+
+  async function handleDownloadDocument(documentItem) {
+    if (!detail?.id || !documentItem?.publicId) return;
+    setDownloadingDocumentPublicId(String(documentItem.publicId));
+    setError("");
+    try {
+      const response = await api.get(
+        `/api/interactions/${detail.id}/documents/${documentItem.publicId}/download`,
+        {
+          responseType: "blob",
+          timeout: 60000,
+        },
+      );
+
+      const contentDisposition = String(
+        response?.headers?.["content-disposition"] || "",
+      );
+      const utfFileNameMatch = contentDisposition.match(
+        /filename\*=UTF-8''([^;]+)/i,
+      );
+      const plainFileNameMatch = contentDisposition.match(
+        /filename="?([^";]+)"?/i,
+      );
+      const decodedFileName = utfFileNameMatch?.[1]
+        ? decodeURIComponent(utfFileNameMatch[1])
+        : plainFileNameMatch?.[1] ||
+          documentItem.originalFileName ||
+          "documento";
+
+      const blob = new Blob([response.data], {
+        type:
+          String(response?.headers?.["content-type"] || "").trim() ||
+          documentItem.mimeType ||
+          "application/octet-stream",
+      });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = objectUrl;
+      link.download = decodedFileName;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible descargar el archivo"));
+    } finally {
+      setDownloadingDocumentPublicId("");
     }
   }
 
@@ -5428,11 +5547,13 @@ function InteractionsPage({ can, currentUser }) {
           canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
         )}
         deletingDocumentPublicId={deletingDocumentPublicId}
+        downloadingDocumentPublicId={downloadingDocumentPublicId}
         canDeleteDocuments={Boolean(
           canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
         )}
         onAddDocuments={handleAddDocuments}
         onDeleteDocument={handleDeleteDocument}
+        onDownloadDocument={handleDownloadDocument}
         onResolve={openResolveConfirmation}
         onReanalyze={handleReanalyze}
         leadOutcomeCatalogs={leadOutcomeCatalogs}

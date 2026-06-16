@@ -9665,6 +9665,29 @@ button:disabled {
   color: #8f251d;
 }
 
+.interaction-document-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.interaction-document-download-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: #1d5a8e;
+  border-color: #b9d3ea;
+  background: #eff7ff;
+  flex-shrink: 0;
+}
+
+.interaction-document-download-btn:hover:not(:disabled) {
+  background: #deefff;
+  border-color: #91bce0;
+  color: #144875;
+}
+
 .interaction-metric-chip {
   background: #f9fbfe;
   color: #4d6684;
