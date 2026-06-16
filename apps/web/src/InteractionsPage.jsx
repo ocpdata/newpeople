@@ -55,6 +55,8 @@ const LEAD_QUEUE_FILTER_OPTIONS = [
     label: "Asignados sin oportunidad",
   },
 ];
+const EMPTY_LEAD_SUBSTATUS_FILTER = "__none__";
+const OPERATIONS_SITUATION_PAGE_SIZE = 10;
 
 function sortLeadStatusFilters(values) {
   if (!Array.isArray(values)) return [];
@@ -111,6 +113,266 @@ function formatDateTime(value) {
   });
 }
 
+function getMondayOfWeek(dateStr) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const day = d.getUTCDay() || 7; // Mon=1 … Sun=7
+  d.setUTCDate(d.getUTCDate() - day + 1);
+  return d;
+}
+
+function getIsoWeekKey(date) {
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum); // nearest Thursday
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function buildFullWeekRange(fromStr, toStr, dataRows) {
+  if (!fromStr || !toStr) return dataRows;
+  const toDate = new Date(toStr + "T00:00:00Z");
+  const dataMap = new Map((dataRows || []).map((r) => [r.weekKey, r]));
+  const result = [];
+  let cursor = getMondayOfWeek(fromStr);
+  while (cursor <= toDate) {
+    const key = getIsoWeekKey(cursor);
+    const existing = dataMap.get(key);
+    result.push({
+      weekKey: key,
+      total: Number(existing?.total || 0),
+      qualifiedTotal: Number(existing?.qualifiedTotal || 0),
+    });
+    cursor = new Date(cursor.getTime() + 7 * 24 * 3600 * 1000);
+  }
+  return result;
+}
+
+function getMondayDateFromWeekKey(weekKey) {
+  // Returns the Monday date of an ISO week string "YYYY-Www"
+  const match = String(weekKey || "").match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  // Jan 4 is always in ISO week 1
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const monday = new Date(
+    jan4.getTime() + (week - 1) * 7 * 86400000 - (jan4Day - 1) * 86400000,
+  );
+  return monday;
+}
+
+function formatWeekDateLabel(weekKey) {
+  const d = getMondayDateFromWeekKey(weekKey);
+  if (!d) return weekKey;
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}`;
+}
+
+function formatIsoWeekLabel(weekKey) {
+  const raw = String(weekKey || "").trim();
+  const match = raw.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return raw || "Semana";
+  return `Sem ${Number(match[2])} · ${match[1]}`;
+}
+
+function LeadWeeklyChart({ rows }) {
+  const W = 600;
+  const H = 220;
+  const padL = 44;
+  const padR = 20;
+  const padT = 28; // extra top for legend
+  const padB = 56;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  if (!rows || rows.length === 0) {
+    return (
+      <div className="lead-weekly-chart-empty">
+        No hay datos para el rango seleccionado.
+      </div>
+    );
+  }
+
+  const maxVal = Math.max(
+    ...rows.map((r) => Math.max(r.total, r.qualifiedTotal || 0)),
+    1,
+  );
+  const ySteps = 4;
+  const rawStep = maxVal / ySteps;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
+  const niceStep = Math.ceil(rawStep / magnitude) * magnitude || 1;
+  const yMax = niceStep * ySteps;
+
+  const n = rows.length;
+  const xStep = n > 1 ? plotW / (n - 1) : plotW;
+
+  function xPos(i) {
+    return padL + (n > 1 ? i * xStep : plotW / 2);
+  }
+  function yPos(val) {
+    return padT + plotH - (val / yMax) * plotH;
+  }
+
+  const pointsTotal = rows.map((r, i) => [xPos(i), yPos(r.total)]);
+  const pointsQual = rows.map((r, i) => [xPos(i), yPos(r.qualifiedTotal || 0)]);
+
+  const polylineTotal = pointsTotal.map((p) => p.join(",")).join(" ");
+  const polylineQual = pointsQual.map((p) => p.join(",")).join(" ");
+
+  const areaPath = [
+    `M ${pointsTotal[0][0]},${padT + plotH}`,
+    ...pointsTotal.map((p) => `L ${p[0]},${p[1]}`),
+    `L ${pointsTotal[pointsTotal.length - 1][0]},${padT + plotH}`,
+    "Z",
+  ].join(" ");
+
+  const yLabels = Array.from({ length: ySteps + 1 }, (_, i) =>
+    Math.round((yMax / ySteps) * i),
+  );
+
+  const maxLabels = Math.max(2, Math.floor(plotW / 38));
+  const xLabelStep = Math.max(1, Math.ceil(n / maxLabels));
+
+  return (
+    <svg
+      className="lead-weekly-chart-svg"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      aria-label="Gráfica de leads creados por semana"
+    >
+      <defs>
+        <linearGradient id="wkAreaGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#0f5cd7" stopOpacity="0.12" />
+          <stop offset="100%" stopColor="#0f5cd7" stopOpacity="0.01" />
+        </linearGradient>
+      </defs>
+
+      {/* Legend */}
+      <g>
+        <circle cx={padL} cy={10} r="4" fill="#0f5cd7" />
+        <text x={padL + 8} y={14} fontSize="9" fill="#3d566e" fontWeight="600">
+          Creados
+        </text>
+        <circle cx={padL + 68} cy={10} r="4" fill="#16a34a" />
+        <text x={padL + 76} y={14} fontSize="9" fill="#3d566e" fontWeight="600">
+          Calificados
+        </text>
+      </g>
+
+      {/* Y grid lines + labels */}
+      {yLabels.map((val) => {
+        const y = yPos(val);
+        return (
+          <g key={val}>
+            <line
+              x1={padL}
+              y1={y}
+              x2={W - padR}
+              y2={y}
+              stroke="#e1e9f3"
+              strokeWidth="1"
+            />
+            <text
+              x={padL - 6}
+              y={y}
+              textAnchor="end"
+              dominantBaseline="middle"
+              fontSize="10"
+              fill="#6a7f97"
+            >
+              {val}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Area fill (total) */}
+      <path d={areaPath} fill="url(#wkAreaGrad)" />
+
+      {/* Line: total creados */}
+      <polyline
+        points={polylineTotal}
+        fill="none"
+        stroke="#0f5cd7"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* Line: calificados */}
+      <polyline
+        points={polylineQual}
+        fill="none"
+        stroke="#16a34a"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        strokeDasharray="4 2"
+      />
+
+      {/* Dots total */}
+      {pointsTotal.map((p, i) => (
+        <g key={`t-${rows[i].weekKey}`}>
+          <circle cx={p[0]} cy={p[1]} r="3" fill="#0f5cd7" />
+          <title>{`${formatWeekDateLabel(rows[i].weekKey)} (${formatIsoWeekLabel(rows[i].weekKey)}): ${rows[i].total} creado${rows[i].total === 1 ? "" : "s"}`}</title>
+        </g>
+      ))}
+
+      {/* Dots calificados */}
+      {pointsQual.map((p, i) => (
+        <g key={`q-${rows[i].weekKey}`}>
+          <circle cx={p[0]} cy={p[1]} r="3" fill="#16a34a" />
+          <title>{`${formatWeekDateLabel(rows[i].weekKey)} (${formatIsoWeekLabel(rows[i].weekKey)}): ${rows[i].qualifiedTotal || 0} calificado${(rows[i].qualifiedTotal || 0) === 1 ? "" : "s"}`}</title>
+        </g>
+      ))}
+
+      {/* X axis labels */}
+      {rows.map((r, i) => {
+        if (i % xLabelStep !== 0 && i !== n - 1) return null;
+        const x = xPos(i);
+        const yBase = padT + plotH + 14;
+        const dateLabel = formatWeekDateLabel(r.weekKey);
+        const yearMatch = String(r.weekKey).match(/^(\d{4})/);
+        const year = yearMatch ? yearMatch[1] : "";
+        const prevYearMatch =
+          i > 0 ? String(rows[i - 1]?.weekKey).match(/^(\d{4})/) : null;
+        const prevYear = prevYearMatch ? prevYearMatch[1] : null;
+        const showYear = i === 0 || year !== prevYear;
+        return (
+          <g key={r.weekKey}>
+            <text
+              x={x}
+              y={yBase}
+              textAnchor="middle"
+              fontSize="7"
+              fontWeight="600"
+              fill="#3d566e"
+            >
+              {dateLabel}
+            </text>
+            {showYear && (
+              <text
+                x={x}
+                y={yBase + 11}
+                textAnchor="middle"
+                fontSize="6"
+                fill="#8fa3b8"
+              >
+                {year}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function LeadDashboardStatCard({
   label,
   value,
@@ -131,7 +393,9 @@ function LeadDashboardStatCard({
       <button type="button" className={className} onClick={onClick}>
         <span className="lead-dashboard-stat-label">{label}</span>
         <strong className="lead-dashboard-stat-value">{value}</strong>
-        {helper ? <span className="lead-dashboard-stat-helper">{helper}</span> : null}
+        {helper ? (
+          <span className="lead-dashboard-stat-helper">{helper}</span>
+        ) : null}
       </button>
     );
   }
@@ -140,7 +404,9 @@ function LeadDashboardStatCard({
     <div className={className}>
       <span className="lead-dashboard-stat-label">{label}</span>
       <strong className="lead-dashboard-stat-value">{value}</strong>
-      {helper ? <span className="lead-dashboard-stat-helper">{helper}</span> : null}
+      {helper ? (
+        <span className="lead-dashboard-stat-helper">{helper}</span>
+      ) : null}
     </div>
   );
 }
@@ -157,7 +423,11 @@ function LeadDashboardQueueTable({
       <div className="lead-dashboard-queue-card-header">
         <div>
           <h3>{title}</h3>
-          <p>{items.length ? `${items.length} lead${items.length === 1 ? "" : "s"} destacados` : emptyLabel}</p>
+          <p>
+            {items.length
+              ? `${items.length} lead${items.length === 1 ? "" : "s"} destacados`
+              : emptyLabel}
+          </p>
         </div>
         <button type="button" className="btn-secondary" onClick={onOpenQueue}>
           Ver bandeja
@@ -180,10 +450,15 @@ function LeadDashboardQueueTable({
                   <td>
                     <div className="lead-dashboard-row-title">
                       <strong>{item.title || "Lead sin título"}</strong>
-                      <span>{item.accountName || getLeadSourceLabel(item.leadSource)}</span>
+                      <span>
+                        {item.accountName ||
+                          getLeadSourceLabel(item.leadSource)}
+                      </span>
                     </div>
                   </td>
-                  <td>{item.sellerName || item.sellerEmail || "Sin vendedor"}</td>
+                  <td>
+                    {item.sellerName || item.sellerEmail || "Sin vendedor"}
+                  </td>
                   <td>
                     {item.nextActionDueAt
                       ? formatDateTime(item.nextActionDueAt)
@@ -204,7 +479,9 @@ function LeadDashboardQueueTable({
           </table>
         </div>
       ) : (
-        <div className="account-opps-empty lead-dashboard-empty-inline">{emptyLabel}</div>
+        <div className="account-opps-empty lead-dashboard-empty-inline">
+          {emptyLabel}
+        </div>
       )}
     </section>
   );
@@ -235,6 +512,16 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Sin fecha";
   return date.toLocaleDateString("es-MX");
+}
+
+function formatLeadOutcomeCode(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "-";
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(" ");
 }
 
 function formatCurrencyUsd(value) {
@@ -684,7 +971,9 @@ function buildLeadCallOutcomeForm(detail, transitionRules) {
         rule.substatusCode === detail?.leadSubstatusCode &&
         rule.reasonCode === detail?.leadReasonCode &&
         rule.requiredActionCode === detail?.leadRequiredActionCode,
-    ) || transitionRules[0] || null;
+    ) ||
+    transitionRules[0] ||
+    null;
 
   return {
     substatusCode: initialRule?.substatusCode || "",
@@ -1030,7 +1319,7 @@ function CreateInteractionModal({
             </button>
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
-                <span className="interaction-create-kicker">Nuevo lead</span>
+                <span className="interaction-create-kicker">Editar lead</span>
                 <div className="account-modal-title-row">
                   <h3 className="modal-title">Crear lead</h3>
                   <ModalInlineHelp helpKey="lead.create" />
@@ -1466,13 +1755,10 @@ function InteractionDetailModal({
   canManageLeadCallOutcome,
 }) {
   const [uploadInputKey, setUploadInputKey] = useState(0);
-  const [showDisqualificationReasonModal, setShowDisqualificationReasonModal] =
-    useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setUploadInputKey((currentValue) => currentValue + 1);
-    setShowDisqualificationReasonModal(false);
   }, [detail?.id, isOpen]);
 
   if (!isOpen || !detail || !editForm || !resolutionForm) return null;
@@ -1624,9 +1910,6 @@ function InteractionDetailModal({
   const interactionDocumentCount = Array.isArray(detail?.documents)
     ? detail.documents.length
     : 0;
-  const disqualificationReason = String(
-    detail?.disqualificationReason || "",
-  ).trim();
   const leadSubstatus = getLeadCatalogEntryByCode(
     leadOutcomeCatalogs?.substatuses,
     detail?.leadSubstatusCode,
@@ -1642,9 +1925,7 @@ function InteractionDetailModal({
   const leadSubstatusGuide = getLeadCallOutcomeSubstatusGuide(
     detail?.leadSubstatusCode,
   );
-  const leadReasonGuide = getLeadCallOutcomeReasonGuide(
-    detail?.leadReasonCode,
-  );
+  const leadReasonGuide = getLeadCallOutcomeReasonGuide(detail?.leadReasonCode);
   const leadRequiredActionGuide = getLeadCallOutcomeActionGuide(
     detail?.leadRequiredActionCode,
   );
@@ -1704,9 +1985,7 @@ function InteractionDetailModal({
             </button>
             <div className="interaction-detail-header-copy">
               <div className="account-modal-title-row">
-                <h3 className="modal-title">
-                  {normalizeLeadDisplayText(detail.title)}
-                </h3>
+                <h3 className="modal-title">Editar lead</h3>
                 <ModalInlineHelp helpKey="lead.edit" />
               </div>
               <p className="roles-subtitle">
@@ -1714,28 +1993,9 @@ function InteractionDetailModal({
               </p>
             </div>
             <div className="interaction-detail-header-actions">
-              {isDisqualifiedLeadStatus(detail.analysisStatus) &&
-              disqualificationReason ? (
-                <button
-                  type="button"
-                  className={statusMeta.className}
-                  onClick={() => setShowDisqualificationReasonModal(true)}
-                  title="Ver razón de descalificación"
-                  aria-label="Ver razón de descalificación"
-                >
-                  {statusMeta.label}
-                </button>
-              ) : (
-                <span className={statusMeta.className}>{statusMeta.label}</span>
-              )}
+              <span className={statusMeta.className}>{statusMeta.label}</span>
             </div>
           </div>
-          <DisqualificationReasonModal
-            isOpen={showDisqualificationReasonModal}
-            interactionTitle={normalizeLeadDisplayText(detail.title)}
-            reason={disqualificationReason}
-            onClose={() => setShowDisqualificationReasonModal(false)}
-          />
           <fieldset
             className="interaction-detail-lock-shell"
             disabled={isAnalysisLocked}
@@ -2004,7 +2264,9 @@ function InteractionDetailModal({
                           }))
                         }
                       >
-                        <option value="link_existing">Vincular existente</option>
+                        <option value="link_existing">
+                          Vincular existente
+                        </option>
                         <option value="ignore">Ignorar</option>
                         <option value="create_new">Crear cuenta</option>
                       </select>
@@ -2894,7 +3156,10 @@ function InteractionDetailModal({
                       <div className="lead-follow-up-meta-row">
                         {detail?.leadNextActionDueAt ? (
                           <span className="interaction-readonly-pill lead-follow-up-meta-pill">
-                            Fecha compromiso: {formatLeadOutcomeDateLabel(detail.leadNextActionDueAt)}
+                            Fecha compromiso:{" "}
+                            {formatLeadOutcomeDateLabel(
+                              detail.leadNextActionDueAt,
+                            )}
                           </span>
                         ) : null}
                         {detail?.leadReferredContactName ? (
@@ -3137,130 +3402,6 @@ function ResolveInteractionConfirmationModal({
   );
 }
 
-function DisqualifyInteractionModal({
-  isOpen,
-  interaction,
-  reason,
-  onReasonChange,
-  onClose,
-  onConfirm,
-  saving,
-}) {
-  if (!isOpen || !interaction) return null;
-
-  const trimmedReason = String(reason || "").trim();
-
-  return (
-    <div
-      className="modal-overlay modal-overlay-elevated"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) onClose();
-      }}
-    >
-      <div className="modal-dialog resolve-confirmation-modal lead-decision-modal lead-decision-modal-danger">
-        <div className="modal-header">
-          <div>
-            <span className="lead-decision-kicker is-danger">Descalificación</span>
-            <h3 className="modal-title">Descalificar lead</h3>
-            <p className="roles-subtitle resolve-confirmation-subtitle">
-              Indica el motivo para descalificar {normalizeLeadDisplayText(interaction.title)}.
-            </p>
-          </div>
-        </div>
-
-        <form
-          className="account-create-form in-modal lead-decision-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!trimmedReason || saving) return;
-            onConfirm();
-          }}
-        >
-          <div className="lead-decision-note is-danger">
-            Esta decisión cerrará el lead como no viable y dejará la razón visible para futuras revisiones.
-          </div>
-          <div className="field-group">
-            <label>
-              Razón de descalificación <span className="required-mark">*</span>
-            </label>
-            <textarea
-              value={reason}
-              onChange={(event) => onReasonChange(event.target.value)}
-              placeholder="Explica por qué este lead no es una oportunidad comercial viable."
-              rows={5}
-              disabled={saving}
-              autoFocus
-            />
-            <p className="field-hint">
-              Este motivo quedará registrado en el lead descalificado.
-            </p>
-          </div>
-
-          <div className="modal-buttons lead-decision-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-              disabled={saving}
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={!trimmedReason || saving}
-            >
-              {saving ? "Guardando..." : "Descalificar lead"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function DisqualificationReasonModal({
-  isOpen,
-  interactionTitle,
-  reason,
-  onClose,
-}) {
-  if (!isOpen || !String(reason || "").trim()) return null;
-
-  return (
-    <div
-      className="modal-overlay modal-overlay-elevated"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="modal-dialog resolve-confirmation-modal lead-decision-modal lead-decision-modal-danger">
-        <div className="modal-header">
-          <div>
-            <span className="lead-decision-kicker is-danger">Historial</span>
-            <h3 className="modal-title">Razón de descalificación</h3>
-            <p className="roles-subtitle resolve-confirmation-subtitle">
-              {interactionTitle}
-            </p>
-          </div>
-        </div>
-
-        <div className="resolve-confirmation-body lead-decision-body">
-          <section className="resolve-confirmation-section lead-decision-panel">
-            <p>{reason}</p>
-          </section>
-        </div>
-
-        <div className="modal-buttons lead-decision-actions">
-          <button type="button" className="btn-primary" onClick={onClose}>
-            Cerrar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function LeadCallOutcomeModal({
   isOpen,
   detail,
@@ -3291,7 +3432,9 @@ function LeadCallOutcomeModal({
   const substatusOptions = useMemo(
     () =>
       transitionRules
-        .map((rule) => getLeadCatalogEntryByCode(substatuses, rule.substatusCode))
+        .map((rule) =>
+          getLeadCatalogEntryByCode(substatuses, rule.substatusCode),
+        )
         .filter(Boolean)
         .filter(
           (entry, index, entries) =>
@@ -3341,7 +3484,12 @@ function LeadCallOutcomeModal({
           entries.findIndex((candidate) => candidate.code === entry.code) ===
           index,
       );
-  }, [requiredActions, selectedReasonCode, selectedSubstatusCode, transitionRules]);
+  }, [
+    requiredActions,
+    selectedReasonCode,
+    selectedSubstatusCode,
+    transitionRules,
+  ]);
 
   const selectedRequiredActionCode = requiredActionOptions.some(
     (entry) => entry.code === form.requiredActionCode,
@@ -3476,7 +3624,9 @@ function LeadCallOutcomeModal({
                   />
                   {selectedReasonGuide || selectedReason ? (
                     <p className="field-hint lead-outcome-modal-selection-hint">
-                      {selectedReasonGuide?.whenToUse || selectedReason?.name || ""}
+                      {selectedReasonGuide?.whenToUse ||
+                        selectedReason?.name ||
+                        ""}
                     </p>
                   ) : null}
                 </section>
@@ -3498,7 +3648,9 @@ function LeadCallOutcomeModal({
                   />
                   {selectedActionGuide || selectedRequiredAction ? (
                     <p className="field-hint lead-outcome-modal-selection-hint">
-                      {selectedActionGuide?.whenToUse || selectedRequiredAction?.name || ""}
+                      {selectedActionGuide?.whenToUse ||
+                        selectedRequiredAction?.name ||
+                        ""}
                     </p>
                   ) : null}
                 </section>
@@ -3531,9 +3683,9 @@ function LeadCallOutcomeModal({
                 </div>
               </section>
 
-              {(selectedRule?.requiresDueDate ||
-                selectedRule?.requiresReferredContact ||
-                selectedRule?.requiresReferredArea) ? (
+              {selectedRule?.requiresDueDate ||
+              selectedRule?.requiresReferredContact ||
+              selectedRule?.requiresReferredArea ? (
                 <section className="account-form-section account-modal-section lead-outcome-side-panel">
                   <strong>Datos obligatorios para esta ruta</strong>
                   {selectedRule?.requiresDueDate ? (
@@ -3642,9 +3794,27 @@ function InteractionsPage({ can, currentUser }) {
   const [periodFilter, setPeriodFilter] = useState("all");
   const [queueFilter, setQueueFilter] = useState("all");
   const [activeView, setActiveView] = useState("inbox");
+  const [weeklyFrom, setWeeklyFrom] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  });
+  const [weeklyTo, setWeeklyTo] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
   const [dashboard, setDashboard] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
+  const [operationsSelectedSubstatusCode, setOperationsSelectedSubstatusCode] =
+    useState("");
+  const [operationsSelectedSubstatusName, setOperationsSelectedSubstatusName] =
+    useState("");
+  const [operationsSituationItems, setOperationsSituationItems] = useState([]);
+  const [operationsSituationPage, setOperationsSituationPage] = useState(1);
+  const [operationsSituationTotal, setOperationsSituationTotal] = useState(0);
+  const [operationsSituationLoading, setOperationsSituationLoading] =
+    useState(false);
+  const [operationsSituationError, setOperationsSituationError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -3688,16 +3858,17 @@ function InteractionsPage({ can, currentUser }) {
   const [deletingDocumentPublicId, setDeletingDocumentPublicId] = useState("");
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
-  const [showDisqualifyModal, setShowDisqualifyModal] = useState(false);
   const [showLeadCallOutcomeModal, setShowLeadCallOutcomeModal] =
     useState(false);
-  const [disqualifyTarget, setDisqualifyTarget] = useState(null);
-  const [disqualificationReason, setDisqualificationReason] = useState("");
   const [showResolveConfirmation, setShowResolveConfirmation] = useState(false);
   const [resolveDuplicateReview, setResolveDuplicateReview] = useState(null);
   const interactionAnalysisPollingTokenRef = useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const operationsSituationTotalPages = Math.max(
+    1,
+    Math.ceil(operationsSituationTotal / OPERATIONS_SITUATION_PAGE_SIZE),
+  );
   const canAccessLeadDashboard =
     can("interacciones.dashboard.access") ||
     can("interacciones.read") ||
@@ -3726,7 +3897,7 @@ function InteractionsPage({ can, currentUser }) {
         ? [{ id: "management", label: "Gestión" }]
         : []),
       ...(canAccessLeadDashboard && canViewOperationsDashboard
-        ? [{ id: "operations", label: "Operativo" }]
+        ? [{ id: "operations", label: "Situación" }]
         : []),
     ],
     [
@@ -3780,28 +3951,6 @@ function InteractionsPage({ can, currentUser }) {
   function closeLeadCallOutcomeModal() {
     if (savingLeadOutcome) return;
     setShowLeadCallOutcomeModal(false);
-  }
-
-  function openDisqualifyInteractionModal(interaction) {
-    if (!interaction?.id) return;
-    if (
-      isQualifiedLeadStatus(interaction.analysisStatus) ||
-      isDisqualifiedLeadStatus(interaction.analysisStatus)
-    ) {
-      return;
-    }
-
-    setOpenInteractionMenuId(null);
-    setDisqualifyTarget(interaction);
-    setDisqualificationReason("");
-    setShowDisqualifyModal(true);
-  }
-
-  function closeDisqualifyInteractionModal() {
-    if (deletingInteractionId === Number(disqualifyTarget?.id || 0)) return;
-    setShowDisqualifyModal(false);
-    setDisqualifyTarget(null);
-    setDisqualificationReason("");
   }
 
   async function ensureCreateUploadSession() {
@@ -3983,48 +4132,61 @@ function InteractionsPage({ can, currentUser }) {
     };
   }, [closeStatusFilterMenu, statusFilterMenuOpen, statusFilters]);
 
-  const loadInteractions = useCallback(async (overrides = {}) => {
-    const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
-    const effectivePageSize = Math.min(
-      50,
-      Math.max(1, Number(overrides.pageSize ?? pageSize) || 10),
-    );
-    const effectiveQuery = String(overrides.query ?? query);
-    const rawEffectiveStatuses = overrides.statuses ?? statusFilters;
-    const effectiveStatuses = normalizeLeadStatusFilters(
-      Array.isArray(rawEffectiveStatuses)
-        ? rawEffectiveStatuses
-        : [rawEffectiveStatuses],
-    );
-    const statusesParam =
-      effectiveStatuses.length === LEAD_STATUS_FILTER_VALUES.length
-        ? "all"
-        : effectiveStatuses.join(",");
-    const effectiveSource = String(overrides.source ?? sourceFilter);
-    const effectivePeriod = String((overrides.period ?? periodFilter) || "all");
-    const effectiveQueue = String((overrides.queue ?? queueFilter) || "all");
+  const loadInteractions = useCallback(
+    async (overrides = {}) => {
+      const effectivePage = Math.max(1, Number(overrides.page ?? page) || 1);
+      const effectivePageSize = Math.min(
+        50,
+        Math.max(1, Number(overrides.pageSize ?? pageSize) || 10),
+      );
+      const effectiveQuery = String(overrides.query ?? query);
+      const rawEffectiveStatuses = overrides.statuses ?? statusFilters;
+      const effectiveStatuses = normalizeLeadStatusFilters(
+        Array.isArray(rawEffectiveStatuses)
+          ? rawEffectiveStatuses
+          : [rawEffectiveStatuses],
+      );
+      const statusesParam =
+        effectiveStatuses.length === LEAD_STATUS_FILTER_VALUES.length
+          ? "all"
+          : effectiveStatuses.join(",");
+      const effectiveSource = String(overrides.source ?? sourceFilter);
+      const effectivePeriod = String(
+        (overrides.period ?? periodFilter) || "all",
+      );
+      const effectiveQueue = String((overrides.queue ?? queueFilter) || "all");
 
-    setLoading(true);
-    try {
-      const { data } = await api.get("/api/interactions", {
-        params: {
-          page: effectivePage,
-          pageSize: effectivePageSize,
-          query: effectiveQuery,
-          statuses: statusesParam,
-          source: effectiveSource,
-          period: effectivePeriod,
-          queue: effectiveQueue,
-        },
-      });
-      setItems(Array.isArray(data?.items) ? data.items : []);
-      setTotal(Number(data?.total || 0));
-    } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible cargar los leads"));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, query, statusFilters, sourceFilter, periodFilter, queueFilter]);
+      setLoading(true);
+      try {
+        const { data } = await api.get("/api/interactions", {
+          params: {
+            page: effectivePage,
+            pageSize: effectivePageSize,
+            query: effectiveQuery,
+            statuses: statusesParam,
+            source: effectiveSource,
+            period: effectivePeriod,
+            queue: effectiveQueue,
+          },
+        });
+        setItems(Array.isArray(data?.items) ? data.items : []);
+        setTotal(Number(data?.total || 0));
+      } catch (err) {
+        setError(getApiErrorMessage(err, "No fue posible cargar los leads"));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      page,
+      pageSize,
+      query,
+      statusFilters,
+      sourceFilter,
+      periodFilter,
+      queueFilter,
+    ],
+  );
 
   const loadDashboard = useCallback(async () => {
     const effectiveStatuses = normalizeLeadStatusFilters(statusFilters);
@@ -4042,6 +4204,8 @@ function InteractionsPage({ can, currentUser }) {
           statuses: statusesParam,
           source: sourceFilter,
           period: periodFilter,
+          weeklyFrom,
+          weeklyTo,
         },
       });
       setDashboard(data || null);
@@ -4052,7 +4216,54 @@ function InteractionsPage({ can, currentUser }) {
     } finally {
       setDashboardLoading(false);
     }
-  }, [periodFilter, query, sourceFilter, statusFilters]);
+  }, [periodFilter, query, sourceFilter, statusFilters, weeklyFrom, weeklyTo]);
+
+  const loadOperationsSituationLeads = useCallback(
+    async ({ substatusCode, substatusName, page: situationPage = 1 }) => {
+      if (!substatusCode) return;
+      const effectiveStatuses = normalizeLeadStatusFilters(statusFilters);
+      const statusesParam =
+        effectiveStatuses.length === LEAD_STATUS_FILTER_VALUES.length
+          ? "all"
+          : effectiveStatuses.join(",");
+
+      setOperationsSituationLoading(true);
+      setOperationsSituationError("");
+      setOperationsSelectedSubstatusCode(substatusCode);
+      setOperationsSelectedSubstatusName(substatusName || "Sin situación");
+      setOperationsSituationPage(situationPage);
+
+      try {
+        const { data } = await api.get("/api/interactions", {
+          params: {
+            page: situationPage,
+            pageSize: OPERATIONS_SITUATION_PAGE_SIZE,
+            query,
+            statuses: statusesParam,
+            source: sourceFilter,
+            period: periodFilter,
+            substatus: substatusCode,
+          },
+        });
+        setOperationsSituationItems(
+          Array.isArray(data?.items) ? data.items : [],
+        );
+        setOperationsSituationTotal(Number(data?.total || 0));
+      } catch (err) {
+        setOperationsSituationItems([]);
+        setOperationsSituationTotal(0);
+        setOperationsSituationError(
+          getApiErrorMessage(
+            err,
+            "No fue posible cargar los leads de esta situación",
+          ),
+        );
+      } finally {
+        setOperationsSituationLoading(false);
+      }
+    },
+    [periodFilter, query, sourceFilter, statusFilters],
+  );
 
   useEffect(() => {
     // Reloading the list on pagination/filter changes is intentional.
@@ -4066,6 +4277,32 @@ function InteractionsPage({ can, currentUser }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadDashboard();
   }, [selectedView, loadDashboard]);
+
+  useEffect(() => {
+    if (selectedView === "operations" && operationsSelectedSubstatusCode) {
+      void loadOperationsSituationLeads({
+        substatusCode: operationsSelectedSubstatusCode,
+        substatusName: operationsSelectedSubstatusName,
+        page: operationsSituationPage,
+      });
+      return;
+    }
+    if (selectedView !== "operations") {
+      setOperationsSelectedSubstatusCode("");
+      setOperationsSelectedSubstatusName("");
+      setOperationsSituationItems([]);
+      setOperationsSituationPage(1);
+      setOperationsSituationTotal(0);
+      setOperationsSituationError("");
+      setOperationsSituationLoading(false);
+    }
+  }, [
+    selectedView,
+    operationsSelectedSubstatusCode,
+    operationsSelectedSubstatusName,
+    operationsSituationPage,
+    loadOperationsSituationLeads,
+  ]);
 
   useEffect(() => {
     if (!error && !success) return undefined;
@@ -4314,45 +4551,6 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
-  async function handleDisqualifyInteraction() {
-    const interaction = disqualifyTarget;
-    if (!interaction?.id) return;
-    if (
-      isQualifiedLeadStatus(interaction.analysisStatus) ||
-      isDisqualifiedLeadStatus(interaction.analysisStatus)
-    ) {
-      return;
-    }
-    const trimmedReason = String(disqualificationReason || "").trim();
-    if (!trimmedReason) {
-      setError("La razón de descalificación es obligatoria.");
-      return;
-    }
-
-    setDeletingInteractionId(interaction.id);
-    setError("");
-    try {
-      const { data } = await api.post(`/api/interactions/${interaction.id}/disqualify`, {
-        reason: trimmedReason,
-      });
-      if (detail && Number(detail.id) === Number(interaction.id)) {
-        setDetail(data);
-        setEditForm(buildEditableForm(data));
-        setResolutionForm(
-          buildInitialResolutionForm(data, options, currentUser),
-        );
-      }
-      await loadLeadOutcomeCatalogs(data.analysisStatus);
-      closeDisqualifyInteractionModal();
-      setSuccess("Lead descalificado");
-      await loadInteractions();
-    } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible descalificar el lead"));
-    } finally {
-      setDeletingInteractionId(null);
-    }
-  }
-
   async function handleReanalyze() {
     if (!detail) return;
     setReanalyzing(true);
@@ -4480,8 +4678,8 @@ function InteractionsPage({ can, currentUser }) {
         ...editForm,
         sellerUserId:
           canSubmitCommercialAssignment && effectiveResolutionForm.sellerUserId
-          ? Number(effectiveResolutionForm.sellerUserId)
-          : null,
+            ? Number(effectiveResolutionForm.sellerUserId)
+            : null,
         assignCurrentUserAsOwnerSeller: canSubmitCommercialAssignment
           ? Boolean(effectiveResolutionForm.assignCurrentUserAsOwnerSeller)
           : false,
@@ -4522,8 +4720,8 @@ function InteractionsPage({ can, currentUser }) {
               selectedSellerUserId:
                 canSubmitCommercialAssignment &&
                 effectiveResolutionForm.sellerUserId
-                ? Number(effectiveResolutionForm.sellerUserId)
-                : null,
+                  ? Number(effectiveResolutionForm.sellerUserId)
+                  : null,
             };
           },
         ),
@@ -4651,9 +4849,17 @@ function InteractionsPage({ can, currentUser }) {
   const dashboardStatusMap = useMemo(
     () =>
       new Map(
-        (dashboard?.statusCounts || []).map((entry) => [entry.code, entry.total]),
+        (dashboard?.statusCounts || []).map((entry) => [
+          entry.code,
+          entry.total,
+        ]),
       ),
     [dashboard],
+  );
+  const weeklyCreatedRows = useMemo(
+    () =>
+      buildFullWeekRange(weeklyFrom, weeklyTo, dashboard?.weeklyCreated || []),
+    [weeklyFrom, weeklyTo, dashboard],
   );
   const executiveCards = [
     {
@@ -4666,17 +4872,28 @@ function InteractionsPage({ can, currentUser }) {
     {
       label: "Activos",
       value: dashboardSummary.activeTotal,
-      helper: formatPercent(dashboardSummary.activeTotal, dashboardSummary.totalVisible),
+      helper: formatPercent(
+        dashboardSummary.activeTotal,
+        dashboardSummary.totalVisible,
+      ),
       tone: "accent",
       onClick: () =>
         applyDashboardDrilldown({
-          statuses: ["created", "lead_unassigned", "lead_assigned", "lead_qualified"],
+          statuses: [
+            "created",
+            "lead_unassigned",
+            "lead_assigned",
+            "lead_qualified",
+          ],
         }),
     },
     {
       label: "Calificados",
       value: dashboardSummary.qualifiedTotal,
-      helper: formatPercent(dashboardSummary.qualifiedTotal, dashboardSummary.totalVisible),
+      helper: formatPercent(
+        dashboardSummary.qualifiedTotal,
+        dashboardSummary.totalVisible,
+      ),
       tone: "success",
       onClick: () => applyDashboardDrilldown({ statuses: ["lead_qualified"] }),
     },
@@ -4690,65 +4907,65 @@ function InteractionsPage({ can, currentUser }) {
   ];
   const managementCards = [
     {
-      label: "Lead no asignado",
-      value: dashboardSummary.unassignedTotal,
-      helper: "Cuenta y contacto resueltos, sin vendedor",
+      label: "Total",
+      value: dashboardSummary.totalVisible,
+      helper: `Periodo ${LEAD_DASHBOARD_PERIOD_OPTIONS.find((option) => option.value === periodFilter)?.label || "Todo"}`,
       tone: "default",
-      onClick: () => applyDashboardDrilldown({ statuses: ["lead_unassigned"] }),
+      onClick: () => applyDashboardDrilldown({ queue: "all" }),
     },
     {
-      label: "Lead asignado",
+      label: "Asignados",
       value: dashboardSummary.assignedTotal,
-      helper: "Vendedor definido, sin oportunidad",
+      helper: formatPercent(
+        dashboardSummary.assignedTotal,
+        dashboardSummary.totalVisible,
+      ),
       tone: "accent",
       onClick: () => applyDashboardDrilldown({ statuses: ["lead_assigned"] }),
     },
     {
-      label: "Estancados",
-      value: dashboardSummary.stagnantTotal,
-      helper: "Sin avance reciente según umbral",
-      tone: "warning",
-      onClick: () => applyDashboardDrilldown({ queue: "stagnant" }),
-    },
-    {
-      label: "Con próximo paso",
-      value: dashboardSummary.withNextActionTotal,
-      helper: formatPercent(dashboardSummary.withNextActionTotal, dashboardSummary.activeTotal),
+      label: "Calificados",
+      value: dashboardSummary.qualifiedTotal,
+      helper: formatPercent(
+        dashboardSummary.qualifiedTotal,
+        dashboardSummary.totalVisible,
+      ),
       tone: "success",
-      onClick: () => applyDashboardDrilldown({ queue: "all" }),
-    },
-  ];
-  const operationsCards = [
-    {
-      label: "Sin contacto",
-      value: dashboardSummary.noContactTotal,
-      helper: "Sin situación registrada",
-      tone: "warning",
-      onClick: () => applyDashboardDrilldown({ queue: "no_contact" }),
+      onClick: () => applyDashboardDrilldown({ statuses: ["lead_qualified"] }),
     },
     {
-      label: "Vencidos",
-      value: dashboardSummary.overdueTotal,
-      helper: "Próximo paso incumplido",
+      label: "Descalificados",
+      value: dashboardSummary.disqualifiedTotal,
+      helper: formatPercent(
+        dashboardSummary.disqualifiedTotal,
+        dashboardSummary.totalVisible,
+      ),
       tone: "danger",
-      onClick: () => applyDashboardDrilldown({ queue: "overdue" }),
-    },
-    {
-      label: "Estancados",
-      value: dashboardSummary.stagnantTotal,
-      helper: "Sin avance comercial relevante",
-      tone: "warning",
-      onClick: () => applyDashboardDrilldown({ queue: "stagnant" }),
-    },
-    {
-      label: "Asignados sin oportunidad",
-      value: dashboardSummary.assignedTotal,
-      helper: "Cola lista para destrabe",
-      tone: "accent",
       onClick: () =>
-        applyDashboardDrilldown({ queue: "assigned_without_opportunity" }),
+        applyDashboardDrilldown({ statuses: ["lead_disqualified"] }),
     },
   ];
+  const operationsSubstatusRows = dashboard?.substatusCounts || [];
+
+  function handleOperationsSubstatusRowClick(row) {
+    const rowCode = String(row?.code || EMPTY_LEAD_SUBSTATUS_FILTER);
+    const rowName = String(row?.name || "Sin situación");
+    if (operationsSelectedSubstatusCode === rowCode) {
+      setOperationsSelectedSubstatusCode("");
+      setOperationsSelectedSubstatusName("");
+      setOperationsSituationItems([]);
+      setOperationsSituationPage(1);
+      setOperationsSituationTotal(0);
+      setOperationsSituationError("");
+      setOperationsSituationLoading(false);
+      return;
+    }
+    void loadOperationsSituationLeads({
+      substatusCode: rowCode,
+      substatusName: rowName,
+      page: 1,
+    });
+  }
 
   function renderDashboardBody() {
     if (dashboardLoading) {
@@ -4756,11 +4973,19 @@ function InteractionsPage({ can, currentUser }) {
     }
 
     if (dashboardError) {
-      return <div className="toast toast-error lead-dashboard-inline-toast">{dashboardError}</div>;
+      return (
+        <div className="toast toast-error lead-dashboard-inline-toast">
+          {dashboardError}
+        </div>
+      );
     }
 
     if (!dashboard) {
-      return <div className="account-opps-empty">Aún no hay métricas disponibles.</div>;
+      return (
+        <div className="account-opps-empty">
+          Aún no hay métricas disponibles.
+        </div>
+      );
     }
 
     if (selectedView === "executive") {
@@ -4776,7 +5001,10 @@ function InteractionsPage({ can, currentUser }) {
             <div className="lead-dashboard-panel-header">
               <div>
                 <h3>Estados actuales del funnel</h3>
-                <p>Haz clic sobre cualquier estado para abrir la bandeja filtrada.</p>
+                <p>
+                  Haz clic sobre cualquier estado para abrir la bandeja
+                  filtrada.
+                </p>
               </div>
             </div>
             <div className="lead-dashboard-status-grid">
@@ -4786,13 +5014,53 @@ function InteractionsPage({ can, currentUser }) {
                   label={status.label}
                   value={dashboardStatusMap.get(status.value) || 0}
                   helper="Abrir bandeja"
-                  tone={status.value === "lead_qualified" ? "success" : status.value === "lead_disqualified" ? "danger" : "default"}
+                  tone={
+                    status.value === "lead_qualified"
+                      ? "success"
+                      : status.value === "lead_disqualified"
+                        ? "danger"
+                        : "default"
+                  }
                   onClick={() =>
-                    applyDashboardDrilldown({ statuses: [status.value], queue: "all" })
+                    applyDashboardDrilldown({
+                      statuses: [status.value],
+                      queue: "all",
+                    })
                   }
                 />
               ))}
             </div>
+          </section>
+
+          <section className="lead-dashboard-panel">
+            <div className="lead-dashboard-panel-header">
+              <div>
+                <h3>Leads creados por semana</h3>
+              </div>
+              <div className="lead-weekly-date-range">
+                <label className="lead-weekly-date-label">
+                  Desde
+                  <input
+                    type="date"
+                    className="lead-weekly-date-input"
+                    value={weeklyFrom}
+                    max={weeklyTo}
+                    onChange={(e) => setWeeklyFrom(e.target.value)}
+                  />
+                </label>
+                <label className="lead-weekly-date-label">
+                  Hasta
+                  <input
+                    type="date"
+                    className="lead-weekly-date-input"
+                    value={weeklyTo}
+                    min={weeklyFrom}
+                    onChange={(e) => setWeeklyTo(e.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+            <LeadWeeklyChart rows={weeklyCreatedRows} />
           </section>
 
           <section className="lead-dashboard-panel">
@@ -4821,7 +5089,10 @@ function InteractionsPage({ can, currentUser }) {
                           type="button"
                           className="lead-dashboard-link-btn"
                           onClick={() =>
-                            applyDashboardDrilldown({ source: row.code, queue: "all" })
+                            applyDashboardDrilldown({
+                              source: row.code,
+                              queue: "all",
+                            })
                           }
                         >
                           {getLeadSourceLabel(row.code)}
@@ -4854,7 +5125,10 @@ function InteractionsPage({ can, currentUser }) {
             <div className="lead-dashboard-panel-header">
               <div>
                 <h3>Seguimiento por vendedor</h3>
-                <p>Lectura táctica del backlog y la conversión visible por responsable.</p>
+                <p>
+                  Lectura táctica del backlog y la conversión visible por
+                  responsable.
+                </p>
               </div>
             </div>
             <div className="lead-dashboard-table-wrap">
@@ -4862,11 +5136,10 @@ function InteractionsPage({ can, currentUser }) {
                 <thead>
                   <tr>
                     <th>Vendedor</th>
-                    <th>Activos</th>
+                    <th>Total</th>
                     <th>Asignados</th>
                     <th>Calificados</th>
-                    <th>Vencidos</th>
-                    <th>Estancados</th>
+                    <th>Descalificados</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -4878,11 +5151,23 @@ function InteractionsPage({ can, currentUser }) {
                           <span>{row.sellerEmail || "Sin correo visible"}</span>
                         </div>
                       </td>
-                      <td>{row.activeTotal}</td>
-                      <td>{row.assignedTotal}</td>
-                      <td>{row.qualifiedTotal}</td>
-                      <td>{row.overdueTotal}</td>
-                      <td>{row.stagnantTotal}</td>
+                      <td>{row.totalVisible}</td>
+                      <td>
+                        {row.assignedTotal} (
+                        {formatPercent(row.assignedTotal, row.totalVisible)})
+                      </td>
+                      <td>
+                        {row.qualifiedTotal} (
+                        {formatPercent(row.qualifiedTotal, row.totalVisible)})
+                      </td>
+                      <td>
+                        {row.disqualifiedTotal || 0} (
+                        {formatPercent(
+                          row.disqualifiedTotal || 0,
+                          row.totalVisible,
+                        )}
+                        )
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -4895,44 +5180,204 @@ function InteractionsPage({ can, currentUser }) {
 
     return (
       <div className="lead-dashboard-stack">
-        <div className="lead-dashboard-stat-grid">
-          {operationsCards.map((card) => (
-            <LeadDashboardStatCard key={card.label} {...card} />
-          ))}
-        </div>
+        <section className="lead-dashboard-panel">
+          <div className="lead-dashboard-panel-header">
+            <div>
+              <h3>Leads por situación</h3>
+              <p>Distribución operativa según la situación actual del lead.</p>
+            </div>
+          </div>
+          <div className="lead-dashboard-table-wrap">
+            <table className="lead-dashboard-table">
+              <thead>
+                <tr>
+                  <th>Situación del lead</th>
+                  <th>Cantidad</th>
+                  <th>Participación</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operationsSubstatusRows.length ? (
+                  operationsSubstatusRows.map((row) => (
+                    <tr
+                      key={row.code || "sin-situacion"}
+                      className={
+                        operationsSelectedSubstatusCode ===
+                        String(row.code || EMPTY_LEAD_SUBSTATUS_FILTER)
+                          ? "lead-dashboard-row-selectable is-selected"
+                          : "lead-dashboard-row-selectable"
+                      }
+                      onClick={() => handleOperationsSubstatusRowClick(row)}
+                    >
+                      <td>{row.name}</td>
+                      <td>{row.total}</td>
+                      <td>
+                        {formatPercent(
+                          row.total,
+                          dashboardSummary.totalVisible,
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3}>
+                      No hay situaciones del lead para los filtros actuales.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        <div className="lead-dashboard-queue-grid">
-          <LeadDashboardQueueTable
-            title="Seguimiento vencido"
-            emptyLabel="No hay leads vencidos con los filtros actuales."
-            items={dashboard.queues?.overdue || []}
-            onOpenLead={(itemId) => void openDetail(itemId)}
-            onOpenQueue={() => applyDashboardDrilldown({ queue: "overdue" })}
-          />
-          <LeadDashboardQueueTable
-            title="Sin contacto"
-            emptyLabel="No hay leads sin contacto registrados con los filtros actuales."
-            items={dashboard.queues?.noContact || []}
-            onOpenLead={(itemId) => void openDetail(itemId)}
-            onOpenQueue={() => applyDashboardDrilldown({ queue: "no_contact" })}
-          />
-          <LeadDashboardQueueTable
-            title="Estancados"
-            emptyLabel="No hay leads estancados con los filtros actuales."
-            items={dashboard.queues?.stagnant || []}
-            onOpenLead={(itemId) => void openDetail(itemId)}
-            onOpenQueue={() => applyDashboardDrilldown({ queue: "stagnant" })}
-          />
-          <LeadDashboardQueueTable
-            title="Asignados sin oportunidad"
-            emptyLabel="No hay leads asignados sin oportunidad en este corte."
-            items={dashboard.queues?.assignedWithoutOpportunity || []}
-            onOpenLead={(itemId) => void openDetail(itemId)}
-            onOpenQueue={() =>
-              applyDashboardDrilldown({ queue: "assigned_without_opportunity" })
-            }
-          />
-        </div>
+        {operationsSelectedSubstatusCode ? (
+          <section className="lead-dashboard-panel">
+            <div className="lead-dashboard-panel-header">
+              <div>
+                <h3>Leads en situación: {operationsSelectedSubstatusName}</h3>
+                <p>
+                  Listado de leads para la situación seleccionada (
+                  {operationsSituationTotal}).
+                </p>
+              </div>
+            </div>
+
+            {operationsSituationError ? (
+              <div className="toast toast-error lead-dashboard-inline-toast">
+                {operationsSituationError}
+              </div>
+            ) : null}
+
+            {operationsSituationLoading ? (
+              <div className="centered">Cargando leads de la situación...</div>
+            ) : operationsSituationItems.length ? (
+              <>
+                <div className="lead-dashboard-table-wrap">
+                  <table className="lead-dashboard-table">
+                    <thead>
+                      <tr>
+                        <th>Lead</th>
+                        <th>Cuenta</th>
+                        <th>Razón</th>
+                        <th>Acción comercial</th>
+                        <th>Vendedor</th>
+                        <th>Estado</th>
+                        <th>Actualizado</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {operationsSituationItems.map((item) => {
+                        const statusMeta = getInteractionStatusMeta(
+                          item.analysisStatus,
+                        );
+                        return (
+                          <tr key={item.id}>
+                            <td>
+                              <div className="lead-dashboard-row-title">
+                                <strong>
+                                  {normalizeLeadDisplayText(item.title) ||
+                                    "Lead sin título"}
+                                </strong>
+                              </div>
+                            </td>
+                            <td>{item.accountName || "-"}</td>
+                            <td>
+                              {item.leadReasonName ||
+                                formatLeadOutcomeCode(item.leadReasonCode)}
+                            </td>
+                            <td>
+                              {item.leadRequiredActionName ||
+                                formatLeadOutcomeCode(
+                                  item.leadRequiredActionCode,
+                                )}
+                            </td>
+                            <td>
+                              {item.sellerName || item.sellerEmail || "-"}
+                            </td>
+                            <td>
+                              <span className={statusMeta.className}>
+                                {statusMeta.label}
+                              </span>
+                            </td>
+                            <td>
+                              {formatDateTime(item.updatedAt || item.createdAt)}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => {
+                                  void openDetail(item.id);
+                                }}
+                              >
+                                Abrir lead
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="users-pagination">
+                  <div className="users-pagination-left">
+                    <span className="users-pagination-info">
+                      {operationsSituationTotal
+                        ? `${(operationsSituationPage - 1) * OPERATIONS_SITUATION_PAGE_SIZE + 1}-${Math.min(operationsSituationPage * OPERATIONS_SITUATION_PAGE_SIZE, operationsSituationTotal)} de ${operationsSituationTotal}`
+                        : "0"}
+                    </span>
+                  </div>
+                  <div className="users-pagination-center">
+                    <button
+                      type="button"
+                      className="users-page-btn"
+                      disabled={operationsSituationPage === 1}
+                      onClick={() =>
+                        void loadOperationsSituationLeads({
+                          substatusCode: operationsSelectedSubstatusCode,
+                          substatusName: operationsSelectedSubstatusName,
+                          page: Math.max(1, operationsSituationPage - 1),
+                        })
+                      }
+                    >
+                      ‹
+                    </button>
+                    <span className="users-pagination-pages">
+                      {operationsSituationPage} /{" "}
+                      {operationsSituationTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="users-page-btn"
+                      disabled={
+                        operationsSituationPage >= operationsSituationTotalPages
+                      }
+                      onClick={() =>
+                        void loadOperationsSituationLeads({
+                          substatusCode: operationsSelectedSubstatusCode,
+                          substatusName: operationsSelectedSubstatusName,
+                          page: Math.min(
+                            operationsSituationTotalPages,
+                            operationsSituationPage + 1,
+                          ),
+                        })
+                      }
+                    >
+                      ›
+                    </button>
+                  </div>
+                  <div className="users-pagination-right" />
+                </div>
+              </>
+            ) : (
+              <div className="account-opps-empty lead-dashboard-empty-inline">
+                No hay leads para esta situación con los filtros actuales.
+              </div>
+            )}
+          </section>
+        ) : null}
       </div>
     );
   }
@@ -5025,16 +5470,6 @@ function InteractionsPage({ can, currentUser }) {
         saving={savingLeadOutcome}
       />
 
-      <DisqualifyInteractionModal
-        isOpen={showDisqualifyModal}
-        interaction={disqualifyTarget}
-        reason={disqualificationReason}
-        onReasonChange={setDisqualificationReason}
-        onClose={closeDisqualifyInteractionModal}
-        onConfirm={handleDisqualifyInteraction}
-        saving={deletingInteractionId === Number(disqualifyTarget?.id || 0)}
-      />
-
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -5116,7 +5551,11 @@ function InteractionsPage({ can, currentUser }) {
         ) : null}
       </div>
 
-      <div className="lead-dashboard-tabs" role="tablist" aria-label="Vistas del módulo de leads">
+      <div
+        className="lead-dashboard-tabs"
+        role="tablist"
+        aria-label="Vistas del módulo de leads"
+      >
         {availableViews.map((view) => (
           <button
             key={view.id}
@@ -5225,11 +5664,7 @@ function InteractionsPage({ can, currentUser }) {
               <button
                 key={option.value}
                 type="button"
-                className={
-                  periodFilter === option.value
-                    ? "is-active"
-                    : ""
-                }
+                className={periodFilter === option.value ? "is-active" : ""}
                 onClick={() => {
                   setPage(1);
                   setPeriodFilter(option.value);
@@ -5323,10 +5758,6 @@ function InteractionsPage({ can, currentUser }) {
                 const displayIndex = (page - 1) * pageSize + index + 1;
                 const canDeleteInteraction =
                   canUpdate && !isFinalizedLeadStatus(item.analysisStatus);
-                const canDisqualifyInteraction =
-                  canUpdate &&
-                  !isQualifiedLeadStatus(item.analysisStatus) &&
-                  !isDisqualifiedLeadStatus(item.analysisStatus);
                 return (
                   <tr key={item.id}>
                     <td title={item.publicId}>{displayIndex}</td>
@@ -5389,19 +5820,6 @@ function InteractionsPage({ can, currentUser }) {
                             >
                               Editar
                             </button>
-                            {canDisqualifyInteraction ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  openDisqualifyInteractionModal(item);
-                                }}
-                                disabled={deletingInteractionId === item.id}
-                              >
-                                {deletingInteractionId === item.id
-                                  ? "Guardando..."
-                                  : "Marcar descalificado"}
-                              </button>
-                            ) : null}
                             {canDeleteInteraction ? (
                               <button
                                 type="button"

@@ -252,46 +252,312 @@ const LEAD_SUBSTATUS_CATALOG = [
   },
 ];
 const LEAD_REASON_CATALOG = [
-  { code: "interest_confirmed", name: "Interés confirmado", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 1 },
-  { code: "meeting_accepted", name: "Aceptó siguiente reunión", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 2 },
-  { code: "business_pain_confirmed", name: "Dolor o necesidad validada", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 3 },
-  { code: "project_identified", name: "Proyecto identificado", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 4 },
-  { code: "decision_process_started", name: "Se inició proceso de decisión", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 5 },
-  { code: "opportunity_created", name: "Se creó oportunidad", reasonGroup: "avance", suggestsDisqualification: false, requiresComment: false, displayOrder: 6 },
-  { code: "follow_up_later_requested", name: "Pidió hablar después", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 7 },
-  { code: "timing_not_right", name: "El momento no es adecuado", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 8 },
-  { code: "budget_next_cycle", name: "Presupuesto en otro ciclo", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 9 },
-  { code: "waiting_internal_alignment", name: "Espera alineación interna", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 10 },
-  { code: "wrong_contact", name: "No es la persona correcta", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: false, displayOrder: 11 },
-  { code: "referred_to_other_contact", name: "Refirió a otro contacto", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: false, displayOrder: 12 },
-  { code: "referred_to_other_area", name: "Refirió a otra área", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: false, displayOrder: 13 },
-  { code: "needs_more_information", name: "Falta más información", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 14 },
-  { code: "value_not_clear_yet", name: "Aún no queda claro el valor", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 15 },
-  { code: "account_potential_other_use_case", name: "La cuenta tiene potencial en otro caso de uso", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: false, displayOrder: 16 },
-  { code: "not_interested_current_contact", name: "No le interesa a este contacto", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: true, displayOrder: 17 },
-  { code: "offer_not_relevant_current_area", name: "La oferta no aplica a esta área", reasonGroup: "redireccion", suggestsDisqualification: false, requiresComment: true, displayOrder: 18 },
-  { code: "incumbent_provider_in_place", name: "Ya cuentan con otra solución", reasonGroup: "objecion", suggestsDisqualification: false, requiresComment: true, displayOrder: 19 },
-  { code: "no_current_initiative", name: "No existe iniciativa actual", reasonGroup: "cierre_temporal", suggestsDisqualification: true, requiresComment: true, displayOrder: 20 },
-  { code: "priority_shifted", name: "Cambio de prioridad", reasonGroup: "seguimiento", suggestsDisqualification: false, requiresComment: false, displayOrder: 21 },
-  { code: "no_interest_definitive", name: "No hay interés definitivo", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 22 },
-  { code: "no_fit", name: "No hay encaje", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 23 },
-  { code: "no_budget_no_plan", name: "Sin presupuesto ni plan", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 24 },
-  { code: "account_closed_to_change", name: "Cuenta cerrada al cambio", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 25 },
-  { code: "duplicate_or_invalid_lead", name: "Lead duplicado o inválido", reasonGroup: "higiene", suggestsDisqualification: true, requiresComment: true, displayOrder: 26 },
-  { code: "do_not_contact_requested", name: "Solicita no ser contactado", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 27 },
-  { code: "outside_target_market", name: "Fuera del mercado objetivo", reasonGroup: "cierre_definitivo", suggestsDisqualification: true, requiresComment: true, displayOrder: 28 },
+  {
+    code: "interest_confirmed",
+    name: "Interés confirmado",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 1,
+  },
+  {
+    code: "meeting_accepted",
+    name: "Aceptó siguiente reunión",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 2,
+  },
+  {
+    code: "business_pain_confirmed",
+    name: "Dolor o necesidad validada",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 3,
+  },
+  {
+    code: "project_identified",
+    name: "Proyecto identificado",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 4,
+  },
+  {
+    code: "decision_process_started",
+    name: "Se inició proceso de decisión",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 5,
+  },
+  {
+    code: "opportunity_created",
+    name: "Se creó oportunidad",
+    reasonGroup: "avance",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 6,
+  },
+  {
+    code: "follow_up_later_requested",
+    name: "Pidió hablar después",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 7,
+  },
+  {
+    code: "timing_not_right",
+    name: "El momento no es adecuado",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 8,
+  },
+  {
+    code: "budget_next_cycle",
+    name: "Presupuesto en otro ciclo",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 9,
+  },
+  {
+    code: "waiting_internal_alignment",
+    name: "Espera alineación interna",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 10,
+  },
+  {
+    code: "wrong_contact",
+    name: "No es la persona correcta",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 11,
+  },
+  {
+    code: "referred_to_other_contact",
+    name: "Refirió a otro contacto",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 12,
+  },
+  {
+    code: "referred_to_other_area",
+    name: "Refirió a otra área",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 13,
+  },
+  {
+    code: "needs_more_information",
+    name: "Falta más información",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 14,
+  },
+  {
+    code: "value_not_clear_yet",
+    name: "Aún no queda claro el valor",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 15,
+  },
+  {
+    code: "account_potential_other_use_case",
+    name: "La cuenta tiene potencial en otro caso de uso",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 16,
+  },
+  {
+    code: "not_interested_current_contact",
+    name: "No le interesa a este contacto",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: true,
+    displayOrder: 17,
+  },
+  {
+    code: "offer_not_relevant_current_area",
+    name: "La oferta no aplica a esta área",
+    reasonGroup: "redireccion",
+    suggestsDisqualification: false,
+    requiresComment: true,
+    displayOrder: 18,
+  },
+  {
+    code: "incumbent_provider_in_place",
+    name: "Ya cuentan con otra solución",
+    reasonGroup: "objecion",
+    suggestsDisqualification: false,
+    requiresComment: true,
+    displayOrder: 19,
+  },
+  {
+    code: "no_current_initiative",
+    name: "No existe iniciativa actual",
+    reasonGroup: "cierre_temporal",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 20,
+  },
+  {
+    code: "priority_shifted",
+    name: "Cambio de prioridad",
+    reasonGroup: "seguimiento",
+    suggestsDisqualification: false,
+    requiresComment: false,
+    displayOrder: 21,
+  },
+  {
+    code: "no_interest_definitive",
+    name: "No hay interés definitivo",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 22,
+  },
+  {
+    code: "no_fit",
+    name: "No hay encaje",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 23,
+  },
+  {
+    code: "no_budget_no_plan",
+    name: "Sin presupuesto ni plan",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 24,
+  },
+  {
+    code: "account_closed_to_change",
+    name: "Cuenta cerrada al cambio",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 25,
+  },
+  {
+    code: "duplicate_or_invalid_lead",
+    name: "Lead duplicado o inválido",
+    reasonGroup: "higiene",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 26,
+  },
+  {
+    code: "do_not_contact_requested",
+    name: "Solicita no ser contactado",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 27,
+  },
+  {
+    code: "outside_target_market",
+    name: "Fuera del mercado objetivo",
+    reasonGroup: "cierre_definitivo",
+    suggestsDisqualification: true,
+    requiresComment: true,
+    displayOrder: 28,
+  },
 ];
 const LEAD_REQUIRED_ACTION_CATALOG = [
-  { code: "schedule_meeting", name: "Agendar reunión", requiresDueDate: true, requiresContactReference: false, requiresAreaReference: false, displayOrder: 1 },
-  { code: "send_follow_up_message", name: "Enviar seguimiento", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: false, displayOrder: 2 },
-  { code: "retry_contact", name: "Reintentar contacto", requiresDueDate: true, requiresContactReference: false, requiresAreaReference: false, displayOrder: 3 },
-  { code: "contact_referred_person", name: "Contactar a la persona referida", requiresDueDate: false, requiresContactReference: true, requiresAreaReference: false, displayOrder: 4 },
-  { code: "explore_other_area", name: "Explorar otra área", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: true, displayOrder: 5 },
-  { code: "revisit_on_date", name: "Definir fecha de recontacto", requiresDueDate: true, requiresContactReference: false, requiresAreaReference: false, displayOrder: 6 },
-  { code: "collect_missing_context", name: "Completar contexto", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: false, displayOrder: 7 },
-  { code: "create_opportunity", name: "Crear oportunidad", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: false, displayOrder: 8 },
-  { code: "close_as_disqualified", name: "Cerrar como descalificado", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: false, displayOrder: 9 },
-  { code: "mark_do_not_contact", name: "Marcar como no contactar", requiresDueDate: false, requiresContactReference: false, requiresAreaReference: false, displayOrder: 10 },
+  {
+    code: "schedule_meeting",
+    name: "Agendar reunión",
+    requiresDueDate: true,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 1,
+  },
+  {
+    code: "send_follow_up_message",
+    name: "Enviar seguimiento",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 2,
+  },
+  {
+    code: "retry_contact",
+    name: "Reintentar contacto",
+    requiresDueDate: true,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 3,
+  },
+  {
+    code: "contact_referred_person",
+    name: "Contactar a la persona referida",
+    requiresDueDate: false,
+    requiresContactReference: true,
+    requiresAreaReference: false,
+    displayOrder: 4,
+  },
+  {
+    code: "explore_other_area",
+    name: "Explorar otra área",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: true,
+    displayOrder: 5,
+  },
+  {
+    code: "revisit_on_date",
+    name: "Definir fecha de recontacto",
+    requiresDueDate: true,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 6,
+  },
+  {
+    code: "collect_missing_context",
+    name: "Completar contexto",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 7,
+  },
+  {
+    code: "create_opportunity",
+    name: "Crear oportunidad",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 8,
+  },
+  {
+    code: "close_as_disqualified",
+    name: "Cerrar como descalificado",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 9,
+  },
+  {
+    code: "mark_do_not_contact",
+    name: "Marcar como no contactar",
+    requiresDueDate: false,
+    requiresContactReference: false,
+    requiresAreaReference: false,
+    displayOrder: 10,
+  },
 ];
 function buildLeadCallOutcomeRulesForStatus(currentStatusCode) {
   return [
@@ -586,6 +852,12 @@ function getLeadReasonCatalogEntry(code) {
   return LEAD_REASON_CATALOG.find((entry) => entry.code === code) || null;
 }
 
+function getLeadRequiredActionCatalogEntry(code) {
+  return (
+    LEAD_REQUIRED_ACTION_CATALOG.find((entry) => entry.code === code) || null
+  );
+}
+
 function getLeadCallOutcomeRule({
   currentStatusCode,
   substatusCode,
@@ -614,7 +886,9 @@ function getLeadCallOutcomeCatalogResponse(currentStatusCode = null) {
     statuses: LEAD_STATUS_CATALOG.map((entry) => ({ ...entry })),
     substatuses: LEAD_SUBSTATUS_CATALOG.map((entry) => ({ ...entry })),
     reasons: LEAD_REASON_CATALOG.map((entry) => ({ ...entry })),
-    requiredActions: LEAD_REQUIRED_ACTION_CATALOG.map((entry) => ({ ...entry })),
+    requiredActions: LEAD_REQUIRED_ACTION_CATALOG.map((entry) => ({
+      ...entry,
+    })),
     transitionRules: transitionRules.map((rule) => ({
       ...rule,
       resultStatusName:
@@ -1113,6 +1387,7 @@ function buildLeadQueueCondition(queueFilter, alias = "i") {
 
 function buildInteractionFilterContext(req, alias = "i") {
   const queryText = String(req.query.query || "").trim();
+  const substatusFilter = String(req.query.substatus || "").trim();
   const rawStatusesParam = String(req.query.statuses || "").trim();
   const legacyStatusFilter = String(req.query.status || "all").trim();
   const statusFilters = Array.from(
@@ -1146,7 +1421,9 @@ function buildInteractionFilterContext(req, alias = "i") {
   params.push(...accessCondition.params);
 
   if (queryText) {
-    where.push(`(${alias}.title LIKE ? OR ${alias}.summary LIKE ? OR a.name LIKE ?)`);
+    where.push(
+      `(${alias}.title LIKE ? OR ${alias}.summary LIKE ? OR a.name LIKE ?)`,
+    );
     params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
   }
 
@@ -1160,6 +1437,15 @@ function buildInteractionFilterContext(req, alias = "i") {
   if (sourceFilter !== "all") {
     where.push(`${alias}.lead_source = ?`);
     params.push(sourceFilter);
+  }
+
+  if (substatusFilter) {
+    if (substatusFilter === "__none__") {
+      where.push(`${alias}.lead_substatus_code IS NULL`);
+    } else {
+      where.push(`${alias}.lead_substatus_code = ?`);
+      params.push(substatusFilter);
+    }
   }
 
   const periodCondition = buildLeadPeriodCondition(period, alias);
@@ -1186,6 +1472,8 @@ function buildInteractionFilterContext(req, alias = "i") {
 }
 
 function mapInteractionListRow(row) {
+  const reasonCode = row.lead_reason_code || "";
+  const requiredActionCode = row.lead_required_action_code || "";
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -1209,6 +1497,11 @@ function mapInteractionListRow(row) {
     updatedAt: row.updated_at,
     nextActionDueAt: row.lead_next_action_due_at,
     leadSubstatusCode: row.lead_substatus_code || "",
+    leadReasonCode: reasonCode,
+    leadReasonName: getLeadReasonCatalogEntry(reasonCode)?.name || "",
+    leadRequiredActionCode: requiredActionCode,
+    leadRequiredActionName:
+      getLeadRequiredActionCatalogEntry(requiredActionCode)?.name || "",
   };
 }
 
@@ -3452,7 +3745,8 @@ router.get(
     const rows = await query(
       `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
               i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
-              i.lead_next_action_due_at, i.lead_substatus_code,
+              i.lead_next_action_due_at, i.lead_substatus_code, i.lead_reason_code,
+              i.lead_required_action_code,
               a.name AS account_name,
               po.name AS primary_opportunity_name,
               su.full_name AS seller_user_name,
@@ -3467,7 +3761,8 @@ router.get(
        ${filterContext.whereClause}
       GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
                 i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
-                i.lead_next_action_due_at, i.lead_substatus_code, a.name, po.name,
+                i.lead_next_action_due_at, i.lead_substatus_code, i.lead_reason_code,
+                i.lead_required_action_code, a.name, po.name,
                 su.full_name, su.email
        ORDER BY i.created_at DESC
        LIMIT ? OFFSET ?`,
@@ -3492,99 +3787,196 @@ router.get(
     const noContactCondition = buildLeadNoContactCondition("i");
     const stagnantCondition = buildLeadStagnantCondition("i");
 
-    const [summaryRows, statusRows, sourceRows, sellerRows] = await Promise.all([
+    const weeklyFromStr = String(req.query.weeklyFrom || "").trim();
+    const weeklyToStr = String(req.query.weeklyTo || "").trim();
+    const weeklyFromValid =
+      weeklyFromStr && /^\d{4}-\d{2}-\d{2}$/.test(weeklyFromStr);
+    const weeklyToValid =
+      weeklyToStr && /^\d{4}-\d{2}-\d{2}$/.test(weeklyToStr);
+
+    // Weekly query uses its own filter context (no global period/queue)
+    // so the date range inputs control it independently of the period toggle.
+    const weeklyFilterContext = buildInteractionFilterContext(
+      {
+        ...req,
+        query: { ...req.query, period: "all", queue: "all" },
+      },
+      "i",
+    );
+    const weeklyDateConditions = [];
+    const weeklyDateParams = [];
+    if (weeklyFromValid) {
+      weeklyDateConditions.push(`i.created_at >= ?`);
+      weeklyDateParams.push(`${weeklyFromStr} 00:00:00`);
+    }
+    if (weeklyToValid) {
+      weeklyDateConditions.push(`i.created_at <= ?`);
+      weeklyDateParams.push(`${weeklyToStr} 23:59:59`);
+    }
+    const weeklyWhereArr = [
+      ...weeklyFilterContext.where,
+      ...weeklyDateConditions,
+    ];
+    const weeklyWhereClause = weeklyWhereArr.length
+      ? `WHERE ${weeklyWhereArr.join(" AND ")}`
+      : "";
+    const weeklyParams = [...weeklyFilterContext.params, ...weeklyDateParams];
+
+    const [
+      summaryRows,
+      statusRows,
+      substatusRows,
+      sourceRows,
+      sellerRows,
+      weeklyCreatedRows,
+      weeklyQualifiedRows,
+    ] = await Promise.all([
       query(
         `SELECT COUNT(*) AS total_visible,
-                SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_unassigned' THEN 1 ELSE 0 END) AS unassigned_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
-                SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total,
-                SUM(CASE WHEN i.lead_next_action_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_next_action_total,
-                SUM(CASE WHEN ${overdueCondition} THEN 1 ELSE 0 END) AS overdue_total,
-                SUM(CASE WHEN ${noContactCondition} THEN 1 ELSE 0 END) AS no_contact_total,
-                SUM(CASE WHEN ${stagnantCondition} THEN 1 ELSE 0 END) AS stagnant_total
-         FROM interactions i
-         LEFT JOIN accounts a ON a.id = i.account_id
-         ${filterContext.accessJoin}
-         ${filterContext.whereClause}`,
+                  SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_unassigned' THEN 1 ELSE 0 END) AS unassigned_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
+                  SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total,
+                  SUM(CASE WHEN i.lead_next_action_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_next_action_total,
+                  SUM(CASE WHEN ${overdueCondition} THEN 1 ELSE 0 END) AS overdue_total,
+                  SUM(CASE WHEN ${noContactCondition} THEN 1 ELSE 0 END) AS no_contact_total,
+                  SUM(CASE WHEN ${stagnantCondition} THEN 1 ELSE 0 END) AS stagnant_total
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           ${filterContext.accessJoin}
+           ${filterContext.whereClause}`,
         filterContext.params,
       ),
       query(
         `SELECT i.analysis_status, COUNT(*) AS total
-         FROM interactions i
-         LEFT JOIN accounts a ON a.id = i.account_id
-         ${filterContext.accessJoin}
-         ${filterContext.whereClause}
-         GROUP BY i.analysis_status`,
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           ${filterContext.accessJoin}
+           ${filterContext.whereClause}
+           GROUP BY i.analysis_status`,
+        filterContext.params,
+      ),
+      query(
+        `SELECT i.lead_substatus_code, COUNT(*) AS total
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           ${filterContext.accessJoin}
+           ${filterContext.whereClause}
+           GROUP BY i.lead_substatus_code
+           ORDER BY total DESC, i.lead_substatus_code ASC`,
         filterContext.params,
       ),
       query(
         `SELECT i.lead_source,
-                COUNT(*) AS total,
-                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
-                SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total
-         FROM interactions i
-         LEFT JOIN accounts a ON a.id = i.account_id
-         ${filterContext.accessJoin}
-         ${filterContext.whereClause}
-         GROUP BY i.lead_source
-         ORDER BY total DESC, i.lead_source ASC`,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
+                  SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           ${filterContext.accessJoin}
+           ${filterContext.whereClause}
+           GROUP BY i.lead_source
+           ORDER BY total DESC, i.lead_source ASC`,
         filterContext.params,
       ),
       query(
         `SELECT i.seller_user_id,
-                su.full_name AS seller_user_name,
-                su.email AS seller_user_email,
-                COUNT(*) AS total_visible,
-                SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
-                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
-                SUM(CASE WHEN ${overdueCondition} THEN 1 ELSE 0 END) AS overdue_total,
-                SUM(CASE WHEN ${stagnantCondition} THEN 1 ELSE 0 END) AS stagnant_total
-         FROM interactions i
-         LEFT JOIN accounts a ON a.id = i.account_id
-         LEFT JOIN users su ON su.id = i.seller_user_id
-         ${filterContext.accessJoin}
-         ${filterContext.whereClause}
-         GROUP BY i.seller_user_id, su.full_name, su.email
-         ORDER BY active_total DESC, qualified_total DESC, seller_user_name ASC`,
+                  su.full_name AS seller_user_name,
+                  su.email AS seller_user_email,
+                  COUNT(*) AS total_visible,
+                  SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           LEFT JOIN users su ON su.id = i.seller_user_id
+           ${filterContext.accessJoin}
+           ${filterContext.whereClause}
+           GROUP BY i.seller_user_id, su.full_name, su.email
+           ORDER BY active_total DESC, qualified_total DESC, seller_user_name ASC`,
         filterContext.params,
       ),
+      query(
+        `SELECT DATE_FORMAT(i.created_at, '%x-W%v') AS week_key,
+                  COUNT(*) AS total,
+                  MIN(i.created_at) AS week_start
+           FROM interactions i
+           LEFT JOIN accounts a ON a.id = i.account_id
+           ${weeklyFilterContext.accessJoin}
+           ${weeklyWhereClause}
+           GROUP BY week_key
+           ORDER BY week_start ASC`,
+        weeklyParams,
+      ),
+      (() => {
+        const qualWhereParts = [
+          ...weeklyFilterContext.where,
+          "i.analysis_status = 'lead_qualified'",
+          "i.updated_at >= ?",
+          "i.updated_at <= ?",
+        ];
+        const qualWhereClause = `WHERE ${qualWhereParts.join(" AND ")}`;
+        const qualParams = [
+          ...weeklyFilterContext.params,
+          weeklyFromValid ? `${weeklyFromStr} 00:00:00` : "1970-01-01 00:00:00",
+          weeklyToValid ? `${weeklyToStr} 23:59:59` : "9999-12-31 23:59:59",
+        ];
+        return query(
+          `SELECT DATE_FORMAT(i.updated_at, '%x-W%v') AS week_key,
+                    COUNT(*) AS qualified_total,
+                    MIN(i.updated_at) AS week_start
+             FROM interactions i
+             LEFT JOIN accounts a ON a.id = i.account_id
+             ${weeklyFilterContext.accessJoin}
+             ${qualWhereClause}
+             GROUP BY week_key
+             ORDER BY week_start ASC`,
+          qualParams,
+        );
+      })(),
     ]);
 
-    const [overdueItems, noContactItems, stagnantItems, assignedWithoutOpportunityItems] =
-      await Promise.all([
-        loadDashboardQueueRows({
-          req,
-          queueFilter: "overdue",
-          limit: 5,
-          orderBy: "i.lead_next_action_due_at ASC, i.updated_at ASC",
-        }),
-        loadDashboardQueueRows({
-          req,
-          queueFilter: "no_contact",
-          limit: 5,
-          orderBy: "i.created_at ASC",
-        }),
-        loadDashboardQueueRows({
-          req,
-          queueFilter: "stagnant",
-          limit: 5,
-          orderBy: "i.updated_at ASC",
-        }),
-        loadDashboardQueueRows({
-          req,
-          queueFilter: "assigned_without_opportunity",
-          limit: 5,
-          orderBy: "i.updated_at ASC",
-        }),
-      ]);
+    const [
+      overdueItems,
+      noContactItems,
+      stagnantItems,
+      assignedWithoutOpportunityItems,
+    ] = await Promise.all([
+      loadDashboardQueueRows({
+        req,
+        queueFilter: "overdue",
+        limit: 5,
+        orderBy: "i.lead_next_action_due_at ASC, i.updated_at ASC",
+      }),
+      loadDashboardQueueRows({
+        req,
+        queueFilter: "no_contact",
+        limit: 5,
+        orderBy: "i.created_at ASC",
+      }),
+      loadDashboardQueueRows({
+        req,
+        queueFilter: "stagnant",
+        limit: 5,
+        orderBy: "i.updated_at ASC",
+      }),
+      loadDashboardQueueRows({
+        req,
+        queueFilter: "assigned_without_opportunity",
+        limit: 5,
+        orderBy: "i.updated_at ASC",
+      }),
+    ]);
 
     const statusNameByCode = new Map(
       LEAD_STATUS_CATALOG.map((status) => [status.code, status.name]),
+    );
+    const substatusNameByCode = new Map(
+      LEAD_SUBSTATUS_CATALOG.map((status) => [status.code, status.name]),
     );
     const summary = summaryRows[0] || {};
 
@@ -3614,6 +4006,14 @@ router.get(
         name: statusNameByCode.get(row.analysis_status) || row.analysis_status,
         total: Number(row.total || 0),
       })),
+      substatusCounts: substatusRows.map((row) => {
+        const code = row.lead_substatus_code || "";
+        return {
+          code,
+          name: code ? substatusNameByCode.get(code) || code : "Sin situación",
+          total: Number(row.total || 0),
+        };
+      }),
       sourceCounts: sourceRows.map((row) => ({
         code: row.lead_source || "otro",
         total: Number(row.total || 0),
@@ -3630,9 +4030,27 @@ router.get(
         activeTotal: Number(row.active_total || 0),
         assignedTotal: Number(row.assigned_total || 0),
         qualifiedTotal: Number(row.qualified_total || 0),
-        overdueTotal: Number(row.overdue_total || 0),
-        stagnantTotal: Number(row.stagnant_total || 0),
+        disqualifiedTotal: Number(row.disqualified_total || 0),
       })),
+      weeklyCreated: (() => {
+        const totalMap = new Map(
+          weeklyCreatedRows.map((r) => [r.week_key, Number(r.total || 0)]),
+        );
+        const qualMap = new Map(
+          weeklyQualifiedRows.map((r) => [
+            r.week_key,
+            Number(r.qualified_total || 0),
+          ]),
+        );
+        const weekKeys = Array.from(
+          new Set([...totalMap.keys(), ...qualMap.keys()]),
+        ).sort((a, b) => String(a).localeCompare(String(b)));
+        return weekKeys.map((weekKey) => ({
+          weekKey,
+          total: totalMap.get(weekKey) || 0,
+          qualifiedTotal: qualMap.get(weekKey) || 0,
+        }));
+      })(),
       queues: {
         overdue: overdueItems,
         noContact: noContactItems,
@@ -4232,11 +4650,6 @@ router.post(
     if (rule.requiresComment && !normalizedComment) {
       return res.status(400).json({
         message: "Debes registrar un comentario comercial para este resultado",
-      });
-    }
-    if (rule.requiresDueDate && !nextActionDueAtRaw) {
-      return res.status(400).json({
-        message: "Debes definir una fecha compromiso para esta acción",
       });
     }
     if (nextActionDueAtRaw && Number.isNaN(nextActionDueAt?.getTime())) {
