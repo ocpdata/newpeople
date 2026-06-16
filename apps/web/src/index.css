@@ -8581,13 +8581,13 @@ button:disabled {
 }
 
 .interaction-document-card-head {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: 12px;
 }
 
-.interaction-document-card-head > div {
+.interaction-document-card-head > :first-child {
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -9667,6 +9667,8 @@ button:disabled {
 
 .interaction-document-actions {
   display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
@@ -9804,7 +9806,7 @@ button:disabled {
   }
 
   .interaction-document-card-head {
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 
