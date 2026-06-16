@@ -38,6 +38,36 @@ const INTERACTION_PERMISSIONS = [
     description: "Resolver interacciones",
   },
   {
+    code: "interacciones.dashboard.access",
+    module: "interacciones",
+    action: "dashboard_access",
+    description: "Entrar a tableros de leads",
+  },
+  {
+    code: "interacciones.dashboard.executive.view",
+    module: "interacciones",
+    action: "dashboard_executive_view",
+    description: "Ver tablero ejecutivo de leads",
+  },
+  {
+    code: "interacciones.dashboard.management.view",
+    module: "interacciones",
+    action: "dashboard_management_view",
+    description: "Ver tablero de gestion comercial de leads",
+  },
+  {
+    code: "interacciones.dashboard.operations.view",
+    module: "interacciones",
+    action: "dashboard_operations_view",
+    description: "Ver tablero operativo de leads",
+  },
+  {
+    code: "interacciones.dashboard.drilldown.view",
+    module: "interacciones",
+    action: "dashboard_drilldown_view",
+    description: "Abrir drilldown del tablero de leads hacia la bandeja",
+  },
+  {
     code: "interacciones.resolve.assign_self",
     module: "interacciones",
     action: "resolve_assign_self",

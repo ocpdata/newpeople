@@ -81,6 +81,16 @@ const LEAD_STATUS_FILTER_LIST = [
   "lead_disqualified",
 ];
 const LEAD_STATUS_FILTER_CODES = new Set(LEAD_STATUS_FILTER_LIST);
+const LEAD_DASHBOARD_PERIOD_LIST = ["all", "30d", "90d"];
+const LEAD_DASHBOARD_PERIOD_CODES = new Set(LEAD_DASHBOARD_PERIOD_LIST);
+const LEAD_QUEUE_FILTER_LIST = [
+  "all",
+  "overdue",
+  "no_contact",
+  "stagnant",
+  "assigned_without_opportunity",
+];
+const LEAD_QUEUE_FILTER_CODES = new Set(LEAD_QUEUE_FILTER_LIST);
 const LEAD_STATUS_CATALOG = [
   {
     code: "created",
@@ -1032,6 +1042,218 @@ function hasSellerEligibilityPermission(user) {
 
 function hasGlobalReadScope(user) {
   return hasPermission(user, "interacciones.read_all");
+}
+
+function normalizeLeadDashboardPeriod(value) {
+  const normalized = String(value || "all")
+    .trim()
+    .toLowerCase();
+  return LEAD_DASHBOARD_PERIOD_CODES.has(normalized) ? normalized : "all";
+}
+
+function normalizeLeadQueueFilter(value) {
+  const normalized = String(value || "all")
+    .trim()
+    .toLowerCase();
+  return LEAD_QUEUE_FILTER_CODES.has(normalized) ? normalized : "all";
+}
+
+function buildLeadPeriodCondition(periodKey, alias = "i") {
+  if (periodKey === "30d") {
+    return `${alias}.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
+  }
+  if (periodKey === "90d") {
+    return `${alias}.created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`;
+  }
+  return "";
+}
+
+function buildLeadActiveCondition(alias = "i") {
+  return `${alias}.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified')`;
+}
+
+function buildLeadOverdueCondition(alias = "i") {
+  return `(
+    ${buildLeadActiveCondition(alias)}
+    AND ${alias}.lead_next_action_due_at IS NOT NULL
+    AND ${alias}.lead_next_action_due_at < NOW()
+  )`;
+}
+
+function buildLeadNoContactCondition(alias = "i") {
+  return `(
+    ${buildLeadActiveCondition(alias)}
+    AND ${alias}.lead_substatus_code IS NULL
+  )`;
+}
+
+function buildLeadStagnantCondition(alias = "i") {
+  return `(
+    (${alias}.analysis_status = 'created' AND ${alias}.updated_at <= DATE_SUB(NOW(), INTERVAL 2 DAY))
+    OR (${alias}.analysis_status = 'lead_unassigned' AND ${alias}.updated_at <= DATE_SUB(NOW(), INTERVAL 3 DAY))
+    OR (${alias}.analysis_status = 'lead_assigned' AND ${alias}.updated_at <= DATE_SUB(NOW(), INTERVAL 5 DAY))
+    OR (${alias}.analysis_status = 'lead_qualified' AND ${alias}.updated_at <= DATE_SUB(NOW(), INTERVAL 3 DAY))
+  )`;
+}
+
+function buildLeadQueueCondition(queueFilter, alias = "i") {
+  switch (queueFilter) {
+    case "overdue":
+      return buildLeadOverdueCondition(alias);
+    case "no_contact":
+      return buildLeadNoContactCondition(alias);
+    case "stagnant":
+      return buildLeadStagnantCondition(alias);
+    case "assigned_without_opportunity":
+      return `${alias}.analysis_status = 'lead_assigned'`;
+    default:
+      return "";
+  }
+}
+
+function buildInteractionFilterContext(req, alias = "i") {
+  const queryText = String(req.query.query || "").trim();
+  const rawStatusesParam = String(req.query.statuses || "").trim();
+  const legacyStatusFilter = String(req.query.status || "all").trim();
+  const statusFilters = Array.from(
+    new Set(
+      (rawStatusesParam
+        ? rawStatusesParam.split(",")
+        : legacyStatusFilter && legacyStatusFilter !== "all"
+          ? [legacyStatusFilter]
+          : []
+      )
+        .map((value) => String(value || "").trim())
+        .filter((value) => LEAD_STATUS_FILTER_CODES.has(value)),
+    ),
+  );
+  const rawSourceFilter = String(req.query.source || "all").trim();
+  const sourceFilter =
+    rawSourceFilter === "all" || LEAD_SOURCE_CODES.has(rawSourceFilter)
+      ? rawSourceFilter
+      : "all";
+  const period = normalizeLeadDashboardPeriod(req.query.period || "all");
+  const queueFilter = normalizeLeadQueueFilter(req.query.queue || "all");
+  const params = [];
+  const accessJoin = buildInteractionAccessJoin(req.user, alias);
+  const accessCondition = buildInteractionListAccessCondition(req.user, alias);
+  if (!hasGlobalReadScope(req.user)) {
+    params.push(Number(req.user.id));
+  }
+
+  const where = [];
+  where.push(accessCondition.sql);
+  params.push(...accessCondition.params);
+
+  if (queryText) {
+    where.push(`(${alias}.title LIKE ? OR ${alias}.summary LIKE ? OR a.name LIKE ?)`);
+    params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
+  }
+
+  if (statusFilters.length) {
+    where.push(
+      `${alias}.analysis_status IN (${statusFilters.map(() => "?").join(", ")})`,
+    );
+    params.push(...statusFilters);
+  }
+
+  if (sourceFilter !== "all") {
+    where.push(`${alias}.lead_source = ?`);
+    params.push(sourceFilter);
+  }
+
+  const periodCondition = buildLeadPeriodCondition(period, alias);
+  if (periodCondition) {
+    where.push(periodCondition);
+  }
+
+  const queueCondition = buildLeadQueueCondition(queueFilter, alias);
+  if (queueCondition) {
+    where.push(queueCondition);
+  }
+
+  return {
+    queryText,
+    statusFilters,
+    sourceFilter,
+    period,
+    queueFilter,
+    params,
+    accessJoin,
+    where,
+    whereClause: where.length ? `WHERE ${where.join(" AND ")}` : "",
+  };
+}
+
+function mapInteractionListRow(row) {
+  return {
+    id: Number(row.id),
+    publicId: row.public_id,
+    title: row.title,
+    leadSource: row.lead_source || "",
+    summary: row.summary || "",
+    analysisStatus: row.analysis_status,
+    accountId: row.account_id === null ? null : Number(row.account_id),
+    accountName: row.account_name || "",
+    primaryOpportunityId:
+      row.primary_opportunity_id === null
+        ? null
+        : Number(row.primary_opportunity_id),
+    primaryOpportunityName: row.primary_opportunity_name || "",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    sellerName: row.seller_user_name || "",
+    sellerEmail: row.seller_user_email || "",
+    documentCount: Number(row.document_count || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    nextActionDueAt: row.lead_next_action_due_at,
+    leadSubstatusCode: row.lead_substatus_code || "",
+  };
+}
+
+async function loadDashboardQueueRows({
+  req,
+  queueFilter,
+  limit = 5,
+  orderBy,
+}) {
+  const filterContext = buildInteractionFilterContext(
+    {
+      ...req,
+      query: {
+        ...req.query,
+        queue: queueFilter,
+      },
+    },
+    "i",
+  );
+  const rows = await query(
+    `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status,
+            i.account_id, i.primary_opportunity_id, i.seller_user_id, i.created_at,
+            i.updated_at, i.lead_next_action_due_at, i.lead_substatus_code,
+            a.name AS account_name,
+            po.name AS primary_opportunity_name,
+            su.full_name AS seller_user_name,
+            su.email AS seller_user_email,
+            COUNT(DISTINCT d.id) AS document_count
+     FROM interactions i
+     LEFT JOIN accounts a ON a.id = i.account_id
+     LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
+     LEFT JOIN users su ON su.id = i.seller_user_id
+     LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
+     ${filterContext.accessJoin}
+     ${filterContext.whereClause}
+     GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status,
+              i.account_id, i.primary_opportunity_id, i.seller_user_id, i.created_at,
+              i.updated_at, i.lead_next_action_due_at, i.lead_substatus_code,
+              a.name, po.name, su.full_name, su.email
+     ORDER BY ${orderBy}
+     LIMIT ?`,
+    [...filterContext.params, Math.max(1, Number(limit) || 5)],
+  );
+
+  return rows.map(mapInteractionListRow);
 }
 
 function buildInteractionAccessJoin(user, alias = "i") {
@@ -3217,64 +3439,21 @@ router.get(
       50,
       Math.max(1, Number(req.query.pageSize || 10) || 10),
     );
-    const queryText = String(req.query.query || "").trim();
-    const rawStatusesParam = String(req.query.statuses || "").trim();
-    const legacyStatusFilter = String(req.query.status || "all").trim();
-    const statusFilters = Array.from(
-      new Set(
-        (rawStatusesParam
-          ? rawStatusesParam.split(",")
-          : legacyStatusFilter && legacyStatusFilter !== "all"
-            ? [legacyStatusFilter]
-            : []
-        )
-          .map((value) => String(value || "").trim())
-          .filter((value) => LEAD_STATUS_FILTER_CODES.has(value)),
-      ),
-    );
-    const rawSourceFilter = String(req.query.source || "all").trim();
-    const sourceFilter =
-      rawSourceFilter === "all" || LEAD_SOURCE_CODES.has(rawSourceFilter)
-        ? rawSourceFilter
-        : "all";
-    const params = [];
-    const accessJoin = buildInteractionAccessJoin(req.user, "i");
-    const accessCondition = buildInteractionListAccessCondition(req.user, "i");
-    if (!hasGlobalReadScope(req.user)) {
-      params.push(Number(req.user.id));
-    }
-
-    const where = [];
-    where.push(accessCondition.sql);
-    params.push(...accessCondition.params);
-    if (queryText) {
-      where.push("(i.title LIKE ? OR i.summary LIKE ? OR a.name LIKE ?)");
-      params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
-    }
-    if (statusFilters.length) {
-      where.push(
-        `i.analysis_status IN (${statusFilters.map(() => "?").join(", ")})`,
-      );
-      params.push(...statusFilters);
-    }
-    if (sourceFilter && sourceFilter !== "all") {
-      where.push("i.lead_source = ?");
-      params.push(sourceFilter);
-    }
-
-    const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const filterContext = buildInteractionFilterContext(req, "i");
     const countRows = await query(
       `SELECT COUNT(*) AS total
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
-       ${accessJoin}
-       ${whereClause}`,
-      params,
+       ${filterContext.accessJoin}
+       ${filterContext.whereClause}`,
+      filterContext.params,
     );
 
     const rows = await query(
       `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
-              i.primary_opportunity_id, i.seller_user_id, i.created_at, a.name AS account_name,
+              i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
+              i.lead_next_action_due_at, i.lead_substatus_code,
+              a.name AS account_name,
               po.name AS primary_opportunity_name,
               su.full_name AS seller_user_name,
               su.email AS seller_user_email,
@@ -3284,41 +3463,182 @@ router.get(
        LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
        LEFT JOIN users su ON su.id = i.seller_user_id
        LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
-      ${accessJoin}
-       ${whereClause}
+      ${filterContext.accessJoin}
+       ${filterContext.whereClause}
       GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
-                i.primary_opportunity_id, i.seller_user_id, i.created_at, a.name, po.name,
+                i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
+                i.lead_next_action_due_at, i.lead_substatus_code, a.name, po.name,
                 su.full_name, su.email
        ORDER BY i.created_at DESC
        LIMIT ? OFFSET ?`,
-      [...params, pageSize, (page - 1) * pageSize],
+      [...filterContext.params, pageSize, (page - 1) * pageSize],
     );
 
     return res.json({
-      items: rows.map((row) => ({
-        id: Number(row.id),
-        publicId: row.public_id,
-        title: row.title,
-        leadSource: row.lead_source || "",
-        summary: row.summary || "",
-        analysisStatus: row.analysis_status,
-        accountId: row.account_id === null ? null : Number(row.account_id),
-        accountName: row.account_name || "",
-        primaryOpportunityId:
-          row.primary_opportunity_id === null
-            ? null
-            : Number(row.primary_opportunity_id),
-        primaryOpportunityName: row.primary_opportunity_name || "",
-        sellerUserId:
-          row.seller_user_id === null ? null : Number(row.seller_user_id),
-        sellerName: row.seller_user_name || "",
-        sellerEmail: row.seller_user_email || "",
-        documentCount: Number(row.document_count || 0),
-        createdAt: row.created_at,
-      })),
+      items: rows.map(mapInteractionListRow),
       page,
       pageSize,
       total: Number(countRows[0]?.total || 0),
+    });
+  },
+);
+
+router.get(
+  "/dashboard",
+  requireAnyPermission(interactionReadPermissions),
+  async (req, res) => {
+    const filterContext = buildInteractionFilterContext(req, "i");
+    const overdueCondition = buildLeadOverdueCondition("i");
+    const noContactCondition = buildLeadNoContactCondition("i");
+    const stagnantCondition = buildLeadStagnantCondition("i");
+
+    const [summaryRows, statusRows, sourceRows, sellerRows] = await Promise.all([
+      query(
+        `SELECT COUNT(*) AS total_visible,
+                SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_unassigned' THEN 1 ELSE 0 END) AS unassigned_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
+                SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total,
+                SUM(CASE WHEN i.lead_next_action_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_next_action_total,
+                SUM(CASE WHEN ${overdueCondition} THEN 1 ELSE 0 END) AS overdue_total,
+                SUM(CASE WHEN ${noContactCondition} THEN 1 ELSE 0 END) AS no_contact_total,
+                SUM(CASE WHEN ${stagnantCondition} THEN 1 ELSE 0 END) AS stagnant_total
+         FROM interactions i
+         LEFT JOIN accounts a ON a.id = i.account_id
+         ${filterContext.accessJoin}
+         ${filterContext.whereClause}`,
+        filterContext.params,
+      ),
+      query(
+        `SELECT i.analysis_status, COUNT(*) AS total
+         FROM interactions i
+         LEFT JOIN accounts a ON a.id = i.account_id
+         ${filterContext.accessJoin}
+         ${filterContext.whereClause}
+         GROUP BY i.analysis_status`,
+        filterContext.params,
+      ),
+      query(
+        `SELECT i.lead_source,
+                COUNT(*) AS total,
+                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
+                SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total
+         FROM interactions i
+         LEFT JOIN accounts a ON a.id = i.account_id
+         ${filterContext.accessJoin}
+         ${filterContext.whereClause}
+         GROUP BY i.lead_source
+         ORDER BY total DESC, i.lead_source ASC`,
+        filterContext.params,
+      ),
+      query(
+        `SELECT i.seller_user_id,
+                su.full_name AS seller_user_name,
+                su.email AS seller_user_email,
+                COUNT(*) AS total_visible,
+                SUM(CASE WHEN ${buildLeadActiveCondition("i")} THEN 1 ELSE 0 END) AS active_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
+                SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
+                SUM(CASE WHEN ${overdueCondition} THEN 1 ELSE 0 END) AS overdue_total,
+                SUM(CASE WHEN ${stagnantCondition} THEN 1 ELSE 0 END) AS stagnant_total
+         FROM interactions i
+         LEFT JOIN accounts a ON a.id = i.account_id
+         LEFT JOIN users su ON su.id = i.seller_user_id
+         ${filterContext.accessJoin}
+         ${filterContext.whereClause}
+         GROUP BY i.seller_user_id, su.full_name, su.email
+         ORDER BY active_total DESC, qualified_total DESC, seller_user_name ASC`,
+        filterContext.params,
+      ),
+    ]);
+
+    const [overdueItems, noContactItems, stagnantItems, assignedWithoutOpportunityItems] =
+      await Promise.all([
+        loadDashboardQueueRows({
+          req,
+          queueFilter: "overdue",
+          limit: 5,
+          orderBy: "i.lead_next_action_due_at ASC, i.updated_at ASC",
+        }),
+        loadDashboardQueueRows({
+          req,
+          queueFilter: "no_contact",
+          limit: 5,
+          orderBy: "i.created_at ASC",
+        }),
+        loadDashboardQueueRows({
+          req,
+          queueFilter: "stagnant",
+          limit: 5,
+          orderBy: "i.updated_at ASC",
+        }),
+        loadDashboardQueueRows({
+          req,
+          queueFilter: "assigned_without_opportunity",
+          limit: 5,
+          orderBy: "i.updated_at ASC",
+        }),
+      ]);
+
+    const statusNameByCode = new Map(
+      LEAD_STATUS_CATALOG.map((status) => [status.code, status.name]),
+    );
+    const summary = summaryRows[0] || {};
+
+    return res.json({
+      filters: {
+        period: filterContext.period,
+        queue: filterContext.queueFilter,
+        source: filterContext.sourceFilter,
+        statuses: filterContext.statusFilters,
+        query: filterContext.queryText,
+      },
+      summary: {
+        totalVisible: Number(summary.total_visible || 0),
+        activeTotal: Number(summary.active_total || 0),
+        unassignedTotal: Number(summary.unassigned_total || 0),
+        assignedTotal: Number(summary.assigned_total || 0),
+        qualifiedTotal: Number(summary.qualified_total || 0),
+        disqualifiedTotal: Number(summary.disqualified_total || 0),
+        opportunityTotal: Number(summary.opportunity_total || 0),
+        withNextActionTotal: Number(summary.with_next_action_total || 0),
+        overdueTotal: Number(summary.overdue_total || 0),
+        noContactTotal: Number(summary.no_contact_total || 0),
+        stagnantTotal: Number(summary.stagnant_total || 0),
+      },
+      statusCounts: statusRows.map((row) => ({
+        code: row.analysis_status,
+        name: statusNameByCode.get(row.analysis_status) || row.analysis_status,
+        total: Number(row.total || 0),
+      })),
+      sourceCounts: sourceRows.map((row) => ({
+        code: row.lead_source || "otro",
+        total: Number(row.total || 0),
+        qualifiedTotal: Number(row.qualified_total || 0),
+        disqualifiedTotal: Number(row.disqualified_total || 0),
+        opportunityTotal: Number(row.opportunity_total || 0),
+      })),
+      sellerRows: sellerRows.map((row) => ({
+        sellerUserId:
+          row.seller_user_id === null ? null : Number(row.seller_user_id),
+        sellerName: row.seller_user_name || "Sin vendedor asignado",
+        sellerEmail: row.seller_user_email || "",
+        totalVisible: Number(row.total_visible || 0),
+        activeTotal: Number(row.active_total || 0),
+        assignedTotal: Number(row.assigned_total || 0),
+        qualifiedTotal: Number(row.qualified_total || 0),
+        overdueTotal: Number(row.overdue_total || 0),
+        stagnantTotal: Number(row.stagnant_total || 0),
+      })),
+      queues: {
+        overdue: overdueItems,
+        noContact: noContactItems,
+        stagnant: stagnantItems,
+        assignedWithoutOpportunity: assignedWithoutOpportunityItems,
+      },
     });
   },
 );

@@ -15,6 +15,10 @@ Este documento describe el modulo de leads/interacciones del CRM, incluyendo:
 No cubre en detalle la logica interna de cuentas, contactos u oportunidades fuera
 de lo que impacta directamente la conversion del lead.
 
+Documento relacionado:
+
+- [Definiciones funcionales de tableros de leads v1](./tableros-leads-v1.md)
+
 ## Logica de negocio
 
 ### Naturaleza del lead

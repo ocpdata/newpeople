@@ -11,6 +11,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
+- [Tableros de leads v1](./tableros-leads-v1.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Cotizaciones](./cotizaciones.md)
@@ -48,6 +49,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Leads: documento nuevo del modulo de interacciones con carga documental,
   analisis manual, resolucion de cuenta/contactos/oportunidad, razon de
   descalificacion y seguimiento comercial del lead.
+- Leads: especificacion funcional v1 de tableros con KPIs, permisos, filtros,
+  drilldowns y reglas operativas compartidas para gerencia, gestion y operacion.
 - Proveedores: modulo documentado con reglas de proveedor, listas de precios,
   moneda y tipo unico por lista, y composicion/reactivacion automatica de
   `Bundle`.

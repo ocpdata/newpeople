@@ -40,6 +40,21 @@ const LEAD_STATUS_FILTER_OPTIONS = [
 const LEAD_STATUS_FILTER_VALUES = LEAD_STATUS_FILTER_OPTIONS.map(
   (option) => option.value,
 );
+const LEAD_DASHBOARD_PERIOD_OPTIONS = [
+  { value: "all", label: "Todo" },
+  { value: "30d", label: "30 días" },
+  { value: "90d", label: "90 días" },
+];
+const LEAD_QUEUE_FILTER_OPTIONS = [
+  { value: "all", label: "Todas las colas" },
+  { value: "overdue", label: "Seguimiento vencido" },
+  { value: "no_contact", label: "Sin contacto" },
+  { value: "stagnant", label: "Estancados" },
+  {
+    value: "assigned_without_opportunity",
+    label: "Asignados sin oportunidad",
+  },
+];
 
 function sortLeadStatusFilters(values) {
   if (!Array.isArray(values)) return [];
@@ -62,6 +77,137 @@ function getLeadStatusFilterButtonLabel(selectedStatuses) {
     return "Estado: Todas";
   }
   return `Estado: ${selectedCount} seleccionado${selectedCount === 1 ? "" : "s"}`;
+}
+
+function getLeadSourceLabel(sourceCode) {
+  return (
+    LEAD_SOURCE_OPTIONS.find((option) => option.value === sourceCode)?.label ||
+    sourceCode ||
+    "Sin fuente"
+  );
+}
+
+function getLeadQueueLabel(queueCode) {
+  return (
+    LEAD_QUEUE_FILTER_OPTIONS.find((option) => option.value === queueCode)
+      ?.label || "Cola"
+  );
+}
+
+function formatPercent(value, total) {
+  const numerator = Number(value || 0);
+  const denominator = Number(total || 0);
+  if (!denominator) return "0%";
+  return `${Math.round((numerator / denominator) * 100)}%`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "Sin fecha";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin fecha";
+  return date.toLocaleString("es-MX", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function LeadDashboardStatCard({
+  label,
+  value,
+  helper = "",
+  tone = "default",
+  onClick,
+}) {
+  const className = [
+    "lead-dashboard-stat-card",
+    `is-${tone}`,
+    onClick ? "is-clickable" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (onClick) {
+    return (
+      <button type="button" className={className} onClick={onClick}>
+        <span className="lead-dashboard-stat-label">{label}</span>
+        <strong className="lead-dashboard-stat-value">{value}</strong>
+        {helper ? <span className="lead-dashboard-stat-helper">{helper}</span> : null}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      <span className="lead-dashboard-stat-label">{label}</span>
+      <strong className="lead-dashboard-stat-value">{value}</strong>
+      {helper ? <span className="lead-dashboard-stat-helper">{helper}</span> : null}
+    </div>
+  );
+}
+
+function LeadDashboardQueueTable({
+  title,
+  emptyLabel,
+  items,
+  onOpenLead,
+  onOpenQueue,
+}) {
+  return (
+    <section className="lead-dashboard-queue-card">
+      <div className="lead-dashboard-queue-card-header">
+        <div>
+          <h3>{title}</h3>
+          <p>{items.length ? `${items.length} lead${items.length === 1 ? "" : "s"} destacados` : emptyLabel}</p>
+        </div>
+        <button type="button" className="btn-secondary" onClick={onOpenQueue}>
+          Ver bandeja
+        </button>
+      </div>
+      {items.length ? (
+        <div className="lead-dashboard-queue-table-wrap">
+          <table className="lead-dashboard-queue-table">
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>Vendedor</th>
+                <th>Seguimiento</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <div className="lead-dashboard-row-title">
+                      <strong>{item.title || "Lead sin título"}</strong>
+                      <span>{item.accountName || getLeadSourceLabel(item.leadSource)}</span>
+                    </div>
+                  </td>
+                  <td>{item.sellerName || item.sellerEmail || "Sin vendedor"}</td>
+                  <td>
+                    {item.nextActionDueAt
+                      ? formatDateTime(item.nextActionDueAt)
+                      : formatDateTime(item.updatedAt || item.createdAt)}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => onOpenLead(item.id)}
+                    >
+                      Abrir lead
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="account-opps-empty lead-dashboard-empty-inline">{emptyLabel}</div>
+      )}
+    </section>
+  );
 }
 
 function buildPastedTextFileName(label) {
@@ -3493,6 +3639,12 @@ function InteractionsPage({ can, currentUser }) {
     ...LEAD_STATUS_FILTER_VALUES,
   ]);
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("all");
+  const [queueFilter, setQueueFilter] = useState("all");
+  const [activeView, setActiveView] = useState("inbox");
+  const [dashboard, setDashboard] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -3546,10 +3698,47 @@ function InteractionsPage({ can, currentUser }) {
   const interactionAnalysisPollingTokenRef = useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const canAccessLeadDashboard =
+    can("interacciones.dashboard.access") ||
+    can("interacciones.read") ||
+    can("interacciones.read_all");
+  const canViewExecutiveDashboard =
+    can("interacciones.dashboard.executive.view") ||
+    can("interacciones.read_all");
+  const canViewManagementDashboard =
+    can("interacciones.dashboard.management.view") ||
+    can("interacciones.read_all");
+  const canViewOperationsDashboard =
+    can("interacciones.dashboard.operations.view") ||
+    can("interacciones.read") ||
+    can("interacciones.read_all");
   const canCreate = can("interacciones.create");
   const canUpdate = can("interacciones.update");
   const canAnalyze = can("interacciones.analyze");
   const canResolve = can("interacciones.resolve");
+  const availableViews = useMemo(
+    () => [
+      { id: "inbox", label: "Bandeja" },
+      ...(canAccessLeadDashboard && canViewExecutiveDashboard
+        ? [{ id: "executive", label: "Ejecutivo" }]
+        : []),
+      ...(canAccessLeadDashboard && canViewManagementDashboard
+        ? [{ id: "management", label: "Gestión" }]
+        : []),
+      ...(canAccessLeadDashboard && canViewOperationsDashboard
+        ? [{ id: "operations", label: "Operativo" }]
+        : []),
+    ],
+    [
+      canAccessLeadDashboard,
+      canViewExecutiveDashboard,
+      canViewManagementDashboard,
+      canViewOperationsDashboard,
+    ],
+  );
+  const selectedView = availableViews.some((view) => view.id === activeView)
+    ? activeView
+    : availableViews[0]?.id || "inbox";
   const resolveConfirmationPreview = useMemo(
     () =>
       buildResolveConfirmationPreview(
@@ -3712,6 +3901,34 @@ function InteractionsPage({ can, currentUser }) {
     closeStatusFilterMenu();
   }
 
+  function applyDashboardDrilldown({
+    statuses = null,
+    source = null,
+    queue = "all",
+    queryText = null,
+  } = {}) {
+    setPage(1);
+    setActiveView("inbox");
+    setQueueFilter(queue);
+    if (statuses) {
+      setStatusFilters(normalizeLeadStatusFilters(statuses));
+      setStatusFilterDraft(normalizeLeadStatusFilters(statuses));
+    }
+    if (source) {
+      setSourceFilter(source);
+    }
+    if (queryText !== null) {
+      setQuery(queryText);
+    }
+  }
+
+  function openDashboardView(viewId) {
+    setActiveView(viewId);
+    if (viewId !== "inbox") {
+      setQueueFilter("all");
+    }
+  }
+
   useEffect(() => {
     if (!openInteractionMenuId) return undefined;
 
@@ -3784,6 +4001,8 @@ function InteractionsPage({ can, currentUser }) {
         ? "all"
         : effectiveStatuses.join(",");
     const effectiveSource = String(overrides.source ?? sourceFilter);
+    const effectivePeriod = String((overrides.period ?? periodFilter) || "all");
+    const effectiveQueue = String((overrides.queue ?? queueFilter) || "all");
 
     setLoading(true);
     try {
@@ -3794,6 +4013,8 @@ function InteractionsPage({ can, currentUser }) {
           query: effectiveQuery,
           statuses: statusesParam,
           source: effectiveSource,
+          period: effectivePeriod,
+          queue: effectiveQueue,
         },
       });
       setItems(Array.isArray(data?.items) ? data.items : []);
@@ -3803,13 +4024,48 @@ function InteractionsPage({ can, currentUser }) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, query, statusFilters, sourceFilter]);
+  }, [page, pageSize, query, statusFilters, sourceFilter, periodFilter, queueFilter]);
+
+  const loadDashboard = useCallback(async () => {
+    const effectiveStatuses = normalizeLeadStatusFilters(statusFilters);
+    const statusesParam =
+      effectiveStatuses.length === LEAD_STATUS_FILTER_VALUES.length
+        ? "all"
+        : effectiveStatuses.join(",");
+
+    setDashboardLoading(true);
+    setDashboardError("");
+    try {
+      const { data } = await api.get("/api/interactions/dashboard", {
+        params: {
+          query,
+          statuses: statusesParam,
+          source: sourceFilter,
+          period: periodFilter,
+        },
+      });
+      setDashboard(data || null);
+    } catch (err) {
+      setDashboardError(
+        getApiErrorMessage(err, "No fue posible cargar los tableros de leads"),
+      );
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [periodFilter, query, sourceFilter, statusFilters]);
 
   useEffect(() => {
     // Reloading the list on pagination/filter changes is intentional.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInteractions();
   }, [loadInteractions]);
+
+  useEffect(() => {
+    if (selectedView === "inbox") return;
+    // Reloading the dashboard on tab/filter changes is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadDashboard();
+  }, [selectedView, loadDashboard]);
 
   useEffect(() => {
     if (!error && !success) return undefined;
@@ -4372,9 +4628,314 @@ function InteractionsPage({ can, currentUser }) {
     () => getLeadStatusFilterButtonLabel(statusFilters),
     [statusFilters],
   );
+  const queueFilterLabel = useMemo(
+    () => getLeadQueueLabel(queueFilter),
+    [queueFilter],
+  );
   const allDraftStatusesSelected =
     statusFilterDraft.length === LEAD_STATUS_FILTER_VALUES.length;
   const createIsUploadingFiles = createUploadingFilesCount > 0;
+  const dashboardSummary = dashboard?.summary || {
+    totalVisible: 0,
+    activeTotal: 0,
+    unassignedTotal: 0,
+    assignedTotal: 0,
+    qualifiedTotal: 0,
+    disqualifiedTotal: 0,
+    opportunityTotal: 0,
+    withNextActionTotal: 0,
+    overdueTotal: 0,
+    noContactTotal: 0,
+    stagnantTotal: 0,
+  };
+  const dashboardStatusMap = useMemo(
+    () =>
+      new Map(
+        (dashboard?.statusCounts || []).map((entry) => [entry.code, entry.total]),
+      ),
+    [dashboard],
+  );
+  const executiveCards = [
+    {
+      label: "Leads visibles",
+      value: dashboardSummary.totalVisible,
+      helper: `Periodo ${LEAD_DASHBOARD_PERIOD_OPTIONS.find((option) => option.value === periodFilter)?.label || "Todo"}`,
+      tone: "default",
+      onClick: () => applyDashboardDrilldown({ queue: "all" }),
+    },
+    {
+      label: "Activos",
+      value: dashboardSummary.activeTotal,
+      helper: formatPercent(dashboardSummary.activeTotal, dashboardSummary.totalVisible),
+      tone: "accent",
+      onClick: () =>
+        applyDashboardDrilldown({
+          statuses: ["created", "lead_unassigned", "lead_assigned", "lead_qualified"],
+        }),
+    },
+    {
+      label: "Calificados",
+      value: dashboardSummary.qualifiedTotal,
+      helper: formatPercent(dashboardSummary.qualifiedTotal, dashboardSummary.totalVisible),
+      tone: "success",
+      onClick: () => applyDashboardDrilldown({ statuses: ["lead_qualified"] }),
+    },
+    {
+      label: "Seguimiento vencido",
+      value: dashboardSummary.overdueTotal,
+      helper: "Próximo paso fuera de fecha",
+      tone: "warning",
+      onClick: () => applyDashboardDrilldown({ queue: "overdue" }),
+    },
+  ];
+  const managementCards = [
+    {
+      label: "Lead no asignado",
+      value: dashboardSummary.unassignedTotal,
+      helper: "Cuenta y contacto resueltos, sin vendedor",
+      tone: "default",
+      onClick: () => applyDashboardDrilldown({ statuses: ["lead_unassigned"] }),
+    },
+    {
+      label: "Lead asignado",
+      value: dashboardSummary.assignedTotal,
+      helper: "Vendedor definido, sin oportunidad",
+      tone: "accent",
+      onClick: () => applyDashboardDrilldown({ statuses: ["lead_assigned"] }),
+    },
+    {
+      label: "Estancados",
+      value: dashboardSummary.stagnantTotal,
+      helper: "Sin avance reciente según umbral",
+      tone: "warning",
+      onClick: () => applyDashboardDrilldown({ queue: "stagnant" }),
+    },
+    {
+      label: "Con próximo paso",
+      value: dashboardSummary.withNextActionTotal,
+      helper: formatPercent(dashboardSummary.withNextActionTotal, dashboardSummary.activeTotal),
+      tone: "success",
+      onClick: () => applyDashboardDrilldown({ queue: "all" }),
+    },
+  ];
+  const operationsCards = [
+    {
+      label: "Sin contacto",
+      value: dashboardSummary.noContactTotal,
+      helper: "Sin situación registrada",
+      tone: "warning",
+      onClick: () => applyDashboardDrilldown({ queue: "no_contact" }),
+    },
+    {
+      label: "Vencidos",
+      value: dashboardSummary.overdueTotal,
+      helper: "Próximo paso incumplido",
+      tone: "danger",
+      onClick: () => applyDashboardDrilldown({ queue: "overdue" }),
+    },
+    {
+      label: "Estancados",
+      value: dashboardSummary.stagnantTotal,
+      helper: "Sin avance comercial relevante",
+      tone: "warning",
+      onClick: () => applyDashboardDrilldown({ queue: "stagnant" }),
+    },
+    {
+      label: "Asignados sin oportunidad",
+      value: dashboardSummary.assignedTotal,
+      helper: "Cola lista para destrabe",
+      tone: "accent",
+      onClick: () =>
+        applyDashboardDrilldown({ queue: "assigned_without_opportunity" }),
+    },
+  ];
+
+  function renderDashboardBody() {
+    if (dashboardLoading) {
+      return <div className="centered">Cargando tablero...</div>;
+    }
+
+    if (dashboardError) {
+      return <div className="toast toast-error lead-dashboard-inline-toast">{dashboardError}</div>;
+    }
+
+    if (!dashboard) {
+      return <div className="account-opps-empty">Aún no hay métricas disponibles.</div>;
+    }
+
+    if (selectedView === "executive") {
+      return (
+        <div className="lead-dashboard-stack">
+          <div className="lead-dashboard-stat-grid">
+            {executiveCards.map((card) => (
+              <LeadDashboardStatCard key={card.label} {...card} />
+            ))}
+          </div>
+
+          <section className="lead-dashboard-panel">
+            <div className="lead-dashboard-panel-header">
+              <div>
+                <h3>Estados actuales del funnel</h3>
+                <p>Haz clic sobre cualquier estado para abrir la bandeja filtrada.</p>
+              </div>
+            </div>
+            <div className="lead-dashboard-status-grid">
+              {LEAD_STATUS_FILTER_OPTIONS.map((status) => (
+                <LeadDashboardStatCard
+                  key={status.value}
+                  label={status.label}
+                  value={dashboardStatusMap.get(status.value) || 0}
+                  helper="Abrir bandeja"
+                  tone={status.value === "lead_qualified" ? "success" : status.value === "lead_disqualified" ? "danger" : "default"}
+                  onClick={() =>
+                    applyDashboardDrilldown({ statuses: [status.value], queue: "all" })
+                  }
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="lead-dashboard-panel">
+            <div className="lead-dashboard-panel-header">
+              <div>
+                <h3>Desempeño por fuente</h3>
+                <p>Conversión visible según los filtros y el periodo actual.</p>
+              </div>
+            </div>
+            <div className="lead-dashboard-table-wrap">
+              <table className="lead-dashboard-table">
+                <thead>
+                  <tr>
+                    <th>Fuente</th>
+                    <th>Leads</th>
+                    <th>Calificados</th>
+                    <th>Oportunidades</th>
+                    <th>Conversión</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard.sourceCounts || []).map((row) => (
+                    <tr key={row.code}>
+                      <td>
+                        <button
+                          type="button"
+                          className="lead-dashboard-link-btn"
+                          onClick={() =>
+                            applyDashboardDrilldown({ source: row.code, queue: "all" })
+                          }
+                        >
+                          {getLeadSourceLabel(row.code)}
+                        </button>
+                      </td>
+                      <td>{row.total}</td>
+                      <td>{row.qualifiedTotal}</td>
+                      <td>{row.opportunityTotal}</td>
+                      <td>{formatPercent(row.opportunityTotal, row.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    if (selectedView === "management") {
+      return (
+        <div className="lead-dashboard-stack">
+          <div className="lead-dashboard-stat-grid">
+            {managementCards.map((card) => (
+              <LeadDashboardStatCard key={card.label} {...card} />
+            ))}
+          </div>
+
+          <section className="lead-dashboard-panel">
+            <div className="lead-dashboard-panel-header">
+              <div>
+                <h3>Seguimiento por vendedor</h3>
+                <p>Lectura táctica del backlog y la conversión visible por responsable.</p>
+              </div>
+            </div>
+            <div className="lead-dashboard-table-wrap">
+              <table className="lead-dashboard-table">
+                <thead>
+                  <tr>
+                    <th>Vendedor</th>
+                    <th>Activos</th>
+                    <th>Asignados</th>
+                    <th>Calificados</th>
+                    <th>Vencidos</th>
+                    <th>Estancados</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard.sellerRows || []).map((row) => (
+                    <tr key={row.sellerUserId || `seller-${row.sellerName}`}>
+                      <td>
+                        <div className="lead-dashboard-row-title">
+                          <strong>{row.sellerName}</strong>
+                          <span>{row.sellerEmail || "Sin correo visible"}</span>
+                        </div>
+                      </td>
+                      <td>{row.activeTotal}</td>
+                      <td>{row.assignedTotal}</td>
+                      <td>{row.qualifiedTotal}</td>
+                      <td>{row.overdueTotal}</td>
+                      <td>{row.stagnantTotal}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    return (
+      <div className="lead-dashboard-stack">
+        <div className="lead-dashboard-stat-grid">
+          {operationsCards.map((card) => (
+            <LeadDashboardStatCard key={card.label} {...card} />
+          ))}
+        </div>
+
+        <div className="lead-dashboard-queue-grid">
+          <LeadDashboardQueueTable
+            title="Seguimiento vencido"
+            emptyLabel="No hay leads vencidos con los filtros actuales."
+            items={dashboard.queues?.overdue || []}
+            onOpenLead={(itemId) => void openDetail(itemId)}
+            onOpenQueue={() => applyDashboardDrilldown({ queue: "overdue" })}
+          />
+          <LeadDashboardQueueTable
+            title="Sin contacto"
+            emptyLabel="No hay leads sin contacto registrados con los filtros actuales."
+            items={dashboard.queues?.noContact || []}
+            onOpenLead={(itemId) => void openDetail(itemId)}
+            onOpenQueue={() => applyDashboardDrilldown({ queue: "no_contact" })}
+          />
+          <LeadDashboardQueueTable
+            title="Estancados"
+            emptyLabel="No hay leads estancados con los filtros actuales."
+            items={dashboard.queues?.stagnant || []}
+            onOpenLead={(itemId) => void openDetail(itemId)}
+            onOpenQueue={() => applyDashboardDrilldown({ queue: "stagnant" })}
+          />
+          <LeadDashboardQueueTable
+            title="Asignados sin oportunidad"
+            emptyLabel="No hay leads asignados sin oportunidad en este corte."
+            items={dashboard.queues?.assignedWithoutOpportunity || []}
+            onOpenLead={(itemId) => void openDetail(itemId)}
+            onOpenQueue={() =>
+              applyDashboardDrilldown({ queue: "assigned_without_opportunity" })
+            }
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <section className="panel">
@@ -4555,6 +5116,25 @@ function InteractionsPage({ can, currentUser }) {
         ) : null}
       </div>
 
+      <div className="lead-dashboard-tabs" role="tablist" aria-label="Vistas del módulo de leads">
+        {availableViews.map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            role="tab"
+            aria-selected={selectedView === view.id}
+            className={
+              selectedView === view.id
+                ? "lead-dashboard-tab is-active"
+                : "lead-dashboard-tab"
+            }
+            onClick={() => openDashboardView(view.id)}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+
       <div className="roles-pills-bar accounts-pills-bar-row interaction-leads-toolbar">
         <div className="interaction-leads-status-filter" ref={statusFilterRef}>
           <button
@@ -4636,6 +5216,29 @@ function InteractionsPage({ can, currentUser }) {
           ) : null}
         </div>
         <div className="interaction-leads-toolbar-controls">
+          <div
+            className="lead-dashboard-period-switch"
+            role="group"
+            aria-label="Periodo del tablero y la bandeja"
+          >
+            {LEAD_DASHBOARD_PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={
+                  periodFilter === option.value
+                    ? "is-active"
+                    : ""
+                }
+                onClick={() => {
+                  setPage(1);
+                  setPeriodFilter(option.value);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <input
             className="accounts-search-inline interaction-search-input interaction-leads-search-input"
             type="text"
@@ -4665,13 +5268,37 @@ function InteractionsPage({ can, currentUser }) {
         </div>
       </div>
 
+      {queueFilter !== "all" ? (
+        <div className="lead-dashboard-active-filters">
+          <span className="interaction-status-pill is-review">
+            Cola activa: {queueFilterLabel}
+          </span>
+          <button
+            type="button"
+            className="lead-dashboard-clear-filter"
+            onClick={() => {
+              setPage(1);
+              setQueueFilter("all");
+            }}
+          >
+            Limpiar cola
+          </button>
+        </div>
+      ) : null}
+
       {error ? <div className="toast toast-error">{error}</div> : null}
       {success ? <div className="toast toast-success">{success}</div> : null}
 
-      {loading ? (
+      {selectedView !== "inbox" ? (
+        renderDashboardBody()
+      ) : loading ? (
         <div className="centered">Cargando leads...</div>
       ) : !items.length ? (
-        <div className="account-opps-empty">Aún no hay leads registrados.</div>
+        <div className="account-opps-empty">
+          {queueFilter !== "all"
+            ? "No hay leads en la cola seleccionada con los filtros actuales."
+            : "Aún no hay leads registrados."}
+        </div>
       ) : (
         <>
           <table>
