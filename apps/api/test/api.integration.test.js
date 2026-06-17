@@ -10672,6 +10672,82 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("desarrollo comercial incluye seguimientos de leads con fecha compromiso en el calendario", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_calendar_lead_follow_up`,
+    );
+
+    const interactionsLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+
+    const createInteractionResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
+      .field("title", `Lead calendario ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Calendario",
+            "Contacto: Laura Agenda",
+            "Correo: laura.agenda@example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_calendar_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createInteractionResponse.status).toBe(201);
+
+    await query(
+      `UPDATE interactions
+       SET account_id = ?,
+           primary_opportunity_id = ?,
+           seller_user_id = NULL,
+           analysis_status = 'lead_assigned',
+           lead_required_action_code = 'schedule_meeting',
+           lead_next_action_due_at = ?,
+           summary = ?
+       WHERE id = ?`,
+      [
+        fixture.accountId,
+        fixture.opportunityId,
+        "2026-08-12 09:30:00",
+        "Validar disponibilidad y dejar reunion confirmada.",
+        Number(createInteractionResponse.body.id),
+      ],
+    );
+
+    const calendarResponse = await request(app)
+      .get(
+        "/api/commercial-development/calendar?view=week&date=2026-08-12&includeCompleted=false",
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(calendarResponse.status).toBe(200);
+    expect(calendarResponse.body.days).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          date: "2026-08-12",
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              calendarSource: "interaction",
+              activityType: "lead_follow_up",
+              title: `Lead calendario ${TEST_PREFIX}`,
+              accountName: expect.any(String),
+              status: "pending",
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   test("desarrollo comercial calcula real ganado segun el trimestre seleccionado", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_development_actual_by_quarter`,

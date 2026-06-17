@@ -2,9 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 
 const VIEW_OPTIONS = [
-  { value: "day", label: "Dia" },
   { value: "week", label: "Semana" },
-  { value: "month", label: "Mes" },
 ];
 
 const CALENDAR_ACTIVITY_TYPE_OPTIONS = [
@@ -54,7 +52,7 @@ function formatDateTime(value) {
 
 function formatDate(value) {
   if (!value) return "Sin fecha";
-  const parsed = new Date(value);
+  const parsed = parseCalendarDate(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleDateString("es-MX", {
     day: "2-digit",
@@ -134,6 +132,7 @@ function normalizeCalendarActivityDraft(activity) {
       successCriteria: "",
       isPrimaryNextStep: false,
       readonlyByStatus: false,
+      calendarSource: "opportunity",
     };
   }
 
@@ -150,6 +149,8 @@ function normalizeCalendarActivityDraft(activity) {
     successCriteria: String(activity.successCriteria || "").trim(),
     isPrimaryNextStep: Boolean(activity.isPrimaryNextStep),
     readonlyByStatus: Boolean(activity.readonlyByStatus),
+    calendarSource:
+      String(activity.calendarSource || "opportunity").trim() || "opportunity",
   };
 }
 
@@ -198,6 +199,13 @@ function groupItemsByDayPart(items) {
     },
     { manana: [], tarde: [] },
   );
+}
+
+function formatActivityContext(item) {
+  const parts = [item?.opportunityName, item?.accountName].filter(
+    (value) => String(value || "").trim().length > 0,
+  );
+  return parts.join(" · ") || "Sin contexto comercial";
 }
 
 function trafficLabel(value) {
@@ -555,10 +563,11 @@ export default function CalendarPage({ currentUser }) {
   const openActivityModal = async (item) => {
     const opportunityId = Number(item?.opportunityId || 0);
     const activityId = Number(item?.id || 0);
-    if (!opportunityId || !activityId) return;
+    const calendarSource =
+      String(item?.calendarSource || "opportunity").trim() || "opportunity";
+    if (!activityId) return;
 
     setActivityModalOpen(true);
-    setActivityLoading(true);
     setActivityError("");
     setActivityNotice("");
     setActivityDraft(
@@ -569,6 +578,20 @@ export default function CalendarPage({ currentUser }) {
         objective: item?.title || "",
       }),
     );
+
+    if (calendarSource !== "opportunity" || !opportunityId) {
+      setActivityLoading(false);
+      setActivityNotice(
+        "Seguimiento generado desde Interacciones. Su actualizacion se realiza desde el lead.",
+      );
+      setActivityDraft((current) => ({
+        ...current,
+        readonlyByStatus: true,
+      }));
+      return;
+    }
+
+    setActivityLoading(true);
 
     try {
       const response = await api.get(
@@ -881,9 +904,7 @@ export default function CalendarPage({ currentUser }) {
                                   <strong>
                                     {item.title || "Sin objetivo"}
                                   </strong>
-                                  <small>
-                                    {item.opportunityName} · {item.accountName}
-                                  </small>
+                                  <small>{formatActivityContext(item)}</small>
                                 </div>
                               </button>
                             </li>
@@ -922,9 +943,7 @@ export default function CalendarPage({ currentUser }) {
                                   <strong>
                                     {item.title || "Sin objetivo"}
                                   </strong>
-                                  <small>
-                                    {item.opportunityName} · {item.accountName}
-                                  </small>
+                                  <small>{formatActivityContext(item)}</small>
                                 </div>
                               </button>
                             </li>
@@ -986,7 +1005,7 @@ export default function CalendarPage({ currentUser }) {
                       ) : null}
                       <strong>{item.title || "Actividad"}</strong>
                       <p>
-                        {item.opportunityName} ·{" "}
+                        {formatActivityContext(item)} ·{" "}
                         {formatDateTime(item.scheduledAt)}
                       </p>
                     </div>
@@ -1022,7 +1041,7 @@ export default function CalendarPage({ currentUser }) {
                       ) : null}
                       <span>{formatDateTime(item.scheduledAt)}</span>
                       <strong>{item.title || "Actividad"}</strong>
-                      <small>{item.opportunityName}</small>
+                      <small>{formatActivityContext(item)}</small>
                     </button>
                   </li>
                 ))

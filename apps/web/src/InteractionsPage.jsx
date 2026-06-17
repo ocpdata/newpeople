@@ -917,10 +917,30 @@ function getLeadCatalogEntryByCode(entries, code) {
 
 const EMPTY_LEAD_CATALOG = Object.freeze([]);
 
+function parseLeadOutcomeDate(value) {
+  if (!value) return null;
+
+  const text = String(value);
+  const yyyyMmDd = text.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) {
+    const [yearText, monthText, dayText] = yyyyMmDd.split("-");
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const parsed = new Date(year, month - 1, day);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
 function formatLeadOutcomeDateLabel(value) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
+  const date = parseLeadOutcomeDate(value);
+  if (!date) return "";
   return date.toLocaleDateString("es-MX");
 }
 
