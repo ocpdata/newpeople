@@ -15,6 +15,7 @@ import {
 } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
+import { getCommercialSettings } from "./settings.js";
 import {
   buildContactDuplicateResponse,
   validateContactDuplicates,
@@ -91,6 +92,99 @@ const LEAD_QUEUE_FILTER_LIST = [
   "assigned_without_opportunity",
 ];
 const LEAD_QUEUE_FILTER_CODES = new Set(LEAD_QUEUE_FILTER_LIST);
+const DEFAULT_BUSINESS_TIMEZONE =
+  String(config.app?.businessTimezone || "America/Mexico_City").trim() ||
+  "America/Mexico_City";
+let businessTimezoneCache = DEFAULT_BUSINESS_TIMEZONE;
+let businessTimezoneCacheExpiresAt = 0;
+
+async function loadBusinessTimezone() {
+  const nowMs = Date.now();
+  if (businessTimezoneCache && nowMs < businessTimezoneCacheExpiresAt) {
+    return businessTimezoneCache;
+  }
+  const settings = await getCommercialSettings().catch(() => null);
+  businessTimezoneCache =
+    String(settings?.businessTimezone || DEFAULT_BUSINESS_TIMEZONE).trim() ||
+    DEFAULT_BUSINESS_TIMEZONE;
+  businessTimezoneCacheExpiresAt = nowMs + 60000;
+  return businessTimezoneCache;
+}
+
+function parseDateOnlyText(value) {
+  const candidate = String(value || "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(candidate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return null;
+  }
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+}
+
+function getTimeZoneOffsetMinutes(dateValue, timeZone) {
+  const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return 0;
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(parsed);
+  const lookup = {};
+  parts.forEach((part) => {
+    if (part.type !== "literal") {
+      lookup[part.type] = part.value;
+    }
+  });
+
+  const asUtc = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second),
+  );
+  return (asUtc - parsed.getTime()) / 60000;
+}
+
+function toTimeZoneStartOfDayUtc(dateText, timeZone) {
+  const parsed = parseDateOnlyText(dateText);
+  if (!parsed) return null;
+
+  const year = parsed.getUTCFullYear();
+  const month = parsed.getUTCMonth();
+  const day = parsed.getUTCDate();
+  const utcMidnightMs = Date.UTC(year, month, day, 0, 0, 0);
+  let offsetMinutes = getTimeZoneOffsetMinutes(utcMidnightMs, timeZone);
+  let resultMs = utcMidnightMs - offsetMinutes * 60000;
+
+  const normalizedOffset = getTimeZoneOffsetMinutes(resultMs, timeZone);
+  if (normalizedOffset !== offsetMinutes) {
+    offsetMinutes = normalizedOffset;
+    resultMs = utcMidnightMs - offsetMinutes * 60000;
+  }
+
+  return new Date(resultMs);
+}
+
 const LEAD_STATUS_CATALOG = [
   {
     code: "created",
@@ -4714,8 +4808,9 @@ router.post(
       parsed.data.referredAreaName || "",
     ).trim();
     const nextActionDueAtRaw = String(parsed.data.nextActionDueAt || "").trim();
+    const businessTimezone = await loadBusinessTimezone();
     const nextActionDueAt = nextActionDueAtRaw
-      ? new Date(`${nextActionDueAtRaw}T00:00:00`)
+      ? toTimeZoneStartOfDayUtc(nextActionDueAtRaw, businessTimezone)
       : null;
 
     if (rule.requiresComment && !normalizedComment) {

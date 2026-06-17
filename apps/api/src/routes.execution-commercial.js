@@ -3710,7 +3710,9 @@ function mapCommercialTimelineEntry(action) {
 function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
   const actionLabel = getLeadFollowUpActionLabel(row.lead_required_action_code);
   const leadTitle = String(row.interaction_title || "").trim();
-  const scheduledDateText = toIsoDate(row.lead_next_action_due_at);
+  const scheduledDateText =
+    String(row.lead_next_action_due_date || "").trim() ||
+    toIsoDate(row.lead_next_action_due_at);
   const scheduledStart = scheduledDateText
     ? toTimeZoneStartOfDayUtc(scheduledDateText, timeZone)
     : null;
@@ -3752,6 +3754,8 @@ async function listCalendarLeadFollowUps({
   user,
   startDateTime,
   endExclusiveDateTime,
+  startDate,
+  endDate,
   sellerUserId = null,
   year = null,
   quarter = null,
@@ -3763,8 +3767,6 @@ async function listCalendarLeadFollowUps({
     : "LEFT JOIN account_owners ao_interaction_scope ON ao_interaction_scope.account_id = i.account_id AND ao_interaction_scope.user_id = ?";
   const sellerExpression = "COALESCE(i.seller_user_id, po.seller_user_id)";
   const where = [
-    `i.lead_next_action_due_at >= ?`,
-    `i.lead_next_action_due_at < ?`,
     `i.lead_required_action_code IS NOT NULL`,
     `i.analysis_status <> 'lead_disqualified'`,
   ];
@@ -3773,7 +3775,16 @@ async function listCalendarLeadFollowUps({
     params.push(Number(user.id));
   }
 
-  params.push(startDateTime, endExclusiveDateTime);
+  const normalizedStartDate = String(startDate || "").trim();
+  const normalizedEndDate = String(endDate || "").trim();
+  if (normalizedStartDate && normalizedEndDate) {
+    where.push(`DATE(i.lead_next_action_due_at) BETWEEN ? AND ?`);
+    params.push(normalizedStartDate, normalizedEndDate);
+  } else {
+    where.push(`i.lead_next_action_due_at >= ?`);
+    where.push(`i.lead_next_action_due_at < ?`);
+    params.push(startDateTime, endExclusiveDateTime);
+  }
 
   if (year !== null && quarter !== null) {
     const quarterRange = getQuarterDateRange(year, quarter);
@@ -3801,6 +3812,7 @@ async function listCalendarLeadFollowUps({
             i.summary,
             i.lead_required_action_code,
             i.lead_next_action_due_at,
+          DATE_FORMAT(i.lead_next_action_due_at, '%Y-%m-%d') AS lead_next_action_due_date,
             i.primary_opportunity_id,
             po.name AS primary_opportunity_name,
             po.close_date,
@@ -6440,6 +6452,8 @@ async function listCommercialCalendarActivities({
       user,
       startDateTime: range.startDateTime,
       endExclusiveDateTime: range.endExclusiveDateTime,
+      startDate: range.startDate,
+      endDate: range.endDate,
       sellerUserId,
       year,
       quarter,
@@ -6586,6 +6600,11 @@ async function listCalendarAlertActivities({
       user,
       startDateTime: lookbackStart,
       endExclusiveDateTime: next24h,
+      startDate: formatDateInTimeZone(lookbackStart, timeZone),
+      endDate: formatDateInTimeZone(
+        new Date(next24h.getTime() - 1),
+        timeZone,
+      ),
       sellerUserId,
       timeZone,
     }),

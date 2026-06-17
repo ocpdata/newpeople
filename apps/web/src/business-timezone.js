@@ -8,6 +8,7 @@ import {
 } from "react";
 
 export const DEFAULT_BUSINESS_TIMEZONE = "America/Mexico_City";
+const DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 let activeBusinessTimezone = DEFAULT_BUSINESS_TIMEZONE;
 
@@ -29,6 +30,27 @@ function getFormatterParts(formatter, value) {
     }
   }
   return lookup;
+}
+
+function parseDateOnlyText(value) {
+  const text = String(value || "").trim();
+  const match = DATE_ONLY_REGEX.exec(text);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return null;
+  }
+  return { year, month, day, text };
 }
 
 export function isValidIanaTimezone(timezone) {
@@ -82,6 +104,8 @@ export function getBusinessDateParts(value, timezone = getActiveBusinessTimezone
 }
 
 export function toBusinessDateIso(value, timezone = getActiveBusinessTimezone()) {
+  const dateOnly = parseDateOnlyText(value);
+  if (dateOnly) return dateOnly.text;
   const parts = getBusinessDateParts(value, timezone);
   if (!parts) return "";
   return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
@@ -117,6 +141,16 @@ export function formatBusinessDate(
   } = {},
 ) {
   if (!value) return fallback;
+  const dateOnly = parseDateOnlyText(value);
+  if (dateOnly) {
+    const exactDate = new Date(
+      Date.UTC(dateOnly.year, dateOnly.month - 1, dateOnly.day, 12, 0, 0),
+    );
+    return exactDate.toLocaleDateString(locale, {
+      ...options,
+      timeZone: "UTC",
+    });
+  }
   const parsed = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(parsed.getTime())) return fallback;
   return parsed.toLocaleDateString(locale, {
