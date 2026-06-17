@@ -32,6 +32,7 @@ import {
   saveChatbotSettings,
   saveTemporaryFeatureSettings,
   getCommercialSettings,
+  isValidIanaTimezone,
   saveCommercialSettings,
 } from "./settings.js";
 
@@ -1407,6 +1408,15 @@ router.put(
 );
 
 const commercialSettingsSchema = z.object({
+  businessTimezone: z
+    .string()
+    .trim()
+    .min(3)
+    .max(80)
+    .refine((value) => isValidIanaTimezone(value), {
+      message: "Zona horaria invalida",
+    })
+    .optional(),
   stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
   stageWeightMap: z.record(z.string(), z.number().min(0).max(1)).optional(),
 });

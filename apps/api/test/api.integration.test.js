@@ -10717,7 +10717,7 @@ describe("API integration baseline", () => {
       [
         fixture.accountId,
         fixture.opportunityId,
-        "2026-08-12 09:30:00",
+        "2026-08-12 00:00:00",
         "Validar disponibilidad y dejar reunion confirmada.",
         Number(createInteractionResponse.body.id),
       ],
@@ -10739,6 +10739,7 @@ describe("API integration baseline", () => {
               calendarSource: "interaction",
               activityType: "lead_follow_up",
               title: `Lead calendario ${TEST_PREFIX}`,
+              scheduledDate: "2026-08-12",
               accountName: expect.any(String),
               status: "pending",
             }),

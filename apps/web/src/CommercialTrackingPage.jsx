@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
+import {
+  addDaysToIsoDate,
+  formatBusinessDate,
+  getTodayBusinessDate,
+} from "./business-timezone";
 import "./commercial-tracking.css";
 
 const TAB_OPTIONS = [
@@ -66,52 +71,55 @@ const FORECAST_SORT_DEFAULT = {
 };
 
 function getCurrentWeekStart() {
-  const now = new Date();
-  const day = now.getDay() || 7;
-  if (day !== 1) {
-    now.setDate(now.getDate() - (day - 1));
-  }
-  now.setHours(0, 0, 0, 0);
-  return now.toISOString().slice(0, 10);
+  return formatIsoWeekStart(getTodayBusinessDate());
 }
 
-function getWeekStartDate(value = new Date()) {
-  const candidate = value instanceof Date ? new Date(value) : new Date(value);
+function getWeekStartDate(value = getTodayBusinessDate()) {
+  const candidate =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T12:00:00Z`)
+      : value instanceof Date
+        ? new Date(value)
+        : new Date(value);
   if (Number.isNaN(candidate.getTime())) {
-    return getWeekStartDate(new Date());
+    return getWeekStartDate(getTodayBusinessDate());
   }
 
   const normalized = new Date(
-    candidate.getFullYear(),
-    candidate.getMonth(),
-    candidate.getDate(),
-    12,
+    Date.UTC(
+      candidate.getUTCFullYear(),
+      candidate.getUTCMonth(),
+      candidate.getUTCDate(),
+      12,
+    ),
   );
-  const day = normalized.getDay() || 7;
+  const day = normalized.getUTCDay() || 7;
   if (day !== 1) {
-    normalized.setDate(normalized.getDate() - (day - 1));
+    normalized.setUTCDate(normalized.getUTCDate() - (day - 1));
   }
   return normalized;
 }
 
-function formatIsoWeekStart(value = new Date()) {
+function formatIsoWeekStart(value = getTodayBusinessDate()) {
   const weekStart = getWeekStartDate(value);
-  return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`;
+  return `${weekStart.getUTCFullYear()}-${String(weekStart.getUTCMonth() + 1).padStart(2, "0")}-${String(weekStart.getUTCDate()).padStart(2, "0")}`;
 }
 
 function formatWeekOptionLabel(weekStartValue) {
   const weekStart = getWeekStartDate(`${weekStartValue}T12:00:00`);
   const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 6);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
 
   const formatPart = (date, includeYear = false) =>
-    date.toLocaleDateString("es-MX", {
-      day: "2-digit",
-      month: "short",
-      ...(includeYear ? { year: "numeric" } : {}),
+    formatBusinessDate(date, {
+      options: {
+        day: "2-digit",
+        month: "short",
+        ...(includeYear ? { year: "numeric" } : {}),
+      },
     });
 
-  if (weekStart.getFullYear() !== weekEnd.getFullYear()) {
+  if (weekStart.getUTCFullYear() !== weekEnd.getUTCFullYear()) {
     return `${formatPart(weekStart, true)} - ${formatPart(weekEnd, true)}`;
   }
 
@@ -149,15 +157,15 @@ function buildCockpitWeekOptions(selectedWeekStart) {
 }
 
 function getCurrentMonth() {
-  return new Date().toISOString().slice(0, 7);
+  return getTodayBusinessDate().slice(0, 7);
 }
 
 function getCurrentYearStartMonth() {
-  return `${new Date().getFullYear()}-01`;
+  return `${getTodayBusinessDate().slice(0, 4)}-01`;
 }
 
 function getCurrentYearEndMonth() {
-  return `${new Date().getFullYear()}-12`;
+  return `${getTodayBusinessDate().slice(0, 4)}-12`;
 }
 
 function getQuarterKeyForDate(rawDate) {
@@ -177,9 +185,9 @@ function formatMonthLabel(value) {
   if (!value) return "Sin mes";
   const parsed = new Date(`${value}-01T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return value;
-  const label = parsed.toLocaleDateString("es-MX", {
-    month: "long",
-    year: "numeric",
+  const label = formatBusinessDate(parsed, {
+    options: { month: "long", year: "numeric" },
+    fallback: value,
   });
   return label
     .replace(/\s+de\s+/i, " ")
@@ -192,8 +200,10 @@ function buildForecastMonthOptions(selectedMonth) {
   const year = Number(yearPart);
   const monthIndex = Number(monthPart) - 1;
   const anchor = new Date(
-    Number.isFinite(year) ? year : new Date().getFullYear(),
-    Number.isFinite(monthIndex) ? monthIndex : new Date().getMonth(),
+    Number.isFinite(year) ? year : Number(getTodayBusinessDate().slice(0, 4)),
+    Number.isFinite(monthIndex)
+      ? monthIndex
+      : Number(getTodayBusinessDate().slice(5, 7)) - 1,
     1,
   );
 
@@ -212,13 +222,11 @@ function buildForecastMonthOptions(selectedMonth) {
 }
 
 function getDefaultPeriodStart() {
-  const now = new Date();
-  now.setDate(now.getDate() - 84);
-  return now.toISOString().slice(0, 10);
+  return addDaysToIsoDate(getTodayBusinessDate(), -84);
 }
 
 function getDefaultPeriodEnd() {
-  return new Date().toISOString().slice(0, 10);
+  return getTodayBusinessDate();
 }
 
 function formatCurrency(value) {
@@ -234,13 +242,12 @@ function formatNumber(value) {
 }
 
 function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
+  return formatBusinessDate(value, {
+    options: {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    },
   });
 }
 

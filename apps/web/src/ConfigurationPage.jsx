@@ -1517,9 +1517,20 @@ function CommercialSettingsCard({
   canSave,
   isDirty,
   onChange,
+  onTimezoneChange,
   onWeightChange,
   onSave,
 }) {
+  const commonTimezones = [
+    "America/Mexico_City",
+    "America/Bogota",
+    "America/Lima",
+    "America/Santiago",
+    "America/Argentina/Buenos_Aires",
+    "America/New_York",
+    "UTC",
+  ];
+
   return (
     <section className="configuration-card">
       <div className="configuration-card-heading">
@@ -1536,6 +1547,25 @@ function CommercialSettingsCard({
       </div>
 
       <div className="configuration-form-grid">
+        <div className="field-group configuration-grid-span-full">
+          <label>Zona horaria oficial (IANA)</label>
+          <input
+            type="text"
+            list="commercial-timezone-options"
+            value={settings.businessTimezone || "America/Mexico_City"}
+            onChange={(event) => onTimezoneChange(event.target.value)}
+            placeholder="Ej. America/Mexico_City"
+          />
+          <datalist id="commercial-timezone-options">
+            {commonTimezones.map((timezone) => (
+              <option key={timezone} value={timezone} />
+            ))}
+          </datalist>
+          <p className="field-hint">
+            Usa formato IANA (por ejemplo: America/Mexico_City).
+          </p>
+        </div>
+
         {stageSlaEntries.map((entry) => (
           <div key={entry.code} className="field-group">
             <label>{entry.label}</label>
@@ -4227,6 +4257,7 @@ export default function ConfigurationPage() {
     updateChatbotSetting,
     saveChatbotSettings,
     updateCommercialSetting,
+    updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
     saveCommercialSettings,
     activateWorkspacePlaybook,
@@ -4915,6 +4946,7 @@ export default function ConfigurationPage() {
                 canSave={commercialSettingsDirty}
                 isDirty={commercialSettingsDirty}
                 onChange={updateCommercialSetting}
+                onTimezoneChange={updateCommercialBusinessTimezone}
                 onWeightChange={updateCommercialWeightSetting}
                 onSave={saveCommercialSettings}
               />

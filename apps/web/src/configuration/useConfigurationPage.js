@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { formatBusinessDateTime } from "../business-timezone";
 
 const DEFAULT_SELECTED_AI_CAPABILITY_KEY = "proposal.executive_summary";
 
@@ -87,6 +88,7 @@ const DEFAULT_STAGE_WEIGHT_MAP = {
 };
 
 const EMPTY_COMMERCIAL_SETTINGS = {
+  businessTimezone: "America/Mexico_City",
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
   stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
   updatedAt: null,
@@ -613,6 +615,9 @@ function normalizeCommercialSettings(settings) {
   }
 
   return {
+    businessTimezone:
+      String(settings.businessTimezone || "").trim() ||
+      EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
     stageSlaMap,
     stageWeightMap,
     updatedAt: settings.updatedAt || null,
@@ -622,6 +627,7 @@ function normalizeCommercialSettings(settings) {
 
 function serializeCommercialSettings(settings) {
   return JSON.stringify({
+    businessTimezone: String(settings?.businessTimezone || "").trim(),
     stageSlaMap: settings?.stageSlaMap || {},
     stageWeightMap: settings?.stageWeightMap || {},
   });
@@ -641,18 +647,16 @@ function deserializeCommercialSettingsSnapshot(snapshot) {
 }
 
 function formatDateTime(value) {
-  if (!value) return "Sin cambios registrados";
-  try {
-    return new Date(value).toLocaleString("es-MX", {
+  return formatBusinessDateTime(value, {
+    options: {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-    });
-  } catch {
-    return String(value);
-  }
+    },
+    fallback: "Sin cambios registrados",
+  });
 }
 
 function summarizeChangedFields(changedFields) {
@@ -1275,6 +1279,13 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCommercialBusinessTimezone(value) {
+    setCommercialSettings((current) => ({
+      ...current,
+      businessTimezone: String(value || "").trim(),
+    }));
+  }
+
   function updateCommercialWeightSetting(stageCode, percent) {
     const normalizedPercent = Number(percent);
     const safePercent = Number.isFinite(normalizedPercent)
@@ -1296,6 +1307,9 @@ export function useConfigurationPage() {
     try {
       const [saveResponse, auditResponse] = await Promise.all([
         api.put("/api/settings/commercial", {
+          businessTimezone:
+            String(commercialSettings.businessTimezone || "").trim() ||
+            EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
           stageSlaMap: commercialSettings.stageSlaMap,
           stageWeightMap: commercialSettings.stageWeightMap,
         }),
@@ -1306,6 +1320,13 @@ export function useConfigurationPage() {
         saveResponse.data?.settings,
       );
       setCommercialSettings(nextSettings);
+      window.dispatchEvent(
+        new CustomEvent("business-timezone-updated", {
+          detail: {
+            businessTimezone: nextSettings.businessTimezone,
+          },
+        }),
+      );
       setInitialCommercialSettingsSnapshot(
         serializeCommercialSettings(nextSettings),
       );
@@ -2334,6 +2355,7 @@ export function useConfigurationPage() {
     updateChatbotSetting,
     saveChatbotSettings,
     updateCommercialSetting,
+    updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
     saveCommercialSettings,
     reloadAiWalletSummaries,

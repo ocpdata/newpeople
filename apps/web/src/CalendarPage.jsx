@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  addDaysToIsoDate,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  formatBusinessTime,
+  toBusinessDateInputValue,
+  toBusinessDateTimeInputValue,
+} from "./business-timezone";
 
 const VIEW_OPTIONS = [
   { value: "week", label: "Semana" },
@@ -27,60 +35,38 @@ const CALENDAR_ACTIVITY_STATUS_OPTIONS = [
 const MORNING_CUTOFF_HOUR = 12;
 
 function toDateInputValue(value) {
-  if (!value) {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-  return String(value).slice(0, 10);
+  return toBusinessDateInputValue(value);
 }
 
 function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleString("es-MX", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  return formatBusinessDateTime(value, {
+    options: {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
   });
 }
 
 function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const parsed = parseCalendarDate(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
+  return formatBusinessDate(value, {
+    options: {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    },
+    fallback: String(value || "Sin fecha"),
   });
 }
 
 function formatTime(value) {
-  if (!value) return "Sin hora";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin hora";
-  return parsed.toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatBusinessTime(value);
 }
 
 function toDateTimeInputValue(value) {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  const hours = String(parsed.getHours()).padStart(2, "0");
-  const minutes = String(parsed.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return toBusinessDateTimeInputValue(value);
 }
 
 function splitDateTimeInputValue(value) {
@@ -101,13 +87,7 @@ function joinDateAndTime(datePart, timePart) {
 
 function shiftDateInputValue(datePart, daysToShift) {
   if (!datePart) return "";
-  const parsed = new Date(datePart);
-  if (Number.isNaN(parsed.getTime())) return datePart;
-  parsed.setDate(parsed.getDate() + daysToShift);
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return addDaysToIsoDate(datePart, daysToShift);
 }
 
 function activityStatusLabel(statusValue) {
@@ -186,9 +166,18 @@ function getDayActivityCount(day) {
 }
 
 function getDayPart(value) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "tarde";
-  return parsed.getHours() < MORNING_CUTOFF_HOUR ? "manana" : "tarde";
+  const display = formatBusinessTime(value, {
+    fallback: "12:00",
+    options: {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    },
+  });
+  const parsedHour = Number(String(display).slice(0, 2));
+  return Number.isFinite(parsedHour) && parsedHour < MORNING_CUTOFF_HOUR
+    ? "manana"
+    : "tarde";
 }
 
 function groupItemsByDayPart(items) {

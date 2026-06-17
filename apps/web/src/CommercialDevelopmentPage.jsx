@@ -25,6 +25,14 @@ function formatOpportunityScore(value) {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
+import {
+  addDaysToIsoDate,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  getTodayBusinessDate,
+  toBusinessDateIso,
+  toBusinessDateTimeInputValue,
+} from "./business-timezone";
 
 const ACTIVITY_TYPE_OPTIONS = [
   { value: "call", label: "Llamada" },
@@ -361,64 +369,43 @@ function formatPercent(value) {
 }
 
 function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
+  return formatBusinessDate(value, {
+    options: {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    },
   });
 }
 
 function toDateTimeInputValue(value) {
-  if (!value) return "";
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  const hour = String(parsed.getHours()).padStart(2, "0");
-  const minute = String(parsed.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hour}:${minute}`;
+  return toBusinessDateTimeInputValue(value);
 }
 
 function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  return formatBusinessDateTime(value, {
+    options: {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
   });
 }
 
 function toIsoDate(value) {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
+  const next = toBusinessDateIso(value);
+  return next || null;
 }
 
 function getTodayDateValue() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return getTodayBusinessDate();
 }
 
 function addDaysToDateValue(dateValue, days) {
   if (!dateValue) return getTodayDateValue();
-  const [year, month, day] = String(dateValue)
-    .split("-")
-    .map((part) => Number(part));
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + Number(days || 0));
-  return date.toISOString().slice(0, 10);
+  return addDaysToIsoDate(dateValue, days);
 }
 
 function shiftCalendarDate(view, dateValue, direction) {
@@ -448,9 +435,11 @@ function getWeekdayLabel(dateValue, variant = "short") {
   if (!dateValue) return "";
   const parsed = new Date(`${dateValue}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleDateString("es-MX", {
-    weekday: variant,
-    timeZone: "UTC",
+  return formatBusinessDate(`${dateValue}T12:00:00Z`, {
+    options: {
+      weekday: variant,
+    },
+    fallback: "",
   });
 }
 

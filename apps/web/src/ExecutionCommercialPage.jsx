@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  addDaysToIsoDate,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  getTodayBusinessDate,
+} from "./business-timezone";
 
 const TAB_OPTIONS = [
   { id: "overview", label: "Resumen" },
@@ -28,30 +34,29 @@ const DEPENDENCY_TYPE_OPTIONS = [
 ];
 
 function buildCadenceNextRunAt(daysAhead = 2) {
-  return new Date(Date.now() + daysAhead * 86400000).toISOString();
+  const nextDate = addDaysToIsoDate(getTodayBusinessDate(), daysAhead);
+  return `${nextDate}T09:00:00.000Z`;
 }
 
 function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
+  return formatBusinessDate(value, {
+    options: {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    },
   });
 }
 
 function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
-  return parsed.toLocaleString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  return formatBusinessDateTime(value, {
+    options: {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
   });
 }
 
@@ -183,7 +188,7 @@ function getRecommendedNextMoveText(value) {
 function buildNextStepDraft(item) {
   const dueDate = item?.nextStep?.dueDate
     ? String(item.nextStep.dueDate).slice(0, 10)
-    : new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+    : addDaysToIsoDate(getTodayBusinessDate(), 2);
   return {
     opportunityId: item?.id || null,
     title:
@@ -201,7 +206,7 @@ function buildDependencyDraft(item) {
     opportunityId: item?.id || null,
     dependencyType: "presales_support",
     title: "",
-    dueDate: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+    dueDate: addDaysToIsoDate(getTodayBusinessDate(), 2),
     expectedOutcome: "",
     details: "",
   };

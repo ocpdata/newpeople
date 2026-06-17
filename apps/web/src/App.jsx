@@ -4,6 +4,7 @@ import { api, setAuthToken } from "./api";
 import { FirstUserSetup, LoginPage, SetPasswordPage } from "./AuthPages";
 import AppShell from "./AppShell";
 import { HelpProvider } from "./help/HelpProvider";
+import { BusinessTimezoneProvider } from "./business-timezone";
 
 const OAUTH_ERROR_MESSAGES = {
   google_disabled: "El acceso con Google no esta habilitado en este entorno.",
@@ -126,17 +127,19 @@ function App() {
   }
 
   return (
-    <HelpProvider currentUser={currentUser}>
-      <AppShell
-        currentUser={currentUser}
-        token={token}
-        onLogout={() => {
-          setCurrentUser(null);
-          setToken("");
-        }}
-        onRefreshCurrentUser={fetchMe}
-      />
-    </HelpProvider>
+    <BusinessTimezoneProvider initialTimezone={currentUser.businessTimezone}>
+      <HelpProvider currentUser={currentUser}>
+        <AppShell
+          currentUser={currentUser}
+          token={token}
+          onLogout={() => {
+            setCurrentUser(null);
+            setToken("");
+          }}
+          onRefreshCurrentUser={fetchMe}
+        />
+      </HelpProvider>
+    </BusinessTimezoneProvider>
   );
 }
 

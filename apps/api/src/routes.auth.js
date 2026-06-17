@@ -18,6 +18,7 @@ import {
   findPasswordSetupToken,
   resolvePasswordSetupTokenState,
 } from "./passwordSetupTokens.js";
+import { getCommercialSettings } from "./settings.js";
 
 const router = express.Router();
 
@@ -66,6 +67,22 @@ const setPasswordContextSchema = z.object({
 });
 
 let googleMailConnectionsTableEnsured = false;
+let businessTimezoneCache = String(config.app?.businessTimezone || "").trim();
+let businessTimezoneCacheExpiresAt = 0;
+
+async function loadBusinessTimezone() {
+  const nowMs = Date.now();
+  if (businessTimezoneCache && nowMs < businessTimezoneCacheExpiresAt) {
+    return businessTimezoneCache;
+  }
+
+  const fallback = String(config.app?.businessTimezone || "").trim() || "America/Mexico_City";
+  const settings = await getCommercialSettings().catch(() => null);
+  businessTimezoneCache =
+    String(settings?.businessTimezone || fallback).trim() || fallback;
+  businessTimezoneCacheExpiresAt = nowMs + 60000;
+  return businessTimezoneCache;
+}
 
 function resolveAppBaseUrl() {
   if (config.app.baseUrl) {
@@ -1111,9 +1128,11 @@ router.post("/set-password", async (req, res) => {
 });
 
 router.get("/me", authRequired, loadUser, async (req, res) => {
+  const businessTimezone = await loadBusinessTimezone();
   const { permissionSet, ...user } = req.user;
   res.json({
     ...user,
+    businessTimezone,
     permissions: Array.from(permissionSet),
   });
 });

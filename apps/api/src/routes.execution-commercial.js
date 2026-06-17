@@ -43,6 +43,8 @@ const router = express.Router();
 
 let _stageSlaCache = null;
 let _stageSlaExpiry = 0;
+let _businessTimezoneCache = null;
+let _businessTimezoneExpiry = 0;
 
 async function loadStageSlaMap() {
   if (_stageSlaCache && Date.now() < _stageSlaExpiry) {
@@ -54,6 +56,18 @@ async function loadStageSlaMap() {
     : { ...STAGE_SLA_DEFAULTS };
   _stageSlaExpiry = Date.now() + 60000;
   return _stageSlaCache;
+}
+
+async function loadBusinessTimezone() {
+  if (_businessTimezoneCache && Date.now() < _businessTimezoneExpiry) {
+    return _businessTimezoneCache;
+  }
+  const settings = await getCommercialSettings().catch(() => null);
+  _businessTimezoneCache =
+    String(settings?.businessTimezone || config.app?.businessTimezone || "")
+      .trim() || "America/Mexico_City";
+  _businessTimezoneExpiry = Date.now() + 60000;
+  return _businessTimezoneCache;
 }
 
 const STAGE_SLA_DAYS = {
@@ -473,13 +487,13 @@ function addUtcDays(date, days) {
   return next;
 }
 
-function getCalendarRange(view, requestedDate) {
+function getCalendarRange(view, requestedDate, timeZone = BUSINESS_TIMEZONE) {
   const normalizedView = ["day", "week", "month"].includes(view)
     ? view
     : "week";
   const anchorDateText =
     parseDateOnly(requestedDate)?.toISOString().slice(0, 10) ||
-    formatDateInTimeZone(new Date(), BUSINESS_TIMEZONE);
+    formatDateInTimeZone(new Date(), timeZone);
   const anchor = parseDateOnly(anchorDateText);
 
   let start = anchor;
@@ -504,10 +518,10 @@ function getCalendarRange(view, requestedDate) {
     selectedDate: toIsoDate(anchor),
     startDate: toIsoDate(start),
     endDate: toIsoDate(end),
-    startDateTime: toTimeZoneStartOfDayUtc(toIsoDate(start), BUSINESS_TIMEZONE),
+    startDateTime: toTimeZoneStartOfDayUtc(toIsoDate(start), timeZone),
     endExclusiveDateTime: toTimeZoneStartOfDayUtc(
       toIsoDate(addUtcDays(end, 1)),
-      BUSINESS_TIMEZONE,
+      timeZone,
     ),
   };
 }
@@ -3693,9 +3707,19 @@ function mapCommercialTimelineEntry(action) {
   };
 }
 
-function mapLeadFollowUpCalendarItem(row) {
+function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
   const actionLabel = getLeadFollowUpActionLabel(row.lead_required_action_code);
   const leadTitle = String(row.interaction_title || "").trim();
+  const scheduledDateText = toIsoDate(row.lead_next_action_due_at);
+  const scheduledStart = scheduledDateText
+    ? toTimeZoneStartOfDayUtc(scheduledDateText, timeZone)
+    : null;
+  const scheduledAt = scheduledStart
+    ? new Date(scheduledStart.getTime() + 12 * 60 * 60 * 1000)
+    : row.lead_next_action_due_at;
+  const scheduledDate = scheduledDateText
+    ? scheduledDateText
+    : formatDateInTimeZone(row.lead_next_action_due_at, timeZone);
 
   return {
     id: Number(row.id),
@@ -3709,11 +3733,8 @@ function mapLeadFollowUpCalendarItem(row) {
     accountName: row.account_name || "",
     activityType: "lead_follow_up",
     status: "pending",
-    scheduledAt: row.lead_next_action_due_at,
-    scheduledDate: formatDateInTimeZone(
-      row.lead_next_action_due_at,
-      BUSINESS_TIMEZONE,
-    ),
+    scheduledAt,
+    scheduledDate,
     title: leadTitle || actionLabel || "Seguimiento de lead",
     note: row.summary || actionLabel || "",
     isPrimaryNextStep: false,
@@ -3734,6 +3755,7 @@ async function listCalendarLeadFollowUps({
   sellerUserId = null,
   year = null,
   quarter = null,
+  timeZone = BUSINESS_TIMEZONE,
 }) {
   const params = [];
   const accessJoin = hasCalendarGlobalScope(user)
@@ -3796,7 +3818,7 @@ async function listCalendarLeadFollowUps({
     params,
   ).catch(() => []);
 
-  return rows.map(mapLeadFollowUpCalendarItem);
+  return rows.map((row) => mapLeadFollowUpCalendarItem(row, timeZone));
 }
 
 function buildCommercialActivitySummary(actions) {
@@ -6354,8 +6376,9 @@ async function listCommercialCalendarActivities({
   sellerUserId = null,
   year = null,
   quarter = null,
+  timeZone = BUSINESS_TIMEZONE,
 }) {
-  const range = getCalendarRange(view, date);
+  const range = getCalendarRange(view, date, timeZone);
   const allowedStatuses = getCalendarActivityStatuses(includeCompleted);
   const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
   const params = [];
@@ -6420,6 +6443,7 @@ async function listCommercialCalendarActivities({
       sellerUserId,
       year,
       quarter,
+      timeZone,
     }),
   ]);
 
@@ -6431,7 +6455,7 @@ async function listCommercialCalendarActivities({
     activityType: row.action_type,
     status: row.status,
     scheduledAt: row.scheduled_at,
-    scheduledDate: formatDateInTimeZone(row.scheduled_at, BUSINESS_TIMEZONE),
+    scheduledDate: formatDateInTimeZone(row.scheduled_at, timeZone),
     title: row.title || "",
     note: row.notes || "",
     isPrimaryNextStep: Boolean(row.is_primary_next_step),
@@ -6510,6 +6534,7 @@ async function listCalendarAlertActivities({
   sellerUserId,
   now,
   next24h,
+  timeZone = BUSINESS_TIMEZONE,
 }) {
   const actionTypes = Array.from(COMMERCIAL_ACTIVITY_ACTION_TYPES);
   const allowedStatuses = Array.from(COMMERCIAL_ACTIVITY_OPEN_STATUSES);
@@ -6562,6 +6587,7 @@ async function listCalendarAlertActivities({
       startDateTime: lookbackStart,
       endExclusiveDateTime: next24h,
       sellerUserId,
+      timeZone,
     }),
   ]);
 
@@ -6573,7 +6599,7 @@ async function listCalendarAlertActivities({
     activityType: row.action_type || "other",
     status: row.status || "pending",
     scheduledAt: row.scheduled_at,
-    scheduledDate: formatDateInTimeZone(row.scheduled_at, BUSINESS_TIMEZONE),
+    scheduledDate: formatDateInTimeZone(row.scheduled_at, timeZone),
     title: row.title || "",
     note: row.notes || "",
     sellerUserId:
@@ -6603,11 +6629,12 @@ async function buildCommercialCalendarInsights({
   user,
   sellerUserId,
   slaDays,
+  timeZone = BUSINESS_TIMEZONE,
 }) {
   const now = new Date();
   const nowMs = now.getTime();
-  const todayDate = formatDateInTimeZone(now, BUSINESS_TIMEZONE);
-  const todayWindow = getTimeZoneDayWindow(todayDate, BUSINESS_TIMEZONE);
+  const todayDate = formatDateInTimeZone(now, timeZone);
+  const todayWindow = getTimeZoneDayWindow(todayDate, timeZone);
   const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   const alertItems = await listCalendarAlertActivities({
@@ -6615,6 +6642,7 @@ async function buildCommercialCalendarInsights({
     sellerUserId,
     now,
     next24h,
+    timeZone,
   });
   const opportunityIds = Array.from(
     new Set(alertItems.map((item) => item.opportunityId).filter(Boolean)),
@@ -6764,7 +6792,7 @@ async function buildCommercialCalendarInsights({
   }, new Map());
 
   return {
-    timezone: BUSINESS_TIMEZONE,
+    timezone: timeZone,
     myDay,
     alerts: {
       prioritized,
@@ -7312,6 +7340,7 @@ router.get(
     const quarterSelection = hasQuarterFilter
       ? resolveQuarterSelection(req.query)
       : { year: null, quarter: null };
+    const businessTimezone = await loadBusinessTimezone();
 
     const [calendarData, sellerOptions, insights] = await Promise.all([
       listCommercialCalendarActivities({
@@ -7322,12 +7351,14 @@ router.get(
         sellerUserId,
         year: quarterSelection.year,
         quarter: quarterSelection.quarter,
+        timeZone: businessTimezone,
       }),
       listCalendarSellerOptions(req.user),
       buildCommercialCalendarInsights({
         user: req.user,
         sellerUserId,
         slaDays,
+        timeZone: businessTimezone,
       }),
     ]);
 
@@ -7341,7 +7372,7 @@ router.get(
         minDays: CALENDAR_MIN_SLA_DAYS,
         maxDays: CALENDAR_MAX_SLA_DAYS,
       },
-      businessTimezone: BUSINESS_TIMEZONE,
+      businessTimezone,
       myDay: insights.myDay,
       alerts: insights.alerts,
       indicators: insights.indicators,

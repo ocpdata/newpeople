@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  addDaysToIsoDate,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  getTodayBusinessDate,
+} from "./business-timezone";
 import ModalInlineHelp from "./help/ModalInlineHelp";
 import {
   getLeadCallOutcomeActionGuide,
@@ -104,12 +110,11 @@ function formatPercent(value, total) {
 }
 
 function formatDateTime(value) {
-  if (!value) return "Sin fecha";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-  return date.toLocaleString("es-MX", {
-    dateStyle: "short",
-    timeStyle: "short",
+  return formatBusinessDateTime(value, {
+    options: {
+      dateStyle: "short",
+      timeStyle: "short",
+    },
   });
 }
 
@@ -508,10 +513,9 @@ function buildPastedTextFile({ fileName, text }) {
 }
 
 function formatDate(value) {
-  if (!value) return "Sin fecha";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-  return date.toLocaleDateString("es-MX");
+  return formatBusinessDate(value, {
+    options: { day: "2-digit", month: "2-digit", year: "numeric" },
+  });
 }
 
 function formatLeadOutcomeCode(value) {
@@ -941,7 +945,10 @@ function formatLeadOutcomeDateLabel(value) {
   if (!value) return "";
   const date = parseLeadOutcomeDate(value);
   if (!date) return "";
-  return date.toLocaleDateString("es-MX");
+  return formatBusinessDate(date, {
+    options: { day: "2-digit", month: "2-digit", year: "numeric" },
+    fallback: "",
+  });
 }
 
 function getDocumentStageLabel(status, labels = {}) {
@@ -1009,8 +1016,7 @@ function buildLeadCallOutcomeForm(detail, transitionRules) {
 }
 
 function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
-  const closeDate = new Date();
-  closeDate.setDate(closeDate.getDate() + 30);
+  const closeDate = addDaysToIsoDate(getTodayBusinessDate(), 30);
   return {
     name: suggestion?.name || "",
     contactId: "",
@@ -1018,7 +1024,7 @@ function buildDefaultOpportunityDraft(suggestion, options, currentUser) {
       suggestion?.amountUsd === null || suggestion?.amountUsd === undefined
         ? ""
         : String(suggestion.amountUsd),
-    closeDate: suggestion?.closeDate || closeDate.toISOString().slice(0, 10),
+    closeDate: suggestion?.closeDate || closeDate,
     businessLineId: suggestion?.selectedBusinessLineId
       ? String(suggestion.selectedBusinessLineId)
       : options.businessLines[0]?.id
@@ -3886,13 +3892,9 @@ function InteractionsPage({ can, currentUser }) {
   const [queueFilter, setQueueFilter] = useState("all");
   const [activeView, setActiveView] = useState("inbox");
   const [weeklyFrom, setWeeklyFrom] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 3);
-    return d.toISOString().slice(0, 10);
+    return addDaysToIsoDate(getTodayBusinessDate(), -90);
   });
-  const [weeklyTo, setWeeklyTo] = useState(() =>
-    new Date().toISOString().slice(0, 10),
-  );
+  const [weeklyTo, setWeeklyTo] = useState(() => getTodayBusinessDate());
   const [dashboard, setDashboard] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
