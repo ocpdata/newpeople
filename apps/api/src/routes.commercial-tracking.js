@@ -1,12 +1,17 @@
 import express from "express";
 import { requireAnyPermission } from "./auth.js";
 import { query } from "./db.js";
-import { getCommercialSettings, STAGE_SLA_DEFAULTS } from "./settings.js";
+import {
+  getCommercialSettings,
+  STAGE_SLA_DEFAULTS,
+  STAGE_WEIGHT_DEFAULTS,
+} from "./settings.js";
 
 const router = express.Router();
 
 let _stageSlaCache = null;
 let _stageSlaExpiry = 0;
+let _forecastStageWeightCache = { ...STAGE_WEIGHT_DEFAULTS };
 
 async function loadStageSlaMap() {
   if (_stageSlaCache && Date.now() < _stageSlaExpiry) {
@@ -16,6 +21,9 @@ async function loadStageSlaMap() {
   _stageSlaCache = settings?.stageSlaMap
     ? { ...STAGE_SLA_DEFAULTS, ...settings.stageSlaMap }
     : { ...STAGE_SLA_DEFAULTS };
+  _forecastStageWeightCache = settings?.stageWeightMap
+    ? { ...STAGE_WEIGHT_DEFAULTS, ...settings.stageWeightMap }
+    : { ...STAGE_WEIGHT_DEFAULTS };
   _stageSlaExpiry = Date.now() + 60000;
   return _stageSlaCache;
 }
@@ -28,19 +36,6 @@ const STAGE_SLA_DAYS = {
   demostracion: 6,
   negociacion: 4,
   waiting: 3,
-};
-
-const FORECAST_STAGE_WEIGHTS = {
-  contacto_inicial: 0.05,
-  identificacion_oportunidad: 0.1,
-  desarrollo: 0.2,
-  cotizacion: 0.4,
-  demostracion: 0.55,
-  negociacion: 0.75,
-  waiting: 0.65,
-  ganada: 1,
-  perdida: 0,
-  anulada: 0,
 };
 
 const FORECAST_QUALITY_FACTORS = {
@@ -365,7 +360,7 @@ async function listOpportunityLeadOrigins(opportunityIds) {
 }
 
 function getForecastStageWeight(stageCode) {
-  return FORECAST_STAGE_WEIGHTS[String(stageCode || "")] || 0;
+  return _forecastStageWeightCache[String(stageCode || "")] || 0;
 }
 
 function getForecastStageOrder(stageCode, fallback = 0) {
@@ -759,6 +754,7 @@ function buildMonthlyQuotaDashboardPayload({
       });
       const amountUsd = Number(row.amount_usd || 0);
       const weightedAmountUsd = toAmount(amountUsd * weight);
+      const stageWeightedAmountUsd = toAmount(amountUsd * baseWeight);
       const origin = originByOpportunity.get(opportunityId) || "direct";
 
       return {
@@ -769,6 +765,7 @@ function buildMonthlyQuotaDashboardPayload({
         sellerUserName: row.seller_user_name || "Sin vendedor",
         amountUsd,
         weightedAmountUsd,
+        stageWeightedAmountUsd,
         weight,
         weightPercent: toAmount(weight * 100),
         category,
@@ -803,6 +800,12 @@ function buildMonthlyQuotaDashboardPayload({
       0,
     ),
   );
+  const forecastWeightedAmountByStage = toAmount(
+    forecastItems.reduce(
+      (sum, item) => sum + Number(item.stageWeightedAmountUsd || 0),
+      0,
+    ),
+  );
   const committedItems = forecastItems.filter((item) => item.category === "committed");
   const probableItems = forecastItems.filter((item) => item.category === "probable");
   const weakItems = forecastItems.filter((item) => item.category === "weak");
@@ -816,7 +819,9 @@ function buildMonthlyQuotaDashboardPayload({
     weakItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
   );
   const realWonAmount = toAmount(sumAmounts(wonItems));
-  const totalExpectedAmount = toAmount(realWonAmount + forecastWeightedAmount);
+  const totalExpectedAmount = toAmount(
+    realWonAmount + forecastWeightedAmountByStage,
+  );
   const gapAmount =
     monthlyQuotaAmount === null
       ? null
@@ -856,6 +861,7 @@ function buildMonthlyQuotaDashboardPayload({
       opportunities: 0,
       grossAmountUsd: 0,
       weightedAmountUsd: 0,
+      wonCount: 0,
       committedCount: 0,
       probableCount: 0,
       weakCount: 0,
@@ -866,7 +872,7 @@ function buildMonthlyQuotaDashboardPayload({
       current.grossAmountUsd + Number(item.amountUsd || 0),
     );
     current.weightedAmountUsd = toAmount(
-      current.weightedAmountUsd + Number(item.weightedAmountUsd || 0),
+      current.weightedAmountUsd + Number(item.stageWeightedAmountUsd || 0),
     );
     if (item.category === "committed") current.committedCount += 1;
     if (item.category === "probable") current.probableCount += 1;
@@ -970,7 +976,7 @@ function buildMonthlyQuotaDashboardPayload({
     },
     headline: {
       realWonAmount,
-      forecastWeightedAmount,
+      forecastWeightedAmount: forecastWeightedAmountByStage,
       totalExpectedAmount,
       gapAmount,
       realAttainmentPercent:

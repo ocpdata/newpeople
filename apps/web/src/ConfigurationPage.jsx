@@ -1511,11 +1511,13 @@ function ChatbotSettingsCard({
 function CommercialSettingsCard({
   settings,
   stageSlaEntries,
+  stageWeightEntries,
   latestUpdateText,
   saving,
   canSave,
   isDirty,
   onChange,
+  onWeightChange,
   onSave,
 }) {
   return (
@@ -1545,6 +1547,34 @@ function CommercialSettingsCard({
               value={settings.stageSlaMap?.[entry.code] ?? 5}
               onChange={(event) =>
                 onChange(entry.code, Number(event.target.value || 1))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Pesos de forecast por etapa (%)</h4>
+          <p>
+            Ajusta el porcentaje base de ponderación usado para estimar forecast
+            mensual por etapa comercial.
+          </p>
+        </div>
+      </div>
+
+      <div className="configuration-form-grid">
+        {stageWeightEntries.map((entry) => (
+          <div key={entry.code} className="field-group">
+            <label>{entry.label}</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={Math.round((settings.stageWeightMap?.[entry.code] ?? 0) * 100)}
+              onChange={(event) =>
+                onWeightChange(entry.code, Number(event.target.value || 0))
               }
             />
           </div>
@@ -4184,6 +4214,7 @@ export default function ConfigurationPage() {
     latestAiParametersUpdateText,
     sectionItems,
     stageSlaEntries,
+    stageWeightEntries,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -4196,6 +4227,7 @@ export default function ConfigurationPage() {
     updateChatbotSetting,
     saveChatbotSettings,
     updateCommercialSetting,
+    updateCommercialWeightSetting,
     saveCommercialSettings,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
@@ -4877,11 +4909,13 @@ export default function ConfigurationPage() {
               <CommercialSettingsCard
                 settings={commercialSettings}
                 stageSlaEntries={stageSlaEntries}
+                stageWeightEntries={stageWeightEntries}
                 latestUpdateText={latestCommercialSettingsUpdateText}
                 saving={savingCommercialSettings}
                 canSave={commercialSettingsDirty}
                 isDirty={commercialSettingsDirty}
                 onChange={updateCommercialSetting}
+                onWeightChange={updateCommercialWeightSetting}
                 onSave={saveCommercialSettings}
               />
 

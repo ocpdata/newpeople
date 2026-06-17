@@ -47,6 +47,22 @@ const STAGE_SLA_ENTRIES = [
   { code: "waiting", label: "En espera" },
 ];
 
+const STAGE_WEIGHT_ENTRIES = [
+  { code: "contacto_inicial", label: "Contacto inicial" },
+  {
+    code: "identificacion_oportunidad",
+    label: "Identificación de oportunidad",
+  },
+  { code: "desarrollo", label: "Desarrollo" },
+  { code: "cotizacion", label: "Cotización" },
+  { code: "demostracion", label: "Demostración" },
+  { code: "negociacion", label: "Negociación" },
+  { code: "waiting", label: "En espera" },
+  { code: "ganada", label: "Ganada" },
+  { code: "perdida", label: "Perdida" },
+  { code: "anulada", label: "Anulada" },
+];
+
 const DEFAULT_STAGE_SLA_MAP = {
   contacto_inicial: 3,
   identificacion_oportunidad: 3,
@@ -57,8 +73,22 @@ const DEFAULT_STAGE_SLA_MAP = {
   waiting: 3,
 };
 
+const DEFAULT_STAGE_WEIGHT_MAP = {
+  contacto_inicial: 0.05,
+  identificacion_oportunidad: 0.1,
+  desarrollo: 0.2,
+  cotizacion: 0.4,
+  demostracion: 0.55,
+  negociacion: 0.75,
+  waiting: 0.65,
+  ganada: 1,
+  perdida: 0,
+  anulada: 0,
+};
+
 const EMPTY_COMMERCIAL_SETTINGS = {
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+  stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
   updatedAt: null,
   updatedByUserName: "",
 };
@@ -549,10 +579,12 @@ function normalizeCommercialSettings(settings) {
     return {
       ...EMPTY_COMMERCIAL_SETTINGS,
       stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+      stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
     };
   }
 
   const stageSlaMap = { ...DEFAULT_STAGE_SLA_MAP };
+  const stageWeightMap = { ...DEFAULT_STAGE_WEIGHT_MAP };
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);
@@ -566,27 +598,44 @@ function normalizeCommercialSettings(settings) {
       }
     });
   }
+  if (settings.stageWeightMap && typeof settings.stageWeightMap === "object") {
+    Object.entries(settings.stageWeightMap).forEach(([code, weight]) => {
+      const parsed = Number(weight);
+      if (
+        Object.prototype.hasOwnProperty.call(DEFAULT_STAGE_WEIGHT_MAP, code) &&
+        Number.isFinite(parsed) &&
+        parsed >= 0 &&
+        parsed <= 1
+      ) {
+        stageWeightMap[code] = parsed;
+      }
+    });
+  }
 
   return {
     stageSlaMap,
+    stageWeightMap,
     updatedAt: settings.updatedAt || null,
     updatedByUserName: String(settings.updatedByUserName || ""),
   };
 }
 
 function serializeCommercialSettings(settings) {
-  return JSON.stringify(settings?.stageSlaMap || {});
+  return JSON.stringify({
+    stageSlaMap: settings?.stageSlaMap || {},
+    stageWeightMap: settings?.stageWeightMap || {},
+  });
 }
 
 function deserializeCommercialSettingsSnapshot(snapshot) {
   try {
-    return normalizeCommercialSettings({
-      stageSlaMap: JSON.parse(snapshot || "null"),
-    });
+    const parsed = JSON.parse(snapshot || "null");
+    return normalizeCommercialSettings(parsed);
   } catch {
     return {
       ...EMPTY_COMMERCIAL_SETTINGS,
       stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
+      stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
     };
   }
 }
@@ -1226,6 +1275,20 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCommercialWeightSetting(stageCode, percent) {
+    const normalizedPercent = Number(percent);
+    const safePercent = Number.isFinite(normalizedPercent)
+      ? Math.max(0, Math.min(normalizedPercent, 100))
+      : 0;
+    setCommercialSettings((current) => ({
+      ...current,
+      stageWeightMap: {
+        ...current.stageWeightMap,
+        [stageCode]: safePercent / 100,
+      },
+    }));
+  }
+
   async function saveCommercialSettings() {
     setSavingCommercialSettings(true);
     setError("");
@@ -1234,6 +1297,7 @@ export function useConfigurationPage() {
       const [saveResponse, auditResponse] = await Promise.all([
         api.put("/api/settings/commercial", {
           stageSlaMap: commercialSettings.stageSlaMap,
+          stageWeightMap: commercialSettings.stageWeightMap,
         }),
         api.get("/api/settings/audit?limit=25"),
       ]);
@@ -2257,6 +2321,7 @@ export function useConfigurationPage() {
     latestAiParametersUpdateText,
     sectionItems,
     stageSlaEntries: STAGE_SLA_ENTRIES,
+    stageWeightEntries: STAGE_WEIGHT_ENTRIES,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -2269,6 +2334,7 @@ export function useConfigurationPage() {
     updateChatbotSetting,
     saveChatbotSettings,
     updateCommercialSetting,
+    updateCommercialWeightSetting,
     saveCommercialSettings,
     reloadAiWalletSummaries,
     reloadAiPricingRates,

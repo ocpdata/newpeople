@@ -1408,6 +1408,7 @@ router.put(
 
 const commercialSettingsSchema = z.object({
   stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
+  stageWeightMap: z.record(z.string(), z.number().min(0).max(1)).optional(),
 });
 
 router.get(

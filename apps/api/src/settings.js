@@ -2905,11 +2905,25 @@ const STAGE_SLA_DEFAULTS = {
   waiting: 3,
 };
 
+const STAGE_WEIGHT_DEFAULTS = {
+  contacto_inicial: 0.05,
+  identificacion_oportunidad: 0.1,
+  desarrollo: 0.2,
+  cotizacion: 0.4,
+  demostracion: 0.55,
+  negociacion: 0.75,
+  waiting: 0.65,
+  ganada: 1,
+  perdida: 0,
+  anulada: 0,
+};
+
 function buildFallbackCommercialSettings() {
   return {
     id: null,
     singletonKey: "default",
     stageSlaMap: { ...STAGE_SLA_DEFAULTS },
+    stageWeightMap: { ...STAGE_WEIGHT_DEFAULTS },
     updatedAt: null,
     updatedByUserId: null,
     updatedByUserName: "",
@@ -2925,6 +2939,7 @@ function normalizeCommercialSettingsRow(row) {
   }
 
   let stageSlaMap;
+  let stageWeightMap;
   try {
     const parsed =
       typeof row.stage_sla_days_json === "string"
@@ -2948,10 +2963,34 @@ function normalizeCommercialSettingsRow(row) {
     stageSlaMap = { ...STAGE_SLA_DEFAULTS };
   }
 
+  try {
+    const parsed =
+      typeof row.forecast_stage_weights_json === "string"
+        ? JSON.parse(row.forecast_stage_weights_json)
+        : row.forecast_stage_weights_json;
+    stageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
+    if (parsed && typeof parsed === "object") {
+      Object.entries(parsed).forEach(([code, weight]) => {
+        const parsedWeight = Number(weight);
+        if (
+          Object.prototype.hasOwnProperty.call(STAGE_WEIGHT_DEFAULTS, code) &&
+          Number.isFinite(parsedWeight) &&
+          parsedWeight >= 0 &&
+          parsedWeight <= 1
+        ) {
+          stageWeightMap[code] = parsedWeight;
+        }
+      });
+    }
+  } catch {
+    stageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
+  }
+
   return {
     id: Number(row.id),
     singletonKey: String(row.singleton_key || "default"),
     stageSlaMap,
+    stageWeightMap,
     updatedAt: row.updated_at || null,
     updatedByUserId: row.updated_by_user_id
       ? Number(row.updated_by_user_id)
@@ -2972,6 +3011,7 @@ async function ensureCommercialSettingsTable() {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         singleton_key VARCHAR(40) NOT NULL,
         stage_sla_days_json JSON NOT NULL,
+        forecast_stage_weights_json JSON NOT NULL,
         created_by_user_id BIGINT UNSIGNED NULL,
         updated_by_user_id BIGINT UNSIGNED NULL,
         created_at DATETIME(3) NOT NULL,
@@ -2987,19 +3027,25 @@ async function ensureCommercialSettingsTable() {
   }
 
   await ensureCommercialSettingsTablePromise;
+  await ensureTableColumn(
+    "commercial_settings",
+    "forecast_stage_weights_json",
+    "ADD COLUMN forecast_stage_weights_json JSON NOT NULL AFTER stage_sla_days_json",
+  );
 }
 
 async function ensureDefaultCommercialSettings() {
   await ensureCommercialSettingsTable();
   await query(
     `INSERT INTO commercial_settings
-      (singleton_key, stage_sla_days_json, created_by_user_id, updated_by_user_id,
+      (singleton_key, stage_sla_days_json, forecast_stage_weights_json,
+       created_by_user_id, updated_by_user_id,
        created_at, updated_at)
-     SELECT 'default', ?, NULL, NULL, NOW(3), NOW(3)
+     SELECT 'default', ?, ?, NULL, NULL, NOW(3), NOW(3)
      WHERE NOT EXISTS (
        SELECT 1 FROM commercial_settings WHERE singleton_key = 'default'
      )`,
-    [JSON.stringify(STAGE_SLA_DEFAULTS)],
+    [JSON.stringify(STAGE_SLA_DEFAULTS), JSON.stringify(STAGE_WEIGHT_DEFAULTS)],
   );
 }
 
@@ -3032,6 +3078,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
   const now = new Date();
 
   const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
+  const nextStageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);
@@ -3045,22 +3092,44 @@ export async function saveCommercialSettings(settings, actorUserId) {
       }
     });
   }
+  if (settings.stageWeightMap && typeof settings.stageWeightMap === "object") {
+    Object.entries(settings.stageWeightMap).forEach(([code, weight]) => {
+      const parsed = Number(weight);
+      if (
+        Object.prototype.hasOwnProperty.call(STAGE_WEIGHT_DEFAULTS, code) &&
+        Number.isFinite(parsed) &&
+        parsed >= 0 &&
+        parsed <= 1
+      ) {
+        nextStageWeightMap[code] = parsed;
+      }
+    });
+  }
 
   if (existingId) {
     await query(
       `UPDATE commercial_settings
-       SET stage_sla_days_json = ?, updated_by_user_id = ?, updated_at = ?
+       SET stage_sla_days_json = ?, forecast_stage_weights_json = ?,
+           updated_by_user_id = ?, updated_at = ?
        WHERE id = ?`,
-      [JSON.stringify(nextSlaMap), actorUserId || null, now, existingId],
+      [
+        JSON.stringify(nextSlaMap),
+        JSON.stringify(nextStageWeightMap),
+        actorUserId || null,
+        now,
+        existingId,
+      ],
     );
   } else {
     await query(
       `INSERT INTO commercial_settings
-        (singleton_key, stage_sla_days_json, created_by_user_id, updated_by_user_id,
+        (singleton_key, stage_sla_days_json, forecast_stage_weights_json,
+         created_by_user_id, updated_by_user_id,
          created_at, updated_at)
-       VALUES ('default', ?, ?, ?, ?, ?)`,
+       VALUES ('default', ?, ?, ?, ?, ?, ?)`,
       [
         JSON.stringify(nextSlaMap),
+        JSON.stringify(nextStageWeightMap),
         actorUserId || null,
         actorUserId || null,
         now,
@@ -3072,7 +3141,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
   return getCommercialSettings();
 }
 
-export { STAGE_SLA_DEFAULTS };
+export { STAGE_SLA_DEFAULTS, STAGE_WEIGHT_DEFAULTS };
 
 export async function getCompanyProfile() {
   await ensureCompanyProfileTable();

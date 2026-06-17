@@ -45,97 +45,7 @@ function formatPercent(value, digits = 1) {
   return `${Number(value).toFixed(digits)}%`;
 }
 
-function formatRatio(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
-    return "-";
-  }
-  return `${Number(value).toFixed(2)}x`;
-}
-
-function clampWidth(value, total) {
-  if (!total || total <= 0) {
-    return 0;
-  }
-  return Math.max(0, Math.min((Number(value || 0) / total) * 100, 100));
-}
-
-function buildCompositionSegments(dashboardMonthly) {
-  const quota = Number(dashboardMonthly?.quota?.monthAmount || 0);
-  const realWon = Number(dashboardMonthly?.headline?.realWonAmount || 0);
-  const committed = Number(
-    dashboardMonthly?.forecastBuckets?.committed?.amountUsd || 0,
-  );
-  const probable = Number(
-    dashboardMonthly?.forecastBuckets?.probable?.amountUsd || 0,
-  );
-  const weak = Number(dashboardMonthly?.forecastBuckets?.weak?.amountUsd || 0);
-  const gap = Number(dashboardMonthly?.headline?.gapAmount || 0);
-  const maxValue = Math.max(quota, realWon + committed + probable + weak, 1);
-
-  return [
-    { key: "real", label: "Ganado", value: realWon, tone: "success" },
-    {
-      key: "committed",
-      label: "Muy probable",
-      value: committed,
-      tone: "accent",
-    },
-    {
-      key: "probable",
-      label: "En seguimiento",
-      value: probable,
-      tone: "warning",
-    },
-    { key: "weak", label: "Riesgoso", value: weak, tone: "muted" },
-    { key: "gap", label: "Falta por cubrir", value: gap, tone: "danger" },
-  ].map((segment) => ({
-    ...segment,
-    width: clampWidth(segment.value, maxValue),
-  }));
-}
-
-function DashboardMetricCard({ label, value, helper, description, tone = "default" }) {
-  return (
-    <article className={`dashboard-monthly-metric is-${tone}`.trim()}>
-      <span className="dashboard-monthly-metric-label">{label}</span>
-      <strong className="dashboard-monthly-metric-value">{value}</strong>
-      {helper ? <span className="dashboard-monthly-metric-helper">{helper}</span> : null}
-      {description ? (
-        <p className="dashboard-monthly-metric-description">{description}</p>
-      ) : null}
-    </article>
-  );
-}
-
-function ScenarioCard({ title, amount, quotaAmount, helper, tone = "default" }) {
-  const attainment = quotaAmount > 0 ? (Number(amount || 0) / quotaAmount) * 100 : null;
-  return (
-    <article className={`dashboard-monthly-scenario is-${tone}`.trim()}>
-      <span className="dashboard-monthly-scenario-title">{title}</span>
-      <strong>{formatCurrency(amount)}</strong>
-      <span>{formatPercent(attainment)}</span>
-      <p>{helper}</p>
-    </article>
-  );
-}
-
-function QualityCard({ title, amountUsd, total, helper }) {
-  return (
-    <article className="dashboard-monthly-quality-card">
-      <div>
-        <span className="dashboard-monthly-quality-title">{title}</span>
-        <strong>{formatCompactNumber(total)}</strong>
-      </div>
-      <div>
-        <strong>{formatCurrency(amountUsd)}</strong>
-        <span>{helper}</span>
-      </div>
-    </article>
-  );
-}
-
 function OutcomePanel({ title, summary, tone }) {
-  const dominantStage = summary?.dominantStage;
   return (
     <section className={`dashboard-monthly-outcome is-${tone}`.trim()}>
       <div className="dashboard-monthly-outcome-header">
@@ -145,10 +55,6 @@ function OutcomePanel({ title, summary, tone }) {
       <strong className="dashboard-monthly-outcome-amount">
         {formatCurrency(summary?.amountUsd || 0)}
       </strong>
-      <p>
-        Etapa dominante: {dominantStage?.stageName || "Sin datos"}
-        {dominantStage?.amountUsd ? ` · ${formatCurrency(dominantStage.amountUsd)}` : ""}
-      </p>
       <ul className="dashboard-monthly-reason-list">
         {(summary?.topReasons || []).length ? (
           summary.topReasons.map((reason) => (
@@ -216,10 +122,6 @@ export default function Dashboard({ canAccessCommercialTracking = false }) {
 
   const monthOptions = useMemo(() => buildMonthOptions(month), [month]);
   const dashboardMonthly = payload?.dashboardMonthly || null;
-  const compositionSegments = useMemo(
-    () => buildCompositionSegments(dashboardMonthly),
-    [dashboardMonthly],
-  );
 
   if (!canAccessCommercialTracking) {
     return (
@@ -238,13 +140,22 @@ export default function Dashboard({ canAccessCommercialTracking = false }) {
 
   const quotaAmount = Number(dashboardMonthly?.quota?.monthAmount || 0);
   const headline = dashboardMonthly?.headline || {};
-  const forecastBuckets = dashboardMonthly?.forecastBuckets || {};
-  const scenarios = dashboardMonthly?.scenarios || {};
-  const qualitySummary = dashboardMonthly?.qualitySummary || {};
   const stageFunnel = dashboardMonthly?.stageFunnel || [];
-  const originSummary = dashboardMonthly?.originSummary || [];
+  const stageFunnelRows = stageFunnel.filter(
+    (row) => String(row.stageCode || "") !== "ganada",
+  );
+  const stageFunnelTotal = stageFunnelRows.reduce(
+    (accumulator, row) => ({
+      opportunities:
+        accumulator.opportunities + Number(row.opportunities || 0),
+      grossAmountUsd:
+        accumulator.grossAmountUsd + Number(row.grossAmountUsd || 0),
+      weightedAmountUsd:
+        accumulator.weightedAmountUsd + Number(row.weightedAmountUsd || 0),
+    }),
+    { opportunities: 0, grossAmountUsd: 0, weightedAmountUsd: 0 },
+  );
   const criticalOpportunities = dashboardMonthly?.criticalOpportunities || [];
-  const recommendations = dashboardMonthly?.recommendations || [];
 
   return (
     <section className="panel dashboard-monthly-page">
@@ -299,7 +210,7 @@ export default function Dashboard({ canAccessCommercialTracking = false }) {
                 <div className="dashboard-monthly-hero-stat-card">
                   <span>Forecast ponderado</span>
                   <strong>{formatCurrency(headline.forecastWeightedAmount || 0)}</strong>
-                  <small>Proyección ajustada por etapa y calidad.</small>
+                  <small>Proyección por etapa (sin ajuste de calidad/riesgo).</small>
                 </div>
                 <div className="dashboard-monthly-hero-stat-card">
                   <span>Cumplimiento esperado</span>
@@ -310,235 +221,57 @@ export default function Dashboard({ canAccessCommercialTracking = false }) {
             </div>
           </section>
 
-          <section className="dashboard-monthly-composition">
-            <div className="dashboard-monthly-composition-bar" aria-label="Composicion del mes">
-              {compositionSegments.map((segment) => (
-                <div
-                  key={segment.key}
-                  className={`dashboard-monthly-composition-segment is-${segment.tone}`.trim()}
-                  style={{ width: `${segment.width}%` }}
-                  title={`${segment.label}: ${formatCurrency(segment.value)}`}
-                />
-              ))}
+          <section className="dashboard-monthly-panel">
+            <div className="dashboard-monthly-panel-header">
+              <h3>Embudo del mes por etapa</h3>
+              <span>{formatCompactNumber(stageFunnelRows.length)} etapas</span>
             </div>
-            <div className="dashboard-monthly-composition-legend">
-              {compositionSegments.map((segment) => (
-                <div key={segment.key}>
-                  <span className={`dashboard-monthly-dot is-${segment.tone}`.trim()} />
-                  <span>{segment.label}</span>
-                  <strong>{formatCurrency(segment.value)}</strong>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="dashboard-monthly-metrics-grid">
-            <DashboardMetricCard
-              label="Meta del mes"
-              value={formatCurrency(quotaAmount)}
-              helper="Trimestre / 3"
-              description="Objetivo total de ventas para este mes."
-            />
-            <DashboardMetricCard
-              label="Vendido"
-              value={formatCurrency(headline.realWonAmount || 0)}
-              helper={formatPercent(headline.realAttainmentPercent)}
-              description="Ya está cerrado y sí cuenta en la cuota."
-              tone="success"
-            />
-            <DashboardMetricCard
-              label="Cierre casi seguro"
-              value={formatCurrency(forecastBuckets?.committed?.amountUsd || 0)}
-              helper={`${formatCompactNumber(forecastBuckets?.committed?.total || 0)} negocios`}
-              description="Lo más confiable para cerrar este mes."
-              tone="accent"
-            />
-            <DashboardMetricCard
-              label="Puede entrar"
-              value={formatCurrency(forecastBuckets?.probable?.amountUsd || 0)}
-              helper={`${formatCompactNumber(forecastBuckets?.probable?.total || 0)} negocios`}
-              description="Puede cerrar si se mueve bien este mes."
-              tone="warning"
-            />
-            <DashboardMetricCard
-              label="En riesgo"
-              value={formatCurrency(forecastBuckets?.weak?.amountUsd || 0)}
-              helper={`${formatCompactNumber(forecastBuckets?.weak?.total || 0)} negocios`}
-              description="Existe, pero hoy se ve lejano para cerrar."
-              tone="danger"
-            />
-            <DashboardMetricCard
-              label="Falta para la meta"
-              value={formatCurrency(headline.gapAmount || 0)}
-              helper="Pendiente por cubrir"
-              description="Es lo que aún falta para llegar a la meta."
-              tone="danger"
-            />
-            <DashboardMetricCard
-              label="Respaldo real"
-              value={formatRatio(headline.coverageRatio)}
-              helper="Seguro + en seguimiento"
-              description="Si es menor a 1.0x, todavía no alcanza."
-            />
-            <DashboardMetricCard
-              label="Negocios clave"
-              value={formatCompactNumber(criticalOpportunities.length)}
-              helper="Los que más mueven el mes"
-              description="Si avanzan o se caen, cambian el resultado."
-            />
-          </section>
-
-          <section className="dashboard-monthly-scenarios-grid">
-            <ScenarioCard
-              title="Escenario conservador"
-              amount={scenarios.conservativeAmount || 0}
-              quotaAmount={quotaAmount}
-              helper="Ganado + comprometido"
-              tone="accent"
-            />
-            <ScenarioCard
-              title="Escenario base"
-              amount={scenarios.baseAmount || 0}
-              quotaAmount={quotaAmount}
-              helper="Ganado + comprometido + probable"
-              tone="warning"
-            />
-            <ScenarioCard
-              title="Escenario extendido"
-              amount={scenarios.extendedAmount || 0}
-              quotaAmount={quotaAmount}
-              helper="Incluye forecast debil"
-              tone="danger"
-            />
-          </section>
-
-          <div className="dashboard-monthly-grid-two">
-            <section className="dashboard-monthly-panel">
-              <div className="dashboard-monthly-panel-header">
-                <h3>Embudo del mes por etapa</h3>
-                <span>{formatCompactNumber(stageFunnel.length)} etapas</span>
-              </div>
-              <div className="dashboard-monthly-table-wrap">
-                <table className="dashboard-monthly-table">
-                  <thead>
-                    <tr>
-                      <th>Etapa</th>
-                      <th>Oportunidades</th>
-                      <th>Monto bruto</th>
-                      <th>Monto ponderado</th>
-                      <th>Riesgo dominante</th>
+            <div className="dashboard-monthly-table-wrap">
+              <table className="dashboard-monthly-table">
+                <thead>
+                  <tr>
+                    <th>Etapa</th>
+                    <th>Oportunidades</th>
+                    <th>Monto bruto</th>
+                    <th>Monto ponderado</th>
+                    <th>Riesgo dominante</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stageFunnelRows.map((row) => (
+                    <tr key={row.stageCode}>
+                      <td>{row.stageName}</td>
+                      <td>{formatCompactNumber(row.opportunities)}</td>
+                      <td>{formatCurrency(row.grossAmountUsd)}</td>
+                      <td>{formatCurrency(row.weightedAmountUsd)}</td>
+                      <td>{row.riskLabel}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {stageFunnel.map((row) => (
-                      <tr key={row.stageCode}>
-                        <td>{row.stageName}</td>
-                        <td>{formatCompactNumber(row.opportunities)}</td>
-                        <td>{formatCurrency(row.grossAmountUsd)}</td>
-                        <td>{formatCurrency(row.weightedAmountUsd)}</td>
-                        <td>{row.riskLabel}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="dashboard-monthly-panel">
-              <div className="dashboard-monthly-panel-header">
-                <h3>Calidad operativa del forecast</h3>
-                <span>{formatCurrency(forecastBuckets.grossAmountUsd || 0)} brutos</span>
-              </div>
-              <div className="dashboard-monthly-quality-grid">
-                <QualityCard
-                  title="Sin siguiente paso"
-                  amountUsd={qualitySummary?.noNextStep?.amountUsd || 0}
-                  total={qualitySummary?.noNextStep?.total || 0}
-                  helper="No deben sostener el mes"
-                />
-                <QualityCard
-                  title="Bloqueadas"
-                  amountUsd={qualitySummary?.blocked?.amountUsd || 0}
-                  total={qualitySummary?.blocked?.total || 0}
-                  helper="Requieren intervencion"
-                />
-                <QualityCard
-                  title="Estancadas"
-                  amountUsd={qualitySummary?.stale?.amountUsd || 0}
-                  total={qualitySummary?.stale?.total || 0}
-                  helper="Sin actividad reciente"
-                />
-                <QualityCard
-                  title="Cierre inconsistente"
-                  amountUsd={qualitySummary?.inconsistentClose?.amountUsd || 0}
-                  total={qualitySummary?.inconsistentClose?.total || 0}
-                  helper="Fecha no alineada con etapa"
-                />
-                <QualityCard
-                  title="Alto monto y alto riesgo"
-                  amountUsd={qualitySummary?.highAmountHighRisk?.amountUsd || 0}
-                  total={qualitySummary?.highAmountHighRisk?.total || 0}
-                  helper="Escalar a gerencia"
-                />
-              </div>
-            </section>
-          </div>
+                  ))}
+                  <tr>
+                    <td>
+                      <strong>Total</strong>
+                    </td>
+                    <td>
+                      <strong>{formatCompactNumber(stageFunnelTotal.opportunities)}</strong>
+                    </td>
+                    <td>
+                      <strong>{formatCurrency(stageFunnelTotal.grossAmountUsd)}</strong>
+                    </td>
+                    <td>
+                      <strong>{formatCurrency(stageFunnelTotal.weightedAmountUsd)}</strong>
+                    </td>
+                    <td>
+                      <strong>-</strong>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           <div className="dashboard-monthly-grid-two">
             <OutcomePanel title="Perdidas" summary={dashboardMonthly?.losses} tone="danger" />
             <OutcomePanel title="Anuladas" summary={dashboardMonthly?.cancelled} tone="muted" />
-          </div>
-
-          <div className="dashboard-monthly-grid-two">
-            <section className="dashboard-monthly-panel">
-              <div className="dashboard-monthly-panel-header">
-                <h3>Origen del pipeline del mes</h3>
-                <span>{formatCompactNumber(originSummary.length)} orígenes</span>
-              </div>
-              <div className="dashboard-monthly-table-wrap">
-                <table className="dashboard-monthly-table">
-                  <thead>
-                    <tr>
-                      <th>Origen</th>
-                      <th>Monto bruto</th>
-                      <th>Monto ponderado</th>
-                      <th>Ganadas</th>
-                      <th>Comprometidas</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {originSummary.map((row) => (
-                      <tr key={row.origin}>
-                        <td>{row.label}</td>
-                        <td>{formatCurrency(row.grossAmountUsd)}</td>
-                        <td>{formatCurrency(row.weightedAmountUsd)}</td>
-                        <td>{formatCurrency(row.wonAmountUsd)}</td>
-                        <td>{formatCompactNumber(row.committedCount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="dashboard-monthly-panel">
-              <div className="dashboard-monthly-panel-header">
-                <h3>Acciones recomendadas</h3>
-                <span>Prioridad semanal</span>
-              </div>
-              <div className="dashboard-monthly-action-list">
-                {recommendations.length ? (
-                  recommendations.map((item) => (
-                    <article key={item.code} className="dashboard-monthly-action-card">
-                      <strong>{item.title}</strong>
-                      <p>{item.impactLabel}</p>
-                    </article>
-                  ))
-                ) : (
-                  <p className="dashboard-monthly-empty">Sin acciones sugeridas.</p>
-                )}
-              </div>
-            </section>
           </div>
 
           <section className="dashboard-monthly-panel">
