@@ -1422,9 +1422,25 @@ function buildInteractionFilterContext(req, alias = "i") {
 
   if (queryText) {
     where.push(
-      `(${alias}.title LIKE ? OR ${alias}.summary LIKE ? OR a.name LIKE ?)`,
+      `(
+        ${alias}.title LIKE ?
+        OR ${alias}.summary LIKE ?
+        OR a.name LIKE ?
+        OR EXISTS (
+          SELECT 1
+          FROM users su_search
+          WHERE su_search.id = ${alias}.seller_user_id
+            AND (su_search.full_name LIKE ? OR su_search.email LIKE ?)
+        )
+      )`,
     );
-    params.push(`%${queryText}%`, `%${queryText}%`, `%${queryText}%`);
+    params.push(
+      `%${queryText}%`,
+      `%${queryText}%`,
+      `%${queryText}%`,
+      `%${queryText}%`,
+      `%${queryText}%`,
+    );
   }
 
   if (statusFilters.length) {
@@ -3737,6 +3753,7 @@ router.get(
       `SELECT COUNT(*) AS total
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
+       LEFT JOIN users su ON su.id = i.seller_user_id
        ${filterContext.accessJoin}
        ${filterContext.whereClause}`,
       filterContext.params,

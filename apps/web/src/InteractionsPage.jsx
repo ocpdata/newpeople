@@ -1841,6 +1841,7 @@ function InteractionDetailModal({
     : "";
   const isCommercialAssignmentSelfOnly =
     commercialAssignmentPolicy.mode === "self_only";
+  const showLeadFollowUpSection = !isFinalizedLeadStatus(detail.analysisStatus);
   const currentUserIsSellerEligible = Boolean(
     commercialAssignmentPolicy.currentUserIsSellerEligible,
   );
@@ -3148,7 +3149,8 @@ function InteractionDetailModal({
                 </>
               ) : null}
 
-              <section className="account-form-section account-modal-section interaction-detail-section lead-follow-up-section">
+              {showLeadFollowUpSection ? (
+                <section className="account-form-section account-modal-section interaction-detail-section lead-follow-up-section">
                 <div className="interaction-resolution-header lead-follow-up-header">
                   <div className="lead-follow-up-header-copy">
                     <span className="lead-follow-up-kicker">
@@ -3272,7 +3274,8 @@ function InteractionDetailModal({
                     selectedActionCode={detail?.leadRequiredActionCode}
                   />
                 </div>
-              </section>
+                </section>
+              ) : null}
             </div>
 
             <div className="modal-buttons interaction-detail-modal-buttons">
@@ -5880,7 +5883,13 @@ function InteractionsPage({ can, currentUser }) {
                 const canDeleteInteraction =
                   canUpdate && !isFinalizedLeadStatus(item.analysisStatus);
                 return (
-                  <tr key={item.id}>
+                  <tr
+                    key={item.id}
+                    className="accounts-row-clickable"
+                    onClick={() => {
+                      void openDetail(item.id);
+                    }}
+                  >
                     <td title={item.publicId}>{displayIndex}</td>
                     <td className="interaction-title-column">
                       <div className="interaction-table-title-cell">
@@ -5909,7 +5918,10 @@ function InteractionsPage({ can, currentUser }) {
                       </div>
                     </td>
                     <td>{formatDate(item.createdAt)}</td>
-                    <td className="accounts-actions-cell">
+                    <td
+                      className="accounts-actions-cell"
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <div
                         className="user-kebab-wrap interactions-kebab-wrap"
                         ref={
@@ -5921,7 +5933,10 @@ function InteractionsPage({ can, currentUser }) {
                         <button
                           type="button"
                           className="kebab-btn"
-                          onClick={() => toggleInteractionMenu(item.id)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleInteractionMenu(item.id);
+                          }}
                           aria-label="Abrir acciones"
                         >
                           ⋮

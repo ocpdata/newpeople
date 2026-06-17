@@ -13313,7 +13313,7 @@ td {
   position: fixed;
   top: 16px;
   right: 16px;
-  z-index: 1200;
+  z-index: 1700;
   min-width: 260px;
   max-width: min(92vw, 420px);
   padding: 12px 14px;
