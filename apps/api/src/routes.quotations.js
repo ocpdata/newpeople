@@ -6986,6 +6986,7 @@ async function getQuotationVersionSections(versionId) {
     const items = await query(
       `SELECT qsi.id, qsi.quotation_section_id, qsi.provider_id,
               p.name AS provider_name,
+              c.iso2 AS provider_country_iso2,
               qsi.product_code, qsi.product_description, qsi.item_type, qsi.is_renewal,
               qsi.bundle_parent_item_id, qsi.bundle_origin_type,
               qsi.source_provider_price_list_item_id,
@@ -6997,6 +6998,7 @@ async function getQuotationVersionSections(versionId) {
               qsi.display_order, qsi.bundle_sort_order
        FROM quotation_section_items qsi
        INNER JOIN providers p ON p.id = qsi.provider_id
+       INNER JOIN countries c ON c.id = p.country_id
        WHERE qsi.quotation_section_id IN (${placeholders})
        ORDER BY qsi.display_order, qsi.id`,
       sectionIds,
@@ -7009,6 +7011,9 @@ async function getQuotationVersionSections(versionId) {
         quotationSectionId: key,
         providerId: Number(item.provider_id),
         providerName: item.provider_name,
+        providerCountryIso2: String(item.provider_country_iso2 || "")
+          .toUpperCase()
+          .trim(),
         importWarnings: normalizeProviderDocumentImportWarningsToSpanish(
           safeParseJsonArray(item.import_warnings_json) || [],
         ),
@@ -16136,6 +16141,7 @@ router.post(
 const QUOTATION_APPROVAL_TOTAL_MARGIN_MIN_PCT = 30;
 const QUOTATION_APPROVAL_PRODUCT_MARGIN_MIN_PCT = 10;
 const QUOTATION_APPROVAL_SERVICE_MARGIN_MIN_PCT = 40;
+const QUOTATION_APPROVAL_FOREIGN_PROVIDER_IMPORT_COST_PCT = 10;
 const QUOTATION_APPROVAL_COST_TOLERANCE_ABS = 0.01;
 const QUOTATION_APPROVAL_COST_TOLERANCE_REL = 0.001;
 const QUOTATION_APPROVAL_MANDATORY_SERVICE_RULES = {
@@ -16544,6 +16550,63 @@ function evaluateQuotationApprovalMandatoryServices({
   };
 }
 
+function evaluateQuotationApprovalForeignProviderImportCost({
+  items,
+  warnings,
+}) {
+  const comparableThreshold = 0.000001;
+  const foreignLines = items.filter(
+    (item) =>
+      item.itemType !== "grupo_productos" &&
+      String(item.providerCountryIso2 || "").toUpperCase() !== "MX",
+  );
+
+  if (!foreignLines.length) {
+    return;
+  }
+
+  const providers = Array.from(
+    new Set(
+      foreignLines
+        .map((item) => String(item.providerName || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const linesWithImportNot10 = foreignLines
+    .filter((item) => {
+      const importCostPct = Number(item.importCostPct || 0);
+      return (
+        Math.abs(
+          importCostPct - QUOTATION_APPROVAL_FOREIGN_PROVIDER_IMPORT_COST_PCT,
+        ) > comparableThreshold
+      );
+    })
+    .map((item) => ({
+      itemId: Number(item.id),
+      providerName: String(item.providerName || "").trim(),
+      providerCountryIso2: String(item.providerCountryIso2 || "")
+        .toUpperCase()
+        .trim(),
+      productCode: String(item.productCode || "").trim(),
+      importCostPct: Number(Number(item.importCostPct || 0).toFixed(6)),
+    }));
+
+  warnings.push(
+    buildQuotationApprovalWarning(
+      "approval_foreign_provider_hardware_import_cost_review",
+      "Hay items de proveedores fuera de Mexico. Si dentro de la cotizacion hay hardware, puede requerirse agregar 10% de costo de importacion.",
+      {
+        expectedImportCostPct:
+          QUOTATION_APPROVAL_FOREIGN_PROVIDER_IMPORT_COST_PCT,
+        providers,
+        foreignItemCount: foreignLines.length,
+        linesWithImportNot10,
+      },
+    ),
+  );
+}
+
 async function evaluateQuotationApprovalProviderCostAlignment({
   items,
   blockingRules,
@@ -16738,6 +16801,46 @@ function evaluateQuotationApprovalProviderBacking({
     };
   }
 
+  const nonBundleItems = items.filter(
+    (item) => item.itemType !== "grupo_productos",
+  );
+  const nonAccessQualityItems = nonBundleItems
+    .filter((item) => {
+      const normalizedProviderName =
+        normalizeProviderDocumentImportComparableName(item.providerName);
+      return !normalizedProviderName.includes("access quality");
+    })
+    .map((item) => ({
+      itemId: Number(item.id || 0),
+      providerId: Number(item.providerId || 0),
+      providerName: String(item.providerName || "").trim(),
+      productCode: String(item.productCode || "").trim(),
+      productDescription: String(item.productDescription || "").trim(),
+    }));
+
+  if (nonAccessQualityItems.length > 0) {
+    blockingRules.push(
+      buildQuotationApprovalBlockingRule(
+        "approval_provider_backing_exception_access_quality_only",
+        "Solo se permite aprobar sin respaldo completo de proveedor cuando todos los items son de Access Quality. Hay items de otro proveedor y no se puede continuar sin cotizacion de respaldo.",
+        {
+          requiresConfirmation: false,
+          allowedProviderName: "Access Quality",
+          nonAccessQualityItems,
+          providerDocumentMissing,
+          unbackedItems,
+        },
+      ),
+    );
+    return {
+      providerDocumentMissing,
+      unbackedItems,
+      providerBackingExceptionApplied: false,
+      providerBackingExceptionReason: "",
+      acknowledgedUnbackedItemIds: [],
+    };
+  }
+
   const acceptedException = Boolean(
     approvalContext?.confirmProviderBackingException,
   );
@@ -16884,6 +16987,11 @@ async function evaluateQuotationApprovalPolicies({ version, approvalContext }) {
   const sections = await getQuotationVersionSections(Number(version.id));
   const flatItems = sections.flatMap((section) => section.items || []);
   const leafItems = buildQuotationApprovalLeafItems(flatItems);
+
+  evaluateQuotationApprovalForeignProviderImportCost({
+    items: leafItems,
+    warnings,
+  });
 
   evaluateQuotationApprovalMargins({
     version,
@@ -17056,6 +17164,13 @@ router.post(
             rule.code === "approval_provider_backing_confirmation_required",
         ) || null;
 
+      const providerBackingAccessQualityOnlyRule =
+        approvalValidationResult.blockingRules.find(
+          (rule) =>
+            rule.code ===
+            "approval_provider_backing_exception_access_quality_only",
+        ) || null;
+
       const providerBackingReasonRule =
         approvalValidationResult.blockingRules.find(
           (rule) => rule.code === "approval_provider_backing_reason_required",
@@ -17081,6 +17196,17 @@ router.post(
         return res.status(409).json({
           code: "quotation_approval_provider_backing_confirmation_required",
           message: providerBackingConfirmationRule.message,
+          validation: {
+            blockingRules: approvalValidationResult.blockingRules,
+            warnings: approvalValidationResult.warnings,
+          },
+        });
+      }
+
+      if (providerBackingAccessQualityOnlyRule) {
+        return res.status(409).json({
+          code: "quotation_approval_provider_backing_access_quality_only",
+          message: providerBackingAccessQualityOnlyRule.message,
           validation: {
             blockingRules: approvalValidationResult.blockingRules,
             warnings: approvalValidationResult.warnings,

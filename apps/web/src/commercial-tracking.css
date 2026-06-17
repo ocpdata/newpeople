@@ -430,6 +430,14 @@
   text-align: right;
 }
 
+.tracking-opportunity-row-clickable {
+  cursor: pointer;
+}
+
+.tracking-opportunity-row-clickable:hover td {
+  background: #f6fbf8;
+}
+
 .tracking-kebab-menu {
   position: relative;
   display: inline-block;

@@ -1845,7 +1845,15 @@ export default function CommercialTrackingPage() {
                           </td>
                         </tr>
                         {monthGroup.items.map((item) => (
-                          <tr key={item.id || item.opportunityId}>
+                          <tr
+                            key={item.id || item.opportunityId}
+                            className="tracking-opportunity-row-clickable"
+                            onClick={() =>
+                              openOpportunityFromForecast(
+                                item.id || item.opportunityId,
+                              )
+                            }
+                          >
                             <td>
                               <strong>
                                 {item.name || item.opportunityName}
@@ -1944,7 +1952,15 @@ export default function CommercialTrackingPage() {
                           </td>
                         </tr>
                         {monthGroup.items.map((item) => (
-                          <tr key={item.id || item.opportunityId}>
+                          <tr
+                            key={item.id || item.opportunityId}
+                            className="tracking-opportunity-row-clickable"
+                            onClick={() =>
+                              openOpportunityFromForecast(
+                                item.id || item.opportunityId,
+                              )
+                            }
+                          >
                             <td>
                               <strong>
                                 {item.name || item.opportunityName}

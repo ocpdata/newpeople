@@ -8678,11 +8678,17 @@ button:disabled {
   gap: 12px;
 }
 
-.lead-dashboard-stat-grid,
-.lead-dashboard-status-grid {
+.lead-dashboard-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.lead-dashboard-status-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
 }
 
 .lead-dashboard-stat-card {
@@ -8946,7 +8952,6 @@ button:disabled {
   }
 
   .lead-dashboard-stat-grid,
-  .lead-dashboard-status-grid,
   .lead-dashboard-queue-grid {
     grid-template-columns: 1fr;
   }

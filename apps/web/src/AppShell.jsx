@@ -147,16 +147,8 @@ export default function AppShell({
     0,
     Math.min(100, Number(aiCreditSummary?.consumedPercent || 0)),
   );
+  const aiCreditAvailablePercent = Math.max(0, 100 - aiCreditPercent);
   const aiCreditState = String(aiCreditSummary?.state || "normal").trim();
-
-  function formatUsd(value) {
-    return new Intl.NumberFormat("es-MX", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(value || 0));
-  }
 
   const canAccessQuotations = [
     "cotizaciones.operacion",
@@ -720,27 +712,20 @@ export default function AppShell({
                 {aiCreditSummary ? (
                   <div
                     className="topbar-ai-credit"
-                    title="Consumo acumulado de IA"
+                    title="Porcentaje disponible de credito IA"
                   >
                     <div className="topbar-ai-credit-head">
                       <span>Credito IA</span>
-                      <span>
-                        {formatUsd(aiCreditSummary?.lifetimeConsumedUsd || 0)} /{" "}
-                        {formatUsd(aiCreditSummary?.lifetimeGrantedUsd || 0)}
-                      </span>
+                      <span>{aiCreditAvailablePercent}% disponible</span>
                     </div>
                     <div className="topbar-ai-credit-track" aria-hidden="true">
                       <span
                         className={`topbar-ai-credit-fill state-${aiCreditState}`}
-                        style={{ width: `${aiCreditPercent}%` }}
+                        style={{ width: `${aiCreditAvailablePercent}%` }}
                       />
                     </div>
                     <div className="topbar-ai-credit-foot">
-                      <span>{aiCreditPercent}% consumido</span>
-                      <span>
-                        Disponible:{" "}
-                        {formatUsd(aiCreditSummary?.balanceUsd || 0)}
-                      </span>
+                      <span>{aiCreditAvailablePercent}% disponible</span>
                     </div>
                   </div>
                 ) : null}

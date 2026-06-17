@@ -5144,7 +5144,7 @@ function InteractionsPage({ can, currentUser }) {
           <section className="lead-dashboard-panel">
             <div className="lead-dashboard-panel-header">
               <div>
-                <h3>Estados actuales del funnel</h3>
+                <h3>Estados actuales de los leads</h3>
                 <p>
                   Haz clic sobre cualquier estado para abrir la bandeja
                   filtrada.

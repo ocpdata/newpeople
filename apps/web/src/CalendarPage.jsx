@@ -766,23 +766,26 @@ export default function CalendarPage({ currentUser }) {
               onChange={(event) => setCalendarDate(event.target.value)}
             />
           </label>
+          {canReadAll ? (
+            <label>
+              Vendedor
+              <select
+                value={selectedSellerId}
+                onChange={(event) => setSelectedSellerId(event.target.value)}
+              >
+                <option value="all">Todos</option>
+                {sellers.map((seller) => (
+                  <option key={seller.id} value={seller.id}>
+                    {seller.fullName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label>
-            Vendedor
-            <select
-              value={selectedSellerId}
-              onChange={(event) => setSelectedSellerId(event.target.value)}
-              disabled={!canReadAll}
-            >
-              {canReadAll ? <option value="all">Todos</option> : null}
-              {sellers.map((seller) => (
-                <option key={seller.id} value={seller.id}>
-                  {seller.fullName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            SLA (dias)
+            <span title="SLA es el maximo de dias sin actividad antes de marcar una oportunidad en riesgo.">
+              SLA (dias)
+            </span>
             <input
               type="number"
               min={Number(data?.slaConfig?.minDays || 1)}
