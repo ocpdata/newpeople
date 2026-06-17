@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { formatBusinessDateTime } from "../business-timezone";
 import OpportunityOperationEmailModal from "./OpportunityOperationEmailModal";
 
 const AI_NARRATIVE_TIMEOUT_MS = 60000;
@@ -78,16 +79,15 @@ function getJobStatusTone(status) {
 }
 
 function formatNarrativeTimestamp(value) {
-  const text = normalizeText(value);
-  if (!text) return "Sin fecha";
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) return text;
-  return date.toLocaleString("es-MX", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  return formatBusinessDateTime(value, {
+    fallback: "Sin fecha",
+    options: {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
   });
 }
 

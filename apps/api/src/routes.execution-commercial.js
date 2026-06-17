@@ -334,6 +334,67 @@ function getTimeZoneOffsetMinutes(dateValue, timeZone) {
   return (asUtc - parsed.getTime()) / 60000;
 }
 
+function parseDateTimeLocalText(value) {
+  const rawValue = String(value || "").trim();
+  const match = rawValue.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] || 0);
+  const millisecond = Number(String(match[7] || "0").padEnd(3, "0"));
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    !Number.isInteger(second) ||
+    !Number.isInteger(millisecond)
+  ) {
+    return null;
+  }
+
+  return { year, month, day, hour, minute, second, millisecond };
+}
+
+function toBusinessDateTimeUtc(dateTimeText, timeZone) {
+  const parsed = parseDateTimeLocalText(dateTimeText);
+  if (!parsed) {
+    return null;
+  }
+
+  const baseUtcMs = Date.UTC(
+    parsed.year,
+    parsed.month - 1,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+    parsed.second,
+    parsed.millisecond,
+  );
+
+  let resultMs = baseUtcMs;
+  for (let index = 0; index < 3; index += 1) {
+    const offsetMinutes = getTimeZoneOffsetMinutes(resultMs, timeZone);
+    const nextResultMs = baseUtcMs - offsetMinutes * 60000;
+    if (nextResultMs === resultMs) {
+      break;
+    }
+    resultMs = nextResultMs;
+  }
+
+  return new Date(resultMs);
+}
+
 function toTimeZoneStartOfDayUtc(dateText, timeZone) {
   const parsed = parseDateOnly(dateText);
   if (!parsed) return null;
@@ -7407,6 +7468,7 @@ router.get(
   ]),
   requirePermission("oportunidades.read"),
   async (req, res) => {
+    const businessTimezone = await loadBusinessTimezone();
     const opportunityId = Number(req.params.id);
     if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
       return res.status(400).json({ message: "Parametros invalidos" });
@@ -7746,11 +7808,11 @@ router.post(
       if (!scheduledAtRaw) {
         return res.status(400).json({ message: "scheduledAt es obligatorio" });
       }
-      scheduledAt = new Date(scheduledAtRaw);
-      if (Number.isNaN(scheduledAt.getTime())) {
+      scheduledAt = toBusinessDateTimeUtc(scheduledAtRaw, businessTimezone);
+      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
         return res.status(400).json({ message: "scheduledAt invalido" });
       }
-      dueDate = scheduledAtRaw.slice(0, 10);
+      dueDate = formatDateInTimeZone(scheduledAt, businessTimezone);
     } else {
       dueDate = dueDateRaw || scheduledAtRaw.slice(0, 10);
       if (!dueDate) {
@@ -7819,6 +7881,7 @@ router.patch(
   requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
+    const businessTimezone = await loadBusinessTimezone();
     const opportunityId = Number(req.params.id);
     const activityId = Number(req.params.activityId);
     if (
@@ -7921,11 +7984,14 @@ router.patch(
       if (!scheduledAtRaw) {
         return res.status(400).json({ message: "scheduledAt es obligatorio" });
       }
-      scheduledAt = new Date(scheduledAtRaw);
-      if (Number.isNaN(scheduledAt.getTime())) {
+      scheduledAt =
+        scheduledAtRaw instanceof Date
+          ? new Date(scheduledAtRaw)
+          : toBusinessDateTimeUtc(scheduledAtRaw, businessTimezone);
+      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
         return res.status(400).json({ message: "scheduledAt invalido" });
       }
-      dueDate = String(scheduledAt.toISOString().slice(0, 10));
+      dueDate = formatDateInTimeZone(scheduledAt, businessTimezone);
     } else {
       dueDate = String(dueDateRaw || "").trim();
       if (!dueDate) {
