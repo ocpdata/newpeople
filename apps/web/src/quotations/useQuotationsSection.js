@@ -6283,11 +6283,49 @@ export function useQuotationsSection({
           return [];
         }
 
+        const formatMoneyValue = (value) => {
+          const numericValue = Number(value);
+          if (!Number.isFinite(numericValue)) {
+            return "N/A";
+          }
+          return numericValue.toLocaleString("es-MX", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
+        };
+
+        const buildCostMismatchDetailRecommendation = (warning) => {
+          const code = String(warning?.productCode || "").trim();
+          const itemId = Number(warning?.itemId || 0);
+          const providerCost = Number(warning?.providerCost || 0);
+          const quotationCost = Number(warning?.quotationCost || 0);
+          const absDiff = Number(
+            warning?.absDiff == null
+              ? Math.abs(quotationCost - providerCost)
+              : warning?.absDiff,
+          );
+
+          const parts = [
+            `Producto ${code || `#${itemId || "sin id"}`}`,
+            `cotizacion ${formatMoneyValue(quotationCost)}`,
+            `proveedor ${formatMoneyValue(providerCost)}`,
+            `diferencia ${formatMoneyValue(absDiff)}`,
+          ];
+          return parts.join(" | ");
+        };
+
+        const buildInvalidProviderCostReferenceRecommendation = (warning) => {
+          const code = String(warning?.productCode || "").trim();
+          const itemId = Number(warning?.itemId || 0);
+          const providerCost = Number(warning?.providerCost || 0);
+          return `Referencia de costo proveedor invalida en ${code || `#${itemId || "sin id"}`} (costo proveedor ${formatMoneyValue(providerCost)}).`;
+        };
+
         const recommendationByCode = {
           approval_provider_cost_reference_not_found:
             "Verifica el costo proveedor de referencia en la lista de precios.",
-          approval_product_cost_mismatch_waived:
-            "Revisa y corrige los costos de proveedor que no coinciden.",
+          approval_product_cost_mismatch_waived: null,
+          approval_provider_cost_reference_invalid: null,
           approval_provider_data_missing_deliveryTime:
             "Confirma el tiempo de entrega con el proveedor.",
           approval_provider_data_missing_quotationValidity:
@@ -6301,11 +6339,24 @@ export function useQuotationsSection({
         const recommendations = Array.from(
           new Set(
             warnings
-              .map(
-                (warning) =>
-                  recommendationByCode[String(warning?.code || "").trim()] ||
-                  String(warning?.message || "").trim(),
-              )
+              .map((warning) => {
+                const warningCode = String(warning?.code || "").trim();
+                if (warningCode === "approval_product_cost_mismatch_waived") {
+                  return buildCostMismatchDetailRecommendation(warning);
+                }
+                if (
+                  warningCode === "approval_provider_cost_reference_invalid"
+                ) {
+                  return buildInvalidProviderCostReferenceRecommendation(
+                    warning,
+                  );
+                }
+
+                return (
+                  recommendationByCode[warningCode] ||
+                  String(warning?.message || "").trim()
+                );
+              })
               .filter(Boolean),
           ),
         );

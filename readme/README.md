@@ -15,6 +15,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
 - [Cotizaciones](./cotizaciones.md)
+- [Cotizaciones - Validacion con IA](./cotizaciones-validacion-ia.md)
 - [Comisiones](./comisiones.md)
 - [Proveedores](./proveedores.md)
 - [Auditoria](./auditoria.md)
@@ -57,6 +58,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Cotizaciones: modulo documentado con workflow propio, guardado completo por version,
   bundles de catalogo y manuales, vista previa oficial en PDF generada por backend,
   y separacion entre precio original del proveedor y precio convertido por tipo de cambio.
+- Cotizaciones IA: politicas actualizadas para validacion en linea por documentos adjuntos con costo directo por codigo (sin referencia historica), exclusion de items Access Quality y bloqueo de descuadre solo con evidencia de alta confianza.
 - IA/Configuracion: documentada la administracion de tarifas por modelo desde
   Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
 - Comisiones: documento nuevo para reglas trimestrales de configuracion y seguimiento en Planeacion Comercial, con umbral de cuota, margen minimo por cotizacion y calculo por item.

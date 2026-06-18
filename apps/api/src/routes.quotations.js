@@ -3790,7 +3790,7 @@ function buildProviderDocumentImportInstructions({
     ? "IMPORTANTE: si el documento contiene precios, costos o descuentos por item, debes devolverlos obligatoriamente en listPriceUnit/unitPrice/resolvedCostUnit/discountPct como numeros. Si el documento contiene terminos o condiciones comerciales, debes devolverlas obligatoriamente en deliveryTime/quotationValidity/warranty/paymentTerms y/o commercialClauses en espanol."
     : "";
 
-  return `Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Extrae tambien clausulas de terminos o condiciones del proveedor y devuelvelas en espanol en commercialClauses. Para campos numericos (quantity, listPriceUnit, unitPrice, discountPct, resolvedCostUnit) devuelve numeros puros sin simbolos ni separadores de miles. Si agregas notes por item, deben ser concretas, específicas para ese item y basadas en evidencia textual; evita frases genéricas como revisar el documento fuente sin indicar el dato detectado. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. ${strictSuffix} expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], commercialClauses: [{ clauseId, titleEs, textEs, category, confidence, sourceSnippet }], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }`;
+  return `Analiza una propuesta de proveedor B2B y responde exclusivamente con JSON valido. No inventes proveedor, moneda, items ni condiciones cuando no haya evidencia. Todos los items deben representarse como productos. Identifica codigos, descripciones, cantidades, precios, descuentos, garantia y condiciones comerciales si aparecen. Para validacion posterior, el codigo de proveedor (providerCode) es el identificador principal de cada item: no inferir ni construir providerCode a partir de descripcion. Si no hay codigo explicito en la evidencia, devuelve providerCode vacio y agrega warning. Extrae tambien clausulas de terminos o condiciones del proveedor y devuelvelas en espanol en commercialClauses. Para campos numericos (quantity, listPriceUnit, unitPrice, discountPct, resolvedCostUnit) devuelve numeros puros sin simbolos ni separadores de miles. Si agregas notes por item, deben ser concretas, específicas para ese item y basadas en evidencia textual; evita frases genéricas como revisar el documento fuente sin indicar el dato detectado. Devuelve campos nulos o warnings cuando no puedas inferir algo con suficiente evidencia. ${strictSuffix} expectedShape: { providerName, currencyCode, deliveryTime, quotationValidity, warranty, paymentTerms, warnings: string[], commercialClauses: [{ clauseId, titleEs, textEs, category, confidence, sourceSnippet }], items: [{ providerCode, description, quantity, currencyCode, listPriceUnit, unitPrice, discountPct, resolvedCostUnit, warranty, notes, detectedFields: string[], confidence, sourceSnippet }] }`;
 }
 
 function buildProviderDocumentImportPrompt({
@@ -4138,7 +4138,7 @@ async function analyzeProviderDocumentImport({
           ),
         };
       })
-      .filter((item) => item.providerCode && item.productDescription),
+      .filter((item) => item.providerCode),
   };
 }
 
@@ -16611,80 +16611,82 @@ async function evaluateQuotationApprovalProviderCostAlignment({
   items,
   blockingRules,
   warnings,
+  providerDocumentCostByItemId,
   shouldBlockOnMismatch = true,
 }) {
-  const productLines = items.filter((item) => item.itemType === "producto");
+  const directCostEvidenceByItemId =
+    providerDocumentCostByItemId instanceof Map
+      ? providerDocumentCostByItemId
+      : new Map();
+
+  const productLines = items.filter(
+    (item) =>
+      item.itemType === "producto" &&
+      !isAccessQualityProviderName(item.providerName),
+  );
   if (!productLines.length) {
     return;
   }
 
-  const sourceIds = new Set();
   for (const item of productLines) {
-    const sourceId = Number(
-      item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId,
-    );
-    if (!Number.isInteger(sourceId) || sourceId <= 0) {
-      blockingRules.push(
-        buildQuotationApprovalBlockingRule(
-          "approval_product_cost_source_missing",
-          "Todas las lineas de producto deben tener referencia de costo proveedor para aprobar.",
-          {
-            itemId: Number(item.id),
-            productCode: String(item.productCode || "").trim(),
-          },
-        ),
-      );
-      continue;
-    }
-    sourceIds.add(sourceId);
-  }
-
-  if (!sourceIds.size) {
-    return;
-  }
-
-  const placeholders = Array.from(sourceIds)
-    .map(() => "?")
-    .join(", ");
-  const providerCostRows = await query(
-    `SELECT id, price
-     FROM provider_price_list_items
-     WHERE id IN (${placeholders})`,
-    Array.from(sourceIds),
-  );
-  const providerCostByItemId = providerCostRows.reduce((map, row) => {
-    map.set(Number(row.id), Number(row.price || 0));
-    return map;
-  }, new Map());
-
-  for (const item of productLines) {
-    const sourceId = Number(
-      item.sourceProviderPriceListItemId || item.sourceComponentPriceListItemId,
-    );
-    if (!Number.isInteger(sourceId) || sourceId <= 0) {
+    const itemId = Number(item.id || 0);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
       continue;
     }
 
-    if (!providerCostByItemId.has(sourceId)) {
+    const productCode = String(item.productCode || "").trim();
+    if (!directCostEvidenceByItemId.has(itemId)) {
       warnings.push(
         buildQuotationApprovalWarning(
-          "approval_provider_cost_reference_not_found",
-          "No se encontro el costo de referencia del proveedor para una linea de producto.",
+          "approval_provider_document_cost_not_detected",
+          "No se pudo detectar un costo directo del documento del proveedor para una linea de producto; revisa manualmente el costo.",
           {
-            itemId: Number(item.id),
-            sourcePriceListItemId: sourceId,
+            itemId,
+            productCode,
           },
         ),
       );
       continue;
     }
 
-    const providerCost = Number(providerCostByItemId.get(sourceId) || 0);
+    const costEvidence = directCostEvidenceByItemId.get(itemId);
+    const costEvidenceConfidence = String(
+      typeof costEvidence === "object" && costEvidence !== null
+        ? costEvidence.confidence
+        : "low",
+    ).trim();
+    const costEvidenceSourceSnippet = String(
+      typeof costEvidence === "object" && costEvidence !== null
+        ? costEvidence.sourceSnippet
+        : "",
+    ).trim();
+
     const quotationCost = Number(
       item.originalListPriceUnit == null
         ? item.listPriceUnit || 0
         : item.originalListPriceUnit,
     );
+    const providerCost = Number(
+      resolveProviderDocumentComparableCost(costEvidence, quotationCost),
+    );
+
+    if (!Number.isFinite(providerCost) || providerCost <= 0) {
+      warnings.push(
+        buildQuotationApprovalWarning(
+          "approval_provider_document_cost_invalid",
+          "El costo detectado en el documento del proveedor no es valido para una linea de producto; revisa manualmente el costo.",
+          {
+            itemId,
+            productCode,
+            providerCost: Number(providerCost || 0),
+            costEvidenceConfidence,
+            costEvidenceSourceSnippet,
+          },
+        ),
+      );
+      continue;
+    }
+
     const absDiff = Math.abs(quotationCost - providerCost);
     const tolerance = Math.max(
       QUOTATION_APPROVAL_COST_TOLERANCE_ABS,
@@ -16693,15 +16695,18 @@ async function evaluateQuotationApprovalProviderCostAlignment({
 
     if (absDiff > tolerance) {
       const mismatchDetails = {
-        itemId: Number(item.id),
-        productCode: String(item.productCode || "").trim(),
+        itemId,
+        productCode,
         providerCost: Number(providerCost.toFixed(6)),
         quotationCost: Number(quotationCost.toFixed(6)),
         absDiff: Number(absDiff.toFixed(6)),
         allowedDiff: Number(tolerance.toFixed(6)),
+        costValidationSource: "provider_document_direct_code_match",
+        costEvidenceConfidence,
+        costEvidenceSourceSnippet,
       };
 
-      if (shouldBlockOnMismatch) {
+      if (shouldBlockOnMismatch && costEvidenceConfidence === "high") {
         blockingRules.push(
           buildQuotationApprovalBlockingRule(
             "approval_product_cost_mismatch",
@@ -16712,8 +16717,12 @@ async function evaluateQuotationApprovalProviderCostAlignment({
       } else {
         warnings.push(
           buildQuotationApprovalWarning(
-            "approval_product_cost_mismatch_waived",
-            "Se detecto descuadre de costo proveedor, pero se permite continuar por excepcion confirmada de respaldo de proveedor.",
+            costEvidenceConfidence === "high"
+              ? "approval_product_cost_mismatch_waived"
+              : "approval_product_cost_mismatch_low_confidence",
+            costEvidenceConfidence === "high"
+              ? "Se detecto descuadre de costo proveedor, pero se permite continuar por excepcion confirmada de respaldo de proveedor."
+              : "Se detecto posible descuadre de costo proveedor con evidencia ambigua del documento; revisa manualmente antes de aprobar.",
             mismatchDetails,
           ),
         );
@@ -16725,53 +16734,44 @@ async function evaluateQuotationApprovalProviderCostAlignment({
 function evaluateQuotationApprovalProviderBacking({
   items,
   approvalContext,
-  latestProviderDocumentImport,
+  backedQuotationItemIds,
+  providerDocumentMissing,
   blockingRules,
 }) {
-  const providerDocumentMissing = !latestProviderDocumentImport;
-  const backedSourceIds = new Set(
-    latestProviderDocumentImport?.supportedProviderPriceListItemIds || [],
+  const backedItemIds =
+    backedQuotationItemIds instanceof Set ? backedQuotationItemIds : new Set();
+
+  const reviewableItems = items.filter(
+    (item) =>
+      item.itemType !== "grupo_productos" &&
+      !isAccessQualityProviderName(item.providerName),
   );
+
+  if (!reviewableItems.length) {
+    return {
+      providerDocumentMissing: false,
+      unbackedItems: [],
+      providerBackingExceptionApplied: false,
+      providerBackingExceptionReason: "",
+      acknowledgedUnbackedItemIds: [],
+    };
+  }
 
   const unbackedItems = [];
   if (!providerDocumentMissing) {
-    for (const item of items) {
-      if (item.itemType === "grupo_productos") {
-        continue;
-      }
-
+    for (const item of reviewableItems) {
       const itemId = Number(item.id || 0);
       if (!Number.isInteger(itemId) || itemId <= 0) {
         continue;
       }
 
-      const itemProviderId = Number(item.providerId || 0);
-      const importedProviderId = Number(
-        latestProviderDocumentImport.providerId || 0,
-      );
       let reasonCode = "";
 
-      if (
-        Number.isInteger(itemProviderId) &&
-        itemProviderId > 0 &&
-        Number.isInteger(importedProviderId) &&
-        importedProviderId > 0 &&
-        itemProviderId !== importedProviderId
-      ) {
-        reasonCode = "provider_mismatch";
-      }
-
-      const sourceId = Number(
-        item.sourceProviderPriceListItemId ||
-          item.sourceComponentPriceListItemId ||
-          0,
-      );
-      if (!reasonCode) {
-        if (!Number.isInteger(sourceId) || sourceId <= 0) {
-          reasonCode = "missing_source_reference";
-        } else if (!backedSourceIds.has(sourceId)) {
-          reasonCode = "not_found_in_provider_document";
-        }
+      const productCode = String(item.productCode || "").trim();
+      if (!productCode) {
+        reasonCode = "missing_product_code";
+      } else if (!backedItemIds.has(itemId)) {
+        reasonCode = "code_not_found_in_provider_documents";
       }
 
       if (!reasonCode) {
@@ -16780,10 +16780,9 @@ function evaluateQuotationApprovalProviderBacking({
 
       unbackedItems.push({
         itemId,
-        productCode: String(item.productCode || "").trim(),
+        productCode,
         productDescription: String(item.productDescription || "").trim(),
-        sourcePriceListItemId:
-          Number.isInteger(sourceId) && sourceId > 0 ? sourceId : null,
+        sourcePriceListItemId: null,
         reasonCode,
       });
     }
@@ -16792,46 +16791,6 @@ function evaluateQuotationApprovalProviderBacking({
   const requiresConfirmation =
     providerDocumentMissing || unbackedItems.length > 0;
   if (!requiresConfirmation) {
-    return {
-      providerDocumentMissing,
-      unbackedItems,
-      providerBackingExceptionApplied: false,
-      providerBackingExceptionReason: "",
-      acknowledgedUnbackedItemIds: [],
-    };
-  }
-
-  const nonBundleItems = items.filter(
-    (item) => item.itemType !== "grupo_productos",
-  );
-  const nonAccessQualityItems = nonBundleItems
-    .filter((item) => {
-      const normalizedProviderName =
-        normalizeProviderDocumentImportComparableName(item.providerName);
-      return !normalizedProviderName.includes("access quality");
-    })
-    .map((item) => ({
-      itemId: Number(item.id || 0),
-      providerId: Number(item.providerId || 0),
-      providerName: String(item.providerName || "").trim(),
-      productCode: String(item.productCode || "").trim(),
-      productDescription: String(item.productDescription || "").trim(),
-    }));
-
-  if (nonAccessQualityItems.length > 0) {
-    blockingRules.push(
-      buildQuotationApprovalBlockingRule(
-        "approval_provider_backing_exception_access_quality_only",
-        "Solo se permite aprobar sin respaldo completo de proveedor cuando todos los items son de Access Quality. Hay items de otro proveedor y no se puede continuar sin cotizacion de respaldo.",
-        {
-          requiresConfirmation: false,
-          allowedProviderName: "Access Quality",
-          nonAccessQualityItems,
-          providerDocumentMissing,
-          unbackedItems,
-        },
-      ),
-    );
     return {
       providerDocumentMissing,
       unbackedItems,
@@ -16933,15 +16892,247 @@ function evaluateQuotationApprovalProviderBacking({
   };
 }
 
-async function getLatestQuotationProviderDocumentImport(quotationId) {
+function isAccessQualityProviderName(providerName) {
+  const normalizedProviderName =
+    normalizeProviderDocumentImportComparableName(providerName);
+  return normalizedProviderName.includes("access quality");
+}
+
+function buildProviderDocumentComparableCodeCandidates(code) {
+  const normalized = normalizeProviderDocumentImportCode(String(code || ""));
+  if (!normalized) {
+    return { rawCandidates: [], comparableCandidates: [] };
+  }
+
+  const rawCandidates = new Set([normalized]);
+  const comparableCandidates = new Set([
+    normalizeProviderDocumentImportCodeComparable(normalized),
+  ]);
+
+  const duplicatePrefixMatch = normalized.match(/^([A-Z0-9]+)-\1-(.+)$/);
+  if (duplicatePrefixMatch) {
+    const collapsed = `${duplicatePrefixMatch[1]}-${duplicatePrefixMatch[2]}`;
+    rawCandidates.add(collapsed);
+    comparableCandidates.add(
+      normalizeProviderDocumentImportCodeComparable(collapsed),
+    );
+  }
+
+  return {
+    rawCandidates: Array.from(rawCandidates).filter(Boolean),
+    comparableCandidates: Array.from(comparableCandidates).filter(Boolean),
+  };
+}
+
+function parseProviderDocumentMoneyValues(text) {
+  const sourceText = String(text || "");
+  if (!sourceText) {
+    return [];
+  }
+
+  const moneyPattern = /\$?\s*-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2,6})?/g;
+  const values = [];
+  let match;
+  while ((match = moneyPattern.exec(sourceText)) !== null) {
+    const rawValue = String(match[0] || "").trim();
+    if (!rawValue) {
+      continue;
+    }
+
+    const afterToken = sourceText.slice(match.index + rawValue.length);
+    const afterTokenPrefix = afterToken.slice(0, 6);
+    if (/^\s*%/.test(afterTokenPrefix) || afterTokenPrefix.includes("%")) {
+      continue;
+    }
+
+    const normalized = Number(rawValue.replace(/[$,\s]/g, ""));
+    if (Number.isFinite(normalized) && normalized > 0) {
+      values.push(normalized);
+    }
+  }
+
+  return values;
+}
+
+function resolveProviderDocumentComparableCost(costEvidence, quotationCost) {
+  if (typeof costEvidence !== "object" || costEvidence === null) {
+    const numericValue = Number(costEvidence || 0);
+    return Number.isFinite(numericValue) ? numericValue : 0;
+  }
+
+  const numericCandidates = Array.from(
+    new Set(
+      (Array.isArray(costEvidence.costCandidates)
+        ? costEvidence.costCandidates
+        : [costEvidence.providerCost]
+      )
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    ),
+  );
+
+  if (!numericCandidates.length) {
+    return 0;
+  }
+
+  const comparableQuotationCost = Number(quotationCost || 0);
+  if (
+    !Number.isFinite(comparableQuotationCost) ||
+    comparableQuotationCost <= 0
+  ) {
+    return numericCandidates[0];
+  }
+
+  let selected = numericCandidates[0];
+  let bestDistance = Math.abs(comparableQuotationCost - selected);
+  for (const candidate of numericCandidates) {
+    const distance = Math.abs(comparableQuotationCost - candidate);
+    if (distance < bestDistance) {
+      selected = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  return selected;
+}
+
+function extractProviderDocumentDirectCostByCode({
+  documentText,
+  rawCandidates,
+  comparableCandidates,
+}) {
+  const rawText = String(documentText?.rawText || "");
+  if (!rawText) {
+    return null;
+  }
+
+  const upperCandidates = (Array.isArray(rawCandidates) ? rawCandidates : [])
+    .map((candidate) =>
+      String(candidate || "")
+        .toUpperCase()
+        .trim(),
+    )
+    .filter(Boolean);
+  const comparableCodeCandidates = (
+    Array.isArray(comparableCandidates) ? comparableCandidates : []
+  )
+    .map((candidate) => String(candidate || "").trim())
+    .filter(Boolean);
+
+  if (!upperCandidates.length && !comparableCodeCandidates.length) {
+    return null;
+  }
+
+  const lines = rawText
+    .split(/\r?\n/g)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return null;
+  }
+
+  const matchedLineIndexes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const upperLine = line.toUpperCase();
+    const comparableLine = normalizeProviderDocumentImportCodeComparable(line);
+    const rawMatch = upperCandidates.some(
+      (candidate) => candidate && upperLine.includes(candidate),
+    );
+    const comparableMatch = comparableCodeCandidates.some(
+      (candidate) => candidate && comparableLine.includes(candidate),
+    );
+    if (rawMatch || comparableMatch) {
+      matchedLineIndexes.push(index);
+    }
+  }
+
+  for (const lineIndex of matchedLineIndexes) {
+    const matchedLine = lines[lineIndex] || "";
+    const sameLineValues = parseProviderDocumentMoneyValues(matchedLine);
+    if (sameLineValues.length) {
+      const selectedValue = Math.max(...sameLineValues);
+      return {
+        providerCost: Number(selectedValue),
+        costCandidates: sameLineValues,
+        confidence: "high",
+        sourceSnippet: matchedLine.slice(0, 240),
+      };
+    }
+
+    const start = Math.max(0, lineIndex - 1);
+    const end = Math.min(lines.length, lineIndex + 3);
+    const windowText = lines.slice(start, end).join(" ");
+    const values = parseProviderDocumentMoneyValues(windowText);
+    if (values.length) {
+      const selectedValue = Math.max(...values);
+      return {
+        providerCost: Number(selectedValue),
+        costCandidates: values,
+        confidence: "low",
+        sourceSnippet: windowText.slice(0, 240),
+      };
+    }
+  }
+
+  return null;
+}
+
+async function extractComparableTextFromQuotationDocument(documentRow) {
+  const documentPublicId = String(documentRow?.document_public_id || "").trim();
+  if (!documentPublicId) {
+    return null;
+  }
+
+  try {
+    const { stream, document } = await getDocumentContentStream({
+      documentPublicId,
+    });
+    const buffer = await streamToBuffer(stream);
+    if (!buffer.length) {
+      return null;
+    }
+
+    const extracted = await extractContentFromBuffer({
+      buffer,
+      mimeType:
+        document?.mime_type ||
+        documentRow?.mime_type ||
+        "application/octet-stream",
+      fileName:
+        document?.original_file_name ||
+        documentRow?.original_file_name ||
+        "Documento",
+      extension:
+        document?.file_extension || documentRow?.file_extension || null,
+    });
+
+    const rawText = String(
+      extracted?.normalizedText || extracted?.rawText || "",
+    ).trim();
+    if (!rawText) {
+      return null;
+    }
+
+    return {
+      rawText,
+      upperText: rawText.toUpperCase(),
+      comparableText: normalizeProviderDocumentImportCodeComparable(rawText),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getLatestQuotationProviderDocumentImport(versionId) {
   const rows = await query(
     `SELECT id, quotation_id, quotation_version_id, document_id, provider_id,
             preview_snapshot_json, apply_snapshot_json, created_at
      FROM quotation_version_document_imports
-     WHERE quotation_id = ?
+     WHERE quotation_version_id = ?
      ORDER BY created_at DESC, id DESC
      LIMIT 1`,
-    [Number(quotationId)],
+    [Number(versionId)],
   );
 
   if (!rows.length) {
@@ -16980,7 +17171,229 @@ async function getLatestQuotationProviderDocumentImport(quotationId) {
   };
 }
 
-async function evaluateQuotationApprovalPolicies({ version, approvalContext }) {
+function mapQuotationVersionDocumentToImportDocumentRow(document) {
+  const linkId = Number(document?.linkId || document?.id || 0);
+  const documentPublicId = String(
+    document?.documentPublicId || document?.publicId || "",
+  ).trim();
+
+  return {
+    link_id: linkId,
+    quotation_version_id: Number(document?.quotationVersionId || 0),
+    quotation_id: Number(document?.quotationId || 0),
+    version_number: Number(document?.versionNumber || 0),
+    document_id: Number(document?.documentId || 0),
+    document_public_id: documentPublicId,
+    original_file_name: String(document?.originalFileName || "").trim(),
+    mime_type: String(document?.mimeType || "").trim(),
+    file_extension: document?.fileExtension || null,
+    ai_enabled: document?.aiEnabled === false ? 0 : 1,
+  };
+}
+
+async function extractProviderBackingSourceIdsFromDocumentText({
+  documentRow,
+  activePriceListItems,
+}) {
+  const documentPublicId = String(documentRow?.document_public_id || "").trim();
+  if (!documentPublicId || !Array.isArray(activePriceListItems)) {
+    return [];
+  }
+
+  try {
+    const { stream, document } = await getDocumentContentStream({
+      documentPublicId,
+    });
+    const buffer = await streamToBuffer(stream);
+    if (!buffer.length) {
+      return [];
+    }
+
+    const extracted = await extractContentFromBuffer({
+      buffer,
+      mimeType:
+        document?.mime_type ||
+        documentRow?.mime_type ||
+        "application/octet-stream",
+      fileName:
+        document?.original_file_name ||
+        documentRow?.original_file_name ||
+        "Documento",
+      extension:
+        document?.file_extension || documentRow?.file_extension || null,
+    });
+
+    const rawText = String(
+      extracted?.normalizedText || extracted?.rawText || "",
+    );
+    if (!rawText.trim()) {
+      return [];
+    }
+
+    const upperText = rawText.toUpperCase();
+    const comparableText =
+      normalizeProviderDocumentImportCodeComparable(rawText);
+    const matchedSourceIds = new Set();
+
+    for (const item of activePriceListItems) {
+      const sourceId = Number(item?.id || 0);
+      if (!Number.isInteger(sourceId) || sourceId <= 0) {
+        continue;
+      }
+
+      const code = String(item?.code || "").trim();
+      if (!code) {
+        continue;
+      }
+
+      let found = false;
+      const upperCode = code.toUpperCase();
+      if (upperCode.length >= 6 && upperText.includes(upperCode)) {
+        found = true;
+      }
+
+      if (!found) {
+        const comparableCode =
+          normalizeProviderDocumentImportCodeComparable(code);
+        if (
+          comparableCode.length >= 8 &&
+          comparableText.includes(comparableCode)
+        ) {
+          found = true;
+        }
+      }
+
+      if (found) {
+        matchedSourceIds.add(sourceId);
+      }
+    }
+
+    return Array.from(matchedSourceIds);
+  } catch (_error) {
+    return [];
+  }
+}
+
+async function buildQuotationApprovalProviderBackingEvidence({
+  version,
+  items,
+}) {
+  const reviewableItems = items.filter(
+    (item) =>
+      item.itemType !== "grupo_productos" &&
+      !isAccessQualityProviderName(item.providerName),
+  );
+
+  if (!reviewableItems.length) {
+    return {
+      backedQuotationItemIds: new Set(),
+      providerDocumentCostByItemId: new Map(),
+      providerDocumentMissing: false,
+    };
+  }
+
+  const versionDocuments = await listQuotationVersionDocuments({
+    versionId: Number(version.id),
+  });
+  const aiEnabledDocuments = versionDocuments.filter((document) =>
+    Boolean(document.aiEnabled),
+  );
+
+  const hasAttachedEvidence = aiEnabledDocuments.length > 0;
+  const backedQuotationItemIds = new Set();
+  const providerDocumentCostByItemId = new Map();
+
+  if (hasAttachedEvidence) {
+    const documentTexts = [];
+    for (const document of aiEnabledDocuments) {
+      const documentRow =
+        mapQuotationVersionDocumentToImportDocumentRow(document);
+      if (!Number(documentRow.link_id) || !Number(documentRow.document_id)) {
+        continue;
+      }
+      const extracted =
+        await extractComparableTextFromQuotationDocument(documentRow);
+      if (!extracted) {
+        continue;
+      }
+      documentTexts.push(extracted);
+    }
+
+    for (const item of reviewableItems) {
+      const itemId = Number(item.id || 0);
+      if (!Number.isInteger(itemId) || itemId <= 0) {
+        continue;
+      }
+
+      const itemCode = String(item.productCode || "").trim();
+      if (!itemCode) {
+        continue;
+      }
+
+      const { rawCandidates, comparableCandidates } =
+        buildProviderDocumentComparableCodeCandidates(itemCode);
+      if (!rawCandidates.length && !comparableCandidates.length) {
+        continue;
+      }
+
+      let matchedDocumentText = null;
+      for (const documentText of documentTexts) {
+        const rawMatch = rawCandidates.some((candidate) =>
+          documentText.upperText.includes(
+            String(candidate || "").toUpperCase(),
+          ),
+        );
+        const comparableMatch = comparableCandidates.some(
+          (candidate) =>
+            candidate && documentText.comparableText.includes(candidate),
+        );
+        if (rawMatch || comparableMatch) {
+          matchedDocumentText = documentText;
+          break;
+        }
+      }
+
+      if (matchedDocumentText) {
+        backedQuotationItemIds.add(itemId);
+
+        const detectedCost = extractProviderDocumentDirectCostByCode({
+          documentText: matchedDocumentText,
+          rawCandidates,
+          comparableCandidates,
+        });
+        const normalizedDetectedCost = Number(detectedCost?.providerCost || 0);
+        if (
+          Number.isFinite(normalizedDetectedCost) &&
+          normalizedDetectedCost > 0
+        ) {
+          providerDocumentCostByItemId.set(itemId, {
+            providerCost: Number(normalizedDetectedCost),
+            costCandidates: Array.isArray(detectedCost?.costCandidates)
+              ? detectedCost.costCandidates
+              : [Number(normalizedDetectedCost)],
+            confidence:
+              String(detectedCost?.confidence || "").trim() === "high"
+                ? "high"
+                : "low",
+            sourceSnippet: String(detectedCost?.sourceSnippet || "").trim(),
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    backedQuotationItemIds,
+    providerDocumentCostByItemId,
+    providerDocumentMissing: !hasAttachedEvidence,
+  };
+}
+
+async function evaluateQuotationApprovalPolicies({
+  version,
+  approvalContext,
+  user,
+}) {
   const blockingRules = [];
   const warnings = [];
 
@@ -17006,14 +17419,19 @@ async function evaluateQuotationApprovalPolicies({ version, approvalContext }) {
   });
 
   const latestProviderDocumentImport =
-    await getLatestQuotationProviderDocumentImport(
-      Number(version.quotation_id),
-    );
+    await getLatestQuotationProviderDocumentImport(Number(version.id));
+
+  const providerBackingEvidence =
+    await buildQuotationApprovalProviderBackingEvidence({
+      version,
+      items: leafItems,
+    });
 
   const providerBackingResult = evaluateQuotationApprovalProviderBacking({
     items: leafItems,
     approvalContext,
-    latestProviderDocumentImport,
+    backedQuotationItemIds: providerBackingEvidence.backedQuotationItemIds,
+    providerDocumentMissing: providerBackingEvidence.providerDocumentMissing,
     blockingRules,
   });
 
@@ -17021,12 +17439,16 @@ async function evaluateQuotationApprovalPolicies({ version, approvalContext }) {
     providerBackingResult?.providerBackingExceptionApplied,
   );
 
-  await evaluateQuotationApprovalProviderCostAlignment({
-    items: leafItems,
-    blockingRules,
-    warnings,
-    shouldBlockOnMismatch: shouldBlockOnProviderCostMismatch,
-  });
+  if (!providerBackingEvidence.providerDocumentMissing) {
+    await evaluateQuotationApprovalProviderCostAlignment({
+      items: leafItems,
+      blockingRules,
+      warnings,
+      providerDocumentCostByItemId:
+        providerBackingEvidence.providerDocumentCostByItemId,
+      shouldBlockOnMismatch: shouldBlockOnProviderCostMismatch,
+    });
+  }
 
   if (latestProviderDocumentImport) {
     evaluateQuotationApprovalCommercialTerms({
@@ -17150,6 +17572,7 @@ router.post(
       approvalValidationResult = await evaluateQuotationApprovalPolicies({
         version,
         approvalContext,
+        user: req.user,
       });
 
       const confirmationBlockingRule =
