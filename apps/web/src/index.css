@@ -19482,7 +19482,15 @@ td {
   align-items: start;
 }
 
+.opportunity-development-execution-form-grid.is-activity {
+  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
+}
+
 .opportunity-development-execution-form-grid .is-span-2 {
+  grid-column: 1 / -1;
+}
+
+.opportunity-development-execution-form-grid.is-activity .is-span-3 {
   grid-column: 1 / -1;
 }
 
@@ -19511,6 +19519,7 @@ td {
 
 .opportunity-development-execution-form input[type="date"],
 .opportunity-development-execution-form input[type="datetime-local"],
+.opportunity-development-execution-form input[type="time"],
 .opportunity-development-execution-form select {
   padding-top: 0;
   padding-bottom: 0;

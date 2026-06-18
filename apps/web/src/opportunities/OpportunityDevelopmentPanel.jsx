@@ -330,7 +330,8 @@ export default function OpportunityDevelopmentPanel({
   const [activityDraft, setActivityDraft] = useState({
     activityType: "call",
     objective: "",
-    scheduledAt: "",
+    scheduledDate: "",
+    scheduledTime: "09:00",
     note: "",
   });
   const [dependencyDraft, setDependencyDraft] = useState({
@@ -967,7 +968,8 @@ export default function OpportunityDevelopmentPanel({
       setActivityDraft({
         activityType: "call",
         objective: "",
-        scheduledAt: "",
+        scheduledDate: "",
+        scheduledTime: "09:00",
         note: "",
       });
       setDependencyDraft({
@@ -984,11 +986,13 @@ export default function OpportunityDevelopmentPanel({
     const defaultDateTime = toDateTimeLocalInputValue(
       defaultDate.toISOString(),
     );
+    const defaultTime = defaultDateTime ? defaultDateTime.slice(11, 16) : "09:00";
 
     setActivityDraft({
       activityType: "call",
       objective: "",
-      scheduledAt: defaultDateTime,
+      scheduledDate: defaultDateOnly,
+      scheduledTime: defaultTime,
       note: "",
     });
     setDependencyDraft({
@@ -1312,6 +1316,18 @@ export default function OpportunityDevelopmentPanel({
   async function handleCreateActivity() {
     if (!editingOpportunityId) return;
 
+    const scheduledDate = normalizeText(activityDraft.scheduledDate);
+    const scheduledTime = normalizeText(activityDraft.scheduledTime);
+    const scheduledAt =
+      scheduledDate && scheduledTime
+        ? `${scheduledDate}T${scheduledTime}`
+        : "";
+
+    if (!scheduledAt) {
+      setSourceError("Debes indicar fecha y hora para agendar la actividad.");
+      return;
+    }
+
     setSavingExecutionItem("activity");
     setSourceError("");
     try {
@@ -1321,7 +1337,7 @@ export default function OpportunityDevelopmentPanel({
           entryKind: "activity",
           activityType: activityDraft.activityType,
           objective: activityDraft.objective,
-          scheduledAt: activityDraft.scheduledAt,
+          scheduledAt,
           note: activityDraft.note,
           details: {
             entryKind: "activity",
@@ -2319,7 +2335,7 @@ export default function OpportunityDevelopmentPanel({
                 <h6>Actividad</h6>
                 <span className="record-id-badge state-pending">Nueva</span>
               </div>
-              <div className="opportunity-development-execution-form-grid">
+              <div className="opportunity-development-execution-form-grid is-activity">
                 <label>
                   Tipo
                   <select
@@ -2339,19 +2355,33 @@ export default function OpportunityDevelopmentPanel({
                   </select>
                 </label>
                 <label>
-                  Agenda
+                  Fecha
                   <input
-                    type="datetime-local"
-                    value={activityDraft.scheduledAt}
+                    type="date"
+                    value={activityDraft.scheduledDate}
                     onChange={(event) =>
                       setActivityDraft((current) => ({
                         ...current,
-                        scheduledAt: event.target.value,
+                        scheduledDate: event.target.value,
                       }))
                     }
                   />
                 </label>
-                <label className="is-span-2">
+                <label>
+                  Hora
+                  <input
+                    type="time"
+                    step={300}
+                    value={activityDraft.scheduledTime}
+                    onChange={(event) =>
+                      setActivityDraft((current) => ({
+                        ...current,
+                        scheduledTime: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="is-span-3">
                   Objetivo
                   <input
                     value={activityDraft.objective}
@@ -2364,7 +2394,7 @@ export default function OpportunityDevelopmentPanel({
                     placeholder="Ej. llamada de validacion con sponsor"
                   />
                 </label>
-                <label className="is-span-2">
+                <label className="is-span-3">
                   Nota
                   <textarea
                     rows={2}
