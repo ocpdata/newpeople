@@ -26,7 +26,11 @@ body {
 .dashboard-home-section {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 1.25rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.98),
+    rgba(246, 248, 252, 0.96)
+  );
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.06);
 }
 
@@ -37,8 +41,16 @@ body {
   gap: 1rem;
   padding: 1.35rem;
   background:
-    radial-gradient(circle at top right, rgba(14, 165, 233, 0.1), transparent 30%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
+    radial-gradient(
+      circle at top right,
+      rgba(14, 165, 233, 0.1),
+      transparent 30%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.98),
+      rgba(246, 248, 252, 0.96)
+    );
 }
 
 .dashboard-home-kicker {
@@ -119,7 +131,10 @@ body {
   text-decoration: none;
   color: inherit;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
-  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease;
 }
 
 .dashboard-hub-card:hover {
@@ -167,11 +182,19 @@ body {
 }
 
 .dashboard-hub-card.is-accent {
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(224, 242, 254, 0.92));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.98),
+    rgba(224, 242, 254, 0.92)
+  );
 }
 
 .dashboard-hub-card.is-muted {
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.94));
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.98),
+    rgba(241, 245, 249, 0.94)
+  );
 }
 
 .dashboard-home-empty {
@@ -285,7 +308,11 @@ body {
 .dashboard-monthly-action-card {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 1.1rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(246, 248, 252, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.97),
+    rgba(246, 248, 252, 0.97)
+  );
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.06);
 }
 
@@ -449,19 +476,35 @@ body {
 }
 
 .dashboard-monthly-metric.is-success {
-  background: linear-gradient(180deg, rgba(236, 253, 245, 0.97), rgba(209, 250, 229, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(236, 253, 245, 0.97),
+    rgba(209, 250, 229, 0.97)
+  );
 }
 
 .dashboard-monthly-metric.is-accent {
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.97), rgba(219, 234, 254, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.97),
+    rgba(219, 234, 254, 0.97)
+  );
 }
 
 .dashboard-monthly-metric.is-warning {
-  background: linear-gradient(180deg, rgba(255, 251, 235, 0.97), rgba(254, 240, 138, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 251, 235, 0.97),
+    rgba(254, 240, 138, 0.72)
+  );
 }
 
 .dashboard-monthly-metric.is-danger {
-  background: linear-gradient(180deg, rgba(254, 242, 242, 0.97), rgba(254, 226, 226, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(254, 242, 242, 0.97),
+    rgba(254, 226, 226, 0.97)
+  );
 }
 
 .dashboard-monthly-metric-value,
@@ -545,11 +588,19 @@ body {
 }
 
 .dashboard-monthly-outcome.is-danger {
-  background: linear-gradient(180deg, rgba(254, 242, 242, 0.97), rgba(255, 255, 255, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(254, 242, 242, 0.97),
+    rgba(255, 255, 255, 0.97)
+  );
 }
 
 .dashboard-monthly-outcome.is-muted {
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.97), rgba(255, 255, 255, 0.97));
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.97),
+    rgba(255, 255, 255, 0.97)
+  );
 }
 
 .dashboard-monthly-reason-list,
@@ -21222,6 +21273,29 @@ td {
   text-align: right;
 }
 
+.calendar-module-day-more-button {
+  border: 0;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  color: #2c628f;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.calendar-module-day-more-button:hover {
+  text-decoration: underline;
+}
+
+.calendar-module-day-more-button:focus-visible {
+  outline: 2px solid #2e6da3;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .calendar-module-day-groups {
   display: grid;
   gap: 8px;
@@ -21338,6 +21412,81 @@ td {
   display: grid;
   gap: 12px;
   background: #f8fbff;
+}
+
+.calendar-module-day-activities-modal {
+  width: min(92vw, 620px);
+  max-width: 620px;
+  border-radius: 16px;
+  border: 1px solid #d8e3ee;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  background: #f8fbff;
+}
+
+.calendar-module-day-activities-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.calendar-module-day-activities-header .modal-title {
+  margin: 0;
+  color: #1e2b3a;
+}
+
+.calendar-module-day-activities-date {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #b8cee3;
+  background: #e8f1fa;
+  color: #375a78;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.calendar-module-day-activities-body {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-module-day-activities-modal .calendar-module-day-group-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.calendar-module-day-activities-modal .calendar-module-day-group-list li {
+  border: 1px solid #e7eef5;
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  background: #fff;
+}
+
+.calendar-module-day-activities-modal .calendar-module-activity-trigger {
+  color: inherit;
+}
+
+.calendar-module-day-activities-modal .calendar-module-day-item-content strong {
+  color: #183b5c;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.calendar-module-day-activities-modal .calendar-module-day-item-content small {
+  margin: 0;
+  color: #5e7790;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .calendar-activity-editor-header {

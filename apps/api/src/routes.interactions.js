@@ -185,6 +185,18 @@ function toTimeZoneStartOfDayUtc(dateText, timeZone) {
   return new Date(resultMs);
 }
 
+function formatDateInTimeZone(dateValue, timeZone) {
+  const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(parsed);
+}
+
 const LEAD_STATUS_CATALOG = [
   {
     code: "created",
@@ -2046,7 +2058,9 @@ async function fetchInteractionDocuments(interactionId) {
 
 async function fetchInteractionDetail(interactionId, user = null) {
   const rows = await query(
-    `SELECT i.*, a.name AS account_name,
+    `SELECT i.*,
+            DATE_FORMAT(i.lead_next_action_due_at, '%Y-%m-%d') AS lead_next_action_due_date,
+            a.name AS account_name,
             po.name AS primary_opportunity_name,
             su.full_name AS seller_user_name,
             su.email AS seller_user_email,
@@ -2197,6 +2211,8 @@ async function fetchInteractionDetail(interactionId, user = null) {
     };
   });
 
+  const leadNextActionDueAt = row.lead_next_action_due_date || null;
+
   const detail = {
     id: Number(row.id),
     publicId: row.public_id,
@@ -2261,7 +2277,7 @@ async function fetchInteractionDetail(interactionId, user = null) {
     leadReasonCode: row.lead_reason_code || "",
     leadRequiredActionCode: row.lead_required_action_code || "",
     leadCommercialComment: row.lead_commercial_comment || "",
-    leadNextActionDueAt: row.lead_next_action_due_at,
+    leadNextActionDueAt,
     leadReferredContactName: row.lead_referred_contact_name || "",
     leadReferredAreaName: row.lead_referred_area_name || "",
     createdByName: row.created_by_name,
@@ -4808,9 +4824,8 @@ router.post(
       parsed.data.referredAreaName || "",
     ).trim();
     const nextActionDueAtRaw = String(parsed.data.nextActionDueAt || "").trim();
-    const businessTimezone = await loadBusinessTimezone();
-    const nextActionDueAt = nextActionDueAtRaw
-      ? toTimeZoneStartOfDayUtc(nextActionDueAtRaw, businessTimezone)
+    const nextActionDueAtDateOnly = nextActionDueAtRaw
+      ? parseDateOnlyText(nextActionDueAtRaw)
       : null;
 
     if (rule.requiresComment && !normalizedComment) {
@@ -4818,7 +4833,7 @@ router.post(
         message: "Debes registrar un comentario comercial para este resultado",
       });
     }
-    if (nextActionDueAtRaw && Number.isNaN(nextActionDueAt?.getTime())) {
+    if (nextActionDueAtRaw && !nextActionDueAtDateOnly) {
       return res.status(400).json({
         message: "La fecha compromiso no es válida",
       });
@@ -4864,7 +4879,7 @@ router.post(
         parsed.data.reasonCode,
         parsed.data.requiredActionCode,
         normalizedComment || null,
-        nextActionDueAt || null,
+        nextActionDueAtRaw || null,
         normalizedReferredContactName || null,
         normalizedReferredAreaName || null,
         Number(req.user.id),

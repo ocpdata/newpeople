@@ -921,31 +921,26 @@ function getLeadCatalogEntryByCode(entries, code) {
 
 const EMPTY_LEAD_CATALOG = Object.freeze([]);
 
-function parseLeadOutcomeDate(value) {
-  if (!value) return null;
-
-  const text = String(value);
-  const yyyyMmDd = text.slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) {
-    const [yearText, monthText, dayText] = yyyyMmDd.split("-");
-    const year = Number(yearText);
-    const month = Number(monthText);
-    const day = Number(dayText);
-    const parsed = new Date(year, month - 1, day);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-
-  const fallback = new Date(value);
-  return Number.isNaN(fallback.getTime()) ? null : fallback;
+function extractLeadOutcomeDateText(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] || "";
 }
 
 function formatLeadOutcomeDateLabel(value) {
   if (!value) return "";
-  const date = parseLeadOutcomeDate(value);
-  if (!date) return "";
-  return formatBusinessDate(date, {
+  const dateOnlyText = extractLeadOutcomeDateText(value);
+  if (dateOnlyText) {
+    return formatBusinessDate(dateOnlyText, {
+      options: { day: "2-digit", month: "2-digit", year: "numeric" },
+      fallback: "",
+    });
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return formatBusinessDate(parsed, {
     options: { day: "2-digit", month: "2-digit", year: "numeric" },
     fallback: "",
   });
@@ -1007,9 +1002,7 @@ function buildLeadCallOutcomeForm(detail, transitionRules) {
     reasonCode: initialRule?.reasonCode || "",
     requiredActionCode: initialRule?.requiredActionCode || "",
     comment: detail?.leadCommercialComment || "",
-    nextActionDueAt: detail?.leadNextActionDueAt
-      ? String(detail.leadNextActionDueAt).slice(0, 10)
-      : "",
+    nextActionDueAt: extractLeadOutcomeDateText(detail?.leadNextActionDueAt),
     referredContactName: detail?.leadReferredContactName || "",
     referredAreaName: detail?.leadReferredAreaName || "",
   };
@@ -3177,129 +3170,129 @@ function InteractionDetailModal({
 
               {showLeadFollowUpSection ? (
                 <section className="account-form-section account-modal-section interaction-detail-section lead-follow-up-section">
-                <div className="interaction-resolution-header lead-follow-up-header">
-                  <div className="lead-follow-up-header-copy">
-                    <span className="lead-follow-up-kicker">
-                      Seguimiento comercial
-                    </span>
-                    <p className="field-hint lead-follow-up-header-description">
-                      Este seguimiento se edita en una ventana aparte y se
-                      guarda por separado del resto del lead.
-                    </p>
-                  </div>
-                  {canManageLeadCallOutcome ? (
-                    <button
-                      type="button"
-                      className="btn-secondary lead-follow-up-secondary-action"
-                      onClick={onOpenLeadCallOutcomeModal}
-                    >
-                      Editar seguimiento
-                    </button>
-                  ) : null}
-                </div>
-
-                {leadSubstatus || leadReason || leadRequiredAction ? (
-                  <div className="lead-follow-up-overview">
-                    <div className="lead-follow-up-status-block">
-                      <strong>Seguimiento comercial actualizado</strong>
-                      <p className="field-hint">
-                        Revisa la situación actual del lead y abre el detalle si
-                        necesitas ajustarlo.
+                  <div className="interaction-resolution-header lead-follow-up-header">
+                    <div className="lead-follow-up-header-copy">
+                      <span className="lead-follow-up-kicker">
+                        Seguimiento comercial
+                      </span>
+                      <p className="field-hint lead-follow-up-header-description">
+                        Este seguimiento se edita en una ventana aparte y se
+                        guarda por separado del resto del lead.
                       </p>
                     </div>
-                    <div className="lead-follow-up-grid">
-                      <article className="lead-follow-up-card is-substatus">
-                        <span className="lead-follow-up-card-label">
-                          Situación
-                        </span>
-                        <strong>{leadSubstatus?.name || "-"}</strong>
-                        <p className="field-hint lead-follow-up-card-copy">
-                          {leadSubstatusGuide?.optionHint ||
-                            leadSubstatusGuide?.whenToUse ||
-                            leadSubstatus?.description ||
-                            "Sin detalle adicional"}
-                        </p>
-                      </article>
+                    {canManageLeadCallOutcome ? (
+                      <button
+                        type="button"
+                        className="btn-secondary lead-follow-up-secondary-action"
+                        onClick={onOpenLeadCallOutcomeModal}
+                      >
+                        Editar seguimiento
+                      </button>
+                    ) : null}
+                  </div>
 
-                      <article className="lead-follow-up-card is-reason">
-                        <span className="lead-follow-up-card-label">
-                          Motivo principal
-                        </span>
-                        <strong>{leadReason?.name || "-"}</strong>
-                        <p className="field-hint lead-follow-up-card-copy">
-                          {leadReasonGuide?.optionHint ||
-                            leadReasonGuide?.whenToUse ||
-                            "Sin detalle adicional"}
+                  {leadSubstatus || leadReason || leadRequiredAction ? (
+                    <div className="lead-follow-up-overview">
+                      <div className="lead-follow-up-status-block">
+                        <strong>Seguimiento comercial actualizado</strong>
+                        <p className="field-hint">
+                          Revisa la situación actual del lead y abre el detalle
+                          si necesitas ajustarlo.
                         </p>
-                      </article>
-
-                      <article className="lead-follow-up-card is-action">
-                        <span className="lead-follow-up-card-label">
-                          Acción obligatoria
-                        </span>
-                        <strong>{leadRequiredAction?.name || "-"}</strong>
-                        <p className="field-hint lead-follow-up-card-copy">
-                          {leadRequiredActionGuide?.optionHint ||
-                            leadRequiredActionGuide?.whenToUse ||
-                            "Sin detalle adicional"}
-                        </p>
-                      </article>
-                    </div>
-
-                    {detail?.leadNextActionDueAt ||
-                    detail?.leadReferredContactName ||
-                    detail?.leadReferredAreaName ? (
-                      <div className="lead-follow-up-meta-row">
-                        {detail?.leadNextActionDueAt ? (
-                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
-                            Fecha compromiso:{" "}
-                            {formatLeadOutcomeDateLabel(
-                              detail.leadNextActionDueAt,
-                            )}
-                          </span>
-                        ) : null}
-                        {detail?.leadReferredContactName ? (
-                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
-                            Persona referida: {detail.leadReferredContactName}
-                          </span>
-                        ) : null}
-                        {detail?.leadReferredAreaName ? (
-                          <span className="interaction-readonly-pill lead-follow-up-meta-pill">
-                            Área objetivo: {detail.leadReferredAreaName}
-                          </span>
-                        ) : null}
                       </div>
-                    ) : null}
+                      <div className="lead-follow-up-grid">
+                        <article className="lead-follow-up-card is-substatus">
+                          <span className="lead-follow-up-card-label">
+                            Situación
+                          </span>
+                          <strong>{leadSubstatus?.name || "-"}</strong>
+                          <p className="field-hint lead-follow-up-card-copy">
+                            {leadSubstatusGuide?.optionHint ||
+                              leadSubstatusGuide?.whenToUse ||
+                              leadSubstatus?.description ||
+                              "Sin detalle adicional"}
+                          </p>
+                        </article>
 
-                    {detail?.leadCommercialComment ? (
-                      <article className="lead-follow-up-comment-card">
-                        <span className="lead-follow-up-card-label">
-                          Comentario del vendedor
-                        </span>
-                        <p>{detail.leadCommercialComment}</p>
-                      </article>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="lead-follow-up-empty-state">
-                    <strong>Seguimiento comercial pendiente</strong>
-                    <p className="field-hint">
-                      Aún no se ha definido la situación del lead, el motivo ni
-                      la siguiente acción.
-                    </p>
-                  </div>
-                )}
+                        <article className="lead-follow-up-card is-reason">
+                          <span className="lead-follow-up-card-label">
+                            Motivo principal
+                          </span>
+                          <strong>{leadReason?.name || "-"}</strong>
+                          <p className="field-hint lead-follow-up-card-copy">
+                            {leadReasonGuide?.optionHint ||
+                              leadReasonGuide?.whenToUse ||
+                              "Sin detalle adicional"}
+                          </p>
+                        </article>
 
-                <div className="lead-follow-up-guide-wrap">
-                  <LeadCallOutcomeInlineGuide
-                    substatusEntries={leadOutcomeGuideSubstatusOptions}
-                    reasonEntries={leadOutcomeGuideReasonOptions}
-                    actionEntries={leadOutcomeGuideActionOptions}
-                    selectedSubstatusCode={detail?.leadSubstatusCode}
-                    selectedReasonCode={detail?.leadReasonCode}
-                    selectedActionCode={detail?.leadRequiredActionCode}
-                  />
-                </div>
+                        <article className="lead-follow-up-card is-action">
+                          <span className="lead-follow-up-card-label">
+                            Acción obligatoria
+                          </span>
+                          <strong>{leadRequiredAction?.name || "-"}</strong>
+                          <p className="field-hint lead-follow-up-card-copy">
+                            {leadRequiredActionGuide?.optionHint ||
+                              leadRequiredActionGuide?.whenToUse ||
+                              "Sin detalle adicional"}
+                          </p>
+                        </article>
+                      </div>
+
+                      {detail?.leadNextActionDueAt ||
+                      detail?.leadReferredContactName ||
+                      detail?.leadReferredAreaName ? (
+                        <div className="lead-follow-up-meta-row">
+                          {detail?.leadNextActionDueAt ? (
+                            <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                              Fecha compromiso:{" "}
+                              {formatLeadOutcomeDateLabel(
+                                detail.leadNextActionDueAt,
+                              )}
+                            </span>
+                          ) : null}
+                          {detail?.leadReferredContactName ? (
+                            <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                              Persona referida: {detail.leadReferredContactName}
+                            </span>
+                          ) : null}
+                          {detail?.leadReferredAreaName ? (
+                            <span className="interaction-readonly-pill lead-follow-up-meta-pill">
+                              Área objetivo: {detail.leadReferredAreaName}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {detail?.leadCommercialComment ? (
+                        <article className="lead-follow-up-comment-card">
+                          <span className="lead-follow-up-card-label">
+                            Comentario del vendedor
+                          </span>
+                          <p>{detail.leadCommercialComment}</p>
+                        </article>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="lead-follow-up-empty-state">
+                      <strong>Seguimiento comercial pendiente</strong>
+                      <p className="field-hint">
+                        Aún no se ha definido la situación del lead, el motivo
+                        ni la siguiente acción.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="lead-follow-up-guide-wrap">
+                    <LeadCallOutcomeInlineGuide
+                      substatusEntries={leadOutcomeGuideSubstatusOptions}
+                      reasonEntries={leadOutcomeGuideReasonOptions}
+                      actionEntries={leadOutcomeGuideActionOptions}
+                      selectedSubstatusCode={detail?.leadSubstatusCode}
+                      selectedReasonCode={detail?.leadReasonCode}
+                      selectedActionCode={detail?.leadRequiredActionCode}
+                    />
+                  </div>
                 </section>
               ) : null}
             </div>

@@ -9,9 +9,7 @@ import {
   toBusinessDateTimeInputValue,
 } from "./business-timezone";
 
-const VIEW_OPTIONS = [
-  { value: "week", label: "Semana" },
-];
+const VIEW_OPTIONS = [{ value: "week", label: "Semana" }];
 
 const CALENDAR_ACTIVITY_TYPE_OPTIONS = [
   { value: "call", label: "Llamada" },
@@ -450,6 +448,96 @@ function CalendarActivityEditorModal({
   );
 }
 
+function CalendarDayActivitiesModal({
+  isOpen,
+  date,
+  items,
+  showReadOnlyBadge,
+  onClose,
+  onOpenActivity,
+}) {
+  if (!isOpen) return null;
+
+  const groupedItems = groupItemsByDayPart(items || []);
+
+  const handleOverlayClick = (event) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+
+  const renderDaySection = (title, list, sectionKey) => (
+    <section className="calendar-module-day-group">
+      <h5>{title}</h5>
+      {list.length ? (
+        <ul className="calendar-module-day-group-list">
+          {list.map((item) => (
+            <li
+              key={`calendar-day-modal-${sectionKey}-${item.id}`}
+              className="calendar-module-day-item"
+            >
+              <button
+                type="button"
+                className="calendar-module-activity-trigger"
+                onClick={() => onOpenActivity(item)}
+              >
+                <span className="calendar-module-time-chip">
+                  {formatTime(item.scheduledAt)}
+                </span>
+                <div className="calendar-module-day-item-content">
+                  {showReadOnlyBadge ? (
+                    <span className="calendar-module-readonly-badge">
+                      Solo lectura
+                    </span>
+                  ) : null}
+                  <strong>{item.title || "Sin objetivo"}</strong>
+                  <small>
+                    Cuenta: {String(item.accountName || "Sin cuenta asignada")}
+                  </small>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="calendar-module-day-group-empty">
+          Sin actividades de {sectionKey}.
+        </p>
+      )}
+    </section>
+  );
+
+  return (
+    <div className="modal-overlay" onClick={handleOverlayClick}>
+      <div className="modal-dialog calendar-module-day-activities-modal">
+        <div className="modal-header calendar-module-day-activities-header">
+          <div>
+            <h3 className="modal-title">Actividades del dia</h3>
+            <span className="calendar-module-day-activities-date">
+              {formatDate(date)} · {items.length} actividad
+              {items.length === 1 ? "" : "es"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="calendar-activity-editor-close"
+            onClick={onClose}
+            aria-label="Cerrar actividades del dia"
+            title="Cerrar"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="calendar-module-day-activities-body">
+          {renderDaySection("Manana", groupedItems.manana, "manana")}
+          {renderDaySection("Tarde", groupedItems.tarde, "tarde")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CalendarPage({ currentUser }) {
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
@@ -477,6 +565,9 @@ export default function CalendarPage({ currentUser }) {
   const [activityDraft, setActivityDraft] = useState(
     normalizeCalendarActivityDraft(null),
   );
+  const [dayActivitiesModalOpen, setDayActivitiesModalOpen] = useState(false);
+  const [dayActivitiesDate, setDayActivitiesDate] = useState("");
+  const [dayActivitiesItems, setDayActivitiesItems] = useState([]);
 
   const loadCalendarModule = useCallback(async () => {
     setLoading(true);
@@ -549,6 +640,20 @@ export default function CalendarPage({ currentUser }) {
     setActivityDraft(normalizeCalendarActivityDraft(null));
   };
 
+  const openDayActivitiesModal = (day) => {
+    const items = Array.isArray(day?.items) ? day.items : [];
+    if (!items.length) return;
+    setDayActivitiesDate(String(day?.date || ""));
+    setDayActivitiesItems(items);
+    setDayActivitiesModalOpen(true);
+  };
+
+  const closeDayActivitiesModal = () => {
+    setDayActivitiesModalOpen(false);
+    setDayActivitiesDate("");
+    setDayActivitiesItems([]);
+  };
+
   const openActivityModal = async (item) => {
     const opportunityId = Number(item?.opportunityId || 0);
     const activityId = Number(item?.id || 0);
@@ -597,6 +702,11 @@ export default function CalendarPage({ currentUser }) {
     } finally {
       setActivityLoading(false);
     }
+  };
+
+  const handleOpenActivityFromDayModal = async (item) => {
+    closeDayActivitiesModal();
+    await openActivityModal(item);
   };
 
   const handleActivityFieldChange = (field, value) => {
@@ -955,9 +1065,13 @@ export default function CalendarPage({ currentUser }) {
                 )}
 
                 {remainingItems > 0 ? (
-                  <p className="calendar-module-day-more">
+                  <button
+                    type="button"
+                    className="calendar-module-day-more-button"
+                    onClick={() => openDayActivitiesModal(day)}
+                  >
                     +{remainingItems} actividades adicionales
-                  </p>
+                  </button>
                 ) : null}
               </article>
             );
@@ -1145,6 +1259,15 @@ export default function CalendarPage({ currentUser }) {
         onSave={handleSaveActivity}
         onMarkDone={handleMarkActivityDone}
         onCancelActivity={handleCancelActivity}
+      />
+
+      <CalendarDayActivitiesModal
+        isOpen={dayActivitiesModalOpen}
+        date={dayActivitiesDate}
+        items={dayActivitiesItems}
+        showReadOnlyBadge={showReadOnlyBadge}
+        onClose={closeDayActivitiesModal}
+        onOpenActivity={handleOpenActivityFromDayModal}
       />
     </div>
   );
