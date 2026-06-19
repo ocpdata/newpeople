@@ -7753,6 +7753,7 @@ router.post(
   requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
   async (req, res) => {
+    const businessTimezone = await loadBusinessTimezone();
     const opportunityId = Number(req.params.id);
     if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
       return res.status(400).json({ message: "Oportunidad invalida" });

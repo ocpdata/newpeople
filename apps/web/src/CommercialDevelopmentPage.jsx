@@ -3191,7 +3191,8 @@ function CommercialActivityModal({
 
                 <label className="commercial-development-field">
                   <span>Objetivo</span>
-                  <input
+                  <textarea
+                    rows="3"
                     value={draft.objective}
                     disabled={isModalLocked}
                     onChange={(event) =>

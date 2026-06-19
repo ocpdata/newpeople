@@ -2383,7 +2383,8 @@ export default function OpportunityDevelopmentPanel({
                 </label>
                 <label className="is-span-3">
                   Objetivo
-                  <input
+                  <textarea
+                    rows={2}
                     value={activityDraft.objective}
                     onChange={(event) =>
                       setActivityDraft((current) => ({
@@ -2464,7 +2465,8 @@ export default function OpportunityDevelopmentPanel({
                 </label>
                 <label className="is-span-2">
                   Titulo
-                  <input
+                  <textarea
+                    rows={2}
                     value={dependencyDraft.title}
                     onChange={(event) =>
                       setDependencyDraft((current) => ({
@@ -2762,7 +2764,7 @@ export default function OpportunityDevelopmentPanel({
                 Objetivo
                 <textarea
                   className="opportunity-development-item-modal-objective-textarea"
-                  rows={4}
+                  rows={3}
                   value={executionItemUpdateDraft.objective}
                   onChange={(event) =>
                     setExecutionItemUpdateDraft((current) => ({
