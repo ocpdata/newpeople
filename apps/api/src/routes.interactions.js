@@ -817,6 +817,11 @@ const LEAD_CALL_OUTCOME_RULES = [
   ...buildLeadCallOutcomeRulesForStatus("lead_unassigned"),
   ...buildLeadCallOutcomeRulesForStatus("lead_assigned"),
 ];
+const LEAD_OUTCOME_EVENT_TYPE_LIST = [
+  "activity_update",
+  "admin_correction",
+  "legacy_snapshot",
+];
 const INTERACTION_ANALYSIS_JOB_LEASE_SECONDS = 30;
 const INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES = 15;
 const INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS = 3000;
@@ -861,6 +866,12 @@ const callOutcomeSchema = z.object({
   nextActionDueAt: z.string().trim().max(40).optional().nullable(),
   referredContactName: z.string().trim().max(255).optional().default(""),
   referredAreaName: z.string().trim().max(255).optional().default(""),
+  eventType: z
+    .enum(LEAD_OUTCOME_EVENT_TYPE_LIST)
+    .optional()
+    .default("activity_update"),
+  correctionTargetEventId: z.number().int().positive().optional().nullable(),
+  correctionReason: z.string().trim().max(5000).optional().default(""),
 });
 
 const resolutionSchema = editableInteractionSchema.extend({
@@ -2056,6 +2067,60 @@ async function fetchInteractionDocuments(interactionId) {
   }));
 }
 
+async function fetchInteractionLeadOutcomeHistory(interactionId) {
+  const rows = await query(
+    `SELECT e.id,
+            e.public_id,
+            e.event_type,
+            e.from_status_code,
+            e.to_status_code,
+            e.substatus_code,
+            e.reason_code,
+            e.required_action_code,
+            e.commercial_comment,
+            DATE_FORMAT(e.next_action_due_at, '%Y-%m-%d') AS next_action_due_date,
+            e.referred_contact_name,
+            e.referred_area_name,
+            e.correction_target_event_id,
+            e.correction_reason,
+            e.invalidated_at,
+            e.invalidation_reason,
+            e.effective_at,
+            e.created_at,
+            u.full_name AS created_by_name
+     FROM interaction_lead_outcome_events e
+     INNER JOIN users u ON u.id = e.created_by
+     WHERE e.interaction_id = ?
+     ORDER BY e.created_at DESC, e.id DESC`,
+    [interactionId],
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    publicId: row.public_id,
+    eventType: row.event_type || "activity_update",
+    fromStatusCode: row.from_status_code || "",
+    toStatusCode: row.to_status_code || "",
+    substatusCode: row.substatus_code || "",
+    reasonCode: row.reason_code || "",
+    requiredActionCode: row.required_action_code || "",
+    comment: row.commercial_comment || "",
+    nextActionDueAt: row.next_action_due_date || null,
+    referredContactName: row.referred_contact_name || "",
+    referredAreaName: row.referred_area_name || "",
+    correctionTargetEventId:
+      row.correction_target_event_id === null
+        ? null
+        : Number(row.correction_target_event_id),
+    correctionReason: row.correction_reason || "",
+    invalidatedAt: row.invalidated_at || null,
+    invalidationReason: row.invalidation_reason || "",
+    effectiveAt: row.effective_at,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name || "",
+  }));
+}
+
 async function fetchInteractionDetail(interactionId, user = null) {
   const rows = await query(
     `SELECT i.*,
@@ -2079,28 +2144,30 @@ async function fetchInteractionDetail(interactionId, user = null) {
   if (!rows.length) return null;
 
   const row = rows[0];
-  const [contacts, opportunities, documents] = await Promise.all([
-    query(
-      `SELECT c.id, c.account_id,
+  const [contacts, opportunities, documents, leadOutcomeHistory] =
+    await Promise.all([
+      query(
+        `SELECT c.id, c.account_id,
               CONCAT(c.first_name, ' ', c.last_name) AS full_name,
               c.email, c.phone, c.mobile, c.position_title
        FROM interaction_contact_links icl
        INNER JOIN contacts c ON c.id = icl.contact_id
        WHERE icl.interaction_id = ?
        ORDER BY full_name`,
-      [interactionId],
-    ),
-    query(
-      `SELECT o.id, o.account_id, o.contact_id, o.name, o.amount_usd, o.close_date,
+        [interactionId],
+      ),
+      query(
+        `SELECT o.id, o.account_id, o.contact_id, o.name, o.amount_usd, o.close_date,
               iol.is_primary
        FROM interaction_opportunity_links iol
        INNER JOIN opportunities o ON o.id = iol.opportunity_id
        WHERE iol.interaction_id = ?
        ORDER BY iol.is_primary DESC, o.name`,
-      [interactionId],
-    ),
-    fetchInteractionDocuments(interactionId),
-  ]);
+        [interactionId],
+      ),
+      fetchInteractionDocuments(interactionId),
+      fetchInteractionLeadOutcomeHistory(interactionId),
+    ]);
 
   const suggestedAccountRaw = parseJsonField(row.suggested_account_json, null);
   const linkedAccountId = Number(row.account_id || 0);
@@ -2280,6 +2347,7 @@ async function fetchInteractionDetail(interactionId, user = null) {
     leadNextActionDueAt,
     leadReferredContactName: row.lead_referred_contact_name || "",
     leadReferredAreaName: row.lead_referred_area_name || "",
+    leadOutcomeHistory,
     createdByName: row.created_by_name,
     updatedByName: row.updated_by_name,
   };
@@ -4729,28 +4797,55 @@ router.post(
       return res.json(interaction);
     }
 
-    await query(
-      `UPDATE interactions
-       SET analysis_status = 'lead_disqualified',
-           resolved_at = NOW(3),
-           disqualification_reason = ?,
-           lead_substatus_code = 'disqualified_definitive',
-           lead_reason_code = 'no_interest_definitive',
-           lead_required_action_code = 'close_as_disqualified',
-           lead_commercial_comment = ?,
-           lead_next_action_due_at = NULL,
-           lead_referred_contact_name = NULL,
-           lead_referred_area_name = NULL,
-           updated_by = ?,
-           updated_at = NOW(3)
-       WHERE id = ?`,
-      [
-        parsed.data.reason,
-        parsed.data.reason,
-        Number(req.user.id),
-        interactionId,
-      ],
-    );
+    await withTransaction(async (conn) => {
+      const eventPublicId = randomUUID().replace(/-/g, "");
+      await conn.query(
+        `INSERT INTO interaction_lead_outcome_events (
+           public_id,
+           interaction_id,
+           event_type,
+           from_status_code,
+           to_status_code,
+           substatus_code,
+           reason_code,
+           required_action_code,
+           commercial_comment,
+           created_by,
+           effective_at,
+           created_at
+         ) VALUES (?, ?, 'activity_update', ?, 'lead_disqualified', 'disqualified_definitive', 'no_interest_definitive', 'close_as_disqualified', ?, ?, NOW(3), NOW(3))`,
+        [
+          eventPublicId,
+          interactionId,
+          interaction.analysisStatus,
+          parsed.data.reason,
+          Number(req.user.id),
+        ],
+      );
+
+      await conn.query(
+        `UPDATE interactions
+         SET analysis_status = 'lead_disqualified',
+             resolved_at = NOW(3),
+             disqualification_reason = ?,
+             lead_substatus_code = 'disqualified_definitive',
+             lead_reason_code = 'no_interest_definitive',
+             lead_required_action_code = 'close_as_disqualified',
+             lead_commercial_comment = ?,
+             lead_next_action_due_at = NULL,
+             lead_referred_contact_name = NULL,
+             lead_referred_area_name = NULL,
+             updated_by = ?,
+             updated_at = NOW(3)
+         WHERE id = ?`,
+        [
+          parsed.data.reason,
+          parsed.data.reason,
+          Number(req.user.id),
+          interactionId,
+        ],
+      );
+    });
 
     await logAuditEvent({
       req,
@@ -4827,6 +4922,11 @@ router.post(
     const nextActionDueAtDateOnly = nextActionDueAtRaw
       ? parseDateOnlyText(nextActionDueAtRaw)
       : null;
+    const normalizedEventType = String(parsed.data.eventType || "").trim();
+    const correctionReason = String(parsed.data.correctionReason || "").trim();
+    const correctionTargetEventId = Number(
+      parsed.data.correctionTargetEventId || 0,
+    );
 
     if (rule.requiresComment && !normalizedComment) {
       return res.status(400).json({
@@ -4848,6 +4948,35 @@ router.post(
         message: "Debes indicar el área objetivo para continuar",
       });
     }
+    if (!LEAD_OUTCOME_EVENT_TYPE_LIST.includes(normalizedEventType)) {
+      return res.status(400).json({
+        message: "El tipo de evento de seguimiento no es válido",
+      });
+    }
+    if (normalizedEventType === "admin_correction" && !correctionReason) {
+      return res.status(400).json({
+        message:
+          "Debes indicar el motivo de la corrección administrativa para continuar",
+      });
+    }
+
+    let normalizedCorrectionTargetEventId = null;
+    if (correctionTargetEventId > 0) {
+      const targetRows = await query(
+        `SELECT id
+         FROM interaction_lead_outcome_events
+         WHERE id = ?
+           AND interaction_id = ?
+         LIMIT 1`,
+        [correctionTargetEventId, interactionId],
+      );
+      if (!targetRows.length) {
+        return res.status(400).json({
+          message: "La referencia de corrección no corresponde a este lead",
+        });
+      }
+      normalizedCorrectionTargetEventId = correctionTargetEventId;
+    }
 
     const selectedReason = getLeadReasonCatalogEntry(parsed.data.reasonCode);
     const disqualificationReasonText =
@@ -4857,35 +4986,79 @@ router.post(
     const nextResolvedAtSql =
       rule.resultStatusCode === "lead_disqualified" ? "NOW(3)" : "resolved_at";
 
-    await query(
-      `UPDATE interactions
-       SET analysis_status = ?,
-           resolved_at = ${nextResolvedAtSql},
-           disqualification_reason = ?,
-           lead_substatus_code = ?,
-           lead_reason_code = ?,
-           lead_required_action_code = ?,
-           lead_commercial_comment = ?,
-           lead_next_action_due_at = ?,
-           lead_referred_contact_name = ?,
-           lead_referred_area_name = ?,
-           updated_by = ?,
-           updated_at = NOW(3)
-       WHERE id = ?`,
-      [
-        rule.resultStatusCode,
-        disqualificationReasonText,
-        parsed.data.substatusCode,
-        parsed.data.reasonCode,
-        parsed.data.requiredActionCode,
-        normalizedComment || null,
-        nextActionDueAtRaw || null,
-        normalizedReferredContactName || null,
-        normalizedReferredAreaName || null,
-        Number(req.user.id),
-        interactionId,
-      ],
-    );
+    await withTransaction(async (conn) => {
+      const eventPublicId = randomUUID().replace(/-/g, "");
+      await conn.query(
+        `INSERT INTO interaction_lead_outcome_events (
+           public_id,
+           interaction_id,
+           event_type,
+           from_status_code,
+           to_status_code,
+           substatus_code,
+           reason_code,
+           required_action_code,
+           commercial_comment,
+           next_action_due_at,
+           referred_contact_name,
+           referred_area_name,
+           transition_rule_json,
+           correction_target_event_id,
+           correction_reason,
+           created_by,
+           effective_at,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+        [
+          eventPublicId,
+          interactionId,
+          normalizedEventType,
+          interaction.analysisStatus,
+          rule.resultStatusCode,
+          parsed.data.substatusCode,
+          parsed.data.reasonCode,
+          parsed.data.requiredActionCode,
+          normalizedComment || null,
+          nextActionDueAtRaw || null,
+          normalizedReferredContactName || null,
+          normalizedReferredAreaName || null,
+          JSON.stringify(rule),
+          normalizedCorrectionTargetEventId,
+          correctionReason || null,
+          Number(req.user.id),
+        ],
+      );
+
+      await conn.query(
+        `UPDATE interactions
+         SET analysis_status = ?,
+             resolved_at = ${nextResolvedAtSql},
+             disqualification_reason = ?,
+             lead_substatus_code = ?,
+             lead_reason_code = ?,
+             lead_required_action_code = ?,
+             lead_commercial_comment = ?,
+             lead_next_action_due_at = ?,
+             lead_referred_contact_name = ?,
+             lead_referred_area_name = ?,
+             updated_by = ?,
+             updated_at = NOW(3)
+         WHERE id = ?`,
+        [
+          rule.resultStatusCode,
+          disqualificationReasonText,
+          parsed.data.substatusCode,
+          parsed.data.reasonCode,
+          parsed.data.requiredActionCode,
+          normalizedComment || null,
+          nextActionDueAtRaw || null,
+          normalizedReferredContactName || null,
+          normalizedReferredAreaName || null,
+          Number(req.user.id),
+          interactionId,
+        ],
+      );
+    });
 
     await logAuditEvent({
       req,
@@ -4894,6 +5067,15 @@ router.post(
       entityType: "interaction",
       entityId: interactionId,
       detail: "Resultado comercial del lead registrado",
+      before: {
+        analysis_status: interaction.analysisStatus,
+        lead_substatus_code: interaction.leadSubstatusCode,
+        lead_reason_code: interaction.leadReasonCode,
+        lead_required_action_code: interaction.leadRequiredActionCode,
+        lead_next_action_due_at: interaction.leadNextActionDueAt,
+        lead_referred_contact_name: interaction.leadReferredContactName,
+        lead_referred_area_name: interaction.leadReferredAreaName,
+      },
       after: {
         analysis_status: rule.resultStatusCode,
         lead_substatus_code: parsed.data.substatusCode,
@@ -4902,6 +5084,9 @@ router.post(
         lead_next_action_due_at: nextActionDueAtRaw || null,
         lead_referred_contact_name: normalizedReferredContactName || null,
         lead_referred_area_name: normalizedReferredAreaName || null,
+        lead_outcome_event_type: normalizedEventType,
+        lead_outcome_correction_target_event_id:
+          normalizedCorrectionTargetEventId,
       },
     });
 

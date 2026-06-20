@@ -214,6 +214,54 @@ async function ensureInteractionLeadColumns() {
   );
 }
 
+async function ensureInteractionLeadOutcomeEventsBackfill() {
+  await query(
+    `INSERT INTO interaction_lead_outcome_events (
+       public_id,
+       interaction_id,
+       event_type,
+       from_status_code,
+       to_status_code,
+       substatus_code,
+       reason_code,
+       required_action_code,
+       commercial_comment,
+       next_action_due_at,
+       referred_contact_name,
+       referred_area_name,
+       correction_reason,
+       created_by,
+       effective_at,
+       created_at
+     )
+     SELECT
+       CONCAT('legacy_', i.public_id),
+       i.id,
+       'legacy_snapshot',
+       i.analysis_status,
+       i.analysis_status,
+       i.lead_substatus_code,
+       i.lead_reason_code,
+       i.lead_required_action_code,
+       i.lead_commercial_comment,
+       i.lead_next_action_due_at,
+       i.lead_referred_contact_name,
+       i.lead_referred_area_name,
+       'Migrado desde snapshot existente en interactions',
+       i.updated_by,
+       COALESCE(i.updated_at, i.created_at, NOW(3)),
+       COALESCE(i.updated_at, i.created_at, NOW(3))
+     FROM interactions i
+     WHERE i.lead_substatus_code IS NOT NULL
+       AND i.lead_substatus_code <> ''
+       AND NOT EXISTS (
+         SELECT 1
+         FROM interaction_lead_outcome_events e
+         WHERE e.interaction_id = i.id
+       )`,
+  );
+}
+
 const INTERACTION_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS interactions (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -282,6 +330,38 @@ const INTERACTION_SCHEMA_STATEMENTS = [
     INDEX idx_interaction_opportunity_links_opportunity (opportunity_id),
     INDEX idx_interaction_opportunity_links_primary (interaction_id, is_primary)
   )`,
+  `CREATE TABLE IF NOT EXISTS interaction_lead_outcome_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    public_id VARCHAR(64) NOT NULL,
+    interaction_id BIGINT UNSIGNED NOT NULL,
+    event_type VARCHAR(40) NOT NULL DEFAULT 'activity_update',
+    from_status_code VARCHAR(40) NULL,
+    to_status_code VARCHAR(40) NOT NULL,
+    substatus_code VARCHAR(80) NOT NULL,
+    reason_code VARCHAR(80) NOT NULL,
+    required_action_code VARCHAR(80) NOT NULL,
+    commercial_comment LONGTEXT NULL,
+    next_action_due_at DATETIME(3) NULL,
+    referred_contact_name VARCHAR(255) NULL,
+    referred_area_name VARCHAR(255) NULL,
+    transition_rule_json JSON NULL,
+    correction_target_event_id BIGINT UNSIGNED NULL,
+    correction_reason LONGTEXT NULL,
+    invalidated_at DATETIME(3) NULL,
+    invalidated_by BIGINT UNSIGNED NULL,
+    invalidation_reason LONGTEXT NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    effective_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT uq_interaction_lead_outcome_events_public_id UNIQUE (public_id),
+    CONSTRAINT fk_iloe_interaction FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_iloe_correction_target FOREIGN KEY (correction_target_event_id) REFERENCES interaction_lead_outcome_events(id) ON DELETE SET NULL,
+    CONSTRAINT fk_iloe_invalidated_by FOREIGN KEY (invalidated_by) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_iloe_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+    INDEX idx_iloe_interaction_created (interaction_id, created_at),
+    INDEX idx_iloe_interaction_effective (interaction_id, effective_at),
+    INDEX idx_iloe_interaction_active (interaction_id, invalidated_at)
+  )`,
 ];
 
 export async function ensureInteractionSchema() {
@@ -291,6 +371,7 @@ export async function ensureInteractionSchema() {
         await query(statement);
       }
       await ensureInteractionLeadColumns();
+      await ensureInteractionLeadOutcomeEventsBackfill();
     })().catch((error) => {
       ensureInteractionSchemaPromise = undefined;
       throw error;

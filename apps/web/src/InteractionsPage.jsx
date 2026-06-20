@@ -920,6 +920,19 @@ function getLeadCatalogEntryByCode(entries, code) {
 }
 
 const EMPTY_LEAD_CATALOG = Object.freeze([]);
+const EMPTY_LEAD_HISTORY = Object.freeze([]);
+
+function getLeadOutcomeEventTypeLabel(eventType) {
+  switch (eventType) {
+    case "admin_correction":
+      return "Corrección administrativa";
+    case "legacy_snapshot":
+      return "Snapshot heredado";
+    case "activity_update":
+    default:
+      return "Actualización por actividad";
+  }
+}
 
 function extractLeadOutcomeDateText(value) {
   if (!value) return "";
@@ -1005,6 +1018,9 @@ function buildLeadCallOutcomeForm(detail, transitionRules) {
     nextActionDueAt: extractLeadOutcomeDateText(detail?.leadNextActionDueAt),
     referredContactName: detail?.leadReferredContactName || "",
     referredAreaName: detail?.leadReferredAreaName || "",
+    eventType: "activity_update",
+    correctionReason: "",
+    correctionTargetEventId: "",
   };
 }
 
@@ -1860,7 +1876,7 @@ function InteractionDetailModal({
     : "";
   const isCommercialAssignmentSelfOnly =
     commercialAssignmentPolicy.mode === "self_only";
-  const showLeadFollowUpSection = !isFinalizedLeadStatus(detail.analysisStatus);
+  const showLeadFollowUpSection = true;
   const currentUserIsSellerEligible = Boolean(
     commercialAssignmentPolicy.currentUserIsSellerEligible,
   );
@@ -1979,6 +1995,9 @@ function InteractionDetailModal({
   const leadOutcomeGuideActionOptions = leadRequiredAction
     ? [leadRequiredAction]
     : EMPTY_LEAD_CATALOG;
+  const leadOutcomeHistory = Array.isArray(detail?.leadOutcomeHistory)
+    ? detail.leadOutcomeHistory
+    : EMPTY_LEAD_HISTORY;
   const materializedSuggestedAccountId = Number(
     editForm.suggestedAccount?.selectedAccountId || 0,
   );
@@ -3176,8 +3195,8 @@ function InteractionDetailModal({
                         Seguimiento comercial
                       </span>
                       <p className="field-hint lead-follow-up-header-description">
-                        Este seguimiento se edita en una ventana aparte y se
-                        guarda por separado del resto del lead.
+                        Registra nuevas situaciones del lead en una ventana
+                        aparte y conserva un historial de seguimiento.
                       </p>
                     </div>
                     {canManageLeadCallOutcome ? (
@@ -3186,7 +3205,7 @@ function InteractionDetailModal({
                         className="btn-secondary lead-follow-up-secondary-action"
                         onClick={onOpenLeadCallOutcomeModal}
                       >
-                        Editar seguimiento
+                        Registrar nueva situación
                       </button>
                     ) : null}
                   </div>
@@ -3270,6 +3289,66 @@ function InteractionDetailModal({
                             Comentario del vendedor
                           </span>
                           <p>{detail.leadCommercialComment}</p>
+                        </article>
+                      ) : null}
+
+                      {leadOutcomeHistory.length ? (
+                        <article className="lead-follow-up-comment-card">
+                          <span className="lead-follow-up-card-label">
+                            Historial de situaciones
+                          </span>
+                          <div className="lead-follow-up-history-list">
+                            {leadOutcomeHistory.map((eventItem) => {
+                              const eventSubstatus = getLeadCatalogEntryByCode(
+                                leadOutcomeCatalogs?.substatuses,
+                                eventItem.substatusCode,
+                              );
+                              const eventReason = getLeadCatalogEntryByCode(
+                                leadOutcomeCatalogs?.reasons,
+                                eventItem.reasonCode,
+                              );
+                              const eventAction = getLeadCatalogEntryByCode(
+                                leadOutcomeCatalogs?.requiredActions,
+                                eventItem.requiredActionCode,
+                              );
+                              const eventStatus = getInteractionStatusMeta(
+                                eventItem.toStatusCode,
+                              );
+
+                              return (
+                                <article
+                                  className="lead-follow-up-history-item"
+                                  key={eventItem.id}
+                                >
+                                  <div className="lead-follow-up-history-item-head">
+                                    <strong>
+                                      {eventSubstatus?.name ||
+                                        "Situación registrada"}
+                                    </strong>
+                                    <span className="field-hint">
+                                      {`${formatDateTime(eventItem.createdAt)} · ${getLeadOutcomeEventTypeLabel(eventItem.eventType)}`}
+                                    </span>
+                                  </div>
+                                  <p className="field-hint lead-follow-up-history-item-copy">
+                                    {`Motivo: ${eventReason?.name || "Sin motivo"} · Acción: ${eventAction?.name || "Sin acción"}`}
+                                  </p>
+                                  <p className="field-hint lead-follow-up-history-item-copy">
+                                    {`Estado resultante: ${eventStatus.label}`}
+                                  </p>
+                                  {eventItem.comment ? (
+                                    <p className="lead-follow-up-history-item-comment">
+                                      {eventItem.comment}
+                                    </p>
+                                  ) : null}
+                                  {eventItem.correctionReason ? (
+                                    <p className="field-hint lead-follow-up-history-item-copy">
+                                      {`Corrección: ${eventItem.correctionReason}`}
+                                    </p>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
                         </article>
                       ) : null}
                     </div>
@@ -3625,6 +3704,9 @@ function LeadCallOutcomeModal({
   const selectedActionGuide = getLeadCallOutcomeActionGuide(
     selectedRequiredActionCode,
   );
+  const leadOutcomeHistory = Array.isArray(detail?.leadOutcomeHistory)
+    ? detail.leadOutcomeHistory
+    : EMPTY_LEAD_HISTORY;
 
   return (
     <div
@@ -3647,7 +3729,7 @@ function LeadCallOutcomeModal({
           </button>
           <div>
             <span className="lead-decision-kicker">Resultado guiado</span>
-            <h3 className="modal-title">Resultado de llamada</h3>
+            <h3 className="modal-title">Registrar situación del lead</h3>
             <p className="roles-subtitle resolve-confirmation-subtitle">
               {normalizeLeadDisplayText(detail.title)}
             </p>
@@ -3664,6 +3746,10 @@ function LeadCallOutcomeModal({
               substatusCode: selectedSubstatusCode,
               reasonCode: selectedReasonCode,
               requiredActionCode: selectedRequiredActionCode,
+              eventType: form.eventType || "activity_update",
+              correctionTargetEventId: form.correctionTargetEventId
+                ? Number(form.correctionTargetEventId)
+                : null,
             });
           }}
         >
@@ -3773,6 +3859,80 @@ function LeadCallOutcomeModal({
                 </div>
               </section>
 
+              <section className="account-form-section account-modal-section lead-outcome-side-panel">
+                <div className="field-group">
+                  <label>Tipo de registro</label>
+                  <select
+                    value={form.eventType || "activity_update"}
+                    onChange={(event) =>
+                      setForm((currentValue) => ({
+                        ...currentValue,
+                        eventType: event.target.value,
+                        correctionTargetEventId:
+                          event.target.value === "admin_correction"
+                            ? currentValue.correctionTargetEventId
+                            : "",
+                        correctionReason:
+                          event.target.value === "admin_correction"
+                            ? currentValue.correctionReason
+                            : "",
+                      }))
+                    }
+                    disabled={saving}
+                  >
+                    <option value="activity_update">
+                      Actualización por actividad
+                    </option>
+                    <option value="admin_correction">
+                      Corrección administrativa
+                    </option>
+                  </select>
+                </div>
+
+                {form.eventType === "admin_correction" ? (
+                  <>
+                    <div className="field-group">
+                      <label>Evento a corregir (opcional)</label>
+                      <select
+                        value={form.correctionTargetEventId || ""}
+                        onChange={(event) =>
+                          setForm((currentValue) => ({
+                            ...currentValue,
+                            correctionTargetEventId: event.target.value,
+                          }))
+                        }
+                        disabled={saving}
+                      >
+                        <option value="">Seleccionar evento</option>
+                        {leadOutcomeHistory.map((eventItem) => (
+                          <option
+                            key={eventItem.id}
+                            value={String(eventItem.id)}
+                          >
+                            {`${formatDateTime(eventItem.createdAt)} · ${getLeadOutcomeEventTypeLabel(eventItem.eventType)}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field-group">
+                      <label>Motivo de la corrección</label>
+                      <textarea
+                        value={form.correctionReason || ""}
+                        onChange={(event) =>
+                          setForm((currentValue) => ({
+                            ...currentValue,
+                            correctionReason: event.target.value,
+                          }))
+                        }
+                        disabled={saving}
+                        rows={3}
+                        placeholder="Describe por qué se corrige el registro anterior"
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </section>
+
               {selectedRule?.requiresDueDate ||
               selectedRule?.requiresReferredContact ||
               selectedRule?.requiresReferredArea ? (
@@ -3855,7 +4015,7 @@ function LeadCallOutcomeModal({
               className="btn-primary"
               disabled={!selectedRule || saving}
             >
-              {saving ? "Guardando..." : "Guardar resultado"}
+              {saving ? "Guardando..." : "Registrar situación"}
             </button>
           </div>
         </form>
@@ -4482,7 +4642,7 @@ function InteractionsPage({ can, currentUser }) {
       setResolutionForm(buildInitialResolutionForm(data, options, currentUser));
       await loadLeadOutcomeCatalogs(data.analysisStatus);
       setShowLeadCallOutcomeModal(false);
-      setSuccess("Resultado comercial del lead guardado");
+      setSuccess("Situación comercial registrada");
       await loadInteractions();
     } catch (err) {
       setError(
