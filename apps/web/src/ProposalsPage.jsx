@@ -4673,6 +4673,7 @@ export default function ProposalsPage() {
     currentUrl.searchParams.set("reopenProposalEmail", "1");
     const returnTo = currentUrl.toString();
     try {
+      await api.post("/api/auth/google-mail/disconnect").catch(() => null);
       const { data } = await api.get(connectUrl, {
         params: {
           returnTo,

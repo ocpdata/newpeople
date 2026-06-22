@@ -14,6 +14,7 @@ import {
   loadCommercialEnablementRecommendationCatalog,
   recommendCommercialEnablementResources,
 } from "./commercial-enablement/service.js";
+import { listCommercialLibraryFilesForEmail as listCommercialLibraryFilesForEmailShared } from "./commercial-email/shared.js";
 import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
 import {
   assertAiBudgetAvailable,
@@ -64,8 +65,9 @@ async function loadBusinessTimezone() {
   }
   const settings = await getCommercialSettings().catch(() => null);
   _businessTimezoneCache =
-    String(settings?.businessTimezone || config.app?.businessTimezone || "")
-      .trim() || "America/Mexico_City";
+    String(
+      settings?.businessTimezone || config.app?.businessTimezone || "",
+    ).trim() || "America/Mexico_City";
   _businessTimezoneExpiry = Date.now() + 60000;
   return _businessTimezoneCache;
 }
@@ -3792,7 +3794,8 @@ function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
       row.primary_opportunity_id === null
         ? null
         : Number(row.primary_opportunity_id),
-    opportunityName: row.primary_opportunity_name || actionLabel || "Lead comercial",
+    opportunityName:
+      row.primary_opportunity_name || actionLabel || "Lead comercial",
     accountName: row.account_name || "",
     activityType: "lead_follow_up",
     status: "pending",
@@ -4918,7 +4921,7 @@ async function loadCommercialEmailAttachmentOptions({
   libraryFilters = {},
 }) {
   const [allLibraryFiles, quotationVersions] = await Promise.all([
-    listCommercialLibraryFilesForEmail({ user }),
+    listCommercialLibraryFilesForEmailShared({ user }),
     listCommercialQuotationVersionsForEmail({ opportunityId }),
   ]);
 
@@ -6554,7 +6557,10 @@ async function listCommercialCalendarActivities({
     if (leftTime !== rightTime) {
       return leftTime - rightTime;
     }
-    return String(left.title || "").localeCompare(String(right.title || ""), "es");
+    return String(left.title || "").localeCompare(
+      String(right.title || ""),
+      "es",
+    );
   });
 
   const groupedItems = items.reduce((accumulator, item) => {
@@ -6662,10 +6668,7 @@ async function listCalendarAlertActivities({
       startDateTime: lookbackStart,
       endExclusiveDateTime: next24h,
       startDate: formatDateInTimeZone(lookbackStart, timeZone),
-      endDate: formatDateInTimeZone(
-        new Date(next24h.getTime() - 1),
-        timeZone,
-      ),
+      endDate: formatDateInTimeZone(new Date(next24h.getTime() - 1), timeZone),
       sellerUserId,
       timeZone,
     }),
@@ -6699,7 +6702,10 @@ async function listCalendarAlertActivities({
     if (leftTime !== rightTime) {
       return leftTime - rightTime;
     }
-    return String(left.title || "").localeCompare(String(right.title || ""), "es");
+    return String(left.title || "").localeCompare(
+      String(right.title || ""),
+      "es",
+    );
   });
 
   return items;

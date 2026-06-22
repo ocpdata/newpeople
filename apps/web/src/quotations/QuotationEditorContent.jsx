@@ -1463,6 +1463,7 @@ function QuotationEditorContent({
     const connectUrl =
       quotationGoogleMailStatus.startUrl || "/api/auth/google-mail/start";
     try {
+      await api.post("/api/auth/google-mail/disconnect").catch(() => null);
       const { data } = await api.get(connectUrl, {
         params: {
           returnTo: window.location.href,

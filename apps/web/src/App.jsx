@@ -26,9 +26,13 @@ function App() {
   const tokenRef = useRef("");
   const [loading, setLoading] = useState(true);
   const [hasUsers, setHasUsers] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem("crm_token") || "");
+  const [token, setToken] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("oauthToken") || localStorage.getItem("crm_token") || "";
+  });
   const [currentUser, setCurrentUser] = useState(null);
   const [oauthError, setOauthError] = useState("");
+  const [authBootstrapError, setAuthBootstrapError] = useState("");
 
   useEffect(() => {
     boot();
@@ -39,6 +43,7 @@ function App() {
     setAuthToken(token);
     if (token) {
       localStorage.setItem("crm_token", token);
+      setAuthBootstrapError("");
       void fetchMe(token);
     } else {
       localStorage.removeItem("crm_token");
@@ -83,19 +88,42 @@ function App() {
     }
   }
 
-  async function fetchMe(tokenAtRequestStart = tokenRef.current) {
+  async function fetchMe(
+    tokenAtRequestStart = tokenRef.current,
+    retryCount = 0,
+  ) {
     try {
       const { data } = await api.get("/api/auth/me");
       if (tokenRef.current !== tokenAtRequestStart) {
         return;
       }
       setCurrentUser(data);
-    } catch {
+      setAuthBootstrapError("");
+    } catch (error) {
       if (tokenRef.current !== tokenAtRequestStart) {
         return;
       }
+      if (retryCount < 1) {
+        window.setTimeout(() => {
+          void fetchMe(tokenAtRequestStart, retryCount + 1);
+        }, 500);
+        return;
+      }
+
+      const status = Number(error?.response?.status || error?.status || 0);
+      if (status === 401 || status === 403) {
+        setOauthError(
+          "No fue posible validar tu sesion con Google. Vuelve a iniciar sesion.",
+        );
+        setCurrentUser(null);
+        setToken("");
+        return;
+      }
+
+      setAuthBootstrapError(
+        "No fue posible validar tu sesion. Intenta recargar la pagina.",
+      );
       setCurrentUser(null);
-      setToken("");
     }
   }
 
@@ -120,6 +148,10 @@ function App() {
 
   if (!token) {
     return <LoginPage onLogin={setToken} initialError={oauthError} />;
+  }
+
+  if (authBootstrapError) {
+    return <div className="centered">{authBootstrapError}</div>;
   }
 
   if (!currentUser) {

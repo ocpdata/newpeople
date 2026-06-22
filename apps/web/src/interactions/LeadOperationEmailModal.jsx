@@ -15,7 +15,7 @@ function formatBytes(value) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function OpportunityAiIcon() {
+function AiIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path
@@ -26,7 +26,7 @@ function OpportunityAiIcon() {
   );
 }
 
-function OpportunityCopyIcon() {
+function CopyIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M9.25 8.25A1.75 1.75 0 0 1 11 6.5h6.25A1.75 1.75 0 0 1 19 8.25v8.5a1.75 1.75 0 0 1-1.75 1.75H11a1.75 1.75 0 0 1-1.75-1.75z" />
@@ -35,7 +35,7 @@ function OpportunityCopyIcon() {
   );
 }
 
-function OpportunityPreviewIcon() {
+function PreviewIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M1.75 12s3.6-6 10.25-6 10.25 6 10.25 6-3.6 6-10.25 6S1.75 12 1.75 12Z" />
@@ -44,7 +44,7 @@ function OpportunityPreviewIcon() {
   );
 }
 
-function OpportunityBackIcon() {
+function BackIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M10 5 3 12l7 7" />
@@ -53,7 +53,7 @@ function OpportunityBackIcon() {
   );
 }
 
-function OpportunitySendIcon() {
+function SendIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M21.5 3.5 10 15" />
@@ -62,7 +62,7 @@ function OpportunitySendIcon() {
   );
 }
 
-function OpportunityAttachmentAddIcon() {
+function AttachmentAddIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M12 5.5v13" />
@@ -71,7 +71,7 @@ function OpportunityAttachmentAddIcon() {
   );
 }
 
-function OpportunityGoogleConnectIcon() {
+function GoogleConnectIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M13 4.5a7.5 7.5 0 1 0 0 15h3.5" />
@@ -81,7 +81,7 @@ function OpportunityGoogleConnectIcon() {
   );
 }
 
-function OpportunityAttachmentDownloadIcon() {
+function AttachmentDownloadIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M12 3.5v11" />
@@ -91,7 +91,7 @@ function OpportunityAttachmentDownloadIcon() {
   );
 }
 
-function OpportunityAttachmentRemoveIcon() {
+function AttachmentRemoveIcon() {
   return (
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M4.5 7.5h15" />
@@ -103,8 +103,16 @@ function OpportunityAttachmentRemoveIcon() {
   );
 }
 
-export default function OpportunityOperationEmailModal({
+const MAIL_TYPE_OPTIONS = [
+  { value: "company_intro", label: "Correo inicial de presentacion" },
+  { value: "solution_detail", label: "Correo con detalle de solucion" },
+  { value: "meeting_request", label: "Solicitud de reunion" },
+  { value: "demo_request", label: "Solicitud de demostracion" },
+];
+
+export default function LeadOperationEmailModal({
   isOpen,
+  interactionId,
   draft,
   sending,
   generatingAiDraft,
@@ -233,7 +241,10 @@ export default function OpportunityOperationEmailModal({
     const sourceType = String(attachment?.sourceType || "").trim();
     const selectionSource = String(attachment?.selectionSource || "").trim();
 
-    if (sourceType === "opportunity_document") {
+    if (
+      sourceType === "interaction_document" ||
+      sourceType === "local_upload"
+    ) {
       return "Local";
     }
     if (sourceType === "library_file") {
@@ -246,12 +257,15 @@ export default function OpportunityOperationEmailModal({
 
   function getAttachmentDownloadUrl(attachment) {
     const sourceType = String(attachment?.sourceType || "").trim();
-    if (sourceType === "opportunity_document") {
+    if (sourceType === "local_upload") {
+      return "local-upload";
+    }
+    if (sourceType === "interaction_document") {
       const documentPublicId = String(
         attachment?.documentPublicId || "",
       ).trim();
-      if (!documentPublicId) return "";
-      return `/api/opportunities/documents/${encodeURIComponent(documentPublicId)}/content`;
+      if (!documentPublicId || !interactionId) return "";
+      return `/api/interactions/${encodeURIComponent(interactionId)}/documents/${encodeURIComponent(documentPublicId)}/download`;
     }
     if (sourceType === "library_file") {
       const assetPublicId = String(attachment?.resourcePublicId || "").trim();
@@ -264,6 +278,21 @@ export default function OpportunityOperationEmailModal({
 
   async function handleDownloadAttachment(attachment) {
     if (typeof window === "undefined") return;
+    if (String(attachment?.sourceType || "").trim() === "local_upload") {
+      const file = attachment?.file;
+      if (!(file instanceof File)) return;
+      const objectUrl = window.URL.createObjectURL(file);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download =
+        String(file.name || attachment?.fileName || "archivo").trim() ||
+        "archivo";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      return;
+    }
     const targetUrl = getAttachmentDownloadUrl(attachment);
     if (!targetUrl) return;
 
@@ -358,7 +387,7 @@ export default function OpportunityOperationEmailModal({
                   status.connected ? "Re-conectar Google" : "Conectar Google"
                 }
               >
-                <OpportunityGoogleConnectIcon />
+                <GoogleConnectIcon />
               </button>
               <p className="field-hint opportunity-operation-email-google-connect-help">
                 {status.connected && status.missingScope
@@ -430,7 +459,7 @@ export default function OpportunityOperationEmailModal({
                 aria-label="Volver a editar"
                 title="Volver a editar"
               >
-                <OpportunityBackIcon />
+                <BackIcon />
               </button>
               <button
                 type="button"
@@ -440,13 +469,30 @@ export default function OpportunityOperationEmailModal({
                 aria-label={sending ? "Enviando" : "Enviar ahora"}
                 title={sending ? "Enviando" : "Enviar ahora"}
               >
-                <OpportunitySendIcon />
+                <SendIcon />
               </button>
             </div>
           </div>
         ) : (
           <>
             <div className="opportunity-operation-email-form-grid">
+              <label>
+                Tipo de correo
+                <select
+                  value={String(draft.purposeOther || "company_intro")}
+                  disabled={sending}
+                  onChange={(event) =>
+                    onChangeField("purposeOther", event.target.value)
+                  }
+                >
+                  {MAIL_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label>
                 Para
                 <input
@@ -457,12 +503,13 @@ export default function OpportunityOperationEmailModal({
                     onChangeField("recipient", event.target.value)
                   }
                   placeholder="destinatario@cliente.com"
-                  title="Edita el destinatario si necesitas enviar a otro correo"
+                  title="Edita el destinatario principal"
                 />
                 <small className="field-hint">
                   Puedes editar este destinatario antes de enviar.
                 </small>
               </label>
+
               <label>
                 CC
                 <input
@@ -471,13 +518,8 @@ export default function OpportunityOperationEmailModal({
                   onChange={(event) => onChangeField("cc", event.target.value)}
                   placeholder="equipo@cliente.com"
                 />
-                <small
-                  className="field-hint opportunity-operation-email-hint-placeholder"
-                  aria-hidden="true"
-                >
-                  Destinatario fijo: contacto de la oportunidad.
-                </small>
               </label>
+
               <label className="is-span-2">
                 Asunto
                 <input
@@ -503,7 +545,7 @@ export default function OpportunityOperationEmailModal({
 
               <section className="is-span-2 opportunity-operation-email-ai-instructions">
                 <div className="opportunity-operation-email-ai-instructions-head">
-                  <span id="opportunity-operation-email-ai-instructions-label">
+                  <span id="lead-operation-email-ai-instructions-label">
                     IA
                   </span>
                   <button
@@ -522,14 +564,14 @@ export default function OpportunityOperationEmailModal({
                         : "Generar borrador con IA"
                     }
                   >
-                    <OpportunityAiIcon />
+                    <AiIcon />
                     <span>Generar IA</span>
                   </button>
                 </div>
                 <small className="field-hint" aria-live="polite">
                   {generatingAiDraft
                     ? "Generando borrador con IA..."
-                    : "Describe el tono y el objetivo. La IA devolverá una sugerencia lista para copiar."}
+                    : "Describe el tono y el objetivo. La IA devolvera una sugerencia lista para copiar."}
                 </small>
 
                 <div className="opportunity-operation-email-ai-fields">
@@ -538,12 +580,12 @@ export default function OpportunityOperationEmailModal({
                     <textarea
                       rows={3}
                       value={aiInstructionText}
-                      aria-labelledby="opportunity-operation-email-ai-instructions-label"
+                      aria-labelledby="lead-operation-email-ai-instructions-label"
                       disabled={sending || generatingAiDraft}
                       onChange={(event) =>
                         onChangeAiInstruction(event.target.value)
                       }
-                      placeholder="Ejemplo: tono ejecutivo, breve, incluir llamado a la accion y fecha compromiso."
+                      placeholder="Ejemplo: tono ejecutivo, breve, incluir llamado a la accion y fecha propuesta."
                     />
                   </label>
 
@@ -562,7 +604,7 @@ export default function OpportunityOperationEmailModal({
                         aria-label="Copiar sugerencia al borrador"
                         title="Copiar sugerencia al borrador"
                       >
-                        <OpportunityCopyIcon />
+                        <CopyIcon />
                         <span>Usar sugerencia</span>
                       </button>
                     </div>
@@ -585,7 +627,7 @@ export default function OpportunityOperationEmailModal({
                       rows={5}
                       value={aiSuggestionMessageBody || ""}
                       readOnly
-                      placeholder="La sugerencia generada por la IA aparecerá aqui."
+                      placeholder="La sugerencia generada por la IA aparecera aqui."
                     />
                     <small className="field-hint">
                       Puedes copiar esta sugerencia o seguir editando el
@@ -615,7 +657,7 @@ export default function OpportunityOperationEmailModal({
                       aria-label="Agregar archivos"
                       title="Agregar archivos"
                     >
-                      <OpportunityAttachmentAddIcon />
+                      <AttachmentAddIcon />
                     </button>
                     <input
                       ref={fileInputRef}
@@ -647,7 +689,7 @@ export default function OpportunityOperationEmailModal({
                       aria-label="Sugerir adjuntos de biblioteca con IA"
                       title="Sugerir adjuntos de biblioteca con IA"
                     >
-                      <OpportunityAiIcon />
+                      <AiIcon />
                       <span>
                         {generatingAiAttachments
                           ? "Sugiriendo..."
@@ -766,7 +808,7 @@ export default function OpportunityOperationEmailModal({
                           aria-label={`Descargar documento: ${attachment.fileName || "Adjunto"}`}
                           title="Descargar documento"
                         >
-                          <OpportunityAttachmentDownloadIcon />
+                          <AttachmentDownloadIcon />
                         </button>
                         <button
                           type="button"
@@ -780,7 +822,7 @@ export default function OpportunityOperationEmailModal({
                           aria-label={`Quitar adjunto: ${attachment.fileName || "Adjunto"}`}
                           title="Quitar adjunto"
                         >
-                          <OpportunityAttachmentRemoveIcon />
+                          <AttachmentRemoveIcon />
                         </button>
                       </div>
                     </div>
@@ -800,7 +842,7 @@ export default function OpportunityOperationEmailModal({
                   sending || generatingAiDraft || generatingAiAttachments
                 }
               >
-                Vista previa
+                <PreviewIcon /> Vista previa
               </button>
             </div>
           </>

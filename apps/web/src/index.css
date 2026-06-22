@@ -1386,6 +1386,13 @@ button {
   align-self: flex-start;
 }
 
+.lead-follow-up-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .lead-follow-up-status-block {
   display: grid;
   gap: 6px;
@@ -20109,9 +20116,20 @@ td {
 
 .opportunity-operation-email-preview-button {
   min-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   border-color: #1e5cc7;
   background: #1e5cc7;
   color: #ffffff;
+}
+
+.opportunity-operation-email-preview-button svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  fill: currentColor;
 }
 
 .opportunity-operation-email-preview-button:hover:not(:disabled) {

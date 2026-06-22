@@ -5,6 +5,8 @@ import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import {
   GOOGLE_GMAIL_SEND_SCOPE,
+  decryptOpaqueSecret,
+  exchangeGoogleRefreshToken,
   encryptOpaqueSecret,
   hasGoogleMailSendScope,
   normalizeEmail,
@@ -76,7 +78,8 @@ async function loadBusinessTimezone() {
     return businessTimezoneCache;
   }
 
-  const fallback = String(config.app?.businessTimezone || "").trim() || "America/Mexico_City";
+  const fallback =
+    String(config.app?.businessTimezone || "").trim() || "America/Mexico_City";
   const settings = await getCommercialSettings().catch(() => null);
   businessTimezoneCache =
     String(settings?.businessTimezone || fallback).trim() || fallback;
@@ -486,6 +489,7 @@ router.get("/google-mail/status", authRequired, loadUser, async (req, res) => {
   const rows = await query(
     `SELECT
       google_email,
+      refresh_token_encrypted,
       scope_text,
       revoked_at,
       last_error_code,
@@ -499,18 +503,66 @@ router.get("/google-mail/status", authRequired, loadUser, async (req, res) => {
 
   const row = rows[0] || null;
   const connected = Boolean(row && !row.revoked_at);
-  const hasScope = hasGoogleMailSendScope(row?.scope_text || "");
-  const lastErrorCode = String(row?.last_error_code || "").toLowerCase();
+  let hasScope = hasGoogleMailSendScope(row?.scope_text || "");
+  let lastErrorCode = String(row?.last_error_code || "").toLowerCase();
+
+  if (connected) {
+    const now = new Date();
+    try {
+      const refreshToken = decryptOpaqueSecret(row?.refresh_token_encrypted);
+      const tokenPayload = await exchangeGoogleRefreshToken(refreshToken);
+      const refreshedScopeText = String(
+        tokenPayload?.scope || row?.scope_text || "",
+      );
+      hasScope = hasGoogleMailSendScope(refreshedScopeText);
+      lastErrorCode = hasScope ? "" : "insufficient_scope";
+
+      await query(
+        `UPDATE user_google_mail_connections
+         SET scope_text = ?, last_error_code = ?, last_error_at = ?, updated_at = ?
+         WHERE user_id = ?`,
+        [
+          refreshedScopeText,
+          hasScope ? null : "insufficient_scope",
+          hasScope ? null : now,
+          now,
+          req.user.id,
+        ],
+      );
+    } catch (error) {
+      lastErrorCode = String(error?.code || "google_token_refresh_failed")
+        .trim()
+        .toLowerCase();
+
+      await query(
+        `UPDATE user_google_mail_connections
+         SET last_error_code = ?, last_error_at = ?, updated_at = ?
+         WHERE user_id = ?`,
+        [lastErrorCode || "google_token_refresh_failed", now, now, req.user.id],
+      );
+    }
+  }
+
   const reconnectErrorCodes = new Set([
     "invalid_grant",
     "invalid_token",
+    "unauthenticated",
     "insufficient_permissions",
+    "google_token_refresh_failed",
   ]);
+  const missingScopeErrorCodes = new Set([
+    "insufficient_scope",
+    "insufficient_permissions",
+    "invalid_scope",
+  ]);
+  const missingScope =
+    connected && (!hasScope || missingScopeErrorCodes.has(lastErrorCode));
 
   return res.json({
     connected,
-    canSend: connected && hasScope,
-    missingScope: connected && !hasScope,
+    canSend:
+      connected && hasScope && !missingScopeErrorCodes.has(lastErrorCode),
+    missingScope,
     needsReconnect: connected && reconnectErrorCodes.has(lastErrorCode),
     googleEmail: row?.google_email || "",
     lastConnectedAt: row?.last_connected_at || null,

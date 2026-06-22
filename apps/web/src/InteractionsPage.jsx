@@ -16,6 +16,7 @@ import {
   LeadCallOutcomeInlineGuide,
   LeadCallOutcomeOptionCards,
 } from "./interactions/LeadCallOutcomeGuides";
+import LeadOperationEmailModal from "./interactions/LeadOperationEmailModal";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.mp4";
@@ -63,6 +64,7 @@ const LEAD_QUEUE_FILTER_OPTIONS = [
 ];
 const EMPTY_LEAD_SUBSTATUS_FILTER = "__none__";
 const OPERATIONS_SITUATION_PAGE_SIZE = 10;
+const LEAD_EMAIL_MAX_LIBRARY_ASSETS = 3;
 
 function sortLeadStatusFilters(values) {
   if (!Array.isArray(values)) return [];
@@ -116,6 +118,143 @@ function formatDateTime(value) {
       timeStyle: "short",
     },
   });
+}
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function parseEmailList(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isValidEmail(value) {
+  const email = normalizeText(value);
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function buildLeadEmailTemplate(detail, currentUser, purposeOther) {
+  const contacts = Array.isArray(detail?.contacts) ? detail.contacts : [];
+  const firstRecipient =
+    contacts.find((contact) => normalizeText(contact?.email)) || null;
+  const recipientName = normalizeText(firstRecipient?.fullName || "");
+  const sellerName =
+    normalizeText(detail?.seller?.fullName || "") ||
+    normalizeText(currentUser?.full_name || "");
+  const accountName = normalizeText(detail?.accountName || "");
+  const greeting = recipientName ? `Hola ${recipientName},` : "Hola,";
+  const signature = sellerName ? `\n\nSaludos,\n${sellerName}` : "\n\nSaludos.";
+  const normalizedPurpose = normalizeText(purposeOther) || "company_intro";
+
+  if (normalizedPurpose === "solution_detail") {
+    return {
+      subject: accountName
+        ? `Detalle de solucion - ${accountName}`
+        : "Detalle de solucion",
+      messageBody: `${greeting}\n\nComparto informacion adicional sobre una de nuestras soluciones para que Ud. pueda revisar su alcance, beneficios y posibles casos de uso dentro de su operacion.${signature}`,
+    };
+  }
+
+  if (normalizedPurpose === "meeting_request") {
+    return {
+      subject: accountName
+        ? `Solicitud de reunion - ${accountName}`
+        : "Solicitud de reunion",
+      messageBody: `${greeting}\n\nMe gustaria proponerle una reunion breve para conocer mejor sus prioridades actuales y revisar si existe una linea de trabajo en la que podamos apoyarle.${signature}`,
+    };
+  }
+
+  if (normalizedPurpose === "demo_request") {
+    return {
+      subject: accountName
+        ? `Solicitud de demostracion - ${accountName}`
+        : "Solicitud de demostracion",
+      messageBody: `${greeting}\n\nQuisiera coordinar una demostracion para mostrarle de forma practica como funciona la solucion y revisar si encaja con lo que hoy necesita su equipo.${signature}`,
+    };
+  }
+
+  return {
+    subject: accountName
+      ? `Presentacion de la empresa - ${accountName}`
+      : "Presentacion de la empresa",
+    messageBody: `${greeting}\n\nQuiero presentarle brevemente nuestra empresa y compartirle como apoyamos a organizaciones en iniciativas comerciales, operativas y de transformacion tecnologica.${signature}`,
+  };
+}
+
+function buildLeadEmailDefaultDraft(detail, currentUser) {
+  const contacts = Array.isArray(detail?.contacts) ? detail.contacts : [];
+  const firstRecipient =
+    contacts.find((contact) => normalizeText(contact?.email)) || null;
+  const recipient = normalizeText(firstRecipient?.email || "");
+  const recipientName = normalizeText(firstRecipient?.fullName || "");
+  const sellerName =
+    normalizeText(detail?.seller?.fullName || "") ||
+    normalizeText(currentUser?.full_name || "");
+  const sellerEmail =
+    normalizeText(detail?.seller?.email || "") ||
+    normalizeText(currentUser?.email || "");
+  const template = buildLeadEmailTemplate(detail, currentUser, "company_intro");
+
+  return {
+    recipient,
+    cc: sellerEmail,
+    purposeOther: "company_intro",
+    subject: template.subject,
+    messageBody: template.messageBody,
+    attachments: [],
+  };
+}
+
+function mapLocalFileToLeadEmailAttachment(file, index = 0) {
+  if (!(file instanceof File)) return null;
+  return {
+    id: `local:${Date.now()}:${index}:${file.name}`,
+    sourceType: "local_upload",
+    sourceLabel: "Archivo local",
+    fileName: normalizeText(file.name) || "archivo",
+    mimeType:
+      normalizeText(file.type || "").toLowerCase() ||
+      "application/octet-stream",
+    byteSize: Number(file.size || 0),
+    file,
+  };
+}
+
+function mapLibraryOptionToLeadEmailAttachment(
+  option,
+  selectionSource = "manual",
+) {
+  if (!option) return null;
+  const id = normalizeText(option?.id);
+  const resourcePublicId = normalizeText(option?.resourcePublicId);
+  const filePublicId = normalizeText(option?.filePublicId);
+  if (!id || !resourcePublicId || !filePublicId) {
+    return null;
+  }
+
+  return {
+    id,
+    sourceType: "library_file",
+    sourceLabel: normalizeText(option?.sourceLabel) || "Biblioteca",
+    resourcePublicId,
+    filePublicId,
+    fileName: normalizeText(option?.fileName) || "archivo",
+    mimeType:
+      normalizeText(option?.mimeType).toLowerCase() ||
+      "application/octet-stream",
+    byteSize: Number(option?.byteSize || 0),
+    title: normalizeText(option?.title),
+    summary: normalizeText(option?.summary),
+    assetTypeLabel: normalizeText(option?.assetTypeLabel),
+    selectionSource:
+      normalizeText(selectionSource).toLowerCase() === "ai"
+        ? "library_ai"
+        : "library_manual",
+  };
 }
 
 function getMondayOfWeek(dateStr) {
@@ -1790,6 +1929,9 @@ function InteractionDetailModal({
   leadOutcomeCatalogs,
   onOpenLeadCallOutcomeModal,
   canManageLeadCallOutcome,
+  onOpenLeadEmailModal,
+  canOpenLeadEmailModal,
+  leadEmailDisabledHint,
 }) {
   const [uploadInputKey, setUploadInputKey] = useState(0);
 
@@ -3199,16 +3341,29 @@ function InteractionDetailModal({
                         aparte y conserva un historial de seguimiento.
                       </p>
                     </div>
-                    {canManageLeadCallOutcome ? (
+                    <div className="lead-follow-up-actions-row">
+                      {canManageLeadCallOutcome ? (
+                        <button
+                          type="button"
+                          className="btn-secondary lead-follow-up-secondary-action"
+                          onClick={onOpenLeadCallOutcomeModal}
+                        >
+                          Registrar nueva situación
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn-secondary lead-follow-up-secondary-action"
-                        onClick={onOpenLeadCallOutcomeModal}
+                        onClick={onOpenLeadEmailModal}
+                        disabled={!canOpenLeadEmailModal}
                       >
-                        Registrar nueva situación
+                        Enviar correo
                       </button>
-                    ) : null}
+                    </div>
                   </div>
+                  {leadEmailDisabledHint ? (
+                    <p className="field-hint">{leadEmailDisabledHint}</p>
+                  ) : null}
 
                   {leadSubstatus || leadReason || leadRequiredAction ? (
                     <div className="lead-follow-up-overview">
@@ -4076,6 +4231,43 @@ function InteractionsPage({ can, currentUser }) {
   const [createUploadingFilesCount, setCreateUploadingFilesCount] = useState(0);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [isLeadEmailModalOpen, setIsLeadEmailModalOpen] = useState(false);
+  const [leadEmailDraft, setLeadEmailDraft] = useState(null);
+  const [leadEmailError, setLeadEmailError] = useState("");
+  const [leadEmailNotice, setLeadEmailNotice] = useState("");
+  const [leadEmailLibraryError, setLeadEmailLibraryError] = useState("");
+  const [leadEmailGoogleMailStatus, setLeadEmailGoogleMailStatus] = useState({
+    loading: false,
+    connected: false,
+    canSend: false,
+    missingScope: false,
+    needsReconnect: false,
+    googleEmail: "",
+    startUrl: "/api/auth/google-mail/start",
+  });
+  const [leadEmailLibraryQuery, setLeadEmailLibraryQuery] = useState("");
+  const [leadEmailLibraryOptions, setLeadEmailLibraryOptions] = useState([]);
+  const [
+    leadEmailSelectedLibraryAttachmentIds,
+    setLeadEmailSelectedLibraryAttachmentIds,
+  ] = useState([]);
+  const [leadEmailAiInstructionText, setLeadEmailAiInstructionText] =
+    useState("");
+  const [leadEmailAiSuggestion, setLeadEmailAiSuggestion] = useState({
+    subject: "",
+    messageBody: "",
+    source: "",
+    sourceReason: "",
+  });
+  const [leadEmailLoadingLibraryOptions, setLeadEmailLoadingLibraryOptions] =
+    useState(false);
+  const [leadEmailGeneratingAiDraft, setLeadEmailGeneratingAiDraft] =
+    useState(false);
+  const [
+    leadEmailGeneratingAiAttachments,
+    setLeadEmailGeneratingAiAttachments,
+  ] = useState(false);
+  const [leadEmailSending, setLeadEmailSending] = useState(false);
   const [editForm, setEditForm] = useState(null);
   const [resolutionForm, setResolutionForm] = useState(null);
   const [options, setOptions] = useState({
@@ -4168,11 +4360,655 @@ function InteractionsPage({ can, currentUser }) {
       ),
     [detail, resolutionForm, options, currentUser],
   );
+  const leadPrimaryEmail = useMemo(() => {
+    if (!detail) return "";
+    const contacts = Array.isArray(detail.contacts) ? detail.contacts : [];
+    return normalizeText(
+      contacts.find((contact) => normalizeText(contact?.email))?.email || "",
+    );
+  }, [detail]);
+  const canOpenLeadEmailModal = Boolean(
+    canUpdate && detail?.sellerUserId && leadPrimaryEmail,
+  );
+  const leadEmailDisabledHint = !canUpdate
+    ? "No tienes permisos para enviar correos desde este lead."
+    : !detail?.sellerUserId
+      ? "Este lead debe estar asignado antes de enviar correos."
+      : !leadPrimaryEmail
+        ? "No hay contacto con email disponible para enviar correo desde este lead."
+        : "";
+  const selectedLeadLibraryAttachments = useMemo(() => {
+    const attachments = Array.isArray(leadEmailDraft?.attachments)
+      ? leadEmailDraft.attachments
+      : [];
+    const selectedIds = Array.isArray(leadEmailSelectedLibraryAttachmentIds)
+      ? leadEmailSelectedLibraryAttachmentIds
+      : [];
+    return attachments
+      .filter(
+        (attachment) =>
+          attachment?.sourceType === "library_file" &&
+          selectedIds.includes(attachment?.id),
+      )
+      .filter(Boolean);
+  }, [leadEmailDraft?.attachments, leadEmailSelectedLibraryAttachmentIds]);
+
   function closeDetailModal() {
+    setIsLeadEmailModalOpen(false);
     setShowResolveConfirmation(false);
     setShowLeadCallOutcomeModal(false);
     setResolveDuplicateReview(null);
     setShowDetailModal(false);
+  }
+
+  async function loadLeadEmailGoogleMailStatus({ silent = false } = {}) {
+    setLeadEmailGoogleMailStatus((current) => ({
+      ...current,
+      loading: true,
+    }));
+
+    try {
+      const { data } = await api.get("/api/auth/google-mail/status");
+      const nextStatus = {
+        loading: false,
+        connected: Boolean(data?.connected),
+        canSend: Boolean(data?.canSend),
+        missingScope: Boolean(data?.missingScope),
+        needsReconnect: Boolean(data?.needsReconnect),
+        googleEmail: String(data?.googleEmail || ""),
+        startUrl: String(data?.startUrl || "/api/auth/google-mail/start"),
+      };
+      setLeadEmailGoogleMailStatus(nextStatus);
+
+      if (!silent && !nextStatus.canSend) {
+        if (nextStatus.connected && nextStatus.missingScope) {
+          setLeadEmailNotice(
+            "Tu conexion de Google no incluye permiso de envio. Reconecta y acepta el permiso solicitado.",
+          );
+        } else {
+          setLeadEmailNotice(
+            "Debes conectar Google para habilitar el envio de correos.",
+          );
+        }
+      }
+
+      return nextStatus;
+    } catch (err) {
+      setLeadEmailGoogleMailStatus({
+        loading: false,
+        connected: false,
+        canSend: false,
+        missingScope: false,
+        needsReconnect: false,
+        googleEmail: "",
+        startUrl: "/api/auth/google-mail/start",
+      });
+
+      if (!silent) {
+        setLeadEmailError(
+          getApiErrorMessage(
+            err,
+            "No fue posible validar la conexion de Google.",
+          ),
+        );
+      }
+
+      return null;
+    }
+  }
+
+  async function loadLeadEmailAttachmentOptions({ queryText = "" } = {}) {
+    if (!detail?.id) return;
+    setLeadEmailLoadingLibraryOptions(true);
+    setLeadEmailLibraryError("");
+
+    try {
+      const { data } = await api.get(
+        `/api/interactions/${detail.id}/email-attachments/options`,
+        {
+          params: {
+            q: normalizeText(queryText),
+          },
+        },
+      );
+
+      const libraryOptions = (
+        Array.isArray(data?.libraryFiles) ? data.libraryFiles : []
+      )
+        .map((item) => ({
+          id: normalizeText(item?.id),
+          sourceLabel: normalizeText(item?.sourceLabel) || "Biblioteca",
+          resourcePublicId: normalizeText(item?.resourcePublicId),
+          filePublicId: normalizeText(item?.filePublicId),
+          fileName: normalizeText(item?.fileName),
+          mimeType: normalizeText(item?.mimeType),
+          byteSize: Number(item?.byteSize || 0),
+          title: normalizeText(item?.title),
+          summary: normalizeText(item?.summary),
+          assetTypeLabel: normalizeText(item?.assetTypeLabel),
+        }))
+        .filter(
+          (item) => item.id && item.resourcePublicId && item.filePublicId,
+        );
+
+      setLeadEmailLibraryOptions(libraryOptions);
+    } catch (err) {
+      setLeadEmailLibraryError(
+        getApiErrorMessage(
+          err,
+          "No fue posible cargar contenido de biblioteca comercial.",
+        ),
+      );
+    } finally {
+      setLeadEmailLoadingLibraryOptions(false);
+    }
+  }
+
+  async function handleOpenLeadEmailModal() {
+    if (!detail || !canOpenLeadEmailModal) return;
+
+    setLeadEmailDraft(buildLeadEmailDefaultDraft(detail, currentUser));
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+    setLeadEmailLibraryError("");
+    setLeadEmailLibraryQuery("");
+    setLeadEmailSelectedLibraryAttachmentIds([]);
+    setLeadEmailAiInstructionText("");
+    setLeadEmailAiSuggestion({
+      subject: "",
+      messageBody: "",
+      source: "",
+      sourceReason: "",
+    });
+    setIsLeadEmailModalOpen(true);
+
+    void loadLeadEmailAttachmentOptions({ queryText: "" });
+    const googleStatus = await loadLeadEmailGoogleMailStatus({ silent: true });
+    if (!googleStatus?.canSend) {
+      setLeadEmailNotice("Conecta Google para habilitar el envio desde Leads.");
+    }
+  }
+
+  function handleCloseLeadEmailModal() {
+    if (leadEmailSending || leadEmailGeneratingAiDraft) return;
+    setIsLeadEmailModalOpen(false);
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+  }
+
+  function handleLeadEmailFieldChange(field, value) {
+    setLeadEmailDraft((current) => {
+      const nextDraft = {
+        ...(current || {}),
+        [field]: value,
+      };
+
+      if (field === "purposeOther") {
+        const template = buildLeadEmailTemplate(detail, currentUser, value);
+        nextDraft.subject = template.subject;
+        nextDraft.messageBody = template.messageBody;
+      }
+
+      return nextDraft;
+    });
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+  }
+
+  function handleLeadEmailAiInstructionChange(value) {
+    setLeadEmailAiInstructionText(value);
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+  }
+
+  function handleLeadEmailLibraryQueryChange(value) {
+    setLeadEmailLibraryQuery(value);
+  }
+
+  function handleToggleLeadLibraryAttachment(attachmentId) {
+    const normalizedId = normalizeText(attachmentId);
+    if (!normalizedId) return;
+
+    const option = (
+      Array.isArray(leadEmailLibraryOptions) ? leadEmailLibraryOptions : []
+    ).find((asset) => asset.id === normalizedId);
+    const mappedAttachment = mapLibraryOptionToLeadEmailAttachment(
+      option,
+      "manual",
+    );
+
+    setLeadEmailSelectedLibraryAttachmentIds((current) => {
+      if (current.includes(normalizedId)) {
+        setLeadEmailDraft((draftCurrent) => ({
+          ...(draftCurrent || {}),
+          attachments: (draftCurrent?.attachments || []).filter(
+            (attachment) => attachment.id !== normalizedId,
+          ),
+        }));
+        return current.filter((id) => id !== normalizedId);
+      }
+
+      if (current.length >= LEAD_EMAIL_MAX_LIBRARY_ASSETS) {
+        setLeadEmailError(
+          `Solo puedes seleccionar hasta ${LEAD_EMAIL_MAX_LIBRARY_ASSETS} activos de biblioteca.`,
+        );
+        return current;
+      }
+
+      if (mappedAttachment) {
+        setLeadEmailDraft((draftCurrent) => ({
+          ...(draftCurrent || {}),
+          attachments: [
+            ...(draftCurrent?.attachments || []).filter(
+              (attachment) => attachment.id !== mappedAttachment.id,
+            ),
+            mappedAttachment,
+          ],
+        }));
+      }
+
+      return [...current, normalizedId];
+    });
+
+    setLeadEmailNotice("");
+  }
+
+  function handleUseLeadEmailAiSuggestion() {
+    const subject = normalizeText(leadEmailAiSuggestion.subject);
+    const messageBody = normalizeText(leadEmailAiSuggestion.messageBody);
+    if (!subject && !messageBody) return;
+
+    setLeadEmailDraft((current) => ({
+      ...(current || {}),
+      subject: subject || current?.subject,
+      messageBody: messageBody || current?.messageBody,
+    }));
+    setLeadEmailNotice("Sugerencia copiada al borrador.");
+  }
+
+  async function handleRequestLeadAiDraft() {
+    if (!detail?.id || !leadEmailDraft) return;
+    setLeadEmailGeneratingAiDraft(true);
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+
+    try {
+      const response = await api.post(
+        `/api/interactions/${detail.id}/email-suggestion`,
+        {
+          details: {
+            recipient: normalizeText(leadEmailDraft.recipient),
+            cc: normalizeText(leadEmailDraft.cc),
+            subject: normalizeText(leadEmailDraft.subject),
+            messageBody: normalizeText(leadEmailDraft.messageBody),
+            purpose: "other",
+            purposeOther:
+              normalizeText(leadEmailDraft.purposeOther) || "company_intro",
+            aiInstructionText: normalizeText(leadEmailAiInstructionText),
+            attachments: selectedLeadLibraryAttachments,
+          },
+        },
+      );
+
+      setLeadEmailAiSuggestion({
+        subject: normalizeText(response?.data?.subject),
+        messageBody: normalizeText(response?.data?.messageBody),
+        source: normalizeText(response?.data?.source || "fallback"),
+        sourceReason: normalizeText(response?.data?.sourceReason),
+      });
+      setLeadEmailNotice("Sugerencia generada con IA.");
+    } catch (err) {
+      setLeadEmailError(
+        getApiErrorMessage(err, "No fue posible generar el borrador con IA."),
+      );
+    } finally {
+      setLeadEmailGeneratingAiDraft(false);
+    }
+  }
+
+  async function handleRequestLeadAiAttachments() {
+    if (!detail?.id || !leadEmailDraft) return;
+    setLeadEmailGeneratingAiAttachments(true);
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+
+    try {
+      const response = await api.post(
+        `/api/interactions/${detail.id}/email-attachment-suggestions`,
+        {
+          details: {
+            purposeOther:
+              normalizeText(leadEmailDraft.purposeOther) || "company_intro",
+            aiInstructionText: normalizeText(leadEmailAiInstructionText),
+            attachments: selectedLeadLibraryAttachments,
+          },
+        },
+      );
+
+      const suggestedOptions = (
+        Array.isArray(response?.data?.suggestions)
+          ? response.data.suggestions
+          : []
+      )
+        .map((item) => ({
+          id: normalizeText(item?.id),
+          sourceLabel: normalizeText(item?.sourceLabel) || "Biblioteca",
+          resourcePublicId: normalizeText(item?.resourcePublicId),
+          filePublicId: normalizeText(item?.filePublicId),
+          fileName: normalizeText(item?.fileName),
+          mimeType: normalizeText(item?.mimeType),
+          byteSize: Number(item?.byteSize || 0),
+          title: normalizeText(item?.title),
+          summary: normalizeText(item?.summary),
+          assetTypeLabel: normalizeText(item?.assetTypeLabel),
+        }))
+        .filter((item) => item.id && item.resourcePublicId && item.filePublicId)
+        .slice(0, LEAD_EMAIL_MAX_LIBRARY_ASSETS);
+
+      if (!suggestedOptions.length) {
+        setLeadEmailNotice("No se encontraron adjuntos sugeridos por IA.");
+        return;
+      }
+
+      const currentSelectedIds = Array.isArray(
+        leadEmailSelectedLibraryAttachmentIds,
+      )
+        ? leadEmailSelectedLibraryAttachmentIds
+        : [];
+      const availableSlots = Math.max(
+        LEAD_EMAIL_MAX_LIBRARY_ASSETS - currentSelectedIds.length,
+        0,
+      );
+
+      const suggestedAttachments = suggestedOptions
+        .map((item) => mapLibraryOptionToLeadEmailAttachment(item, "ai"))
+        .filter(Boolean);
+
+      const newSuggestedAttachments = suggestedAttachments
+        .filter((attachment) => !currentSelectedIds.includes(attachment.id))
+        .slice(0, availableSlots);
+
+      if (!newSuggestedAttachments.length) {
+        setLeadEmailNotice(
+          "No se agregaron nuevos adjuntos porque ya alcanzaste el limite o ya estaban seleccionados.",
+        );
+        return;
+      }
+
+      setLeadEmailSelectedLibraryAttachmentIds((current) =>
+        Array.from(
+          new Set([
+            ...(Array.isArray(current) ? current : []),
+            ...newSuggestedAttachments.map((attachment) => attachment.id),
+          ]),
+        ),
+      );
+
+      setLeadEmailDraft((current) => {
+        const currentAttachments = Array.isArray(current?.attachments)
+          ? current.attachments
+          : [];
+        const mergedById = new Map(
+          currentAttachments.map((attachment) => [attachment.id, attachment]),
+        );
+        newSuggestedAttachments.forEach((attachment) => {
+          mergedById.set(attachment.id, attachment);
+        });
+
+        return {
+          ...(current || {}),
+          attachments: Array.from(mergedById.values()),
+        };
+      });
+
+      setLeadEmailNotice(
+        `La IA sugirio ${newSuggestedAttachments.length} adjunto(s) de biblioteca.`,
+      );
+    } catch (err) {
+      setLeadEmailError(
+        getApiErrorMessage(err, "No fue posible sugerir adjuntos con IA."),
+      );
+    } finally {
+      setLeadEmailGeneratingAiAttachments(false);
+    }
+  }
+
+  function handleRemoveLeadEmailAttachment(attachmentId) {
+    const normalizedId = normalizeText(attachmentId);
+    setLeadEmailDraft((current) => ({
+      ...(current || {}),
+      attachments: (current?.attachments || []).filter(
+        (attachment) => attachment.id !== normalizedId,
+      ),
+    }));
+    setLeadEmailSelectedLibraryAttachmentIds((current) =>
+      current.filter((id) => id !== normalizedId),
+    );
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+  }
+
+  async function handleAddLeadEmailAttachments(files) {
+    if (!leadEmailDraft) return;
+
+    const incomingFiles = Array.isArray(files) ? files : [];
+    if (!incomingFiles.length) return;
+
+    const currentAttachments = Array.isArray(leadEmailDraft.attachments)
+      ? leadEmailDraft.attachments
+      : [];
+    if (currentAttachments.length + incomingFiles.length > 10) {
+      setLeadEmailError("Solo puedes adjuntar hasta 10 archivos.");
+      return;
+    }
+
+    const mapped = incomingFiles
+      .map((file, index) => mapLocalFileToLeadEmailAttachment(file, index))
+      .filter(Boolean);
+
+    setLeadEmailDraft((current) => ({
+      ...(current || {}),
+      attachments: [...currentAttachments, ...mapped],
+    }));
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+  }
+
+  async function handleConnectLeadEmailGoogleMail() {
+    if (typeof window === "undefined") return;
+    const connectUrl =
+      leadEmailGoogleMailStatus.startUrl || "/api/auth/google-mail/start";
+    const returnTo = window.location.href;
+
+    try {
+      await api.post("/api/auth/google-mail/disconnect").catch(() => null);
+      const { data } = await api.get(connectUrl, {
+        params: { returnTo, mode: "json" },
+      });
+      const oauthUrl = String(data?.url || "").trim();
+      if (!oauthUrl) {
+        setLeadEmailError("No fue posible iniciar la conexion con Google.");
+        return;
+      }
+      window.location.assign(oauthUrl);
+    } catch (err) {
+      setLeadEmailError(
+        getApiErrorMessage(
+          err,
+          "No fue posible iniciar la conexion con Google.",
+        ),
+      );
+    }
+  }
+
+  async function handleRequestSendLeadEmail() {
+    if (!detail?.id || !leadEmailDraft) return;
+
+    const recipient =
+      normalizeText(leadEmailDraft.recipient) || leadPrimaryEmail;
+    const subject = normalizeText(leadEmailDraft.subject);
+    const messageBody = normalizeText(leadEmailDraft.messageBody);
+    const ccList = parseEmailList(leadEmailDraft.cc);
+
+    if (!normalizeText(leadEmailDraft.recipient) && recipient) {
+      setLeadEmailDraft((current) => ({
+        ...(current || {}),
+        recipient,
+      }));
+    }
+
+    if (!recipient) {
+      setLeadEmailError(
+        "No hay destinatario principal disponible en este lead.",
+      );
+      return;
+    }
+    if (!subject) {
+      setLeadEmailError("Indica el asunto del correo.");
+      return;
+    }
+    if (!messageBody) {
+      setLeadEmailError("El mensaje no puede ir vacio.");
+      return;
+    }
+    if (!isValidEmail(recipient)) {
+      setLeadEmailError("Hay correos con formato invalido.");
+      return;
+    }
+    if (ccList.some((email) => !isValidEmail(email))) {
+      setLeadEmailError("Hay correos con formato invalido en CC.");
+      return;
+    }
+
+    const latestGoogleStatus = await loadLeadEmailGoogleMailStatus({
+      silent: true,
+    });
+    if (!latestGoogleStatus?.canSend) {
+      if (latestGoogleStatus?.connected && latestGoogleStatus?.missingScope) {
+        setLeadEmailError(
+          "Tu conexion de Google no incluye permiso de envio. Reconecta y acepta el permiso solicitado.",
+        );
+      } else {
+        setLeadEmailError(
+          "Tu conexion de Google no esta lista para enviar correos.",
+        );
+      }
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Se enviara este correo ahora a ${recipient}. ¿Deseas continuar?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setLeadEmailSending(true);
+    setLeadEmailError("");
+    setLeadEmailNotice("");
+    setError("");
+    setSuccess("");
+
+    try {
+      const draftAttachments = Array.isArray(leadEmailDraft.attachments)
+        ? leadEmailDraft.attachments
+        : [];
+      const nonLocalAttachments = draftAttachments.filter(
+        (attachment) => attachment?.sourceType !== "local_upload",
+      );
+      const localAttachments = draftAttachments.filter(
+        (attachment) =>
+          attachment?.sourceType === "local_upload" && attachment?.file,
+      );
+      const mergedAttachments = [
+        ...nonLocalAttachments,
+        ...selectedLeadLibraryAttachments,
+      ].filter(Boolean);
+      const uniqueNonLocalAttachments = Array.from(
+        new Map(
+          mergedAttachments.map((attachment) => [attachment.id, attachment]),
+        ).values(),
+      );
+      const formData = new FormData();
+      formData.append(
+        "details",
+        JSON.stringify({
+          recipient,
+          cc: normalizeText(leadEmailDraft.cc),
+          subject,
+          messageBody,
+          purpose: "other",
+          purposeOther:
+            normalizeText(leadEmailDraft.purposeOther) || "company_intro",
+          aiInstructionText: normalizeText(leadEmailAiInstructionText),
+          attachments: uniqueNonLocalAttachments,
+          markDoneOnSend: false,
+        }),
+      );
+      localAttachments.forEach((attachment, index) => {
+        formData.append(`file_${index}`, attachment.file, attachment.file.name);
+      });
+
+      await api.post(`/api/interactions/${detail.id}/send-email`, formData);
+
+      const successMessage = `Correo enviado correctamente a ${recipient}.`;
+      setLeadEmailNotice(successMessage);
+      setSuccess(successMessage);
+      setIsLeadEmailModalOpen(false);
+      await loadInteractions();
+      if (detail?.id) {
+        const { data } = await api.get(`/api/interactions/${detail.id}`);
+        setDetail(data);
+        setEditForm(buildEditableForm(data));
+        setResolutionForm(
+          buildInitialResolutionForm(data, options, currentUser),
+        );
+      }
+    } catch (err) {
+      const reason = String(err?.response?.data?.reason || "").toLowerCase();
+      const missingFields = Array.isArray(err?.response?.data?.missingFields)
+        ? err.response.data.missingFields
+        : [];
+      if (reason === "google_reconnect_required") {
+        const reconnectMessage =
+          "La conexion con Google expiro o fue revocada. Reconecta para continuar.";
+        setLeadEmailError(reconnectMessage);
+        setError(reconnectMessage);
+        await loadLeadEmailGoogleMailStatus({ silent: true });
+      } else if (reason === "google_scope_missing") {
+        const missingScopeMessage =
+          "La conexion de Google no incluye permiso de envio. Reconecta y acepta el permiso solicitado.";
+        setLeadEmailError(missingScopeMessage);
+        setError(missingScopeMessage);
+        await loadLeadEmailGoogleMailStatus({ silent: true });
+      } else if (missingFields.includes("recipient")) {
+        const missingRecipientMessage =
+          "Debes completar el destinatario principal antes de enviar.";
+        setLeadEmailError(missingRecipientMessage);
+        setError(missingRecipientMessage);
+      } else if (missingFields.includes("subject")) {
+        const missingSubjectMessage =
+          "Debes completar el asunto antes de enviar.";
+        setLeadEmailError(missingSubjectMessage);
+        setError(missingSubjectMessage);
+      } else if (missingFields.includes("messageBody")) {
+        const missingMessageMessage =
+          "Debes completar el mensaje base antes de enviar.";
+        setLeadEmailError(missingMessageMessage);
+        setError(missingMessageMessage);
+      } else {
+        const errorMessage = getApiErrorMessage(
+          err,
+          "No fue posible enviar el correo desde Lead.",
+        );
+        setLeadEmailError(errorMessage);
+        setError(errorMessage);
+      }
+    } finally {
+      setLeadEmailSending(false);
+    }
   }
 
   async function loadLeadOutcomeCatalogs(statusCode) {
@@ -4352,6 +5188,15 @@ function InteractionsPage({ can, currentUser }) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [openInteractionMenuId]);
+
+  useEffect(() => {
+    if (!isLeadEmailModalOpen) return;
+    const timer = window.setTimeout(() => {
+      void loadLeadEmailAttachmentOptions({ queryText: leadEmailLibraryQuery });
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [isLeadEmailModalOpen, leadEmailLibraryQuery]);
 
   useEffect(() => {
     if (!statusFilterMenuOpen) return undefined;
@@ -5739,6 +6584,9 @@ function InteractionsPage({ can, currentUser }) {
         canManageLeadCallOutcome={Boolean(
           canUpdate && detail && !isFinalizedLeadStatus(detail.analysisStatus),
         )}
+        onOpenLeadEmailModal={handleOpenLeadEmailModal}
+        canOpenLeadEmailModal={canOpenLeadEmailModal}
+        leadEmailDisabledHint={leadEmailDisabledHint}
         canAnalyze={Boolean(
           canAnalyze &&
           detail &&
@@ -5767,6 +6615,41 @@ function InteractionsPage({ can, currentUser }) {
         onClose={closeLeadCallOutcomeModal}
         onSubmit={handleSaveLeadCallOutcome}
         saving={savingLeadOutcome}
+      />
+
+      <LeadOperationEmailModal
+        isOpen={isLeadEmailModalOpen}
+        interactionId={detail?.id}
+        draft={leadEmailDraft}
+        sending={leadEmailSending}
+        generatingAiDraft={leadEmailGeneratingAiDraft}
+        generatingAiAttachments={leadEmailGeneratingAiAttachments}
+        error={leadEmailError}
+        notice={leadEmailNotice}
+        libraryError={leadEmailLibraryError}
+        googleMailStatus={leadEmailGoogleMailStatus}
+        aiInstructionText={leadEmailAiInstructionText}
+        aiSuggestionSubject={leadEmailAiSuggestion.subject}
+        aiSuggestionMessageBody={leadEmailAiSuggestion.messageBody}
+        aiSuggestionSource={leadEmailAiSuggestion.source}
+        aiSuggestionSourceReason={leadEmailAiSuggestion.sourceReason}
+        libraryQuery={leadEmailLibraryQuery}
+        libraryOptions={leadEmailLibraryOptions}
+        libraryLoading={leadEmailLoadingLibraryOptions}
+        selectedLibraryAttachmentIds={leadEmailSelectedLibraryAttachmentIds}
+        maxLibraryAssets={LEAD_EMAIL_MAX_LIBRARY_ASSETS}
+        onClose={handleCloseLeadEmailModal}
+        onChangeField={handleLeadEmailFieldChange}
+        onChangeAiInstruction={handleLeadEmailAiInstructionChange}
+        onChangeLibraryQuery={handleLeadEmailLibraryQueryChange}
+        onToggleLibraryAttachment={handleToggleLeadLibraryAttachment}
+        onAddAttachments={handleAddLeadEmailAttachments}
+        onRemoveAttachment={handleRemoveLeadEmailAttachment}
+        onRequestAiDraft={handleRequestLeadAiDraft}
+        onRequestAiAttachments={handleRequestLeadAiAttachments}
+        onUseAiSuggestion={handleUseLeadEmailAiSuggestion}
+        onRequestSend={handleRequestSendLeadEmail}
+        onConnectGoogleMail={handleConnectLeadEmailGoogleMail}
       />
 
       <div className="roles-page-header">

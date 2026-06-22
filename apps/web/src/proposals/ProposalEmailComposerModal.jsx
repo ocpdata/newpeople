@@ -88,7 +88,10 @@ export default function ProposalEmailComposerModal({
   }
 
   const mailStatus = googleMailStatus || {};
-  const canSendViaGoogle = Boolean(mailStatus.canSend);
+  const canSendViaGoogle =
+    Boolean(mailStatus.canSend) &&
+    !Boolean(mailStatus.missingScope) &&
+    !Boolean(mailStatus.needsReconnect);
   const showConnectAction = !canSendViaGoogle;
 
   function handleOpenFilePicker() {

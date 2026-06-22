@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { buffer as streamToBuffer } from "node:stream/consumers";
 import path from "node:path";
 import express from "express";
 import { z } from "zod";
 import { logAuditEvent } from "./audit.js";
+import {
+  assertAiBudgetAvailable,
+  recordAiUsageFromOpenAiResponse,
+} from "./ai-usage/service.js";
 import {
   buildAccountDuplicateResponse,
   validateAccountDuplicates,
@@ -17,12 +22,33 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { getCommercialSettings } from "./settings.js";
 import {
+  decryptOpaqueSecret,
+  exchangeGoogleRefreshToken,
+  GOOGLE_GMAIL_SEND_SCOPE,
+  hasGoogleMailSendScope,
+  sendGoogleMailMessage,
+} from "./utils.js";
+import {
   buildContactDuplicateResponse,
   validateContactDuplicates,
 } from "./routes.contacts.js";
 import { ensureInteractionAnalysisJobSchema } from "./interactions/analysis-jobs-schema.js";
 import { ensureInteractionPermissions } from "./interactions/permissions.js";
 import { ensureInteractionSchema } from "./interactions/schema.js";
+import { getCommercialEnablementFileStream } from "./commercial-enablement/service.js";
+import {
+  COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES,
+  COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES,
+  COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES,
+  COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES,
+  buildCommercialLibraryAttachmentCatalogs,
+  filterCommercialLibraryFiles,
+  listCommercialLibraryFilesForEmail,
+  normalizeCommercialEmailDraft,
+  normalizeCommercialLibraryFilters,
+  sortCommercialLibraryFiles,
+  validateCommercialEmailAttachments,
+} from "./commercial-email/shared.js";
 import {
   analyzeInteractionEvidence,
   buildDefaultOpportunityDraft,
@@ -59,6 +85,7 @@ const interactionResolveAssignSelfPermission =
 const interactionResolveAssignAnyPermission =
   "interacciones.resolve.assign_any";
 const commercialSellerEligibilityPermission = "comercial.seller.eligible";
+let interactionGoogleMailConnectionsTableEnsured = false;
 const LEAD_SOURCE_CODE_LIST = [
   "fabricante",
   "mayorista",
@@ -109,6 +136,78 @@ async function loadBusinessTimezone() {
     DEFAULT_BUSINESS_TIMEZONE;
   businessTimezoneCacheExpiresAt = nowMs + 60000;
   return businessTimezoneCache;
+}
+
+async function ensureInteractionGoogleMailConnectionsTable() {
+  if (interactionGoogleMailConnectionsTableEnsured) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_google_mail_connections (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id BIGINT UNSIGNED NOT NULL,
+      google_email VARCHAR(190) NOT NULL,
+      refresh_token_encrypted TEXT NOT NULL,
+      scope_text VARCHAR(2000) NULL,
+      last_connected_at DATETIME NOT NULL,
+      revoked_at DATETIME NULL,
+      last_error_code VARCHAR(120) NULL,
+      last_error_at DATETIME NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_google_mail_connections_user (user_id),
+      CONSTRAINT fk_user_google_mail_connections_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  interactionGoogleMailConnectionsTableEnsured = true;
+}
+
+async function findUserGoogleMailConnection(userId) {
+  await ensureInteractionGoogleMailConnectionsTable();
+  const rows = await query(
+    `SELECT
+      id,
+      google_email,
+      refresh_token_encrypted,
+      scope_text,
+      revoked_at
+    FROM user_google_mail_connections
+    WHERE user_id = ?
+    LIMIT 1`,
+    [userId],
+  );
+  const row = rows[0] || null;
+  if (!row || row.revoked_at) {
+    return null;
+  }
+  return row;
+}
+
+async function markUserGoogleMailConnectionError({ userId, errorCode }) {
+  await ensureInteractionGoogleMailConnectionsTable();
+  const now = new Date();
+  await query(
+    `UPDATE user_google_mail_connections
+     SET last_error_code = ?, last_error_at = ?, updated_at = ?
+     WHERE user_id = ?`,
+    [String(errorCode || "google_send_failed"), now, now, userId],
+  );
+}
+
+async function clearUserGoogleMailConnectionError(userId) {
+  await ensureInteractionGoogleMailConnectionsTable();
+  const now = new Date();
+  await query(
+    `UPDATE user_google_mail_connections
+     SET last_error_code = NULL, last_error_at = NULL, updated_at = ?
+     WHERE user_id = ?`,
+    [now, userId],
+  );
 }
 
 function parseDateOnlyText(value) {
@@ -3906,6 +4005,397 @@ async function linkInteractionDocumentsToOpportunities(
   }
 }
 
+function splitEmailList(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isValidEmailAddress(value) {
+  const email = String(value || "").trim();
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getLeadEmailTypeLabel(typeCode) {
+  const normalized = String(typeCode || "").trim();
+  if (normalized === "company_intro") return "presentacion";
+  if (normalized === "solution_detail") return "detalle de solucion";
+  if (normalized === "meeting_request") return "solicitud de reunion";
+  if (normalized === "demo_request") return "solicitud de demostracion";
+  return "seguimiento";
+}
+
+function buildLeadEmailSuggestionFallback({ detail, draft }) {
+  const accountName = String(detail?.accountName || "").trim();
+  const subjectPrefix = accountName ? `${accountName} - ` : "";
+  const contactName = String(detail?.contacts?.[0]?.fullName || "").trim();
+  const greeting = contactName ? `Hola ${contactName},` : "Hola,";
+  const mailType = String(draft?.purposeOther || "").trim();
+  const typeLabel = getLeadEmailTypeLabel(mailType);
+  const followUpLine =
+    mailType === "company_intro"
+      ? "Quiero presentarte de forma breve nuestra empresa y como apoyamos a equipos comerciales y de operaciones."
+      : mailType === "solution_detail"
+        ? "Comparto el detalle de la solucion para que podamos validar su encaje con tus necesidades actuales."
+        : mailType === "meeting_request"
+          ? "Me gustaria coordinar una reunion breve para revisar objetivos y siguientes pasos."
+          : mailType === "demo_request"
+            ? "Te propongo una demostracion para revisar la solucion en un escenario cercano a tu operacion."
+            : "Comparto este seguimiento para continuar con los siguientes pasos comerciales.";
+  const instructionLine = String(draft?.aiInstructionText || "").trim()
+    ? `\n\nNota adicional: ${String(draft.aiInstructionText).trim()}`
+    : "";
+
+  return {
+    subject:
+      String(draft?.subject || "").trim() ||
+      `${subjectPrefix}Seguimiento comercial (${typeLabel})`,
+    messageBody:
+      String(draft?.messageBody || "").trim() ||
+      `${greeting}\n\n${followUpLine}${instructionLine}\n\nQuedo atento a tus comentarios.\n\nSaludos.`,
+  };
+}
+
+function extractJsonObject(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function requestLeadEmailSuggestionWithAi({
+  detail,
+  draft,
+  aiUsageContext = null,
+}) {
+  const fallback = buildLeadEmailSuggestionFallback({ detail, draft });
+
+  if (!config.openai.apiKey) {
+    return {
+      ...fallback,
+      source: "fallback",
+      sourceReason: "missing_openai_api_key",
+    };
+  }
+
+  const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiUsageStartedAt = new Date();
+  const aiUsageInternalRequestId =
+    aiUsageContext?.internalRequestId || randomUUID();
+
+  if (aiUsageUserId) {
+    await assertAiBudgetAvailable({ userId: aiUsageUserId });
+  }
+
+  const normalizedDraft = normalizeCommercialEmailDraft(draft, {
+    allowedSourceTypes: ["library_file", "interaction_document"],
+  });
+  const recipientName = String(detail?.contacts?.[0]?.fullName || "").trim();
+  const selectedLibraryFiles = (
+    Array.isArray(normalizedDraft.attachments)
+      ? normalizedDraft.attachments
+      : []
+  )
+    .filter((attachment) => attachment?.sourceType === "library_file")
+    .slice(0, 3)
+    .map((attachment) => ({
+      fileName: String(attachment.fileName || "").trim(),
+      title: String(attachment.title || "").trim(),
+      summary: String(attachment.summary || "").trim(),
+      assetTypeLabel: String(attachment.assetTypeLabel || "").trim(),
+    }));
+
+  const payload = {
+    model: config.openai.model,
+    temperature: 0.2,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "lead_email_suggestion",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subject: { type: "string" },
+            messageBody: { type: "string" },
+          },
+          required: ["subject", "messageBody"],
+        },
+      },
+    },
+    messages: [
+      {
+        role: "system",
+        content:
+          "Eres un redactor comercial B2B. Responde solo con JSON valido. No inventes hechos no presentes en la entrada. Debes redactar un asunto y un mensaje base de correo en espanol, formales, ejecutivos y listos para enviar. El asunto debe ser breve, especifico y sin comillas. El mensaje base debe ser texto plano, sin markdown, con saludo profesional, cuerpo breve y cierre cordial. Si existe recipientName, usalo en el saludo de forma natural. Prioriza la instruccion del usuario (aiInstructionText) por encima del contexto fijo del lead, siempre que no contradiga hechos reales. Usa trato formal de Ud. en todo el mensaje.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          lead: {
+            id: Number(detail?.id || 0),
+            title: String(detail?.title || "").trim(),
+            accountName: String(detail?.accountName || "").trim(),
+            status: String(detail?.analysisStatus || "").trim(),
+            sellerName: String(detail?.seller?.fullName || "").trim(),
+            summary: String(detail?.summary || "").trim(),
+          },
+          emailDraft: {
+            purpose: normalizedDraft.purpose,
+            purposeOther: normalizedDraft.purposeOther,
+            recipientName,
+            aiInstructionText: normalizedDraft.aiInstructionText,
+            selectedLibraryFiles,
+          },
+          writingGoal: normalizedDraft.aiInstructionText
+            ? `Sigue esta instruccion del usuario: ${normalizedDraft.aiInstructionText}`
+            : `Redactar un correo comercial sobre: ${normalizedDraft.purposeOther || "seguimiento comercial"}.`,
+          fallback,
+          expectedShape: {
+            subject: "string",
+            messageBody: "string",
+          },
+        }),
+      },
+    ],
+  };
+
+  const response = await fetch(
+    `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  if (aiUsageUserId) {
+    try {
+      await recordAiUsageFromOpenAiResponse({
+        internalRequestId: aiUsageInternalRequestId,
+        userId: aiUsageUserId,
+        featureCode:
+          String(
+            aiUsageContext?.featureCode || "interactions.email_suggestion",
+          ) || "interactions.email_suggestion",
+        model: String(payload?.model || config.openai.model || "").trim(),
+        openAiResponse: data,
+        jobType: aiUsageContext?.jobType || null,
+        jobId: aiUsageContext?.jobId || null,
+        startedAt: aiUsageStartedAt,
+      });
+    } catch (usageError) {
+      if (config.nodeEnv !== "test") {
+        console.warn(
+          "Lead email suggestion usage log warning:",
+          usageError?.message || usageError,
+        );
+      }
+    }
+  }
+
+  const completionContent = String(data?.choices?.[0]?.message?.content || "");
+  const parsed = extractJsonObject(completionContent);
+  const subject = String(parsed?.subject || "").trim() || fallback.subject;
+  const messageBody =
+    String(parsed?.messageBody || "").trim() || fallback.messageBody;
+
+  return {
+    subject,
+    messageBody,
+    source: "openai",
+    sourceReason: "openai",
+  };
+}
+
+function scoreLeadLibraryAttachment(asset, draft) {
+  const query = [
+    String(draft?.purposeOther || ""),
+    String(draft?.aiInstructionText || ""),
+    String(draft?.subject || ""),
+    String(draft?.messageBody || ""),
+  ]
+    .join(" ")
+    .toLowerCase();
+  const target = [
+    String(asset?.fileName || ""),
+    String(asset?.title || ""),
+    String(asset?.summary || ""),
+    String(asset?.assetTypeLabel || ""),
+    ...(Array.isArray(asset?.solutionLabels) ? asset.solutionLabels : []),
+    ...(Array.isArray(asset?.industryLabels) ? asset.industryLabels : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (!query.trim()) return 0;
+  return query
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+    .reduce((acc, token) => (target.includes(token) ? acc + 1 : acc), 0);
+}
+
+async function loadInteractionEmailAttachmentOptions({ user, libraryFilters }) {
+  const allLibraryFiles = await listCommercialLibraryFilesForEmail({ user });
+  const libraryCatalogs =
+    buildCommercialLibraryAttachmentCatalogs(allLibraryFiles);
+  const filteredLibraryFiles = filterCommercialLibraryFiles(
+    allLibraryFiles,
+    libraryFilters,
+  );
+  const sortedLibraryFiles = sortCommercialLibraryFiles(
+    filteredLibraryFiles,
+    libraryFilters?.sort,
+  );
+
+  return {
+    libraryFiles: sortedLibraryFiles,
+    libraryCatalogs,
+    appliedLibraryFilters: normalizeCommercialLibraryFilters(libraryFilters),
+    libraryStats: {
+      totalAvailable: allLibraryFiles.length,
+      totalMatching: sortedLibraryFiles.length,
+    },
+    constraints: {
+      maxFiles: COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES,
+      maxTotalBytes: COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES,
+      allowedMimeTypes: Array.from(
+        COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES,
+      ),
+    },
+  };
+}
+
+async function resolveInteractionEmailAttachment({
+  interactionId,
+  user,
+  attachment,
+}) {
+  if (attachment.sourceType === "library_file") {
+    const file = await getCommercialEnablementFileStream({
+      user,
+      assetPublicId: attachment.resourcePublicId,
+      filePublicId: attachment.filePublicId,
+    });
+    if (!file) {
+      const error = new Error("Activo de biblioteca no encontrado");
+      error.status = 404;
+      throw error;
+    }
+    const content = await streamToBuffer(file.stream);
+    return {
+      fileName: attachment.fileName || file.fileName || "archivo",
+      mimeType:
+        attachment.mimeType || file.mimeType || "application/octet-stream",
+      content,
+      byteSize: content.length,
+    };
+  }
+
+  if (attachment.sourceType === "interaction_document") {
+    const rows = await query(
+      `SELECT storage_bucket, storage_key, original_file_name, mime_type
+       FROM documents
+       WHERE public_id = ?
+         AND entity_type = 'interaction'
+         AND entity_id = ?
+         AND is_deleted = 0
+       LIMIT 1`,
+      [attachment.documentPublicId, Number(interactionId)],
+    );
+    if (!rows.length) {
+      const error = new Error("Documento no disponible para este lead");
+      error.status = 404;
+      throw error;
+    }
+    const row = rows[0];
+    const content = await storage.readBuffer({
+      storageKey: row.storage_key,
+      storageBucket: row.storage_bucket,
+    });
+
+    return {
+      fileName: attachment.fileName || row.original_file_name || "documento",
+      mimeType:
+        attachment.mimeType || row.mime_type || "application/octet-stream",
+      content,
+      byteSize: content.length,
+    };
+  }
+
+  const error = new Error("Tipo de adjunto no soportado");
+  error.status = 400;
+  throw error;
+}
+
+async function resolveInteractionEmailAttachments({
+  interactionId,
+  user,
+  details,
+}) {
+  const attachments = Array.isArray(details?.attachments)
+    ? details.attachments
+    : [];
+  if (!attachments.length) {
+    return [];
+  }
+
+  const validationError = validateCommercialEmailAttachments(attachments);
+  if (validationError) {
+    const error = new Error(validationError);
+    error.status = 400;
+    throw error;
+  }
+
+  let totalBytes = 0;
+  const resolvedAttachments = [];
+  for (const attachment of attachments) {
+    const resolved = await resolveInteractionEmailAttachment({
+      interactionId,
+      user,
+      attachment,
+    });
+    totalBytes += Number(resolved.byteSize || 0);
+    if (totalBytes > COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+      const error = new Error(
+        "El tamano total de adjuntos supera el limite permitido para el correo.",
+      );
+      error.status = 400;
+      throw error;
+    }
+    resolvedAttachments.push({
+      filename: resolved.fileName,
+      contentType: resolved.mimeType,
+      content: resolved.content,
+    });
+  }
+
+  return resolvedAttachments;
+}
+
 router.use(async (_req, _res, next) => {
   try {
     await ensureInteractionPermissions();
@@ -4682,6 +5172,457 @@ router.get(
     );
     res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
     return res.send(buffer);
+  },
+);
+
+router.get(
+  "/:interactionId/email-attachments/options",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const options = await loadInteractionEmailAttachmentOptions({
+      user: req.user,
+      libraryFilters: {
+        q: req.query?.q,
+        manufacturerCodes: req.query?.manufacturerCodes,
+        solutionCodes: req.query?.solutionCodes,
+        industryCodes: req.query?.industryCodes,
+        sort: req.query?.sort,
+      },
+    });
+    const interactionDocuments = await fetchInteractionDocuments(interactionId);
+
+    return res.json({
+      ...options,
+      interactionDocuments: interactionDocuments
+        .filter((document) =>
+          COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES.has(
+            String(document?.mimeType || "")
+              .trim()
+              .toLowerCase(),
+          ),
+        )
+        .map((document) => ({
+          id: `interaction:${document.publicId}`,
+          sourceType: "interaction_document",
+          sourceLabel: "Documento cargado",
+          documentPublicId: document.publicId,
+          fileName: document.originalFileName || "documento",
+          mimeType: document.mimeType || "application/octet-stream",
+          byteSize: Number(document.byteSize || 0),
+          createdAt: document.createdAt,
+        })),
+    });
+  },
+);
+
+router.post(
+  "/:interactionId/email-suggestion",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const detail = await fetchInteractionDetail(interactionId, req.user);
+    if (!detail) {
+      return res.status(404).json({ message: "Lead no encontrado" });
+    }
+
+    const draft = normalizeCommercialEmailDraft(
+      req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {},
+      {
+        allowedSourceTypes: ["library_file", "interaction_document"],
+      },
+    );
+    const fallbackSuggestion = buildLeadEmailSuggestionFallback({
+      detail,
+      draft,
+    });
+
+    try {
+      const result = await requestLeadEmailSuggestionWithAi({
+        detail,
+        draft,
+        aiUsageContext: req.user?.id
+          ? {
+              userId: Number(req.user.id),
+              featureCode: "interactions.email_suggestion",
+              jobType: "interaction_email_suggestion",
+              jobId: Number(detail.id),
+              internalRequestId: `interaction_email_suggestion:${Number(detail.id)}:${Date.now()}`,
+            }
+          : null,
+      });
+
+      return res.json({
+        subject: String(result?.subject || fallbackSuggestion.subject).trim(),
+        messageBody: String(
+          result?.messageBody || fallbackSuggestion.messageBody,
+        ).trim(),
+        source: String(
+          result?.source || fallbackSuggestion.source || "fallback",
+        ).trim(),
+        sourceReason: String(result?.sourceReason || "").trim(),
+      });
+    } catch (error) {
+      if (config.nodeEnv !== "test") {
+        console.error(
+          "Lead email suggestion AI error:",
+          error?.message || error,
+        );
+      }
+
+      const fallbackReason =
+        String(error?.code || "").trim() === "AI_BUDGET_EXCEEDED"
+          ? "ai_budget_exceeded"
+          : String(error?.message || "").includes("OpenAI request failed")
+            ? "openai_request_failed"
+            : "ai_generation_error";
+
+      return res.json({
+        ...fallbackSuggestion,
+        source: "fallback",
+        sourceReason: fallbackReason,
+      });
+    }
+  },
+);
+
+router.post(
+  "/:interactionId/email-attachment-suggestions",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const draft = normalizeCommercialEmailDraft(
+      req.body?.details && typeof req.body.details === "object"
+        ? req.body.details
+        : {},
+      {
+        allowedSourceTypes: ["library_file", "interaction_document"],
+      },
+    );
+
+    const options = await loadInteractionEmailAttachmentOptions({
+      user: req.user,
+      libraryFilters: { q: "" },
+    });
+    const selectedIds = new Set(
+      (Array.isArray(draft.attachments) ? draft.attachments : [])
+        .filter((attachment) => attachment?.sourceType === "library_file")
+        .map((attachment) => String(attachment.id || "").trim())
+        .filter(Boolean),
+    );
+
+    const suggestions = (
+      Array.isArray(options.libraryFiles) ? options.libraryFiles : []
+    )
+      .filter((asset) => !selectedIds.has(String(asset.id || "").trim()))
+      .map((asset) => ({
+        asset,
+        score: scoreLeadLibraryAttachment(asset, draft),
+      }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES)
+      .map((item) => item.asset);
+
+    return res.json({
+      source: "fallback",
+      suggestions,
+    });
+  },
+);
+
+router.post(
+  "/:interactionId/send-email",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    let parsedFiles = [];
+    try {
+      const interactionId = Number(req.params.interactionId);
+      if (!Number.isInteger(interactionId) || interactionId <= 0) {
+        return res.status(400).json({ message: "Parametros invalidos" });
+      }
+
+      const access = await requireAccessibleInteractionOr404({
+        user: req.user,
+        interactionId,
+      });
+      if (!access.ok) {
+        return res.status(access.response.status).json(access.response.body);
+      }
+
+      const detail = await fetchInteractionDetail(interactionId, req.user);
+      if (!detail) {
+        return res.status(404).json({ message: "Lead no encontrado" });
+      }
+      if (!detail.sellerUserId) {
+        return res.status(409).json({
+          message: "Este lead debe estar asignado para enviar correos",
+        });
+      }
+
+      const { fields, files } = await parseMultipartFiles(req).catch(() => ({
+        fields: req.body || {},
+        files: [],
+      }));
+      parsedFiles = files;
+
+      let rawDetails =
+        Array.isArray(fields?.details) && fields.details.length > 0
+          ? fields.details[0]
+          : fields?.details && typeof fields.details === "string"
+            ? fields.details
+            : req.body?.details && typeof req.body.details === "object"
+              ? req.body.details
+              : {};
+      if (Array.isArray(rawDetails) && rawDetails.length > 0) {
+        rawDetails = rawDetails[0];
+      }
+      if (typeof rawDetails === "string") {
+        try {
+          rawDetails = JSON.parse(rawDetails);
+        } catch {
+          return res.status(400).json({ message: "Datos invalidos" });
+        }
+      }
+
+      const draft = normalizeCommercialEmailDraft(rawDetails, {
+        allowedSourceTypes: ["library_file"],
+      });
+
+      const recipient = String(draft.recipient || "").trim();
+      const ccList = splitEmailList(draft.cc);
+      if (!recipient) {
+        return res.status(400).json({
+          message: "Destinatario, asunto y mensaje base son obligatorios",
+          reason: "missing_email_recipient",
+          missingFields: ["recipient"],
+        });
+      }
+      if (!String(draft.subject || "").trim()) {
+        return res.status(400).json({
+          message: "Destinatario, asunto y mensaje base son obligatorios",
+          reason: "missing_email_subject",
+          missingFields: ["subject"],
+        });
+      }
+      if (!String(draft.messageBody || "").trim()) {
+        return res.status(400).json({
+          message: "Destinatario, asunto y mensaje base son obligatorios",
+          reason: "missing_email_message_body",
+          missingFields: ["messageBody"],
+        });
+      }
+      if (!isValidEmailAddress(recipient)) {
+        return res.status(400).json({
+          message:
+            "El destinatario principal no tiene un formato de correo valido",
+        });
+      }
+      if (ccList.some((email) => !isValidEmailAddress(email))) {
+        return res.status(400).json({
+          message: "Hay correos en CC con formato invalido",
+        });
+      }
+
+      if (
+        draft.attachments.length + files.length >
+        COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES
+      ) {
+        return res.status(400).json({
+          message: `Solo puedes incluir hasta ${COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES} documentos por correo.`,
+        });
+      }
+
+      const attachmentValidationError = validateCommercialEmailAttachments(
+        draft.attachments,
+      );
+      if (attachmentValidationError) {
+        return res.status(400).json({ message: attachmentValidationError });
+      }
+
+      const libraryAttachmentBytes = (
+        Array.isArray(draft.attachments) ? draft.attachments : []
+      ).reduce(
+        (total, attachment) => total + Number(attachment?.byteSize || 0),
+        0,
+      );
+
+      let totalLocalAttachmentBytes = 0;
+      const extraAttachments = [];
+      for (const file of files) {
+        const mimeType = String(file?.mimetype || "application/octet-stream")
+          .trim()
+          .toLowerCase();
+        if (!COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+          return res.status(400).json({
+            message: `El archivo ${String(file?.originalFilename || file?.newFilename || "seleccionado").trim() || "seleccionado"} no tiene un tipo permitido para envio.`,
+          });
+        }
+
+        totalLocalAttachmentBytes += Number(file?.size || 0);
+        if (
+          libraryAttachmentBytes + totalLocalAttachmentBytes >
+          COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES
+        ) {
+          return res.status(400).json({
+            message:
+              "El tamano total de adjuntos supera el limite permitido para el correo.",
+          });
+        }
+
+        extraAttachments.push({
+          filename:
+            String(
+              file?.originalFilename || file?.newFilename || "archivo",
+            ).trim() || "archivo",
+          contentType: mimeType,
+          content: await readFile(file.filepath),
+        });
+      }
+
+      const resolvedAttachments = await resolveInteractionEmailAttachments({
+        interactionId,
+        user: req.user,
+        details: draft,
+      });
+      const googleConnection = await findUserGoogleMailConnection(req.user.id);
+      if (!googleConnection) {
+        return res.status(409).json({
+          message:
+            "Debes conectar tu cuenta de Google antes de enviar correos desde leads",
+          reason: "google_reconnect_required",
+        });
+      }
+
+      if (!hasGoogleMailSendScope(googleConnection.scope_text || "")) {
+        return res.status(409).json({
+          message:
+            "Tu conexion de Google no incluye permisos para enviar correo",
+          reason: "google_scope_missing",
+          requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+        });
+      }
+
+      try {
+        const refreshToken = decryptOpaqueSecret(
+          googleConnection.refresh_token_encrypted,
+        );
+        const tokenPayload = await exchangeGoogleRefreshToken(refreshToken);
+
+        await sendGoogleMailMessage({
+          accessToken: tokenPayload.access_token,
+          from: googleConnection.google_email,
+          to: recipient,
+          cc: ccList.join(", "),
+          subject: draft.subject,
+          messageBody: draft.messageBody,
+          attachments: [...resolvedAttachments, ...extraAttachments],
+        });
+
+        await clearUserGoogleMailConnectionError(req.user.id);
+      } catch (error) {
+        const errorCode = String(error?.code || "google_send_failed");
+        await markUserGoogleMailConnectionError({
+          userId: req.user.id,
+          errorCode,
+        });
+
+        const reconnectCodes = new Set([
+          "invalid_grant",
+          "invalid_token",
+          "unauthenticated",
+        ]);
+
+        if (reconnectCodes.has(errorCode.toLowerCase())) {
+          return res.status(409).json({
+            message:
+              "La conexion con Google expiro o fue revocada. Reconecta tu cuenta para continuar",
+            reason: "google_reconnect_required",
+          });
+        }
+
+        if (errorCode.toLowerCase() === "insufficient_scope") {
+          return res.status(409).json({
+            message:
+              "Tu conexion con Google no tiene permisos suficientes para enviar correo",
+            reason: "google_scope_missing",
+            requiredScope: GOOGLE_GMAIL_SEND_SCOPE,
+          });
+        }
+
+        return res.status(502).json({
+          message:
+            String(error?.detail || error?.message || "") ||
+            "No fue posible enviar el correo mediante Google",
+          reason: "google_send_failed",
+        });
+      }
+
+      await logAuditEvent({
+        req,
+        module: "interacciones",
+        action: "lead_email_sent",
+        entityType: "interaction",
+        entityId: interactionId,
+        detail: `Correo enviado desde lead: ${draft.subject}`,
+        after: {
+          recipient,
+          cc: draft.cc,
+          subject: draft.subject,
+          purposeOther: draft.purposeOther,
+          attachmentCount:
+            (Array.isArray(draft.attachments) ? draft.attachments.length : 0) +
+            extraAttachments.length,
+        },
+      });
+
+      return res.json({
+        message: `Correo enviado correctamente a ${recipient}.`,
+        interaction: {
+          id: detail.id,
+          analysisStatus: detail.analysisStatus,
+        },
+      });
+    } finally {
+      await cleanupTempFiles(parsedFiles).catch(() => undefined);
+    }
   },
 );
 
