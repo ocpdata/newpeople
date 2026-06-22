@@ -6,6 +6,7 @@ import { query, withTransaction } from "./db.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 
 const router = express.Router();
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 const periodSchema = z.object({
   year: z.number().int().min(2020).max(2100),
@@ -704,12 +705,14 @@ async function listEligibleSellers() {
      FROM users u
      INNER JOIN user_roles ur ON ur.user_id = u.id
      INNER JOIN roles r ON r.id = ur.role_id
+     INNER JOIN role_permissions rp ON rp.role_id = r.id
+     INNER JOIN permissions p ON p.id = rp.permission_id
      WHERE u.status = 'active'
        AND r.is_active = 1
-       AND LOWER(TRIM(r.name)) = 'vendedor'
+       AND p.code = ?
      GROUP BY u.id, u.full_name, u.email, u.status
      ORDER BY u.full_name`,
-    [],
+    [commercialSellerEligibilityPermission],
   );
 
   return rows.map((row) => ({

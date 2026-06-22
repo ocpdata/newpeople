@@ -1879,7 +1879,7 @@ async function ensureQuotationCreateProviderDocumentImportPreviewJobSchema() {
   return ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise;
 }
 
-async function ensureProposalSchema() {
+export async function ensureProposalSchema() {
   if (!ensureProposalSchemaPromise) {
     ensureProposalSchemaPromise = (async () => {
       await query(

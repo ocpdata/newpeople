@@ -1423,6 +1423,13 @@ export default function CommercialPlanningPage({ can }) {
                     </tr>
                   );
                 })}
+                {!targetDrafts.length ? (
+                  <tr>
+                    <td colSpan="7" className="centered">
+                      No hay vendedores elegibles para capturar metas.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>

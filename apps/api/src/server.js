@@ -26,6 +26,7 @@ import { startCommercialNarrativeWorker } from "./routes.execution-commercial.js
 import { startInteractionAnalysisWorker } from "./routes.interactions.js";
 import {
   ensureQuotationProviderDocumentImportPreviewJobSchema,
+  ensureProposalSchema,
   ensureProposalExecutiveSummaryGenerationJobSchema,
   startQuotationProviderDocumentImportPreviewWorker,
   startProposalExecutiveSummaryGenerationWorker,
@@ -65,6 +66,7 @@ export async function startServer() {
   await ensureOpportunityStageValidationJobSchema();
   await ensureOpportunityWorkspaceSchema();
   await ensureQuotationProviderDocumentImportPreviewJobSchema();
+  await ensureProposalSchema();
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   await ensureCommercialExecutionSchema();
   await ensureCommercialEnablementSchema();
