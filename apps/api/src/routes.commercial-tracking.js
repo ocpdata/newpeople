@@ -72,6 +72,11 @@ const NEXT_STEP_ACTION_TYPES = [
   "waiting_customer",
 ];
 
+const QUARTERLY_AVG_WON_TICKET_USD = 50000;
+const QUARTERLY_OPPORTUNITIES_TO_WON_RATIO = 4;
+const QUARTERLY_LEADS_TO_WON_RATIO = 10;
+const DEFAULT_QUOTATION_VAT_PCT = 16;
+
 function userHasPermission(user, permission) {
   return user?.permissionSet?.has(permission);
 }
@@ -247,6 +252,195 @@ function getDiffDays(fromDate, toDate = new Date()) {
 
 function toAmount(value) {
   return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function toYearValue(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 2000 && parsed <= 2100
+    ? parsed
+    : new Date().getFullYear();
+}
+
+function getQuarterRange(year, quarter) {
+  const start = startOfDay(new Date(year, (quarter - 1) * 3, 1));
+  const end = endOfDay(new Date(year, quarter * 3, 0));
+  return {
+    start,
+    end,
+    label: `T${quarter} ${year}`,
+  };
+}
+
+function isOpenPipelineStatus(statusCode) {
+  const code = String(statusCode || "").trim();
+  return !["ganada", "perdida", "anulada"].includes(code);
+}
+
+function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "qv") {
+  return `LEFT JOIN (
+      SELECT qs.quotation_version_id,
+             SUM(
+               CASE
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   (
+                     qsi.list_price_unit *
+                     (1 - (qsi.manufacturer_discount_pct / 100)) *
+                     (1 + (qsi.import_cost_pct / 100))
+                   ) /
+                   (1 - (qsi.profit_margin_pct / 100)) *
+                   (1 - (qsi.final_discount_pct / 100))
+                 )
+               END
+             ) AS base_sale_total
+      FROM quotation_sections qs
+      INNER JOIN quotation_section_items qsi ON qsi.quotation_section_id = qs.id
+      LEFT JOIN quotation_section_items child
+        ON child.bundle_parent_item_id = qsi.id
+       AND child.quotation_section_id = qs.id
+      WHERE child.id IS NULL
+        AND qsi.item_type <> 'grupo_productos'
+      GROUP BY qs.quotation_version_id
+    ) quotation_total ON quotation_total.quotation_version_id = ${versionAlias}.id`;
+}
+
+function buildQuotationVersionEffectiveTotalSql({
+  versionAlias = "qv",
+  totalsAlias = "quotation_total",
+} = {}) {
+  const baseTotalSql = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
+  const vatPctSql = `COALESCE(${versionAlias}.summary_vat_pct, ${DEFAULT_QUOTATION_VAT_PCT})`;
+  const totalWithPerItemVatSql = `CASE
+      WHEN ${versionAlias}.summary_vat_mode = 'per_item'
+        THEN ${baseTotalSql} * (1 + (${vatPctSql} / 100))
+      ELSE ${baseTotalSql}
+    END`;
+  const discountedTotalSql = `CASE
+      WHEN ${versionAlias}.summary_distribution_mode = 'per_item'
+        THEN ${totalWithPerItemVatSql}
+      WHEN ${versionAlias}.summary_discount_mode = 'amount'
+        THEN GREATEST(
+          ${totalWithPerItemVatSql} - LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${totalWithPerItemVatSql}),
+          0
+        )
+      WHEN ${versionAlias}.summary_discount_mode = 'percentage'
+        THEN ${totalWithPerItemVatSql} *
+          (1 - (LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100))
+      ELSE ${totalWithPerItemVatSql}
+    END`;
+
+  return `CASE
+      WHEN ${versionAlias}.id IS NULL THEN NULL
+      WHEN ${versionAlias}.summary_vat_mode = 'total'
+        THEN ${discountedTotalSql} * (1 + (${vatPctSql} / 100))
+      ELSE ${discountedTotalSql}
+    END`;
+}
+
+async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
+  const hasGlobalScope = hasGlobalOpportunityScope(user);
+  const sellerFilter = toPositiveInt(sellerUserId);
+  const result = new Map();
+
+  for (let quarter = 1; quarter <= 4; quarter += 1) {
+    const periodRows = await query(
+      `SELECT p.id,
+              p.base_currency_code,
+             v.id AS version_id,
+             v.label AS version_label
+       FROM commercial_planning_periods p
+       LEFT JOIN commercial_planning_versions v ON v.id = (
+         SELECT v2.id
+         FROM commercial_planning_versions v2
+         WHERE v2.period_id = p.id AND v2.published_at IS NOT NULL
+         ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
+         LIMIT 1
+       )
+        WHERE p.plan_year = ? AND p.plan_quarter = ?
+       ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+                p.id DESC
+       LIMIT 1`,
+      [year, quarter],
+    ).catch(() => []);
+
+    const periodRow = periodRows[0] || null;
+    if (!periodRow?.version_id) {
+      result.set(quarter, {
+        quotaSalesAmountUsd: 0,
+        quotaContributionAmountUsd: 0,
+         versionLabel: null,
+      });
+      continue;
+    }
+
+    const params = [Number(periodRow.version_id)];
+    const where = ["t.version_id = ?", "t.status <> 'void'"];
+
+    if (!hasGlobalScope) {
+      where.push("t.seller_user_id = ?");
+      params.push(Number(user.id) || 0);
+    }
+    if (sellerFilter) {
+      where.push("t.seller_user_id = ?");
+      params.push(sellerFilter);
+    }
+
+    const targetRows = await query(
+      `SELECT SUM(COALESCE(t.sales_quota_amount, 0)) AS sales_quota_amount,
+              SUM(COALESCE(t.expected_contribution_amount, 0)) AS expected_contribution_amount
+       FROM commercial_planning_targets t
+       WHERE ${where.join(" AND ")}`,
+      params,
+    ).catch(() => []);
+
+    const targetRow = targetRows[0] || {};
+    result.set(quarter, {
+      quotaSalesAmountUsd: toAmount(targetRow.sales_quota_amount || 0),
+      quotaContributionAmountUsd: toAmount(
+        targetRow.expected_contribution_amount || 0,
+      ),
+       versionLabel: periodRow.version_label || null,
+    });
+  }
+
+  return result;
+}
+
+async function listWonQuotationContributionByOpportunity(opportunityIds) {
+  const normalizedIds = (opportunityIds || [])
+    .map((id) => Number(id || 0))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!normalizedIds.length) {
+    return new Map();
+  }
+
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT q.opportunity_id,
+            SUM(
+              (${buildQuotationVersionEffectiveTotalSql({ versionAlias: "qv", totalsAlias: "quotation_total" })}) *
+              CASE
+                WHEN UPPER(COALESCE(qv.currency_code, 'USD')) = 'USD' THEN 1
+                WHEN COALESCE(qv.exchange_rate, 0) > 0 THEN 1 / qv.exchange_rate
+                ELSE 1
+              END
+            ) AS contribution_amount_usd
+     FROM quotations q
+     INNER JOIN quotation_versions qv ON qv.quotation_id = q.id
+     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+     ${buildQuotationVersionBaseSaleTotalJoin("qv")}
+     WHERE q.opportunity_id IN (${placeholders})
+       AND qs.code = 'ganada'
+     GROUP BY q.opportunity_id`,
+    normalizedIds,
+  ).catch(() => []);
+
+  return new Map(
+    rows.map((row) => [
+      Number(row.opportunity_id),
+      toAmount(row.contribution_amount_usd || 0),
+    ]),
+  );
 }
 
 function formatCompactCurrency(value) {
@@ -1562,8 +1756,8 @@ async function buildQuarterQuotaSummary(
      LEFT JOIN commercial_planning_versions v ON v.id = (
        SELECT v2.id
        FROM commercial_planning_versions v2
-       WHERE v2.period_id = p.id AND v2.status = 'active'
-       ORDER BY v2.version_number DESC, v2.id DESC
+       WHERE v2.period_id = p.id AND v2.published_at IS NOT NULL
+       ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
        LIMIT 1
      )
      WHERE p.plan_year = ? AND p.plan_quarter = ?
@@ -1969,6 +2163,170 @@ async function buildForecastMonthlyPayload(user, params = {}) {
   };
 }
 
+async function buildQuarterlyPerformancePayload(user, params = {}) {
+  const year = toYearValue(params.year);
+  const sellerUserId = toPositiveInt(params.sellerUserId);
+  const businessLineId = toPositiveInt(params.businessLineId);
+
+  const yearStart = startOfDay(new Date(year, 0, 1));
+  const yearEnd = endOfDay(new Date(year, 11, 31));
+
+  const scopedOpportunities = await listScopedOpportunities(user, {
+    sellerUserId,
+    businessLineId,
+    closeDateFrom: formatIsoDate(yearStart),
+    closeDateTo: formatIsoDate(yearEnd),
+  });
+
+  const stageNameByCode = new Map();
+  scopedOpportunities.forEach((item) => {
+    const code = String(item.sales_stage_code || "").trim();
+    if (!code) return;
+    if (!stageNameByCode.has(code)) {
+      stageNameByCode.set(code, item.sales_stage_name || code);
+    }
+  });
+
+  const targetByQuarter = await loadQuarterTargetSummaryByQuarter({
+    user,
+    year,
+    sellerUserId,
+  });
+
+  const wonOpportunityIds = scopedOpportunities
+    .filter((item) => isRealWonOpportunity(item))
+    .map((item) => Number(item.id || 0));
+  const wonContributionByOpportunity =
+    await listWonQuotationContributionByOpportunity(wonOpportunityIds);
+
+  const quarters = [];
+  for (let quarter = 1; quarter <= 4; quarter += 1) {
+    const quarterRange = getQuarterRange(year, quarter);
+    const quarterItems = scopedOpportunities.filter((item) =>
+      isBetween(item.close_date, quarterRange.start, quarterRange.end),
+    );
+
+    const wonItems = quarterItems.filter((item) => isRealWonOpportunity(item));
+    const openFunnelItems = quarterItems.filter((item) =>
+      isOpenPipelineStatus(item.commercial_status_code),
+    );
+
+    const stageMap = openFunnelItems.reduce((accumulator, item) => {
+      const stageCode = String(item.sales_stage_code || "sin_etapa");
+      const current = accumulator.get(stageCode) || {
+        stageCode,
+        stageName: item.sales_stage_name || stageNameByCode.get(stageCode) || "Sin etapa",
+        stageOrder: Number(item.sales_stage_order ?? 9999),
+        openAmountUsd: 0,
+        opportunityCount: 0,
+      };
+      current.openAmountUsd += Number(item.amount_usd || 0);
+      current.opportunityCount += 1;
+      accumulator.set(stageCode, current);
+      return accumulator;
+    }, new Map());
+
+    const funnelOpenAmountUsd = toAmount(
+      openFunnelItems.reduce(
+        (sum, item) => sum + Number(item.amount_usd || 0),
+        0,
+      ),
+    );
+
+    const funnelByStage = Array.from(stageMap.values())
+      .map((item) => ({
+        stageCode: item.stageCode,
+        stageName: item.stageName,
+        stageOrder: item.stageOrder,
+        openAmountUsd: toAmount(item.openAmountUsd),
+        opportunityCount: Number(item.opportunityCount || 0),
+        stageSharePct: funnelOpenAmountUsd
+          ? toAmount((Number(item.openAmountUsd || 0) / funnelOpenAmountUsd) * 100)
+          : 0,
+      }))
+      .sort((left, right) => Number(left.stageOrder || 0) - Number(right.stageOrder || 0));
+
+    const targetSummary = targetByQuarter.get(quarter) || {
+      quotaSalesAmountUsd: 0,
+      quotaContributionAmountUsd: 0,
+    };
+
+    const actualSalesAmountUsd = toAmount(
+      wonItems.reduce((sum, item) => sum + Number(item.amount_usd || 0), 0),
+    );
+    const actualContributionAmountUsd = toAmount(
+      wonItems.reduce(
+        (sum, item) =>
+          sum +
+          Number(
+            wonContributionByOpportunity.get(Number(item.id || 0)) || 0,
+          ),
+        0,
+      ),
+    );
+
+    const salesGapAmountUsd = toAmount(
+      actualSalesAmountUsd - Number(targetSummary.quotaSalesAmountUsd || 0),
+    );
+    const contributionGapAmountUsd = toAmount(
+      actualContributionAmountUsd -
+        Number(targetSummary.quotaContributionAmountUsd || 0),
+    );
+
+    const salesMissingAmount = Math.max(
+      Number(targetSummary.quotaSalesAmountUsd || 0) - actualSalesAmountUsd,
+      0,
+    );
+    const winsNeeded = Math.ceil(
+      salesMissingAmount / QUARTERLY_AVG_WON_TICKET_USD,
+    );
+
+    quarters.push({
+      quarter,
+      label: quarterRange.label,
+      startDate: formatIsoDate(quarterRange.start),
+      endDate: formatIsoDate(quarterRange.end),
+       versionLabel: (targetByQuarter.get(quarter) || {}).versionLabel || null,
+      quotaSalesAmountUsd: toAmount(targetSummary.quotaSalesAmountUsd || 0),
+      actualSalesAmountUsd,
+      salesGapAmountUsd,
+      salesAttainmentPct: Number(targetSummary.quotaSalesAmountUsd || 0)
+        ? toAmount((actualSalesAmountUsd / Number(targetSummary.quotaSalesAmountUsd || 0)) * 100)
+        : null,
+      quotaContributionAmountUsd: toAmount(
+        targetSummary.quotaContributionAmountUsd || 0,
+      ),
+      actualContributionAmountUsd,
+      contributionGapAmountUsd,
+      contributionAttainmentPct: Number(
+        targetSummary.quotaContributionAmountUsd || 0,
+      )
+        ? toAmount(
+            (actualContributionAmountUsd /
+              Number(targetSummary.quotaContributionAmountUsd || 0)) *
+              100,
+          )
+        : null,
+      funnelOpenAmountUsd,
+      funnelByStage,
+      opportunitiesMissingCount:
+        winsNeeded * QUARTERLY_OPPORTUNITIES_TO_WON_RATIO,
+      leadsMissingCount: winsNeeded * QUARTERLY_LEADS_TO_WON_RATIO,
+    });
+  }
+
+  return {
+    year,
+    currencyCode: "USD",
+    assumptions: {
+      avgWonTicketUsd: QUARTERLY_AVG_WON_TICKET_USD,
+      opportunitiesToWonRatio: QUARTERLY_OPPORTUNITIES_TO_WON_RATIO,
+      leadsToWonRatio: QUARTERLY_LEADS_TO_WON_RATIO,
+    },
+    quarters,
+  };
+}
+
 router.get(
   "/overview",
   requireAnyPermission(["seguimiento_comercial.read"]),
@@ -2174,6 +2532,20 @@ router.get(
       viewMode: req.query?.viewMode,
     });
 
+    res.json(payload);
+  },
+);
+
+router.get(
+  "/quarterly-performance",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const payload = await buildQuarterlyPerformancePayload(req.user, {
+      year: req.query?.year,
+      sellerUserId: req.query?.sellerUserId,
+      businessLineId: req.query?.businessLineId,
+    });
     res.json(payload);
   },
 );

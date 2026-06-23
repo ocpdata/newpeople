@@ -14,6 +14,7 @@ const TAB_OPTIONS = [
   { id: "won", label: "Ganadas" },
   { id: "period", label: "Oportunidades por periodo" },
   { id: "forecast", label: "Pipeline mensual" },
+  { id: "quarterly", label: "Desempeño trimestral" },
 ];
 
 const HIDDEN_TAB_IDS = new Set(["overview", "forecast"]);
@@ -221,6 +222,26 @@ function buildForecastMonthOptions(selectedMonth) {
   });
 }
 
+function getCurrentYear() {
+  return Number(getTodayBusinessDate().slice(0, 4));
+}
+
+function buildYearOptions(selectedYear) {
+  const currentYear = getCurrentYear();
+  const candidate = Number(selectedYear || currentYear);
+  const startYear = currentYear - 3;
+  const endYear = currentYear + 2;
+  const values = [];
+  for (let year = startYear; year <= endYear; year += 1) {
+    values.push(year);
+  }
+  if (!values.includes(candidate)) {
+    values.push(candidate);
+    values.sort((left, right) => left - right);
+  }
+  return values;
+}
+
 function getDefaultPeriodStart() {
   return addDaysToIsoDate(getTodayBusinessDate(), -84);
 }
@@ -356,6 +377,237 @@ function groupOpenItemsByMonth(items) {
         .reduce((sum, item) => sum + (item.amountUsd || 0), 0),
     };
   });
+}
+
+function getQuarterBarWidth(value, maxValue) {
+  const safeValue = Number(value || 0);
+  const safeMax = Number(maxValue || 0);
+  if (safeValue <= 0 || safeMax <= 0) return 0;
+  return Math.max(2, Math.round((safeValue / safeMax) * 100));
+}
+
+function QuarterlyDualBarChart({ quarters }) {
+  const maxValue = useMemo(
+    () =>
+      (quarters || []).reduce((current, quarter) => {
+        const quota = Number(quarter?.quotaSalesAmountUsd || 0);
+        const actual = Number(quarter?.actualSalesAmountUsd || 0);
+        return Math.max(current, quota, actual);
+      }, 0),
+    [quarters],
+  );
+
+  return (
+    <div className="tracking-quarter-chart-grid">
+      {(quarters || []).map((quarter) => (
+        <article key={quarter.label} className="tracking-quarter-chart-card">
+           <h4>
+             {quarter.label}
+             {quarter.versionLabel && (
+               <span className="tracking-quarter-version-badge">{quarter.versionLabel}</span>
+             )}
+           </h4>
+          <div className="tracking-quarter-bar-row">
+            <span>Cuota</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-quota"
+                style={{ width: `${getQuarterBarWidth(quarter.quotaSalesAmountUsd, maxValue)}%` }}
+              />
+            </div>
+            <strong>{formatCurrency(quarter.quotaSalesAmountUsd)}</strong>
+          </div>
+          <div className="tracking-quarter-bar-row">
+            <span>Real</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-real"
+                style={{ width: `${getQuarterBarWidth(quarter.actualSalesAmountUsd, maxValue)}%` }}
+              />
+            </div>
+            <strong>{formatCurrency(quarter.actualSalesAmountUsd)}</strong>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function QuarterlyGapChart({ quarters }) {
+  const maxAbsGap = useMemo(
+    () =>
+      Math.max(
+        1,
+        ...(quarters || []).flatMap((quarter) => [
+          Math.abs(Number(quarter?.salesGapAmountUsd || 0)),
+          Math.abs(Number(quarter?.contributionGapAmountUsd || 0)),
+        ]),
+      ),
+    [quarters],
+  );
+
+  // width is capped at 50% so bars stay within their half of the track
+  // (positive bars grow right from center, negative bars grow left).
+  const getGapWidth = (value) =>
+    Math.max(2, Math.round((Math.abs(Number(value || 0)) / maxAbsGap) * 50));
+
+  return (
+    <div className="tracking-quarter-gap-grid">
+      {(quarters || []).map((quarter) => (
+        <article key={`gap-${quarter.label}`} className="tracking-quarter-gap-card">
+          <h4>{quarter.label}</h4>
+          {[
+            {
+              label: "Brecha cuota",
+              value: Number(quarter.salesGapAmountUsd || 0),
+            },
+            {
+              label: "Brecha contribucion",
+              value: Number(quarter.contributionGapAmountUsd || 0),
+            },
+          ].map((item) => (
+            <div key={item.label} className="tracking-quarter-gap-row">
+              <span>{item.label}</span>
+              <div className="tracking-quarter-gap-track">
+                <div className="tracking-quarter-gap-midline" />
+                <div
+                  className={`tracking-quarter-gap-bar ${item.value >= 0 ? "is-positive" : "is-negative"}`}
+                  style={{ width: `${getGapWidth(item.value)}%` }}
+                />
+              </div>
+              <strong>{formatCurrency(item.value)}</strong>
+            </div>
+          ))}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function QuarterlyMissingChart({ quarters }) {
+  const maxMissing = useMemo(
+    () =>
+      Math.max(
+        1,
+        ...(quarters || []).flatMap((quarter) => [
+          Number(quarter?.opportunitiesMissingCount || 0),
+          Number(quarter?.leadsMissingCount || 0),
+        ]),
+      ),
+    [quarters],
+  );
+
+  const getWidth = (value) =>
+    Math.max(2, Math.round((Number(value || 0) / maxMissing) * 100));
+
+  return (
+    <div className="tracking-quarter-chart-grid">
+      {(quarters || []).map((quarter) => (
+        <article key={`missing-${quarter.label}`} className="tracking-quarter-chart-card">
+          <h4>{quarter.label}</h4>
+          <div className="tracking-quarter-bar-row">
+            <span>Oportunidades faltantes</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-opportunities"
+                style={{ width: `${getWidth(quarter.opportunitiesMissingCount)}%` }}
+              />
+            </div>
+            <strong>{formatNumber(quarter.opportunitiesMissingCount)}</strong>
+          </div>
+          <div className="tracking-quarter-bar-row">
+            <span>Leads faltantes</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-leads"
+                style={{ width: `${getWidth(quarter.leadsMissingCount)}%` }}
+              />
+            </div>
+            <strong>{formatNumber(quarter.leadsMissingCount)}</strong>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+const FUNNEL_STAGE_COLOR_PALETTE = [
+  "#0b6bcb",
+  "#2f9e44",
+  "#f08c00",
+  "#a61e4d",
+  "#5f3dc4",
+  "#087f5b",
+  "#495057",
+  "#364fc7",
+];
+
+function buildStageColorMap(quarters) {
+  const map = new Map();
+  for (const quarter of quarters || []) {
+    for (const stage of quarter?.funnelByStage || []) {
+      if (!map.has(stage.stageCode)) {
+        map.set(
+          stage.stageCode,
+          FUNNEL_STAGE_COLOR_PALETTE[map.size % FUNNEL_STAGE_COLOR_PALETTE.length],
+        );
+      }
+    }
+  }
+  return map;
+}
+
+function QuarterlyFunnelStackChart({ quarters }) {
+  const stageColorMap = useMemo(
+    () => buildStageColorMap(quarters),
+    [quarters],
+  );
+
+  return (
+    <div className="tracking-quarter-stack-grid">
+      {(quarters || []).map((quarter) => {
+        const stages = (Array.isArray(quarter?.funnelByStage)
+          ? [...quarter.funnelByStage]
+          : []
+        ).sort(
+          (a, b) => Number(a.stageOrder ?? 9999) - Number(b.stageOrder ?? 9999),
+        );
+        return (
+          <article key={`funnel-${quarter.label}`} className="tracking-quarter-stack-card">
+            <div className="tracking-quarter-stack-head">
+              <h4>{quarter.label}</h4>
+              <strong>{formatCurrency(quarter.funnelOpenAmountUsd)}</strong>
+            </div>
+            <div className="tracking-quarter-stack-track">
+              {stages.length ? (
+                stages.map((stage) => (
+                  <div
+                    key={`${quarter.label}-${stage.stageCode}`}
+                    className="tracking-quarter-stack-segment"
+                    style={{
+                      width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%`,
+                      backgroundColor: stageColorMap.get(stage.stageCode),
+                    }}
+                    title={`${stage.stageName}: ${formatCurrency(stage.openAmountUsd)} (${formatPercent(stage.stageSharePct)})`}
+                  />
+                ))
+              ) : (
+                <div className="tracking-quarter-stack-empty">Sin funnel abierto</div>
+              )}
+            </div>
+            <div className="tracking-quarter-stack-legend">
+              {stages.slice(0, 4).map((stage) => (
+                <span key={`${quarter.label}-legend-${stage.stageCode}`}>
+                  <i style={{ backgroundColor: stageColorMap.get(stage.stageCode) }} />
+                  {stage.stageName}
+                </span>
+              ))}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 function SummaryCard({ label, value, helper, tone = "default", onClick }) {
@@ -630,6 +882,9 @@ export default function CommercialTrackingPage() {
   const [openFilterNextStep, setOpenFilterNextStep] = useState("");
   const [periodData, setPeriodData] = useState(null);
   const [forecastData, setForecastData] = useState(null);
+  const [quarterlyPerformanceData, setQuarterlyPerformanceData] =
+    useState(null);
+  const [quarterlyYear, setQuarterlyYear] = useState(getCurrentYear);
   const [forecastSort, setForecastSort] = useState(FORECAST_SORT_DEFAULT);
   const [loading, setLoading] = useState(true);
   const [loadingOverview, setLoadingOverview] = useState(true);
@@ -751,6 +1006,20 @@ export default function CommercialTrackingPage() {
     }
   }
 
+  async function loadQuarterlyPerformanceData() {
+    const response = await api.get(
+      "/api/commercial-tracking/quarterly-performance",
+      {
+        params: {
+          year: quarterlyYear,
+          sellerUserId: sellerUserId || undefined,
+          businessLineId: businessLineId || undefined,
+        },
+      },
+    );
+    setQuarterlyPerformanceData(response.data || null);
+  }
+
   async function reloadAll() {
     setError("");
     setLoading(true);
@@ -771,6 +1040,9 @@ export default function CommercialTrackingPage() {
         }
         if (activeTab === "forecast") {
           await loadForecastData();
+        }
+        if (activeTab === "quarterly") {
+          await loadQuarterlyPerformanceData();
         }
       } catch (requestError) {
         setError(
@@ -808,6 +1080,9 @@ export default function CommercialTrackingPage() {
         if (activeTab === "forecast") {
           await loadForecastData();
         }
+        if (activeTab === "quarterly") {
+          await loadQuarterlyPerformanceData();
+        }
       } catch (requestError) {
         if (!ignore) {
           setError(
@@ -837,6 +1112,7 @@ export default function CommercialTrackingPage() {
     periodTo,
     forecastMonth,
     forecastWeekStart,
+    quarterlyYear,
   ]);
 
   useEffect(() => {
@@ -858,6 +1134,9 @@ export default function CommercialTrackingPage() {
         }
         if (activeTab === "forecast") {
           await loadForecastData();
+        }
+        if (activeTab === "quarterly") {
+          await loadQuarterlyPerformanceData();
         }
       } catch (requestError) {
         if (!ignore) {
@@ -885,6 +1164,7 @@ export default function CommercialTrackingPage() {
     openMonthTo,
     forecastMonth,
     forecastWeekStart,
+    quarterlyYear,
   ]);
 
   const filteredOpenItems = useMemo(() => {
@@ -962,6 +1242,12 @@ export default function CommercialTrackingPage() {
   const forecastQuarterQuota = forecastData?.quarterQuota || null;
   const forecastWeekChange = forecastData?.weekChange || {};
   const forecastOpportunities = forecastData?.forecastOpportunities || [];
+  const quarterlyPayload = quarterlyPerformanceData || {};
+  const quarterlyItems = quarterlyPayload?.quarters || [];
+  const quarterlyYearOptions = useMemo(
+    () => buildYearOptions(quarterlyYear),
+    [quarterlyYear],
+  );
   const cockpitWeekOptions = useMemo(
     () => buildCockpitWeekOptions(weekStart),
     [weekStart],
@@ -1172,6 +1458,59 @@ export default function CommercialTrackingPage() {
               </label>
               <label>
                 Línea
+                <select
+                  value={businessLineId}
+                  onChange={(event) => setBusinessLineId(event.target.value)}
+                >
+                  <option value="">Todas</option>
+                  {businessLines.map((line) => (
+                    <option key={line.id || line.value} value={line.id || ""}>
+                      {line.name || line.label || "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : activeTab === "quarterly" ? (
+            <>
+              <label>
+                Anio
+                <select
+                  value={quarterlyYear}
+                  onChange={(event) =>
+                    setQuarterlyYear(Number(event.target.value || getCurrentYear()))
+                  }
+                >
+                  {quarterlyYearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Vendedor
+                <select
+                  value={sellerUserId}
+                  onChange={(event) => setSellerUserId(event.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {sellers.map((seller) => (
+                    <option
+                      key={seller.id || seller.value || seller.email}
+                      value={seller.id || seller.value || ""}
+                    >
+                      {seller.full_name ||
+                        seller.fullName ||
+                        seller.name ||
+                        seller.label ||
+                        "Sin nombre"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Linea
                 <select
                   value={businessLineId}
                   onChange={(event) => setBusinessLineId(event.target.value)}
@@ -1786,6 +2125,70 @@ export default function CommercialTrackingPage() {
               </table>
             </div>
           </section>
+        </div>
+      ) : null}
+
+      {!loading && activeTab === "quarterly" ? (
+        <div className="tracking-layout tracking-quarterly-layout">
+          {loadingTab ? (
+            <div className="tracking-empty-state">
+              Cargando desempeno trimestral...
+            </div>
+          ) : null}
+
+          {!loadingTab ? (
+            <>
+              <div className="tracking-summary-grid is-forecast">
+                {quarterlyItems.map((quarter) => (
+                  <SummaryCard
+                    key={`summary-${quarter.label}`}
+                    label={quarter.label}
+                    value={formatCurrency(quarter.actualSalesAmountUsd)}
+                    helper={`Cuota ${formatCurrency(quarter.quotaSalesAmountUsd)} · Brecha ${formatCurrency(quarter.salesGapAmountUsd)}`}
+                    tone={
+                      Number(quarter.salesGapAmountUsd || 0) >= 0
+                        ? "soft"
+                        : "default"
+                    }
+                  />
+                ))}
+              </div>
+
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Cuota vs venta real por trimestre</h3>
+                  <span>{quarterlyPayload?.year || quarterlyYear}</span>
+                </div>
+                <QuarterlyDualBarChart quarters={quarterlyItems} />
+              </section>
+
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Brechas (cuota y contribucion)</h3>
+                  <span>Valores con signo</span>
+                </div>
+                <QuarterlyGapChart quarters={quarterlyItems} />
+              </section>
+
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Funnel por etapa</h3>
+                  <span>Monto abierto por trimestre</span>
+                </div>
+                <QuarterlyFunnelStackChart quarters={quarterlyItems} />
+              </section>
+
+              <section className="tracking-panel">
+                <div className="tracking-panel-header">
+                  <h3>Capacidad faltante para cubrir cuota</h3>
+                  <span>
+                    Ticket ${formatNumber(quarterlyPayload?.assumptions?.avgWonTicketUsd)} · Oportunidades {formatNumber(quarterlyPayload?.assumptions?.opportunitiesToWonRatio)}:1 · Leads {formatNumber(quarterlyPayload?.assumptions?.leadsToWonRatio)}:1
+                  </span>
+                </div>
+                <QuarterlyMissingChart quarters={quarterlyItems} />
+              </section>
+            </>
+          ) : null}
         </div>
       ) : null}
 

@@ -640,7 +640,49 @@ export default function CommercialPlanningPage({ can }) {
   }
 
   async function handlePublishVersion() {
-    if (!versionDetail?.version?.id) return;
+    if (!versionDetail?.version?.id) {
+      setError("Selecciona una versión antes de publicarla");
+      setSuccess("");
+      return;
+    }
+    if (versionDetail?.version?.status !== "draft") {
+      setError(
+        `Solo se pueden publicar versiones en borrador. La seleccionada está en estado ${getVersionStatusLabel(versionDetail?.version?.status)}.`,
+      );
+      setSuccess("");
+      return;
+    }
+
+    const hardErrors = Array.isArray(validation?.errors)
+      ? validation.errors.length
+      : 0;
+    if (hardErrors > 0) {
+      setError(
+        "La versión tiene errores duros pendientes. Corrígelos antes de publicar.",
+      );
+      setSuccess("");
+      return;
+    }
+
+    const warningCount = Array.isArray(validation?.warnings)
+      ? validation.warnings.length
+      : 0;
+    const justification = String(publishJustification || "").trim();
+    if (warningCount > 0 && !canOverrideValidation) {
+      setError(
+        "La versión tiene advertencias y tu perfil no tiene permiso para publicarla con advertencias.",
+      );
+      setSuccess("");
+      return;
+    }
+    if (warningCount > 0 && !justification) {
+      setError(
+        "Debes capturar una justificación para publicar una versión con advertencias.",
+      );
+      setSuccess("");
+      return;
+    }
+
     setPublishing(true);
     setError("");
     setSuccess("");
@@ -648,7 +690,7 @@ export default function CommercialPlanningPage({ can }) {
       const response = await api.post(
         `/api/commercial-planning/versions/${versionDetail.version.id}/publish`,
         {
-          justification: String(publishJustification || "").trim() || null,
+          justification: justification || null,
         },
       );
       setSuccess(response.data.message);
@@ -898,7 +940,7 @@ export default function CommercialPlanningPage({ can }) {
                 ) : null}
                 {(periodDetail?.versions || []).map((version) => (
                   <option key={version.id} value={version.id}>
-                    {`Versión ${version.versionNumber}`}
+                    {`Versión ${version.versionNumber} · ${getVersionStatusLabel(version.status)}`}
                   </option>
                 ))}
               </select>
@@ -933,8 +975,7 @@ export default function CommercialPlanningPage({ can }) {
               onClick={handlePublishVersion}
               disabled={
                 !versionDetail?.version ||
-                publishing ||
-                versionDetail?.version?.status !== "draft"
+                publishing
               }
             >
               <span className="commercial-planning-action-button-label">
