@@ -153,9 +153,9 @@ function buildTargetPayload(targetDrafts) {
       normalizeDecimalInput(draft.salesQuotaAmount),
     );
     const expectedMarginPercent = Number(draft.expectedMarginPercent);
-    if (!(salesQuotaAmount > 0)) {
+    if (Number.isNaN(salesQuotaAmount) || salesQuotaAmount < 0) {
       errors.push(
-        `La cuota de venta de ${draft.sellerUserName} debe ser mayor que cero.`,
+        `La cuota de venta de ${draft.sellerUserName} debe ser mayor o igual a cero.`,
       );
       continue;
     }

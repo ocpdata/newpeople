@@ -22,7 +22,7 @@ const createVersionSchema = z.object({
 
 const targetInputSchema = z.object({
   sellerUserId: z.number().int().positive(),
-  salesQuotaAmount: z.number().positive(),
+  salesQuotaAmount: z.number().min(0),
   currencyCode: z.string().trim().min(1).max(10),
   expectedMarginPercent: z.number().min(0).max(999.99),
   notes: z.string().trim().max(4000).optional().nullable(),
@@ -864,10 +864,10 @@ async function validateVersion(versionId) {
         message: `El vendedor ${target.sellerUserName} ya no es un vendedor activo elegible`,
       });
     }
-    if (!(Number(target.salesQuotaAmount) > 0)) {
+    if (Number(target.salesQuotaAmount) < 0) {
       errors.push({
         code: "invalid_sales_quota",
-        message: `La cuota de venta de ${target.sellerUserName} debe ser mayor que cero`,
+        message: `La cuota de venta de ${target.sellerUserName} no puede ser negativa`,
       });
     }
     if (Number(target.expectedMarginPercent) < 0) {
