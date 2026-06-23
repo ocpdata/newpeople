@@ -82,6 +82,12 @@ const ACTIVITY_STATUS_LABELS = {
   cancelled: "Cancelada",
 };
 
+const CALENDAR_SOURCE_LABELS = {
+  opportunity: "Oportunidad",
+  interaction: "Lead",
+  unknown: "No definido",
+};
+
 const ACTION_STATUS_LABELS = {
   pending: "Pendiente",
   in_progress: "En curso",
@@ -645,6 +651,24 @@ function getActivityTypeLabel(value) {
 
 function getActivityStatusLabel(value) {
   return ACTIVITY_STATUS_LABELS[value] || "Programada";
+}
+
+function normalizeCalendarSource(value) {
+  const source = String(value || "").trim();
+  if (source === "opportunity") return "opportunity";
+  if (source === "interaction") return "interaction";
+  return "unknown";
+}
+
+function getCalendarSourceLabel(value) {
+  return CALENDAR_SOURCE_LABELS[normalizeCalendarSource(value)];
+}
+
+function getCalendarSourceBadgeClass(value) {
+  const source = normalizeCalendarSource(value);
+  if (source === "interaction") return "is-lead";
+  if (source === "opportunity") return "is-opportunity";
+  return "is-unknown";
 }
 
 function getActionTypeLabel(value) {
@@ -1288,6 +1312,9 @@ function buildEmailActionDraft(item, activity, options = {}) {
     sellerUserName: item?.sellerUserName || "Sin vendedor",
     status,
     isReadOnly: forceReadOnly || status === "done" || status === "cancelled",
+    calendarSource: normalizeCalendarSource(
+      activity?.calendarSource || item?.calendarSource || "opportunity",
+    ),
     details,
   };
 }
@@ -2030,6 +2057,9 @@ function buildActivityDraft(item, activity = null) {
       successCriteria:
         activity.successCriteria || details.expectedResponse || "",
       isPrimaryNextStep: Boolean(activity.isPrimaryNextStep),
+      calendarSource: normalizeCalendarSource(
+        activity.calendarSource || item?.calendarSource || "opportunity",
+      ),
       details,
     };
   }
@@ -2047,6 +2077,7 @@ function buildActivityDraft(item, activity = null) {
     note: "",
     successCriteria: "",
     isPrimaryNextStep: !item?.nextStep,
+    calendarSource: normalizeCalendarSource(item?.calendarSource || "opportunity"),
     details: emptyActionDetails(),
   };
 }
@@ -2611,6 +2642,11 @@ function CommercialActivityModal({
   const statusOptions = isActionForm
     ? ACTION_STATUS_OPTIONS
     : ACTIVITY_STATUS_OPTIONS;
+  const activityOriginSource = normalizeCalendarSource(
+    safeDraft?.calendarSource || safeItem?.calendarSource || "opportunity",
+  );
+  const activityOriginLabel = getCalendarSourceLabel(activityOriginSource);
+  const activityOriginClass = getCalendarSourceBadgeClass(activityOriginSource);
   const title = isHistoryView
     ? "Actividades y acciones de la oportunidad"
     : isDependencyView
@@ -2701,6 +2737,18 @@ function CommercialActivityModal({
             </span>
             <strong>{item.name}</strong>
             <span>{item.accountName || "Sin cuenta"}</span>
+          </div>
+          <div className="commercial-development-activity-context-meta">
+            <span className="commercial-development-activity-context-label">
+              Origen
+            </span>
+            <span
+              className={`commercial-development-origin-badge ${activityOriginClass}`}
+              aria-label={`Origen: ${activityOriginLabel}`}
+              title={`Origen: ${activityOriginLabel}`}
+            >
+              {activityOriginLabel}
+            </span>
           </div>
         </div>
 
@@ -3509,6 +3557,11 @@ function CommercialEmailDraftModal({
   const isReadOnly = safeDraft?.isReadOnly;
   const sendStatusTone = sendFeedback?.tone || "";
   const sendStatusMessage = sendFeedback?.message || "";
+  const draftOriginSource = normalizeCalendarSource(
+    safeDraft?.calendarSource || safeItem?.calendarSource || "opportunity",
+  );
+  const draftOriginLabel = getCalendarSourceLabel(draftOriginSource);
+  const draftOriginClass = getCalendarSourceBadgeClass(draftOriginSource);
   const ccVisibilityKey = `${safeDraft?.opportunityId || "new"}:${safeDraft?.actionId || "new"}:${safeDraft?.status || ""}`;
   const hasCcValue = Boolean(String(emailDetails.cc || "").trim());
   const [isCcVisible, setIsCcVisible] = useState(hasCcValue);
@@ -3571,6 +3624,18 @@ function CommercialEmailDraftModal({
               Oportunidad
             </span>
             <strong>{safeDraft.opportunityName}</strong>
+          </div>
+          <div className="commercial-development-activity-context-meta">
+            <span className="commercial-development-activity-context-label">
+              Origen
+            </span>
+            <span
+              className={`commercial-development-origin-badge ${draftOriginClass}`}
+              aria-label={`Origen: ${draftOriginLabel}`}
+              title={`Origen: ${draftOriginLabel}`}
+            >
+              {draftOriginLabel}
+            </span>
           </div>
           <div className="commercial-development-inline-row">
             <span>{safeDraft.accountName}</span>
@@ -4721,6 +4786,7 @@ export default function CommercialDevelopmentPage({
       : 0;
   const calendarOpportunityOptions = useMemo(() => {
     const prioritized = selectedDayItems
+      .filter((item) => Number(item?.opportunityId || 0) > 0)
       .map((item) => ({
         value: String(item.opportunityId),
         label: item.opportunityName || `Oportunidad ${item.opportunityId}`,
@@ -6253,13 +6319,22 @@ export default function CommercialDevelopmentPage({
                                 .slice(0, previewLimit)
                                 .map((item) => (
                                   <span
-                                    key={`calendar-item-preview-${item.id}`}
+                                    key={`calendar-item-preview-${item.calendarSource || "unknown"}-${item.id}`}
                                     className="commercial-development-calendar-preview-pill"
                                   >
-                                    {formatDateTime(item.scheduledAt)
-                                      .split(",")[1]
-                                      ?.trim() ||
-                                      getActivityTypeLabel(item.activityType)}
+                                    <span
+                                      className={`commercial-development-origin-badge is-compact ${getCalendarSourceBadgeClass(item.calendarSource)}`}
+                                      aria-label={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                                      title={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                                    >
+                                      {getCalendarSourceLabel(item.calendarSource)}
+                                    </span>{" "}
+                                    <span>
+                                      {formatDateTime(item.scheduledAt)
+                                        .split(",")[1]
+                                        ?.trim() ||
+                                        getActivityTypeLabel(item.activityType)}
+                                    </span>
                                   </span>
                                 ))}
                               {day.count > previewLimit ? (
@@ -6356,7 +6431,7 @@ export default function CommercialDevelopmentPage({
                   {selectedDayItems.length ? (
                     selectedDayItems.map((item) => (
                       <button
-                        key={`calendar-event-${item.id}`}
+                        key={`calendar-event-${item.calendarSource || "unknown"}-${item.id}`}
                         type="button"
                         className="commercial-development-calendar-event-card"
                         onClick={() => handleCalendarEventClick(item)}
@@ -6367,6 +6442,13 @@ export default function CommercialDevelopmentPage({
                           </strong>
                           <span className="commercial-development-pill is-low">
                             {getActivityStatusLabel(item.status)}
+                          </span>
+                          <span
+                            className={`commercial-development-origin-badge ${getCalendarSourceBadgeClass(item.calendarSource)}`}
+                            aria-label={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                            title={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                          >
+                            {getCalendarSourceLabel(item.calendarSource)}
                           </span>
                         </div>
                         <p>{item.title || "Sin objetivo registrado"}</p>

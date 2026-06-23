@@ -151,7 +151,22 @@ function App() {
   }
 
   if (authBootstrapError) {
-    return <div className="centered">{authBootstrapError}</div>;
+    return (
+      <div className="centered" style={{ display: "grid", gap: "12px" }}>
+        <div>{authBootstrapError}</div>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => {
+            setCurrentUser(null);
+            setAuthBootstrapError("");
+            setToken("");
+          }}
+        >
+          Volver a iniciar sesion
+        </button>
+      </div>
+    );
   }
 
   if (!currentUser) {

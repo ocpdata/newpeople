@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import {
   addDaysToIsoDate,
@@ -8,6 +8,7 @@ import {
   toBusinessDateInputValue,
   toBusinessDateTimeInputValue,
 } from "./business-timezone";
+import LeadCallOutcomeModal from "./interactions/LeadCallOutcomeModal";
 
 const VIEW_OPTIONS = [{ value: "week", label: "Semana" }];
 
@@ -31,6 +32,40 @@ const CALENDAR_ACTIVITY_STATUS_OPTIONS = [
 ];
 
 const MORNING_CUTOFF_HOUR = 12;
+
+const CALENDAR_SOURCE_LABELS = {
+  opportunity: "Oportunidad",
+  interaction: "Lead",
+  unknown: "No definido",
+};
+
+const LEAD_SUBSTATUS_CATEGORY_BY_CODE = {
+  new_unreviewed: "inicio",
+  research_pending: "inicio",
+  ready_for_outreach: "inicio",
+  contact_attempt_pending: "contacto",
+  contacted_waiting_response: "contacto",
+  meeting_requested: "avance",
+  meeting_confirmed: "avance",
+  needs_follow_up_later: "nurture",
+  wrong_contact_identified: "redireccion",
+  alternative_contact_needed: "redireccion",
+  account_has_other_potential: "redireccion",
+  value_misaligned_current_contact: "redireccion",
+  budget_timing_issue: "nurture",
+  priority_not_now: "nurture",
+  qualified_opportunity_created: "cierre_positivo",
+  disqualified_temporary: "cierre_negativo",
+  disqualified_definitive: "cierre_negativo",
+};
+
+const EMPTY_LEAD_OUTCOME_CATALOGS = {
+  statuses: [],
+  substatuses: [],
+  reasons: [],
+  requiredActions: [],
+  transitionRules: [],
+};
 
 function toDateInputValue(value) {
   return toBusinessDateInputValue(value);
@@ -63,6 +98,44 @@ function formatTime(value) {
   return formatBusinessTime(value);
 }
 
+function toSortableTimeValue(value) {
+  const display = formatBusinessTime(value, {
+    fallback: "23:59",
+    options: {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    },
+  });
+  const [hourText, minuteText] = String(display).split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return 23 * 60 + 59;
+  }
+  return hour * 60 + minute;
+}
+
+function sortCalendarItemsBySchedule(items) {
+  return [...(items || [])].sort((left, right) => {
+    const leftDate = String(left?.scheduledDate || "").trim();
+    const rightDate = String(right?.scheduledDate || "").trim();
+    if (leftDate && rightDate && leftDate !== rightDate) {
+      return leftDate.localeCompare(rightDate);
+    }
+
+    const leftTimeValue = toSortableTimeValue(left?.scheduledAt);
+    const rightTimeValue = toSortableTimeValue(right?.scheduledAt);
+    if (leftTimeValue !== rightTimeValue) {
+      return leftTimeValue - rightTimeValue;
+    }
+
+    const leftTitle = String(left?.title || "").trim();
+    const rightTitle = String(right?.title || "").trim();
+    return leftTitle.localeCompare(rightTitle, "es");
+  });
+}
+
 function toDateTimeInputValue(value) {
   return toBusinessDateTimeInputValue(value);
 }
@@ -92,6 +165,13 @@ function activityStatusLabel(statusValue) {
   return (
     CALENDAR_ACTIVITY_STATUS_OPTIONS.find((item) => item.value === statusValue)
       ?.label || "Programada"
+  );
+}
+
+function activityTypeLabel(typeValue) {
+  return (
+    CALENDAR_ACTIVITY_TYPE_OPTIONS.find((item) => item.value === typeValue)
+      ?.label || "Actividad"
   );
 }
 
@@ -195,10 +275,71 @@ function formatActivityContext(item) {
   return parts.join(" · ") || "Sin contexto comercial";
 }
 
+function formatActivityTitle(item, fallback = "Sin objetivo") {
+  const baseTitle = String(item?.title || "").trim() || fallback;
+  return baseTitle;
+}
+
 function trafficLabel(value) {
   if (value === "red") return "Rojo";
   if (value === "amber") return "Ambar";
   return "Verde";
+}
+
+function normalizeCalendarSource(value) {
+  const source = String(value || "").trim();
+  if (source === "opportunity") return "opportunity";
+  if (source === "interaction") return "interaction";
+  return "unknown";
+}
+
+function getCalendarSourceLabel(value) {
+  return CALENDAR_SOURCE_LABELS[normalizeCalendarSource(value)];
+}
+
+function getCalendarSourceBadgeClass(value) {
+  const source = normalizeCalendarSource(value);
+  if (source === "interaction") return "is-lead";
+  if (source === "opportunity") return "is-opportunity";
+  return "is-unknown";
+}
+
+function getCalendarActivityStatusCardClass(statusValue) {
+  const status = String(statusValue || "").trim().toLowerCase();
+  if (status === "done") return "is-status-done";
+  if (status === "cancelled" || status === "canceled") {
+    return "is-status-cancelled";
+  }
+  return "";
+}
+
+function getCalendarActivityStatusBadgeClass(statusValue) {
+  const status = String(statusValue || "").trim().toLowerCase();
+  if (status === "done") return "is-done";
+  if (status === "cancelled" || status === "canceled") {
+    return "is-cancelled";
+  }
+  return "is-open";
+}
+
+function getLeadSituationLabel(item) {
+  const name = String(item?.leadSubstatusName || "").trim();
+  if (name) return name;
+  const code = String(item?.leadSubstatusCode || "").trim();
+  return code ? code.replace(/_/g, " ") : "Sin situación";
+}
+
+function getLeadSituationClass(item) {
+  const code = String(item?.leadSubstatusCode || "").trim();
+  const category = LEAD_SUBSTATUS_CATEGORY_BY_CODE[code] || "default";
+  return `is-lead-situation-${category}`;
+}
+
+function getCalendarActivityCardClass(item) {
+  if (normalizeCalendarSource(item?.calendarSource) === "interaction") {
+    return getLeadSituationClass(item);
+  }
+  return getCalendarActivityStatusCardClass(item?.status);
 }
 
 function CalendarActivityEditorModal({
@@ -222,6 +363,9 @@ function CalendarActivityEditorModal({
     draft?.scheduledAt,
   );
   const currentStatusLabel = activityStatusLabel(draft?.status);
+  const sourceLabel = getCalendarSourceLabel(draft?.calendarSource);
+  const sourceBadgeClass = getCalendarSourceBadgeClass(draft?.calendarSource);
+  const typeLabel = activityTypeLabel(draft?.activityType);
 
   const applyAgendaDate = (nextDate) => {
     onChange(
@@ -249,9 +393,25 @@ function CalendarActivityEditorModal({
         <div className="modal-header calendar-activity-editor-header">
           <div>
             <h3 className="modal-title">Actualizar registro</h3>
-            <span className="calendar-activity-editor-status-pill">
-              Estado actual: {currentStatusLabel}
-            </span>
+            <div className="calendar-module-chips-row calendar-activity-editor-chips-row">
+              <span className="calendar-activity-editor-status-pill">
+                Estado actual: {currentStatusLabel}
+              </span>
+              <span
+                className={`calendar-module-source-badge ${sourceBadgeClass}`}
+                aria-label={`Origen: ${sourceLabel}`}
+                title={`Origen: ${sourceLabel}`}
+              >
+                Origen: {sourceLabel}
+              </span>
+              <span
+                className="calendar-module-type-badge"
+                aria-label={`Tipo: ${typeLabel}`}
+                title={`Tipo: ${typeLabel}`}
+              >
+                Tipo: {typeLabel}
+              </span>
+            </div>
           </div>
           <button
             type="button"
@@ -272,9 +432,6 @@ function CalendarActivityEditorModal({
         ) : (
           <form className="calendar-activity-editor-form" onSubmit={onSave}>
             {error ? <p className="form-error">{error}</p> : null}
-            {notice ? (
-              <p className="calendar-activity-editor-notice">{notice}</p>
-            ) : null}
 
             {!canUpdateActivities ? (
               <p className="calendar-activity-editor-readonly-note">
@@ -398,36 +555,54 @@ function CalendarActivityEditorModal({
             </div>
 
             {!readOnly ? (
-              <div className="calendar-activity-editor-icon-actions">
-                <button
-                  type="button"
-                  className="calendar-activity-editor-icon-button is-done"
-                  onClick={onMarkDone}
-                  disabled={saving}
-                  aria-label="Marcar realizada"
-                  title="Marcar realizada"
-                >
-                  ✓
-                </button>
-                <button
-                  type="button"
-                  className="calendar-activity-editor-icon-button is-cancel"
-                  onClick={onCancelActivity}
-                  disabled={saving}
-                  aria-label="Cancelar actividad"
-                  title="Cancelar actividad"
-                >
-                  ×
-                </button>
-                <button
-                  type="submit"
-                  className="calendar-activity-editor-icon-button is-save"
-                  disabled={saving}
-                  aria-label="Guardar cambios"
-                  title="Guardar cambios"
-                >
-                  {saving ? "..." : "S"}
-                </button>
+              <div className="calendar-activity-editor-actions-block">
+                {notice ? (
+                  <p className="calendar-activity-editor-notice">{notice}</p>
+                ) : null}
+                <div className="calendar-activity-editor-icon-actions">
+                  <button
+                    type="button"
+                    className="calendar-activity-editor-icon-button is-done"
+                    onClick={onMarkDone}
+                    disabled={saving}
+                    aria-label="Marcar realizada"
+                    title="Marcar realizada"
+                  >
+                    ✓
+                  </button>
+                  <button
+                    type="button"
+                    className="calendar-activity-editor-icon-button is-cancel"
+                    onClick={onCancelActivity}
+                    disabled={saving}
+                    aria-label="Cancelar actividad"
+                    title="Cancelar actividad"
+                  >
+                    ×
+                  </button>
+                  <button
+                    type="submit"
+                    className="calendar-activity-editor-icon-button is-save"
+                    disabled={saving}
+                    aria-label="Guardar cambios"
+                    title="Guardar cambios"
+                  >
+                    {saving ? (
+                      "..."
+                    ) : (
+                      <svg
+                        className="calendar-activity-editor-save-icon"
+                        viewBox="0 0 24 24"
+                        focusable="false"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 3h11l3 3v15H5z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="M8 3h8v5H8z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="M8 14h8v5H8z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="modal-buttons">
@@ -457,55 +632,13 @@ function CalendarDayActivitiesModal({
   onOpenActivity,
 }) {
   if (!isOpen) return null;
-
-  const groupedItems = groupItemsByDayPart(items || []);
+  const orderedItems = sortCalendarItemsBySchedule(items || []);
 
   const handleOverlayClick = (event) => {
     if (event.target === event.currentTarget) {
       onClose();
     }
   };
-
-  const renderDaySection = (title, list, sectionKey) => (
-    <section className="calendar-module-day-group">
-      <h5>{title}</h5>
-      {list.length ? (
-        <ul className="calendar-module-day-group-list">
-          {list.map((item) => (
-            <li
-              key={`calendar-day-modal-${sectionKey}-${item.id}`}
-              className="calendar-module-day-item"
-            >
-              <button
-                type="button"
-                className="calendar-module-activity-trigger"
-                onClick={() => onOpenActivity(item)}
-              >
-                <span className="calendar-module-time-chip">
-                  {formatTime(item.scheduledAt)}
-                </span>
-                <div className="calendar-module-day-item-content">
-                  {showReadOnlyBadge ? (
-                    <span className="calendar-module-readonly-badge">
-                      Solo lectura
-                    </span>
-                  ) : null}
-                  <strong>{item.title || "Sin objetivo"}</strong>
-                  <small>
-                    Cuenta: {String(item.accountName || "Sin cuenta asignada")}
-                  </small>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="calendar-module-day-group-empty">
-          Sin actividades de {sectionKey}.
-        </p>
-      )}
-    </section>
-  );
 
   return (
     <div className="modal-overlay" onClick={handleOverlayClick}>
@@ -530,8 +663,77 @@ function CalendarDayActivitiesModal({
         </div>
 
         <div className="calendar-module-day-activities-body">
-          {renderDaySection("Manana", groupedItems.manana, "manana")}
-          {renderDaySection("Tarde", groupedItems.tarde, "tarde")}
+          {orderedItems.length ? (
+            <ul className="calendar-module-day-group-list">
+              {orderedItems.map((item) => (
+                <li
+                  key={`calendar-day-modal-${item.calendarSource || "unknown"}-${item.id}-${item.scheduledAt || "no-date"}`}
+                  className={`calendar-module-day-item ${getCalendarActivityCardClass(item)}`.trim()}
+                >
+                  <button
+                    type="button"
+                    className="calendar-module-activity-trigger"
+                    onClick={() => onOpenActivity(item)}
+                  >
+                    <span className="calendar-module-time-chip">
+                      {formatTime(item.scheduledAt)}
+                    </span>
+                    <div className="calendar-module-day-item-content">
+                      <div className="calendar-module-chips-row">
+                        {showReadOnlyBadge ? (
+                          <span className="calendar-module-readonly-badge">
+                            Solo lectura
+                          </span>
+                        ) : null}
+                        <span
+                          className={`calendar-module-source-badge ${getCalendarSourceBadgeClass(item.calendarSource)}`}
+                          aria-label={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                          title={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                        >
+                          {getCalendarSourceLabel(item.calendarSource)}
+                        </span>
+                        {normalizeCalendarSource(item.calendarSource) !==
+                        "interaction" ? (
+                          <span
+                            className="calendar-module-type-badge"
+                            aria-label={`Tipo: ${activityTypeLabel(item.activityType)}`}
+                            title={`Tipo: ${activityTypeLabel(item.activityType)}`}
+                          >
+                            {activityTypeLabel(item.activityType)}
+                          </span>
+                        ) : null}
+                        <span
+                          className={`calendar-module-status-badge ${getCalendarActivityStatusBadgeClass(item.status)}`}
+                          aria-label={`Estado: ${activityStatusLabel(item.status)}`}
+                          title={`Estado: ${activityStatusLabel(item.status)}`}
+                        >
+                          {activityStatusLabel(item.status)}
+                        </span>
+                        {normalizeCalendarSource(item.calendarSource) ===
+                        "interaction" ? (
+                          <span
+                            className="calendar-module-lead-situation-badge"
+                            aria-label={`Situación: ${getLeadSituationLabel(item)}`}
+                            title={`Situación: ${getLeadSituationLabel(item)}`}
+                          >
+                            Situación: {getLeadSituationLabel(item)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <strong>{formatActivityTitle(item)}</strong>
+                      <small>
+                        Cuenta: {String(item.accountName || "Sin cuenta asignada")}
+                      </small>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="calendar-module-day-group-empty">
+              Sin actividades para este dia.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -565,6 +767,13 @@ export default function CalendarPage({ currentUser }) {
   const [activityDraft, setActivityDraft] = useState(
     normalizeCalendarActivityDraft(null),
   );
+  const activityModalCloseTimerRef = useRef(null);
+  const [leadOutcomeModalOpen, setLeadOutcomeModalOpen] = useState(false);
+  const [leadOutcomeSaving, setLeadOutcomeSaving] = useState(false);
+  const [leadOutcomeDetail, setLeadOutcomeDetail] = useState(null);
+  const [leadOutcomeCatalogs, setLeadOutcomeCatalogs] = useState(
+    EMPTY_LEAD_OUTCOME_CATALOGS,
+  );
   const [dayActivitiesModalOpen, setDayActivitiesModalOpen] = useState(false);
   const [dayActivitiesDate, setDayActivitiesDate] = useState("");
   const [dayActivitiesItems, setDayActivitiesItems] = useState([]);
@@ -576,7 +785,7 @@ export default function CalendarPage({ currentUser }) {
       const params = {
         view: calendarView,
         date: calendarDate,
-        includeCompleted: false,
+        includeCompleted: true,
         slaDays,
       };
       if (selectedSellerId && selectedSellerId !== "all") {
@@ -631,13 +840,34 @@ export default function CalendarPage({ currentUser }) {
     !canUpdateActivities || Boolean(activityDraft?.readonlyByStatus);
   const showReadOnlyBadge = !canUpdateActivities;
 
+  const clearActivityModalCloseTimer = useCallback(() => {
+    if (activityModalCloseTimerRef.current) {
+      window.clearTimeout(activityModalCloseTimerRef.current);
+      activityModalCloseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearActivityModalCloseTimer();
+    };
+  }, [clearActivityModalCloseTimer]);
+
   const closeActivityModal = () => {
     if (activitySaving) return;
+    clearActivityModalCloseTimer();
     setActivityModalOpen(false);
     setActivityLoading(false);
     setActivityError("");
     setActivityNotice("");
     setActivityDraft(normalizeCalendarActivityDraft(null));
+  };
+
+  const closeLeadOutcomeModal = () => {
+    if (leadOutcomeSaving) return;
+    setLeadOutcomeModalOpen(false);
+    setLeadOutcomeDetail(null);
+    setLeadOutcomeCatalogs(EMPTY_LEAD_OUTCOME_CATALOGS);
   };
 
   const openDayActivitiesModal = (day) => {
@@ -657,10 +887,40 @@ export default function CalendarPage({ currentUser }) {
   const openActivityModal = async (item) => {
     const opportunityId = Number(item?.opportunityId || 0);
     const activityId = Number(item?.id || 0);
+    const interactionId = Number(item?.interactionId || item?.id || 0);
     const calendarSource =
       String(item?.calendarSource || "opportunity").trim() || "opportunity";
     if (!activityId) return;
 
+    if (calendarSource !== "opportunity") {
+      if (!interactionId) return;
+      setError("");
+      try {
+        const detailResponse = await api.get(`/api/interactions/${interactionId}`);
+        const detailData = detailResponse.data || null;
+        const catalogsResponse = await api.get(
+          "/api/interactions/call-outcome-catalogs",
+          {
+            params: { status: detailData?.analysisStatus || undefined },
+          },
+        );
+        setLeadOutcomeDetail(detailData);
+        setLeadOutcomeCatalogs(
+          catalogsResponse.data || EMPTY_LEAD_OUTCOME_CATALOGS,
+        );
+        setLeadOutcomeModalOpen(true);
+      } catch (requestError) {
+        setError(
+          getApiErrorMessage(
+            requestError,
+            "No fue posible abrir la situación del lead.",
+          ),
+        );
+      }
+      return;
+    }
+
+    clearActivityModalCloseTimer();
     setActivityModalOpen(true);
     setActivityError("");
     setActivityNotice("");
@@ -673,15 +933,11 @@ export default function CalendarPage({ currentUser }) {
       }),
     );
 
-    if (calendarSource !== "opportunity" || !opportunityId) {
+    if (!opportunityId) {
       setActivityLoading(false);
-      setActivityNotice(
-        "Seguimiento generado desde Interacciones. Su actualizacion se realiza desde el lead.",
+      setActivityError(
+        "No fue posible identificar la oportunidad de esta actividad.",
       );
-      setActivityDraft((current) => ({
-        ...current,
-        readonlyByStatus: true,
-      }));
       return;
     }
 
@@ -710,6 +966,7 @@ export default function CalendarPage({ currentUser }) {
   };
 
   const handleActivityFieldChange = (field, value) => {
+    clearActivityModalCloseTimer();
     setActivityDraft((current) => ({
       ...current,
       [field]: value,
@@ -746,6 +1003,10 @@ export default function CalendarPage({ currentUser }) {
       },
       "Actividad actualizada.",
       "No fue posible actualizar la actividad.",
+      {
+        autoCloseOnSuccess: true,
+        closeDelayMs: 2000,
+      },
     );
   };
 
@@ -753,6 +1014,7 @@ export default function CalendarPage({ currentUser }) {
     payload,
     successMessage,
     fallbackErrorMessage,
+    options = {},
   ) => {
     const opportunityId = Number(activityDraft?.opportunityId || 0);
     const activityId = Number(activityDraft?.id || 0);
@@ -786,6 +1048,13 @@ export default function CalendarPage({ currentUser }) {
         ),
       }));
       setActivityNotice(successMessage);
+      if (options.autoCloseOnSuccess) {
+        clearActivityModalCloseTimer();
+        const closeDelayMs = Number(options.closeDelayMs || 2000);
+        activityModalCloseTimerRef.current = window.setTimeout(() => {
+          closeActivityModal();
+        }, closeDelayMs);
+      }
       return true;
     } catch (requestError) {
       setActivityError(getApiErrorMessage(requestError, fallbackErrorMessage));
@@ -804,6 +1073,15 @@ export default function CalendarPage({ currentUser }) {
       return;
     }
 
+    const resultText = String(activityDraft?.successCriteria || "").trim();
+    const doneConfirmationMessage = resultText
+      ? `Se marcara la actividad como realizada.\n\nResultado registrado:\n${resultText}\n\n¿Deseas continuar?`
+      : "No has indicado un resultado en el campo Resultado.\n\nTe recomendamos ingresarlo antes de marcar la actividad como realizada.\n\n¿Deseas continuar de todos modos?";
+
+    if (typeof window !== "undefined" && !window.confirm(doneConfirmationMessage)) {
+      return;
+    }
+
     await updateCalendarActivity(
       {
         entryKind: "activity",
@@ -817,6 +1095,10 @@ export default function CalendarPage({ currentUser }) {
       },
       "Actividad marcada como realizada.",
       "No fue posible marcar la actividad como realizada.",
+      {
+        autoCloseOnSuccess: true,
+        closeDelayMs: 2000,
+      },
     );
   };
 
@@ -826,6 +1108,15 @@ export default function CalendarPage({ currentUser }) {
       setActivityError(
         "Completa fecha/hora y objetivo antes de cancelar la actividad.",
       );
+      return;
+    }
+
+    const cancelConfirmationMessage =
+      "¿Confirmas que deseas cancelar esta actividad?";
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(cancelConfirmationMessage)
+    ) {
       return;
     }
 
@@ -842,7 +1133,47 @@ export default function CalendarPage({ currentUser }) {
       },
       "Actividad cancelada.",
       "No fue posible cancelar la actividad.",
+      {
+        autoCloseOnSuccess: true,
+        closeDelayMs: 2000,
+      },
     );
+  };
+
+  const handleSaveLeadOutcome = async (form) => {
+    if (!leadOutcomeDetail?.id) return;
+
+    setLeadOutcomeSaving(true);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/interactions/${leadOutcomeDetail.id}/call-outcome`,
+        form,
+      );
+      setLeadOutcomeDetail(data || null);
+      const catalogsResponse = await api.get(
+        "/api/interactions/call-outcome-catalogs",
+        {
+          params: { status: data?.analysisStatus || undefined },
+        },
+      );
+      setLeadOutcomeCatalogs(
+        catalogsResponse.data || EMPTY_LEAD_OUTCOME_CATALOGS,
+      );
+      setLeadOutcomeModalOpen(false);
+      setLeadOutcomeDetail(null);
+      setLeadOutcomeCatalogs(EMPTY_LEAD_OUTCOME_CATALOGS);
+      await loadCalendarModule();
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible guardar la situación del lead.",
+        ),
+      );
+    } finally {
+      setLeadOutcomeSaving(false);
+    }
   };
 
   return (
@@ -921,7 +1252,7 @@ export default function CalendarPage({ currentUser }) {
         <div className="calendar-module-section-header calendar-module-activities-header">
           <div className="calendar-module-activities-title">
             <h3>Actividades en calendario</h3>
-            <p>Vista laboral (lunes a viernes), agrupada en manana y tarde.</p>
+            <p>Vista laboral (lunes a viernes), en lista continua por horario.</p>
           </div>
           <div className="calendar-module-activities-meta">
             <span className="calendar-module-badge">
@@ -940,11 +1271,9 @@ export default function CalendarPage({ currentUser }) {
           {weekdays.map((day) => {
             const items = day.items || [];
             const dayCount = getDayActivityCount(day);
-            const groupedItems = groupItemsByDayPart(items);
-            const visibleMorning = groupedItems.manana.slice(0, 3);
-            const visibleAfternoon = groupedItems.tarde.slice(0, 3);
-            const visibleItemsCount =
-              visibleMorning.length + visibleAfternoon.length;
+            const orderedItems = sortCalendarItemsBySchedule(items);
+            const visibleItems = orderedItems.slice(0, 6);
+            const visibleItemsCount = visibleItems.length;
             const remainingItems = Math.max(
               items.length - visibleItemsCount,
               0,
@@ -980,83 +1309,62 @@ export default function CalendarPage({ currentUser }) {
 
                 {dayCount > 0 ? (
                   <div className="calendar-module-day-groups">
-                    <section className="calendar-module-day-group">
-                      <h5>Manana</h5>
-                      {visibleMorning.length ? (
-                        <ul className="calendar-module-day-group-list">
-                          {visibleMorning.map((item) => (
-                            <li
-                              key={item.id}
-                              className="calendar-module-day-item"
-                            >
-                              <button
-                                type="button"
-                                className="calendar-module-activity-trigger"
-                                onClick={() => openActivityModal(item)}
-                              >
-                                <span className="calendar-module-time-chip">
-                                  {formatTime(item.scheduledAt)}
+                    <ul className="calendar-module-day-group-list">
+                      {visibleItems.map((item) => (
+                        <li
+                          key={`${item.calendarSource || "unknown"}-${item.id}-${item.scheduledAt || "no-date"}`}
+                          className={`calendar-module-day-item ${getCalendarActivityCardClass(item)}`.trim()}
+                        >
+                          <button
+                            type="button"
+                            className="calendar-module-activity-trigger"
+                            onClick={() => openActivityModal(item)}
+                          >
+                            <span className="calendar-module-time-chip">
+                              {formatTime(item.scheduledAt)}
+                            </span>
+                            <div className="calendar-module-day-item-content">
+                              <div className="calendar-module-chips-row">
+                                {showReadOnlyBadge ? (
+                                  <span className="calendar-module-readonly-badge">
+                                    Solo lectura
+                                  </span>
+                                ) : null}
+                                <span
+                                  className={`calendar-module-source-badge ${getCalendarSourceBadgeClass(item.calendarSource)}`}
+                                  aria-label={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                                  title={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
+                                >
+                                  {getCalendarSourceLabel(item.calendarSource)}
                                 </span>
-                                <div className="calendar-module-day-item-content">
-                                  {showReadOnlyBadge ? (
-                                    <span className="calendar-module-readonly-badge">
-                                      Solo lectura
-                                    </span>
-                                  ) : null}
-                                  <strong>
-                                    {item.title || "Sin objetivo"}
-                                  </strong>
-                                  <small>{formatActivityContext(item)}</small>
-                                </div>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="calendar-module-day-group-empty">
-                          Sin actividades de manana.
-                        </p>
-                      )}
-                    </section>
-
-                    <section className="calendar-module-day-group">
-                      <h5>Tarde</h5>
-                      {visibleAfternoon.length ? (
-                        <ul className="calendar-module-day-group-list">
-                          {visibleAfternoon.map((item) => (
-                            <li
-                              key={`${item.id}-afternoon`}
-                              className="calendar-module-day-item"
-                            >
-                              <button
-                                type="button"
-                                className="calendar-module-activity-trigger"
-                                onClick={() => openActivityModal(item)}
-                              >
-                                <span className="calendar-module-time-chip">
-                                  {formatTime(item.scheduledAt)}
-                                </span>
-                                <div className="calendar-module-day-item-content">
-                                  {showReadOnlyBadge ? (
-                                    <span className="calendar-module-readonly-badge">
-                                      Solo lectura
-                                    </span>
-                                  ) : null}
-                                  <strong>
-                                    {item.title || "Sin objetivo"}
-                                  </strong>
-                                  <small>{formatActivityContext(item)}</small>
-                                </div>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="calendar-module-day-group-empty">
-                          Sin actividades de tarde.
-                        </p>
-                      )}
-                    </section>
+                                {normalizeCalendarSource(item.calendarSource) !==
+                                "interaction" ? (
+                                  <span
+                                    className="calendar-module-type-badge"
+                                    aria-label={`Tipo: ${activityTypeLabel(item.activityType)}`}
+                                    title={`Tipo: ${activityTypeLabel(item.activityType)}`}
+                                  >
+                                    {activityTypeLabel(item.activityType)}
+                                  </span>
+                                ) : null}
+                                {normalizeCalendarSource(item.calendarSource) ===
+                                "interaction" ? (
+                                  <span
+                                    className="calendar-module-lead-situation-badge"
+                                    aria-label={`Situación: ${getLeadSituationLabel(item)}`}
+                                    title={`Situación: ${getLeadSituationLabel(item)}`}
+                                  >
+                                    Situación: {getLeadSituationLabel(item)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <strong>{formatActivityTitle(item)}</strong>
+                              <small>{formatActivityContext(item)}</small>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 ) : (
                   <p className="calendar-module-day-empty">
@@ -1097,7 +1405,9 @@ export default function CalendarPage({ currentUser }) {
             <h4>Bandeja de alertas priorizadas por riesgo</h4>
             <ul className="calendar-module-alert-list">
               {(alerts?.prioritized || []).slice(0, 20).map((item) => (
-                <li key={item.id}>
+                <li
+                  key={`alert-${item.calendarSource || "unknown"}-${item.id}-${item.scheduledAt || "no-date"}`}
+                >
                   <button
                     type="button"
                     className="calendar-module-alert-trigger"
@@ -1109,7 +1419,7 @@ export default function CalendarPage({ currentUser }) {
                           Solo lectura
                         </span>
                       ) : null}
-                      <strong>{item.title || "Actividad"}</strong>
+                      <strong>{formatActivityTitle(item, "Actividad")}</strong>
                       <p>
                         {formatActivityContext(item)} ·{" "}
                         {formatDateTime(item.scheduledAt)}
@@ -1134,7 +1444,9 @@ export default function CalendarPage({ currentUser }) {
             <ul className="calendar-module-plain-list">
               {myDay.length ? (
                 myDay.map((item) => (
-                  <li key={`my-day-${item.id}`}>
+                  <li
+                    key={`my-day-${item.calendarSource || "unknown"}-${item.id}-${item.scheduledAt || "no-date"}`}
+                  >
                     <button
                       type="button"
                       className="calendar-module-myday-trigger"
@@ -1146,7 +1458,7 @@ export default function CalendarPage({ currentUser }) {
                         </span>
                       ) : null}
                       <span>{formatDateTime(item.scheduledAt)}</span>
-                      <strong>{item.title || "Actividad"}</strong>
+                      <strong>{formatActivityTitle(item, "Actividad")}</strong>
                       <small>{formatActivityContext(item)}</small>
                     </button>
                   </li>
@@ -1188,7 +1500,7 @@ export default function CalendarPage({ currentUser }) {
             <ul className="calendar-module-plain-list">
               {(alerts?.dependencyLinked || []).slice(0, 10).map((item) => (
                 <li key={`dependency-${item.id}`}>
-                  <strong>{item.title || "Actividad"}</strong>
+                  <strong>{formatActivityTitle(item, "Actividad")}</strong>
                   <small>{item.opportunityName} · dependencia vencida</small>
                 </li>
               ))}
@@ -1268,6 +1580,16 @@ export default function CalendarPage({ currentUser }) {
         showReadOnlyBadge={showReadOnlyBadge}
         onClose={closeDayActivitiesModal}
         onOpenActivity={handleOpenActivityFromDayModal}
+      />
+
+      <LeadCallOutcomeModal
+        key={`${leadOutcomeDetail?.id || "lead"}-${leadOutcomeModalOpen ? "open" : "closed"}`}
+        isOpen={leadOutcomeModalOpen}
+        detail={leadOutcomeDetail}
+        catalogs={leadOutcomeCatalogs}
+        onClose={closeLeadOutcomeModal}
+        onSubmit={handleSaveLeadOutcome}
+        saving={leadOutcomeSaving}
       />
     </div>
   );

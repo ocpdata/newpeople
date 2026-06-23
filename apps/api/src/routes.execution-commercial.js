@@ -180,6 +180,26 @@ const COMMERCIAL_ACTION_OPEN_STATUSES = new Set([
 ]);
 
 const CALENDAR_COMPLETED_ACTIVITY_STATUSES = new Set(["done"]);
+
+const LEAD_SUBSTATUS_LABELS = {
+  new_unreviewed: "Nuevo sin revisar",
+  research_pending: "Investigación pendiente",
+  ready_for_outreach: "Listo para contacto",
+  contact_attempt_pending: "Intento de contacto pendiente",
+  contacted_waiting_response: "Contactado, en espera de respuesta",
+  meeting_requested: "Reunión solicitada",
+  meeting_confirmed: "Reunión confirmada",
+  needs_follow_up_later: "Seguimiento posterior",
+  wrong_contact_identified: "Contacto incorrecto detectado",
+  alternative_contact_needed: "Se necesita contacto alternativo",
+  account_has_other_potential: "La cuenta tiene potencial adicional",
+  value_misaligned_current_contact: "Valor no alineado con este contacto",
+  budget_timing_issue: "Restricción de presupuesto",
+  priority_not_now: "No es prioridad ahora",
+  qualified_opportunity_created: "Oportunidad creada",
+  disqualified_temporary: "Descalificación temporal",
+  disqualified_definitive: "Descalificación definitiva",
+};
 const BUSINESS_TIMEZONE =
   String(config.app?.businessTimezone || "America/Mexico_City").trim() ||
   "America/Mexico_City";
@@ -3785,10 +3805,16 @@ function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
   const scheduledDate = scheduledDateText
     ? scheduledDateText
     : formatDateInTimeZone(row.lead_next_action_due_at, timeZone);
+  const leadSubstatusCode = String(row.lead_substatus_code || "").trim();
+  const leadSubstatusName =
+    LEAD_SUBSTATUS_LABELS[leadSubstatusCode] || leadSubstatusCode || "";
 
   return {
-    id: Number(row.id),
-    interactionId: Number(row.id),
+    id:
+      row.event_id === null || row.event_id === undefined
+        ? Number(row.id)
+        : Number(row.event_id),
+    interactionId: Number(row.interaction_id || row.id),
     calendarSource: "interaction",
     opportunityId:
       row.primary_opportunity_id === null
@@ -3811,6 +3837,8 @@ function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
     closeDate: row.close_date || null,
     amountUsd: Number(row.amount_usd || 0),
     readonlyByStatus: true,
+    leadSubstatusCode,
+    leadSubstatusName,
   };
 }
 
@@ -3831,8 +3859,9 @@ async function listCalendarLeadFollowUps({
     : "LEFT JOIN account_owners ao_interaction_scope ON ao_interaction_scope.account_id = i.account_id AND ao_interaction_scope.user_id = ?";
   const sellerExpression = "COALESCE(i.seller_user_id, po.seller_user_id)";
   const where = [
-    `i.lead_required_action_code IS NOT NULL`,
-    `i.analysis_status <> 'lead_disqualified'`,
+    `e.required_action_code IS NOT NULL`,
+    `e.next_action_due_at IS NOT NULL`,
+    `e.to_status_code <> 'lead_disqualified'`,
   ];
 
   if (!hasCalendarGlobalScope(user)) {
@@ -3842,11 +3871,11 @@ async function listCalendarLeadFollowUps({
   const normalizedStartDate = String(startDate || "").trim();
   const normalizedEndDate = String(endDate || "").trim();
   if (normalizedStartDate && normalizedEndDate) {
-    where.push(`DATE(i.lead_next_action_due_at) BETWEEN ? AND ?`);
+    where.push(`DATE(e.next_action_due_at) BETWEEN ? AND ?`);
     params.push(normalizedStartDate, normalizedEndDate);
   } else {
-    where.push(`i.lead_next_action_due_at >= ?`);
-    where.push(`i.lead_next_action_due_at < ?`);
+    where.push(`e.next_action_due_at >= ?`);
+    where.push(`e.next_action_due_at < ?`);
     params.push(startDateTime, endExclusiveDateTime);
   }
 
@@ -3872,11 +3901,14 @@ async function listCalendarLeadFollowUps({
 
   const rows = await query(
     `SELECT i.id,
+            e.id AS event_id,
+            e.interaction_id,
             i.title AS interaction_title,
-            i.summary,
-            i.lead_required_action_code,
-            i.lead_next_action_due_at,
-          DATE_FORMAT(i.lead_next_action_due_at, '%Y-%m-%d') AS lead_next_action_due_date,
+            COALESCE(e.commercial_comment, i.summary) AS summary,
+            COALESCE(e.substatus_code, i.lead_substatus_code) AS lead_substatus_code,
+            e.required_action_code AS lead_required_action_code,
+            COALESCE(e.next_action_due_at, i.lead_next_action_due_at) AS lead_next_action_due_at,
+            DATE_FORMAT(COALESCE(e.next_action_due_at, i.lead_next_action_due_at), '%Y-%m-%d') AS lead_next_action_due_date,
             i.primary_opportunity_id,
             po.name AS primary_opportunity_name,
             po.close_date,
@@ -3885,12 +3917,13 @@ async function listCalendarLeadFollowUps({
             a.name AS account_name,
             su.full_name AS seller_user_name
      FROM interactions i
+     LEFT JOIN interaction_lead_outcome_events e ON e.interaction_id = i.id
      LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
      LEFT JOIN accounts a ON a.id = COALESCE(i.account_id, po.account_id)
      LEFT JOIN users su ON su.id = ${sellerExpression}
      ${accessJoin}
      WHERE ${where.join(" AND ")}
-     ORDER BY i.lead_next_action_due_at ASC, i.id ASC`,
+     ORDER BY COALESCE(e.next_action_due_at, i.lead_next_action_due_at) ASC, e.id ASC`,
     params,
   ).catch(() => []);
 

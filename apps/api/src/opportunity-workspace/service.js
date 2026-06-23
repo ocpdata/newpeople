@@ -3074,6 +3074,8 @@ async function insertOrUpdateEntity({
   payload,
   createColumns,
   createValues,
+  updateScopeColumn,
+  updateScopeValue,
 }) {
   await ensureOpportunityWorkspaceSchema();
 
@@ -3082,9 +3084,19 @@ async function insertOrUpdateEntity({
   );
   if (id) {
     const setClause = entries.map(([key]) => `${key} = ?`).join(", ");
+    const whereParts = ["id = ?"];
+    const whereValues = [id];
+    if (
+      updateScopeColumn &&
+      updateScopeValue !== undefined &&
+      updateScopeValue !== null
+    ) {
+      whereParts.push(`${updateScopeColumn} = ?`);
+      whereValues.push(updateScopeValue);
+    }
     await query(
-      `UPDATE ${table} SET ${setClause}, updated_at = NOW(3) WHERE id = ?`,
-      [...entries.map((entry) => entry[1]), id],
+      `UPDATE ${table} SET ${setClause}, updated_at = NOW(3) WHERE ${whereParts.join(" AND ")}`,
+      [...entries.map((entry) => entry[1]), ...whereValues],
     );
     return Number(id);
   }
@@ -3229,6 +3241,8 @@ export async function saveOpportunityAction({
       "updated_by_user_id",
     ],
     createValues: [opportunityId, userId, userId],
+    updateScopeColumn: "opportunity_id",
+    updateScopeValue: opportunityId,
   });
 }
 
