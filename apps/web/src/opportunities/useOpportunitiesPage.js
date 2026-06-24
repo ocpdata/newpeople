@@ -456,6 +456,7 @@ export function useOpportunitiesPage({
   ]);
   const openEditOpportunityModalRef = useRef(null);
   const commercialSuggestionPollingTokenRef = useRef(0);
+  const commercialSuggestionRetryNoticeRef = useRef("");
   const stageValidationPollingTokenRef = useRef(0);
   const shouldPollDocumentSession = useMemo(
     () =>
@@ -1550,6 +1551,7 @@ export function useOpportunitiesPage({
 
   function closeCommercialSuggestionFeedback() {
     setCommercialSuggestionFeedback(null);
+    commercialSuggestionRetryNoticeRef.current = "";
   }
 
   function showCommercialSuggestionFeedback({
@@ -1638,6 +1640,24 @@ export function useOpportunitiesPage({
         `/api/opportunities/${opportunityId}/stage-view/${stageId}/propose-answers/jobs/${jobId}`,
         { timeout: PROPOSE_ANSWERS_TIMEOUT_MS },
       );
+
+      if (data?.job?.retry?.isRetryingTimeout) {
+        const attemptCount = Number(data?.job?.attemptCount || 0);
+        const maxAttempts = Number(data?.job?.retry?.maxAttempts || 0);
+        const retryKey = `${jobId}:${attemptCount}:${maxAttempts}`;
+        if (commercialSuggestionRetryNoticeRef.current !== retryKey) {
+          commercialSuggestionRetryNoticeRef.current = retryKey;
+          showCommercialSuggestionFeedback({
+            tone: "warning",
+            title: "Reintentando análisis IA",
+            message:
+              maxAttempts > 0
+                ? `El análisis tardó más de lo esperado y estamos reintentando automáticamente (${attemptCount}/${maxAttempts}).`
+                : "El análisis tardó más de lo esperado y estamos reintentando automáticamente.",
+            canRetry: false,
+          });
+        }
+      }
 
       if (data?.result) {
         return data;
@@ -2175,6 +2195,7 @@ export function useOpportunitiesPage({
     commercialSuggestionPollingTokenRef.current += 1;
     const pollingToken = commercialSuggestionPollingTokenRef.current;
     setCommercialSuggestionFeedback(null);
+    commercialSuggestionRetryNoticeRef.current = "";
     setAnalyzingCommercialSuggestions(true);
 
     try {

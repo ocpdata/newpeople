@@ -12,6 +12,8 @@ const PIPELINE_VERSION = "v1";
 const JOB_RESULT_TTL_HOURS = 24;
 const JOB_POLL_AFTER_MS = 3000;
 const JOB_LEASE_SECONDS = 300;
+const JOB_TIMEOUT_MAX_ATTEMPTS = 3;
+const JOB_TIMEOUT_RETRY_DELAYS_SECONDS = [8, 20, 40];
 
 function parseJsonField(value, fallback) {
   if (value === null || value === undefined || value === "") {
@@ -146,8 +148,21 @@ function buildPayloadResult({ salesStage, result }) {
   };
 }
 
-function buildPollAfterMs(status) {
-  return status === "pending" || status === "running" ? JOB_POLL_AFTER_MS : 0;
+function buildPollAfterMs(row) {
+  const status = String(row?.status || "pending");
+  if (!(status === "pending" || status === "running")) {
+    return 0;
+  }
+
+  const leaseExpiresAt = row?.lease_expires_at
+    ? new Date(row.lease_expires_at)
+    : null;
+  if (status === "pending" && leaseExpiresAt && !Number.isNaN(leaseExpiresAt.getTime())) {
+    const waitMs = Math.max(leaseExpiresAt.getTime() - Date.now(), 0);
+    return Math.max(JOB_POLL_AFTER_MS, waitMs);
+  }
+
+  return JOB_POLL_AFTER_MS;
 }
 
 function buildReusableFlag(status) {
@@ -171,8 +186,59 @@ function serializeJobRow(row) {
     startedAt: row.started_at || null,
     finishedAt: row.finished_at || null,
     expiresAt: row.expires_at || null,
-    pollAfterMs: buildPollAfterMs(String(row.status || "pending")),
+    pollAfterMs: buildPollAfterMs(row),
+    attemptCount: Number(row.attempt_count || 0),
+    retry: {
+      isRetryingTimeout:
+        String(row.status || "") === "pending" &&
+        String(row.error_code || "") === "retrying_openai_timeout",
+      maxAttempts: JOB_TIMEOUT_MAX_ATTEMPTS,
+      lastErrorCode: String(row.error_code || "").trim() || null,
+      lastErrorMessage: String(row.error_message || "").trim() || null,
+      nextAttemptAt: row.lease_expires_at || null,
+    },
   };
+}
+
+function isOpenAiTimeoutError(error) {
+  const message = String(error?.message || "");
+  return message.includes("OpenAI request exceeded") && message.includes("ms");
+}
+
+function getTimeoutRetryDelaySeconds(attemptCount) {
+  const index = Math.max(Number(attemptCount || 1) - 1, 0);
+  return (
+    JOB_TIMEOUT_RETRY_DELAYS_SECONDS[
+      Math.min(index, JOB_TIMEOUT_RETRY_DELAYS_SECONDS.length - 1)
+    ] || JOB_TIMEOUT_RETRY_DELAYS_SECONDS[JOB_TIMEOUT_RETRY_DELAYS_SECONDS.length - 1]
+  );
+}
+
+async function requeueJobAfterTimeout({
+  jobId,
+  leaseToken,
+  attemptCount,
+  errorMessage,
+}) {
+  const delaySeconds = getTimeoutRetryDelaySeconds(attemptCount);
+  await query(
+    `UPDATE opportunity_stage_answer_suggestion_jobs
+     SET status = 'pending',
+         lease_token = NULL,
+         lease_expires_at = DATE_ADD(NOW(3), INTERVAL ? SECOND),
+         error_code = 'retrying_openai_timeout',
+         error_message = ?,
+         updated_at = NOW(3)
+     WHERE id = ?
+       AND lease_token = ?`,
+    [
+      delaySeconds,
+      errorMessage ||
+        'La generación excedió el tiempo de espera con OpenAI. Reintentando automáticamente.',
+      Number(jobId),
+      String(leaseToken || ""),
+    ],
+  );
 }
 
 function buildJobResponse(row) {
@@ -457,7 +523,10 @@ async function claimNextPendingJob() {
     `SELECT id
      FROM opportunity_stage_answer_suggestion_jobs
      WHERE (
-         status = 'pending'
+        (
+          status = 'pending'
+          AND (lease_expires_at IS NULL OR lease_expires_at <= NOW(3))
+        )
          OR (
            status = 'running'
            AND lease_expires_at IS NOT NULL
@@ -482,7 +551,10 @@ async function claimNextPendingJob() {
              updated_at = NOW(3)
          WHERE id = ?
            AND (
-             status = 'pending'
+             (
+               status = 'pending'
+               AND (lease_expires_at IS NULL OR lease_expires_at <= NOW(3))
+             )
              OR (
                status = 'running'
                AND lease_expires_at IS NOT NULL
@@ -557,6 +629,7 @@ async function processSingleJob(row) {
   const leaseToken = String(row?.lease_token || "");
   const opportunityId = Number(row?.opportunity_id || 0);
   const salesStageId = Number(row?.sales_stage_id || 0);
+  const attemptCount = Number(row?.attempt_count || 0);
 
   if (!jobId || !leaseToken || !opportunityId || !salesStageId) {
     return false;
@@ -663,6 +736,16 @@ async function processSingleJob(row) {
     });
     return true;
   } catch (error) {
+    if (isOpenAiTimeoutError(error) && attemptCount < JOB_TIMEOUT_MAX_ATTEMPTS) {
+      await requeueJobAfterTimeout({
+        jobId,
+        leaseToken,
+        attemptCount,
+        errorMessage: String(error?.message || "").trim(),
+      });
+      return true;
+    }
+
     await updateJobStatus({
       jobId,
       leaseToken,
