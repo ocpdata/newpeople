@@ -567,6 +567,14 @@
   background: #2f9e44;
 }
 
+.tracking-quarter-bar.is-contribution-planned {
+  background: #7048e8;
+}
+
+.tracking-quarter-bar.is-contribution-real {
+  background: #0b7285;
+}
+
 .tracking-quarter-bar.is-opportunities {
   background: #1864ab;
 }

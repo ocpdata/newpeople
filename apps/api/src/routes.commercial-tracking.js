@@ -292,7 +292,17 @@ function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "qv") {
                    (1 - (qsi.final_discount_pct / 100))
                  )
                END
-             ) AS base_sale_total
+             ) AS base_sale_total,
+             SUM(
+               CASE
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   qsi.list_price_unit *
+                   (1 - (qsi.manufacturer_discount_pct / 100)) *
+                   (1 + (qsi.import_cost_pct / 100))
+                 )
+               END
+             ) AS base_cost_total
       FROM quotation_sections qs
       INNER JOIN quotation_section_items qsi ON qsi.quotation_section_id = qs.id
       LEFT JOIN quotation_section_items child
@@ -302,6 +312,32 @@ function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "qv") {
         AND qsi.item_type <> 'grupo_productos'
       GROUP BY qs.quotation_version_id
     ) quotation_total ON quotation_total.quotation_version_id = ${versionAlias}.id`;
+}
+
+function buildQuotationVersionContributionSql({
+  versionAlias = "qv",
+  totalsAlias = "quotation_total",
+} = {}) {
+  const baseSaleSql = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
+  const baseCostSql = `COALESCE(${totalsAlias}.base_cost_total, 0)`;
+  const adjustedSaleSql = `CASE
+      WHEN ${versionAlias}.summary_distribution_mode = 'per_item'
+        THEN ${baseSaleSql}
+      WHEN ${versionAlias}.summary_discount_mode = 'amount'
+        THEN GREATEST(
+          ${baseSaleSql} - LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${baseSaleSql}),
+          0
+        )
+      WHEN ${versionAlias}.summary_discount_mode = 'percentage'
+        THEN ${baseSaleSql} *
+          (1 - (LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100))
+      ELSE ${baseSaleSql}
+    END`;
+
+  return `CASE
+      WHEN ${versionAlias}.id IS NULL THEN NULL
+      ELSE ${adjustedSaleSql} - ${baseCostSql}
+    END`;
 }
 
 function buildQuotationVersionEffectiveTotalSql({
@@ -418,7 +454,7 @@ async function listWonQuotationContributionByOpportunity(opportunityIds) {
   const rows = await query(
     `SELECT q.opportunity_id,
             SUM(
-              (${buildQuotationVersionEffectiveTotalSql({ versionAlias: "qv", totalsAlias: "quotation_total" })}) *
+              (${buildQuotationVersionContributionSql({ versionAlias: "qv", totalsAlias: "quotation_total" })}) *
               CASE
                 WHEN UPPER(COALESCE(qv.currency_code, 'USD')) = 'USD' THEN 1
                 WHEN COALESCE(qv.exchange_rate, 0) > 0 THEN 1 / qv.exchange_rate
@@ -426,11 +462,17 @@ async function listWonQuotationContributionByOpportunity(opportunityIds) {
               END
             ) AS contribution_amount_usd
      FROM quotations q
-     INNER JOIN quotation_versions qv ON qv.quotation_id = q.id
-     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+     INNER JOIN quotation_versions qv ON qv.id = (
+       SELECT qv2.id
+       FROM quotation_versions qv2
+       INNER JOIN quotation_statuses qs2 ON qs2.id = qv2.status_id
+       WHERE qv2.quotation_id = q.id
+         AND qs2.code = 'ganada'
+       ORDER BY qv2.version_number DESC, qv2.id DESC
+       LIMIT 1
+     )
      ${buildQuotationVersionBaseSaleTotalJoin("qv")}
      WHERE q.opportunity_id IN (${placeholders})
-       AND qs.code = 'ganada'
      GROUP BY q.opportunity_id`,
     normalizedIds,
   ).catch(() => []);

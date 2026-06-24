@@ -392,7 +392,19 @@ function QuarterlyDualBarChart({ quarters }) {
       (quarters || []).reduce((current, quarter) => {
         const quota = Number(quarter?.quotaSalesAmountUsd || 0);
         const actual = Number(quarter?.actualSalesAmountUsd || 0);
-        return Math.max(current, quota, actual);
+        const contributionPlanned = Number(
+          quarter?.quotaContributionAmountUsd || 0,
+        );
+        const contributionReal = Number(
+          quarter?.actualContributionAmountUsd || 0,
+        );
+        return Math.max(
+          current,
+          quota,
+          actual,
+          contributionPlanned,
+          contributionReal,
+        );
       }, 0),
     [quarters],
   );
@@ -426,6 +438,26 @@ function QuarterlyDualBarChart({ quarters }) {
               />
             </div>
             <strong>{formatCurrency(quarter.actualSalesAmountUsd)}</strong>
+          </div>
+          <div className="tracking-quarter-bar-row">
+            <span>Contrib. planeada</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-contribution-planned"
+                style={{ width: `${getQuarterBarWidth(quarter.quotaContributionAmountUsd, maxValue)}%` }}
+              />
+            </div>
+            <strong>{formatCurrency(quarter.quotaContributionAmountUsd)}</strong>
+          </div>
+          <div className="tracking-quarter-bar-row">
+            <span>Contrib. real</span>
+            <div className="tracking-quarter-bar-track">
+              <div
+                className="tracking-quarter-bar is-contribution-real"
+                style={{ width: `${getQuarterBarWidth(quarter.actualContributionAmountUsd, maxValue)}%` }}
+              />
+            </div>
+            <strong>{formatCurrency(quarter.actualContributionAmountUsd)}</strong>
           </div>
         </article>
       ))}
