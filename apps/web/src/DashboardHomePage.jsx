@@ -32,6 +32,17 @@ export default function DashboardHomePage({
           meta: "Comercial",
         }
       : null,
+    canAccessCommercialTracking
+      ? {
+          badge: "Dashboard",
+          title: "Liga trimestral TV",
+          description: "Marcador diario competitivo para mostrar desempeno del equipo comercial.",
+          to: "/seller-league-tv",
+          cta: "Abrir liga",
+          tone: "accent",
+          meta: "Comercial",
+        }
+      : null,
     canAccessInteractions
       ? {
           badge: "Analitica",

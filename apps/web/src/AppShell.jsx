@@ -33,6 +33,7 @@ const CommercialDevelopmentPage = lazy(
 );
 const CalendarPage = lazy(() => import("./CalendarPage"));
 const CommercialTrackingPage = lazy(() => import("./CommercialTrackingPage"));
+const SellerLeagueTvPage = lazy(() => import("./SellerLeagueTvPage"));
 const CommercialPlanningPage = lazy(() => import("./CommercialPlanningPage"));
 const CommercialEnablementPage = lazy(
   () => import("./CommercialEnablementPage"),
@@ -388,6 +389,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/seller-league-tv"
+          element={
+            canAccessCommercialTracking ? (
+              <SellerLeagueTvPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/commercial-planning"
           element={
             canAccessCommercialPlanning ? (
@@ -488,6 +499,7 @@ export default function AppShell({
             {(canReadAccounts ||
               canReadContacts ||
               canReadOpportunities ||
+              canAccessInteractions ||
               canAccessQuotations ||
               canAccessManufacturerRegistrations) && (
               <SidebarNavGroup title="Comercial">
@@ -505,6 +517,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Contactos
+                  </GuardedNavLink>
+                )}
+                {canAccessInteractions && (
+                  <GuardedNavLink
+                    to="/interactions"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Leads
                   </GuardedNavLink>
                 )}
                 {canReadOpportunities && (
@@ -535,19 +555,6 @@ export default function AppShell({
               </SidebarNavGroup>
             )}
 
-            {canAccessInteractions && (
-              <SidebarNavGroup title="Marketing">
-                {canAccessInteractions && (
-                  <GuardedNavLink
-                    to="/interactions"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Leads
-                  </GuardedNavLink>
-                )}
-              </SidebarNavGroup>
-            )}
-
             {(canAccessCommercialDevelopment ||
               canAccessCommercialCalendar ||
               canAccessCommercialTracking ||
@@ -561,6 +568,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Pipeline
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessCommercialTracking ? (
+                  <GuardedNavLink
+                    to="/seller-league-tv"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Liga trimestral TV
                   </GuardedNavLink>
                 ) : null}
                 {canAccessCommercialPlanning ? (

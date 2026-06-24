@@ -6218,8 +6218,9 @@ function InteractionsPage({ can, currentUser }) {
                   <tr>
                     <th>Fuente</th>
                     <th>Leads</th>
+                    <th>Asignados</th>
                     <th>Calificados</th>
-                    <th>Oportunidades</th>
+                    <th>Descalificados</th>
                     <th>Conversión</th>
                   </tr>
                 </thead>
@@ -6241,8 +6242,9 @@ function InteractionsPage({ can, currentUser }) {
                         </button>
                       </td>
                       <td>{row.total}</td>
+                      <td>{row.assignedTotal || 0}</td>
                       <td>{row.qualifiedTotal}</td>
-                      <td>{row.opportunityTotal}</td>
+                      <td>{row.disqualifiedTotal || 0}</td>
                       <td>{formatPercent(row.opportunityTotal, row.total)}</td>
                     </tr>
                   ))}

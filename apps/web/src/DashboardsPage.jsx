@@ -29,6 +29,17 @@ export default function DashboardsPage({
           meta: "Comercial",
         }
       : null,
+    canAccessCommercialTracking
+      ? {
+          badge: "Disponible ahora",
+          title: "Liga comercial trimestral TV",
+          description: "Ranking competitivo diario por vendedor para mostrar en pantallas de equipo.",
+          to: "/seller-league-tv",
+          cta: "Abrir liga",
+          tone: "accent",
+          meta: "Comercial",
+        }
+      : null,
     canAccessInteractions
       ? {
           badge: "Disponible ahora",

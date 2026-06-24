@@ -4556,6 +4556,7 @@ router.get(
       query(
         `SELECT i.lead_source,
                   COUNT(*) AS total,
+                  SUM(CASE WHEN i.analysis_status = 'lead_assigned' THEN 1 ELSE 0 END) AS assigned_total,
                   SUM(CASE WHEN i.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END) AS qualified_total,
                   SUM(CASE WHEN i.analysis_status = 'lead_disqualified' THEN 1 ELSE 0 END) AS disqualified_total,
                   SUM(CASE WHEN i.primary_opportunity_id IS NOT NULL THEN 1 ELSE 0 END) AS opportunity_total
@@ -4702,6 +4703,7 @@ router.get(
       sourceCounts: sourceRows.map((row) => ({
         code: row.lead_source || "otro",
         total: Number(row.total || 0),
+        assignedTotal: Number(row.assigned_total || 0),
         qualifiedTotal: Number(row.qualified_total || 0),
         disqualifiedTotal: Number(row.disqualified_total || 0),
         opportunityTotal: Number(row.opportunity_total || 0),

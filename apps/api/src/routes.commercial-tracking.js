@@ -254,6 +254,21 @@ function toAmount(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function clampScore(value) {
+  const numericValue = Number(value || 0);
+  if (numericValue <= 0) return 0;
+  if (numericValue >= 100) return 100;
+  return toAmount(numericValue);
+}
+
+function safeRatio(numerator, denominator) {
+  const safeDenominator = Number(denominator || 0);
+  if (safeDenominator <= 0) {
+    return 0;
+  }
+  return Number(numerator || 0) / safeDenominator;
+}
+
 function toYearValue(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 2000 && parsed <= 2100
@@ -2369,6 +2384,188 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
   };
 }
 
+async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
+  const periodRows = await query(
+    `SELECT p.id,
+            p.base_currency_code,
+            p.plan_year,
+            p.plan_quarter,
+            v.id AS version_id,
+            v.label AS version_label
+     FROM commercial_planning_periods p
+     LEFT JOIN commercial_planning_versions v ON v.id = (
+       SELECT v2.id
+       FROM commercial_planning_versions v2
+       WHERE v2.period_id = p.id
+         AND v2.published_at IS NOT NULL
+       ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
+       LIMIT 1
+     )
+     WHERE p.plan_year = ?
+       AND p.plan_quarter = ?
+     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+              p.id DESC
+     LIMIT 1`,
+    [quarterSelection.year, quarterSelection.quarter],
+  ).catch(() => []);
+
+  const periodRow = periodRows[0] || null;
+  if (!periodRow?.version_id) {
+    return {
+      hasPlan: Boolean(periodRow),
+      hasPublishedVersion: false,
+      versionLabel: null,
+      currencyCode: periodRow?.base_currency_code || "USD",
+      targetBySellerId: new Map(),
+    };
+  }
+
+  const params = [Number(periodRow.version_id)];
+  const whereClauses = ["t.version_id = ?", "t.status <> 'void'"];
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("t.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const targetRows = await query(
+    `SELECT t.seller_user_id,
+            u.full_name AS seller_user_name,
+            SUM(COALESCE(t.sales_quota_amount, 0)) AS sales_quota_amount
+     FROM commercial_planning_targets t
+     LEFT JOIN users u ON u.id = t.seller_user_id
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY t.seller_user_id, u.full_name`,
+    params,
+  ).catch(() => []);
+
+  const targetBySellerId = new Map();
+  targetRows.forEach((row) => {
+    const sellerUserId = Number(row.seller_user_id || 0);
+    if (!sellerUserId) {
+      return;
+    }
+    targetBySellerId.set(sellerUserId, {
+      sellerUserId,
+      sellerUserName: row.seller_user_name || "Sin vendedor",
+      quotaAmountUsd: toAmount(row.sales_quota_amount || 0),
+    });
+  });
+
+  return {
+    hasPlan: true,
+    hasPublishedVersion: true,
+    versionLabel: periodRow.version_label || null,
+    currencyCode: periodRow.base_currency_code || "USD",
+    targetBySellerId,
+  };
+}
+
+function buildSellerLeagueRow({
+  sellerUserId,
+  sellerUserName,
+  quarterWonItems,
+  quarterOpenItems,
+  advancedOpportunityIds14d,
+  quotaAmountUsd,
+}) {
+  const wonAmountUsd = toAmount(
+    quarterWonItems.reduce((sum, item) => sum + Number(item.amount_usd || 0), 0),
+  );
+  const openOpportunities = quarterOpenItems.length;
+  const pipelineWeightedUsd = toAmount(
+    quarterOpenItems.reduce((sum, item) => {
+      return sum + Number(item.amountUsd || 0) * getForecastStageWeight(item.stageCode);
+    }, 0),
+  );
+  const coverageGapUsd = Math.max(Number(quotaAmountUsd || 0) - wonAmountUsd, 1);
+  const coverageRatio = safeRatio(pipelineWeightedUsd, coverageGapUsd);
+
+  const advanced14dCount = quarterOpenItems.reduce((sum, item) => {
+    return advancedOpportunityIds14d.has(Number(item.opportunityId || 0)) ? sum + 1 : sum;
+  }, 0);
+  const advanceRate14d = safeRatio(advanced14dCount, openOpportunities);
+
+  const opportunitiesWithNextStepCount = quarterOpenItems.filter(
+    (item) => Boolean(item.nextStep),
+  ).length;
+  const qualityReadyCount = quarterOpenItems.filter(
+    (item) => Boolean(item.nextStep) && Boolean(item.closeDate),
+  ).length;
+  const qualityRate = safeRatio(qualityReadyCount, openOpportunities);
+
+  const overdueCount = quarterOpenItems.filter((item) => {
+    if (!item.nextStep?.dueDate) {
+      return false;
+    }
+    return getDiffDays(item.nextStep.dueDate) > 0;
+  }).length;
+  const overdueRate = safeRatio(overdueCount, opportunitiesWithNextStepCount);
+
+  const noNextStepCount = quarterOpenItems.filter((item) => !item.nextStep).length;
+  const noNextStepRate = safeRatio(noNextStepCount, openOpportunities);
+
+  const blockedCriticalCount = quarterOpenItems.filter((item) =>
+    ["bloqueada", "sin_conduccion"].includes(String(item.executionStateCode || "")),
+  ).length;
+  const blockedCriticalRate = safeRatio(blockedCriticalCount, openOpportunities);
+
+  const scoreClosing = quotaAmountUsd
+    ? clampScore(100 * safeRatio(wonAmountUsd, quotaAmountUsd))
+    : null;
+  const scoreCoverage = clampScore((coverageRatio / 2) * 100);
+  const scoreAdvance = clampScore((advanceRate14d / 0.6) * 100);
+  const scoreQuality = clampScore((qualityRate / 0.9) * 100);
+  const scoreBuild = toAmount(
+    0.5 * scoreCoverage + 0.3 * scoreAdvance + 0.2 * scoreQuality,
+  );
+
+  const scoreOverdue = 100 - clampScore((overdueRate / 0.3) * 100);
+  const scoreNoNextStep = 100 - clampScore((noNextStepRate / 0.25) * 100);
+  const scoreBlocked = 100 - clampScore((blockedCriticalRate / 0.2) * 100);
+  const scoreDiscipline = toAmount(
+    0.4 * scoreOverdue + 0.35 * scoreNoNextStep + 0.25 * scoreBlocked,
+  );
+
+  const scoreTotal =
+    scoreClosing === null
+      ? null
+      : toAmount(0.5 * scoreClosing + 0.3 * scoreBuild + 0.2 * scoreDiscipline);
+
+  return {
+    sellerUserId,
+    sellerUserName,
+    quotaAmountUsd: quotaAmountUsd ? toAmount(quotaAmountUsd) : null,
+    wonAmountUsd,
+    attainmentPct:
+      quotaAmountUsd && quotaAmountUsd > 0
+        ? toAmount((wonAmountUsd / Number(quotaAmountUsd)) * 100)
+        : null,
+    gapAmountUsd:
+      quotaAmountUsd && quotaAmountUsd > 0
+        ? toAmount(Math.max(Number(quotaAmountUsd) - wonAmountUsd, 0))
+        : null,
+    openOpportunities,
+    opportunitiesWithNextStepCount,
+    pipelineWeightedUsd,
+    coverageRatio: toAmount(coverageRatio),
+    advanced14dCount,
+    advanceRate14d: toAmount(advanceRate14d * 100),
+    qualityRate: toAmount(qualityRate * 100),
+    overdueCount,
+    overdueRate: toAmount(overdueRate * 100),
+    noNextStepCount,
+    noNextStepRate: toAmount(noNextStepRate * 100),
+    blockedCriticalCount,
+    blockedCriticalRate: toAmount(blockedCriticalRate * 100),
+    scoreClosing,
+    scoreBuild,
+    scoreDiscipline,
+    scoreTotal,
+    momentum7d: toAmount(advanced14dCount * 3 + (wonAmountUsd / 25000)),
+    isOfficial: Boolean(quotaAmountUsd && quotaAmountUsd > 0),
+  };
+}
+
 router.get(
   "/overview",
   requireAnyPermission(["seguimiento_comercial.read"]),
@@ -2589,6 +2786,199 @@ router.get(
       businessLineId: req.query?.businessLineId,
     });
     res.json(payload);
+  },
+);
+
+router.get(
+  "/seller-league-tv",
+  requireAnyPermission(["seguimiento_comercial.read"]),
+  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  async (req, res) => {
+    const quarterSelection = getQuarterSelection(new Date());
+    const quarterStart = formatIsoDate(quarterSelection.start);
+    const quarterEnd = formatIsoDate(quarterSelection.end);
+    const weekRange = getWeekRange(new Date());
+
+    const [
+      scopedQuarterOpportunities,
+      scopedQuarterOpenItems,
+      quarterTargets,
+    ] = await Promise.all([
+      listScopedOpportunities(req.user, {
+        closeDateFrom: quarterStart,
+        closeDateTo: quarterEnd,
+      }),
+      buildOpenOpportunityItems(req.user, {
+        closeDateFrom: quarterStart,
+        closeDateTo: quarterEnd,
+        weekRange,
+      }),
+      loadCurrentQuarterTargetsBySeller({
+        user: req.user,
+        quarterSelection,
+      }),
+    ]);
+
+    const openOpportunityIds = scopedQuarterOpenItems
+      .map((item) => Number(item.opportunityId || 0))
+      .filter(Boolean);
+    const advanced14dRows = await listAuditEvents(
+      openOpportunityIds,
+      ["stage_advanced"],
+      startOfDay(addDays(new Date(), -14)),
+      endOfDay(new Date()),
+    );
+    const advancedOpportunityIds14d = new Set(
+      advanced14dRows
+        .map((row) => Number(row.entity_id || 0))
+        .filter(Boolean),
+    );
+
+    const rowsBySeller = new Map();
+    scopedQuarterOpportunities.forEach((item) => {
+      const sellerUserId = Number(item.seller_user_id || 0);
+      if (!sellerUserId) return;
+      const current = rowsBySeller.get(sellerUserId) || {
+        sellerUserId,
+        sellerUserName: item.seller_user_name || "Sin vendedor",
+        wonItems: [],
+        openItems: [],
+      };
+      if (isRealWonOpportunity(item)) {
+        current.wonItems.push(item);
+      }
+      rowsBySeller.set(sellerUserId, current);
+    });
+
+    scopedQuarterOpenItems.forEach((item) => {
+      const sellerUserId = Number(item.sellerUserId || 0);
+      if (!sellerUserId) return;
+      const current = rowsBySeller.get(sellerUserId) || {
+        sellerUserId,
+        sellerUserName: item.sellerUserName || "Sin vendedor",
+        wonItems: [],
+        openItems: [],
+      };
+      current.openItems.push(item);
+      rowsBySeller.set(sellerUserId, current);
+    });
+
+    quarterTargets.targetBySellerId.forEach((target, sellerUserId) => {
+      if (rowsBySeller.has(sellerUserId)) {
+        return;
+      }
+      rowsBySeller.set(sellerUserId, {
+        sellerUserId,
+        sellerUserName: target.sellerUserName || "Sin vendedor",
+        wonItems: [],
+        openItems: [],
+      });
+    });
+
+    const leaderboard = Array.from(rowsBySeller.values()).map((item) => {
+      const target = quarterTargets.targetBySellerId.get(item.sellerUserId);
+      return buildSellerLeagueRow({
+        sellerUserId: item.sellerUserId,
+        sellerUserName: item.sellerUserName,
+        quarterWonItems: item.wonItems,
+        quarterOpenItems: item.openItems,
+        advancedOpportunityIds14d,
+        quotaAmountUsd: target?.quotaAmountUsd || null,
+      });
+    });
+
+    leaderboard.sort((left, right) => {
+      const scoreDelta = Number(right.scoreTotal || -1) - Number(left.scoreTotal || -1);
+      if (scoreDelta !== 0) return scoreDelta;
+      const closingDelta = Number(right.scoreClosing || -1) - Number(left.scoreClosing || -1);
+      if (closingDelta !== 0) return closingDelta;
+      const wonDelta = Number(right.wonAmountUsd || 0) - Number(left.wonAmountUsd || 0);
+      if (wonDelta !== 0) return wonDelta;
+      const buildDelta = Number(right.scoreBuild || 0) - Number(left.scoreBuild || 0);
+      if (buildDelta !== 0) return buildDelta;
+      const momentumDelta = Number(right.momentum7d || 0) - Number(left.momentum7d || 0);
+      if (momentumDelta !== 0) return momentumDelta;
+      const disciplineDelta = Number(right.scoreDiscipline || 0) - Number(left.scoreDiscipline || 0);
+      if (disciplineDelta !== 0) return disciplineDelta;
+      return String(left.sellerUserName || "").localeCompare(
+        String(right.sellerUserName || ""),
+        "es",
+        { sensitivity: "base" },
+      );
+    });
+
+    let officialRank = 0;
+    const withRank = leaderboard.map((row, index) => {
+      const previousOfficial = leaderboard
+        .slice(0, index)
+        .filter((item) => item.isOfficial)
+        .at(-1);
+      const rankGapToNext =
+        row.isOfficial && previousOfficial
+          ? toAmount(Number(previousOfficial.scoreTotal || 0) - Number(row.scoreTotal || 0))
+          : null;
+      if (row.isOfficial) {
+        officialRank += 1;
+      }
+      return {
+        ...row,
+        rankPosition: row.isOfficial ? officialRank : null,
+        rankGapToNext,
+      };
+    });
+
+    const teamQuotaAmountUsd = toAmount(
+      withRank.reduce((sum, row) => sum + Number(row.quotaAmountUsd || 0), 0),
+    );
+    const teamWonAmountUsd = toAmount(
+      withRank.reduce((sum, row) => sum + Number(row.wonAmountUsd || 0), 0),
+    );
+    const teamAttainmentPct =
+      teamQuotaAmountUsd > 0
+        ? toAmount((teamWonAmountUsd / teamQuotaAmountUsd) * 100)
+        : null;
+
+    res.json({
+      period: {
+        year: quarterSelection.year,
+        quarter: quarterSelection.quarter,
+        label: quarterSelection.label,
+        startDate: quarterStart,
+        endDate: quarterEnd,
+      },
+      generatedAt: new Date().toISOString(),
+      weights: {
+        closing: 0.5,
+        build: 0.3,
+        discipline: 0.2,
+      },
+      planning: {
+        hasPlan: quarterTargets.hasPlan,
+        hasPublishedVersion: quarterTargets.hasPublishedVersion,
+        versionLabel: quarterTargets.versionLabel,
+        currencyCode: quarterTargets.currencyCode,
+      },
+      team: {
+        sellersVisible: withRank.length,
+        sellersOfficial: withRank.filter((row) => row.isOfficial).length,
+        quotaAmountUsd: teamQuotaAmountUsd,
+        wonAmountUsd: teamWonAmountUsd,
+        attainmentPct: teamAttainmentPct,
+        overdueCount: withRank.reduce(
+          (sum, row) => sum + Number(row.overdueCount || 0),
+          0,
+        ),
+        noNextStepCount: withRank.reduce(
+          (sum, row) => sum + Number(row.noNextStepCount || 0),
+          0,
+        ),
+        blockedCriticalCount: withRank.reduce(
+          (sum, row) => sum + Number(row.blockedCriticalCount || 0),
+          0,
+        ),
+      },
+      leaderboard: withRank,
+    });
   },
 );
 
