@@ -3530,7 +3530,7 @@ async function createContactFromDraft(conn, user, accountId, draft) {
         accountId: Number(accountId),
         positionTitle: draft.positionTitle || "",
         phone: draft.phone || "",
-        phoneExtension: "",
+        phoneExtension: draft.phoneExtension || "",
         mobile: draft.mobile || "",
         email: draft.email || "",
         department: draft.department || "",
