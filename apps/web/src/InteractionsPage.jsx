@@ -1296,6 +1296,7 @@ function buildInitialResolutionForm(detail, options, currentUser) {
           lastName: contact.lastName || "",
           email: contact.email || "",
           phone: contact.phone || "",
+          phoneExtension: "",
           mobile: contact.mobile || "",
           positionTitle: contact.positionTitle || "",
           department: contact.department || "",
@@ -1317,6 +1318,7 @@ function buildInitialResolutionForm(detail, options, currentUser) {
         lastName: "",
         email: "",
         phone: "",
+        phoneExtension: "",
         mobile: "",
         positionTitle: "",
         department: "",
@@ -2860,6 +2862,79 @@ function InteractionDetailModal({
                                                       ...item.draft,
                                                       positionTitle:
                                                         event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div className="field-group">
+                                  <label>Teléfono</label>
+                                  <input
+                                    value={resolution.draft.phone}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      phone: event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div className="field-group">
+                                  <label>Extensión</label>
+                                  <input
+                                    value={resolution.draft.phoneExtension}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      phoneExtension:
+                                                        event.target.value,
+                                                    },
+                                                  }
+                                                : item,
+                                          ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div className="field-group">
+                                  <label>Móvil</label>
+                                  <input
+                                    value={resolution.draft.mobile}
+                                    onChange={(event) =>
+                                      setResolutionForm((prev) => ({
+                                        ...prev,
+                                        contactResolutions:
+                                          prev.contactResolutions.map(
+                                            (item, itemIndex) =>
+                                              itemIndex === index
+                                                ? {
+                                                    ...item,
+                                                    draft: {
+                                                      ...item.draft,
+                                                      mobile: event.target.value,
                                                     },
                                                   }
                                                 : item,
