@@ -1998,6 +1998,10 @@ export function useQuotationsSection({
         quotation.latestVersionNumber ??
         quotation.latest_version_number ??
         null,
+      latestCurrencyCode:
+        quotation.latestCurrencyCode ??
+        quotation.latest_currency_code ??
+        null,
       latestStatusCode:
         quotation.latestStatusCode ?? quotation.latest_status_code ?? null,
       latestStatusName:

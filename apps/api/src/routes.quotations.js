@@ -10841,6 +10841,7 @@ router.get(
         su.mobile AS seller_user_phone,
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
+            lv.currency_code AS latest_currency_code,
               qs.code AS latest_status_code,
               qs.name AS latest_status_name,
               qs.ui_key AS latest_status_ui_key,
@@ -10885,6 +10886,7 @@ router.get(
         latestVersionNumber: row.latest_version_number
           ? Number(row.latest_version_number)
           : null,
+        latestCurrencyCode: row.latest_currency_code || null,
         latestStatusCode: row.latest_status_code || null,
         latestStatusName: row.latest_status_name || null,
         latestStatusUiKey: row.latest_status_ui_key || null,
@@ -10940,6 +10942,7 @@ router.get(
         su.mobile AS seller_user_phone,
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
+            lv.currency_code AS latest_currency_code,
               qs.code AS latest_status_code,
               qs.name AS latest_status_name,
               qs.ui_key AS latest_status_ui_key,
@@ -10984,6 +10987,7 @@ router.get(
         latestVersionNumber: row.latest_version_number
           ? Number(row.latest_version_number)
           : null,
+        latestCurrencyCode: row.latest_currency_code || null,
         latestStatusCode: row.latest_status_code || null,
         latestStatusName: row.latest_status_name || null,
         latestStatusUiKey: row.latest_status_ui_key || null,

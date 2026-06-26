@@ -13325,9 +13325,12 @@ button:disabled {
   gap: 4px;
   font-weight: 700;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .sort-header-btn span {
+  display: inline-flex;
+  align-items: center;
   color: #5a6f8b;
   font-size: 11px;
 }

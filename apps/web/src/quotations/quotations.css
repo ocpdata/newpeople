@@ -522,6 +522,11 @@
   min-width: 0;
 }
 
+.quotation-list-panel .quotation-amount-cell {
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .quotation-sidebar {
   display: grid;
   gap: 10px;

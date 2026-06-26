@@ -69,6 +69,35 @@ import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.
 import { createDocumentStorage } from "./opportunity-documents/storage.js";
 
 const router = express.Router();
+
+const INTERACTION_LIST_SORT_MAP = {
+  id: "i.id",
+  title: "i.title",
+  accountName: "a.name",
+  primaryOpportunityName: "po.name",
+  sellerName: "COALESCE(su.full_name, su.email, '')",
+  documentCount: "COUNT(DISTINCT d.id)",
+  analysisStatus: "i.analysis_status",
+  createdAt: "i.created_at",
+};
+
+function normalizeInteractionListSortBy(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "createdAt";
+  return Object.prototype.hasOwnProperty.call(
+    INTERACTION_LIST_SORT_MAP,
+    normalized,
+  )
+    ? normalized
+    : "createdAt";
+}
+
+function normalizeInteractionListSortDir(value, fallback = "desc") {
+  const normalized = String(value || fallback)
+    .trim()
+    .toLowerCase();
+  return normalized === "asc" ? "ASC" : "DESC";
+}
 const storage = createDocumentStorage();
 
 const interactionReadPermissions = [
@@ -4426,6 +4455,10 @@ router.get(
       Math.max(1, Number(req.query.pageSize || 10) || 10),
     );
     const filterContext = buildInteractionFilterContext(req, "i");
+    const sortBy = normalizeInteractionListSortBy(req.query.sortBy);
+    const sortDir = normalizeInteractionListSortDir(req.query.sortDir, "desc");
+    const sortExpression = INTERACTION_LIST_SORT_MAP[sortBy];
+    const orderByClause = `${sortExpression} ${sortDir}, i.id DESC`;
     const countRows = await query(
       `SELECT COUNT(*) AS total
        FROM interactions i
@@ -4458,7 +4491,7 @@ router.get(
                 i.lead_next_action_due_at, i.lead_substatus_code, i.lead_reason_code,
                 i.lead_required_action_code, a.name, po.name,
                 su.full_name, su.email
-       ORDER BY i.created_at DESC
+       ORDER BY ${orderByClause}
        LIMIT ? OFFSET ?`,
       [...filterContext.params, pageSize, (page - 1) * pageSize],
     );
@@ -4468,6 +4501,8 @@ router.get(
       page,
       pageSize,
       total: Number(countRows[0]?.total || 0),
+      sortBy,
+      sortDir: sortDir.toLowerCase(),
     });
   },
 );

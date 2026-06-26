@@ -264,13 +264,25 @@ function QuotationsListPanel({
     setContactModalLoading(false);
   }
 
-  const formattedAmount = (value) => {
+  const formattedAmount = (value, currencyCode) => {
     if (value === null || value === undefined || value === "") return "-";
-    return Number(value).toLocaleString("es-MX", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 0,
-    });
+    const normalizedCurrency = String(currencyCode || "USD")
+      .trim()
+      .toUpperCase();
+
+    try {
+      const formattedValue = Number(value).toLocaleString("es-MX", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      return `${normalizedCurrency} ${formattedValue}`;
+    } catch {
+      const formattedValue = Number(value).toLocaleString("es-MX", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      return `USD ${formattedValue}`;
+    }
   };
 
   const buildQuotationVersionOptions = (quotation) => {
@@ -519,7 +531,12 @@ function QuotationsListPanel({
                 <td>{quotation.accountName || "-"}</td>
                 <td>{quotation.opportunityName || "-"}</td>
                 <td>{quotation.opportunitySalesStageName || "-"}</td>
-                <td>{formattedAmount(quotation.latestTotalSaleAmount)}</td>
+                <td className="quotation-amount-cell">
+                  {formattedAmount(
+                    quotation.latestTotalSaleAmount,
+                    quotation.latestCurrencyCode,
+                  )}
+                </td>
                 <td>{formatQuotationDate(quotation.opportunityCloseDate)}</td>
                 <td>
                   <span

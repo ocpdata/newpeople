@@ -4264,6 +4264,8 @@ function InteractionsPage({ can, currentUser }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortDir, setSortDir] = useState("desc");
   const [query, setQuery] = useState("");
   const [statusFilters, setStatusFilters] = useState([
     ...LEAD_STATUS_FILTER_VALUES,
@@ -5239,6 +5241,23 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
+  function handleLeadSort(nextSortBy) {
+    setPage(1);
+    if (sortBy === nextSortBy) {
+      setSortDir((currentSortDir) =>
+        currentSortDir === "asc" ? "desc" : "asc",
+      );
+      return;
+    }
+    setSortBy(nextSortBy);
+    setSortDir(nextSortBy === "createdAt" ? "desc" : "asc");
+  }
+
+  function getLeadSortIndicator(columnSortBy) {
+    if (sortBy !== columnSortBy) return "↕";
+    return sortDir === "asc" ? "↑" : "↓";
+  }
+
   useEffect(() => {
     if (!openInteractionMenuId) return undefined;
 
@@ -5325,6 +5344,14 @@ function InteractionsPage({ can, currentUser }) {
         (overrides.period ?? periodFilter) || "all",
       );
       const effectiveQueue = String((overrides.queue ?? queueFilter) || "all");
+      const effectiveSortBy = String(
+        (overrides.sortBy ?? sortBy) || "createdAt",
+      );
+      const effectiveSortDir =
+        String((overrides.sortDir ?? sortDir) || "desc").toLowerCase() ===
+        "asc"
+          ? "asc"
+          : "desc";
 
       setLoading(true);
       try {
@@ -5337,6 +5364,8 @@ function InteractionsPage({ can, currentUser }) {
             source: effectiveSource,
             period: effectivePeriod,
             queue: effectiveQueue,
+            sortBy: effectiveSortBy,
+            sortDir: effectiveSortDir,
           },
         });
         setItems(Array.isArray(data?.items) ? data.items : []);
@@ -5355,6 +5384,8 @@ function InteractionsPage({ can, currentUser }) {
       sourceFilter,
       periodFilter,
       queueFilter,
+      sortBy,
+      sortDir,
     ],
   );
 
@@ -7028,23 +7059,86 @@ function InteractionsPage({ can, currentUser }) {
           <table>
             <thead>
               <tr>
-                <th>#</th>
-                <th className="interaction-title-column">Lead</th>
-                <th>Cuenta</th>
-                <th>Oportunidad</th>
-                <th>Vendedor</th>
-                <th>Archivos</th>
-                <th>Estado</th>
-                <th>Creada</th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("id")}
+                  >
+                    ID {getLeadSortIndicator("id")}
+                  </button>
+                </th>
+                <th className="interaction-title-column">
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("title")}
+                  >
+                    Lead {getLeadSortIndicator("title")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("accountName")}
+                  >
+                    Cuenta {getLeadSortIndicator("accountName")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("primaryOpportunityName")}
+                  >
+                    Oportunidad {getLeadSortIndicator("primaryOpportunityName")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("sellerName")}
+                  >
+                    Vendedor {getLeadSortIndicator("sellerName")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("documentCount")}
+                  >
+                    Archivos {getLeadSortIndicator("documentCount")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("analysisStatus")}
+                  >
+                    Estado {getLeadSortIndicator("analysisStatus")}
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("createdAt")}
+                  >
+                    Creada {getLeadSortIndicator("createdAt")}
+                  </button>
+                </th>
                 <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item, index) => {
+              {items.map((item) => {
                 const statusMeta = getInteractionStatusMeta(
                   item.analysisStatus,
                 );
-                const displayIndex = (page - 1) * pageSize + index + 1;
                 const canDeleteInteraction =
                   canUpdate && !isFinalizedLeadStatus(item.analysisStatus);
                 return (
@@ -7055,7 +7149,7 @@ function InteractionsPage({ can, currentUser }) {
                       void openDetail(item.id);
                     }}
                   >
-                    <td title={item.publicId}>{displayIndex}</td>
+                    <td title={item.publicId}>{item.id}</td>
                     <td className="interaction-title-column">
                       <div className="interaction-table-title-cell">
                         <strong
