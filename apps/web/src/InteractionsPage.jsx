@@ -1992,13 +1992,15 @@ function InteractionDetailModal({
     currentUserIsSellerEligible: false,
   };
   const canEditCommercialAssignment = commercialAssignmentPolicy.mode === "any";
-  const availableSellerUsers = resolvedAccountId
-    ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
-    : canEditCommercialAssignment
-      ? options.sellerUsers || []
+  const availableSellerUsers = canEditCommercialAssignment
+    ? options.sellerUsers || []
+    : resolvedAccountId
+      ? options.sellerUsersByAccountId?.[String(resolvedAccountId)] || []
       : [];
   const legacySellerOption = buildLegacySellerOption(detail);
+  const canUseLegacySellerOption = !resolvedAccountId;
   const sellerOptionList =
+    canUseLegacySellerOption &&
     legacySellerOption &&
     !availableSellerUsers.some(
       (user) => Number(user.id) === Number(legacySellerOption.id),
@@ -5886,6 +5888,34 @@ function InteractionsPage({ can, currentUser }) {
     );
     const canSubmitCommercialAssignment =
       detail?.commercialAssignmentPolicy?.mode !== "none";
+    const requiresSellerOwnerForLinkedAccount =
+      detail?.commercialAssignmentPolicy?.mode !== "any";
+    const linkedAccountId =
+      effectiveResolutionForm.accountResolution.mode === "link_existing" &&
+      effectiveResolutionForm.accountResolution.accountId
+        ? Number(effectiveResolutionForm.accountResolution.accountId)
+        : null;
+    const sellerUsersForLinkedAccount = linkedAccountId
+      ? options?.sellerUsersByAccountId?.[String(linkedAccountId)] || []
+      : [];
+    const hasInvalidSellerForLinkedAccount = Boolean(
+      requiresSellerOwnerForLinkedAccount &&
+      canSubmitCommercialAssignment &&
+        linkedAccountId &&
+        effectiveResolutionForm.sellerUserId &&
+        !sellerUsersForLinkedAccount.some(
+          (user) =>
+            Number(user.id) === Number(effectiveResolutionForm.sellerUserId),
+        ),
+    );
+
+    if (hasInvalidSellerForLinkedAccount) {
+      setError(
+        "El vendedor asignado debe ser uno de los owners vendedores de la cuenta vinculada.",
+      );
+      return;
+    }
+
     setShowResolveConfirmation(false);
     setResolving(true);
     setError("");

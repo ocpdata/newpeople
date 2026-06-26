@@ -3568,7 +3568,7 @@ async function createContactFromDraft(conn, user, accountId, draft) {
         hierarchy_level_id, influence_level_id, employment_status_id,
         activation_status_id, manager_contact_id, influences_contact_id,
         created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
     [
       draft.firstName,
       draft.lastName,
@@ -6506,18 +6506,35 @@ router.post(
           }
 
           if (resolvedAccountId && !isNewlyCreatedAccount) {
-            const isValidSellerOwner = await validateSellerOwnerForAccount(
-              resolvedAccountId,
-              assignedSellerUserId,
-              conn,
-            );
-            if (!isValidSellerOwner) {
-              throw Object.assign(
-                new Error(
-                  "El vendedor asignado debe ser uno de los owners vendedores de la cuenta",
-                ),
-                { status: 400 },
+            if (commercialAssignmentPolicy.mode === "any") {
+              const preservesExistingSeller =
+                detail.sellerUserId &&
+                Number(detail.sellerUserId) === Number(assignedSellerUserId);
+              const isValidActiveSeller = preservesExistingSeller
+                ? true
+                : await validateActiveSellerUser(assignedSellerUserId, conn);
+              if (!isValidActiveSeller) {
+                throw Object.assign(
+                  new Error(
+                    "El vendedor asignado debe ser un usuario elegible para ventas y activo",
+                  ),
+                  { status: 400 },
+                );
+              }
+            } else {
+              const isValidSellerOwner = await validateSellerOwnerForAccount(
+                resolvedAccountId,
+                assignedSellerUserId,
+                conn,
               );
+              if (!isValidSellerOwner) {
+                throw Object.assign(
+                  new Error(
+                    "El vendedor asignado debe ser uno de los owners vendedores de la cuenta",
+                  ),
+                  { status: 400 },
+                );
+              }
             }
           } else {
             const preservesExistingSeller =
@@ -6798,6 +6815,17 @@ router.post(
 
       return res.json(await fetchInteractionDetail(interactionId, req.user));
     } catch (error) {
+      const internalErrorDetail = String(error?.message || "").trim();
+      const exposeInternalError = process.env.NODE_ENV !== "production";
+      // Keep a server-side trace in dev to diagnose unexpected resolve failures.
+      if (exposeInternalError) {
+        console.error("[interactions.resolve]", {
+          interactionId,
+          status: error?.status,
+          message: internalErrorDetail,
+          stack: error?.stack,
+        });
+      }
       if (error?.payload && typeof error.payload === "object") {
         return res.status(error.status || 500).json({
           ...error.payload,
@@ -6806,6 +6834,10 @@ router.post(
             (error.status && error.status < 500
               ? error.message
               : "No fue posible guardar el lead"),
+          detail:
+            exposeInternalError && (!error.status || error.status >= 500)
+              ? internalErrorDetail || undefined
+              : undefined,
         });
       }
       return res.status(error.status || 500).json({
@@ -6813,6 +6845,10 @@ router.post(
           error.status && error.status < 500
             ? error.message
             : "No fue posible guardar el lead",
+        detail:
+          exposeInternalError && (!error.status || error.status >= 500)
+            ? internalErrorDetail || undefined
+            : undefined,
       });
     }
   },
