@@ -42,6 +42,9 @@ export default function QuotationsPage({ currentUser }) {
   const [initialSelectedOpportunityId] = useState(
     searchParams.get("opportunityId") || "",
   );
+  const [initialSelectedQuotationId] = useState(
+    searchParams.get("quotationId") || "",
+  );
   const [accounts, setAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [opportunities, setOpportunities] = useState([]);
@@ -335,6 +338,24 @@ export default function QuotationsPage({ currentUser }) {
     const timeoutId = window.setTimeout(() => setError(""), 10000);
     return () => window.clearTimeout(timeoutId);
   }, [error]);
+
+  useEffect(() => {
+    if (
+      !initialSelectedQuotationId ||
+      loadingContacts ||
+      !quotationsSectionRef.current
+    ) {
+      return;
+    }
+
+    const quotationIdToLoad = Number(initialSelectedQuotationId);
+    if (
+      quotationIdToLoad > 0 &&
+      quotationsSectionRef.current?.loadQuotationById
+    ) {
+      quotationsSectionRef.current.loadQuotationById(quotationIdToLoad);
+    }
+  }, [initialSelectedQuotationId, loadingContacts]);
 
   const hasAvailableAccounts = accounts.length > 0;
   const quotationPermissions = useMemo(

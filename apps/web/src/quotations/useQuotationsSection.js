@@ -1999,9 +1999,7 @@ export function useQuotationsSection({
         quotation.latest_version_number ??
         null,
       latestCurrencyCode:
-        quotation.latestCurrencyCode ??
-        quotation.latest_currency_code ??
-        null,
+        quotation.latestCurrencyCode ?? quotation.latest_currency_code ?? null,
       latestStatusCode:
         quotation.latestStatusCode ?? quotation.latest_status_code ?? null,
       latestStatusName:
@@ -3160,6 +3158,24 @@ export function useQuotationsSection({
       selectedQuotationId,
       selectedVersionId,
     ],
+  );
+
+  const handleLoadQuotationById = useCallback(
+    async (quotationId) => {
+      const quotation = quotations.find(
+        (q) => Number(q.id) === Number(quotationId),
+      );
+
+      if (!quotation) {
+        return;
+      }
+
+      await handleSelectQuotationVersion(
+        quotationId,
+        quotation.latestVersionId || quotationId,
+      );
+    },
+    [quotations, handleSelectQuotationVersion],
   );
 
   useEffect(() => {
@@ -7874,6 +7890,7 @@ export function useQuotationsSection({
       loadingDuplicateTargetOpportunities,
       selectedQuotationId,
       loadVersion: handleSelectQuotationVersion,
+      loadQuotationById: handleLoadQuotationById,
       quotationStatusFilter,
       setQuotationStatusFilter: handleQuotationStatusFilterChange,
       quotationStatusCounts,

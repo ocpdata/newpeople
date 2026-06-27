@@ -66,8 +66,14 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     ref,
     () => ({
       openCreateQuotationModal,
+      loadVersion: listPanelProps.loadVersion,
+      loadQuotationById: listPanelProps.loadQuotationById,
     }),
-    [openCreateQuotationModal],
+    [
+      openCreateQuotationModal,
+      listPanelProps.loadVersion,
+      listPanelProps.loadQuotationById,
+    ],
   );
 
   return (
