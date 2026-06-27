@@ -7695,6 +7695,10 @@ export function useQuotationsSection({
             leftValue = Number(left.latestTotalSaleAmount || 0);
             rightValue = Number(right.latestTotalSaleAmount || 0);
             break;
+          case "contribucion":
+            leftValue = Number(left.latestContributionAmount || 0);
+            rightValue = Number(right.latestContributionAmount || 0);
+            break;
           case "cierre_oportunidad":
             leftValue = left.opportunityCloseDate || "";
             rightValue = right.opportunityCloseDate || "";

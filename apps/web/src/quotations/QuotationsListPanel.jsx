@@ -497,6 +497,16 @@ function QuotationsListPanel({
               <button
                 type="button"
                 className="sort-header-btn"
+                onClick={() => toggleQuotationSort("contribucion")}
+              >
+                Contribución{" "}
+                <span>{getQuotationSortArrow("contribucion")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
                 onClick={() => toggleQuotationSort("cierre_oportunidad")}
               >
                 Cierre oportunidad{" "}
@@ -519,7 +529,7 @@ function QuotationsListPanel({
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={9} className="empty-state">
+              <td colSpan={10} className="empty-state">
                 Cargando cotizaciones...
               </td>
             </tr>
@@ -534,6 +544,12 @@ function QuotationsListPanel({
                 <td className="quotation-amount-cell">
                   {formattedAmount(
                     quotation.latestTotalSaleAmount,
+                    quotation.latestCurrencyCode,
+                  )}
+                </td>
+                <td className="quotation-amount-cell">
+                  {formattedAmount(
+                    quotation.latestContributionAmount,
                     quotation.latestCurrencyCode,
                   )}
                 </td>
@@ -789,7 +805,7 @@ function QuotationsListPanel({
             ))
           ) : (
             <tr>
-              <td colSpan={9} className="empty-state">
+              <td colSpan={10} className="empty-state">
                 No hay cotizaciones que coincidan con los filtros
               </td>
             </tr>

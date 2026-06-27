@@ -1082,8 +1082,8 @@ const itemSchema = z.object({
   productDescription: z.string().trim().min(1).max(5000),
   quantity: z.number().positive(),
   originalCurrencyCode: z.string().trim().length(3).optional().nullable(),
-  originalListPriceUnit: z.number().nonnegative().optional().nullable(),
-  listPriceUnit: z.number().nonnegative(),
+  originalListPriceUnit: z.number().optional().nullable(),
+  listPriceUnit: z.number(),
   manufacturerDiscountPct: z.number().min(0).max(100),
   importCostPct: z.number().min(0).max(100),
   profitMarginPct: z.number().min(0).max(100),
@@ -1259,7 +1259,17 @@ function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "lv") {
                    (1 - (qsi.final_discount_pct / 100))
                  )
                END
-             ) AS base_sale_total
+             ) AS base_sale_total,
+             SUM(
+               CASE
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   qsi.list_price_unit *
+                   (1 - (qsi.manufacturer_discount_pct / 100)) *
+                   (1 + (qsi.import_cost_pct / 100))
+                 )
+               END
+             ) AS base_cost_total
       FROM quotation_sections qs
       INNER JOIN quotation_section_items qsi ON qsi.quotation_section_id = qs.id
       LEFT JOIN quotation_section_items child
@@ -1301,6 +1311,32 @@ function buildQuotationVersionEffectiveTotalSql({
       WHEN ${versionAlias}.summary_vat_mode = 'total'
         THEN ${discountedTotalSql} * (1 + (${vatPctSql} / 100))
       ELSE ${discountedTotalSql}
+    END`;
+}
+
+function buildQuotationVersionContributionSql({
+  versionAlias = "lv",
+  totalsAlias = "latest_total",
+} = {}) {
+  const baseSaleSql = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
+  const baseCostSql = `COALESCE(${totalsAlias}.base_cost_total, 0)`;
+  const adjustedSaleSql = `CASE
+      WHEN ${versionAlias}.summary_distribution_mode = 'per_item'
+        THEN ${baseSaleSql}
+      WHEN ${versionAlias}.summary_discount_mode = 'amount'
+        THEN GREATEST(
+          ${baseSaleSql} - LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${baseSaleSql}),
+          0
+        )
+      WHEN ${versionAlias}.summary_discount_mode = 'percentage'
+        THEN ${baseSaleSql} *
+          (1 - (LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100))
+      ELSE ${baseSaleSql}
+    END`;
+
+  return `CASE
+      WHEN ${versionAlias}.id IS NULL THEN NULL
+      ELSE ${adjustedSaleSql} - ${baseCostSql}
     END`;
 }
 
@@ -10861,7 +10897,8 @@ router.get(
               qs.ui_key AS latest_status_ui_key,
               lv.proposal_name AS latest_proposal_name,
           lv.quotation_date AS latest_quotation_date,
-          ${buildQuotationVersionEffectiveTotalSql()} AS latest_total_sale_amount
+          ${buildQuotationVersionEffectiveTotalSql()} AS latest_total_sale_amount,
+          ${buildQuotationVersionContributionSql()} AS latest_contribution_amount
        FROM quotations q
        INNER JOIN opportunities o ON o.id = q.opportunity_id
       INNER JOIN accounts a ON a.id = o.account_id
@@ -10912,6 +10949,11 @@ router.get(
           row.latest_total_sale_amount === undefined
             ? null
             : Number(row.latest_total_sale_amount),
+        latestContributionAmount:
+          row.latest_contribution_amount === null ||
+          row.latest_contribution_amount === undefined
+            ? null
+            : Number(row.latest_contribution_amount),
         activationStatusId: Number(row.activation_status_id),
         activationStatusCode: row.activation_status_code,
         activationStatusName: row.activation_status_name,

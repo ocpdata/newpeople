@@ -396,21 +396,28 @@ export function formatQuotationAmount(value) {
 }
 
 export function sanitizeQuotationMoneyInputValue(value) {
-  return String(value || "")
-    .replace(/,/gu, "")
-    .replace(/[^\d.]/gu, "")
-    .replace(/(\..*)\./gu, "$1");
+  const stringValue = String(value || "");
+  const isNegative = stringValue.includes("-");
+  return (
+    (isNegative ? "-" : "") +
+    stringValue
+      .replace(/,/gu, "")
+      .replace(/[^\d.]/gu, "")
+      .replace(/(\..*)\./gu, "$1")
+  );
 }
 
 export function formatQuotationMoneyInputValue(value) {
   const sanitizedValue = sanitizeQuotationMoneyInputValue(value);
   const numericValue = Number(sanitizedValue);
 
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+  if (!Number.isFinite(numericValue) || numericValue === 0) {
     return "0";
   }
 
-  const normalizedValue = numericValue
+  const isNegative = numericValue < 0;
+  const absoluteValue = Math.abs(numericValue);
+  const normalizedValue = absoluteValue
     .toFixed(4)
     .replace(/(\.\d*?[1-9])0+$/u, "$1")
     .replace(/\.0+$/u, "");
@@ -422,9 +429,11 @@ export function formatQuotationMoneyInputValue(value) {
     },
   );
 
-  return decimalPart
+  const formatted = decimalPart
     ? `${formattedIntegerPart}.${decimalPart}`
     : formattedIntegerPart;
+
+  return isNegative ? `-${formatted}` : formatted;
 }
 
 export function roundQuotationMoney(value) {
@@ -471,9 +480,8 @@ export function buildQuotationItemPricing(item, pricingContext = {}) {
     item?.originalCurrencyCode,
     quotationCurrencyCode,
   );
-  const originalListPriceUnit = Math.max(
-    toNumber(item?.originalListPriceUnit ?? item?.listPriceUnit),
-    0,
+  const originalListPriceUnit = toNumber(
+    item?.originalListPriceUnit ?? item?.listPriceUnit,
   );
   const exchangeRate = normalizeQuotationExchangeRateValue(
     pricingContext?.exchangeRate,
@@ -565,7 +573,7 @@ function toPercentFactor(value) {
 
 export function calculateQuotationItemTotals(item, options = {}) {
   const quantity = Math.max(toNumber(item?.quantity), 0);
-  const listPriceUnit = Math.max(toNumber(item?.listPriceUnit), 0);
+  const listPriceUnit = toNumber(item?.listPriceUnit);
   const manufacturerDiscount = toPercentFactor(item?.manufacturerDiscountPct);
   const importCost = toPercentFactor(item?.importCostPct);
   const profitMargin = toPercentFactor(item?.profitMarginPct);
@@ -594,7 +602,7 @@ export function resolveQuotationItemSaleTarget({
   vatPct = DEFAULT_QUOTATION_VAT_PCT,
 }) {
   const quantity = Math.max(toNumber(item?.quantity), 0);
-  const listPriceUnit = Math.max(toNumber(item?.listPriceUnit), 0);
+  const listPriceUnit = toNumber(item?.listPriceUnit);
   const manufacturerDiscountPct = toNumber(item?.manufacturerDiscountPct);
   const importCostPct = toNumber(item?.importCostPct);
   const profitMarginPct = toNumber(item?.profitMarginPct);
@@ -671,7 +679,7 @@ export function resolveQuotationItemSaleTarget({
       };
     }
 
-    if (!(listPriceUnit > 0)) {
+    if (!Number.isFinite(listPriceUnit) || listPriceUnit === 0) {
       return {
         ok: false,
         message:
@@ -939,10 +947,7 @@ export function applyCreateQuotationPerItemVat(
   }));
 }
 
-export function getQuotationSectionInclusionCode(
-  section,
-  inclusionTypes = [],
-) {
+export function getQuotationSectionInclusionCode(section, inclusionTypes = []) {
   const inclusionTypeId = String(section?.inclusionTypeId || "");
 
   if (!inclusionTypeId) {
@@ -950,9 +955,8 @@ export function getQuotationSectionInclusionCode(
   }
 
   return (
-    inclusionTypes.find(
-      (type) => String(type?.id || "") === inclusionTypeId,
-    )?.code || ""
+    inclusionTypes.find((type) => String(type?.id || "") === inclusionTypeId)
+      ?.code || ""
   );
 }
 
@@ -965,18 +969,12 @@ export function isQuotationSectionCountedInSummary(
     inclusionTypes,
   );
 
-  return (
-    inclusionCode !== "no_incluida" && inclusionCode !== "opcional"
-  );
+  return inclusionCode !== "no_incluida" && inclusionCode !== "opcional";
 }
 
-export function isQuotationSectionVisibleInPrint(
-  section,
-  inclusionTypes = [],
-) {
+export function isQuotationSectionVisibleInPrint(section, inclusionTypes = []) {
   return (
-    getQuotationSectionInclusionCode(section, inclusionTypes) !==
-    "no_incluida"
+    getQuotationSectionInclusionCode(section, inclusionTypes) !== "no_incluida"
   );
 }
 
@@ -1022,7 +1020,8 @@ export function calculateCreateQuotationSummary(
     : [];
 
   const allItems = includedSections.flatMap((section) => section?.items || []);
-  const childParentIdSet = getQuotationSummaryChildParentIdSet(includedSections);
+  const childParentIdSet =
+    getQuotationSummaryChildParentIdSet(includedSections);
 
   allItems.forEach((item) => {
     if (!isQuotationSummaryLeafItem(item, childParentIdSet)) {
