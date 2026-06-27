@@ -560,6 +560,13 @@ function ContactsPage({ can, currentUser }) {
           const opportunityId = Number(
             quotation?.opportunityId || quotation?.opportunity_id || 0,
           );
+          const quotationId = Number(quotation?.id || 0);
+          if (opportunityId && quotationId) {
+            navigate(
+              `/quotations?opportunityId=${opportunityId}&quotationId=${quotationId}`,
+            );
+            return;
+          }
           if (opportunityId) {
             navigate(`/quotations?opportunityId=${opportunityId}`);
             return;
