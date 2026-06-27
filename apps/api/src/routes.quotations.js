@@ -10818,11 +10818,25 @@ router.get(
     if (!assertQuotationPermission(req, res)) return;
 
     const params = [];
+    const accountId = req.query.accountId ? Number(req.query.accountId) : null;
+    const opportunityId = req.query.opportunityId
+      ? Number(req.query.opportunityId)
+      : null;
+
     const ownershipJoin = applyOwnedAccountScope({
       user: req.user,
       accountExpression: "o.account_id",
       params,
     });
+
+    let whereClause = "";
+    if (opportunityId && opportunityId > 0) {
+      whereClause = "WHERE q.opportunity_id = ?";
+      params.push(opportunityId);
+    } else if (accountId && accountId > 0) {
+      whereClause = "WHERE a.id = ?";
+      params.push(accountId);
+    }
 
     const rows = await query(
       `SELECT q.id, q.opportunity_id, q.latest_version_id,
@@ -10858,6 +10872,7 @@ router.get(
        LEFT JOIN quotation_versions lv ON lv.id = q.latest_version_id
         ${buildQuotationVersionBaseSaleTotalJoin()}
        LEFT JOIN quotation_statuses qs ON qs.id = lv.status_id
+       ${whereClause}
        ORDER BY q.id DESC`,
       params,
     );
