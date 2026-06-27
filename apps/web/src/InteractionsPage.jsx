@@ -584,6 +584,7 @@ function LeadDashboardQueueTable({
               <tr>
                 <th>Lead</th>
                 <th>Vendedor</th>
+                <th>Contacto</th>
                 <th>Seguimiento</th>
                 <th>Acción</th>
               </tr>
@@ -602,6 +603,13 @@ function LeadDashboardQueueTable({
                   </td>
                   <td>
                     {item.sellerName || item.sellerEmail || "Sin vendedor"}
+                  </td>
+                  <td>
+                    {Array.isArray(item.contacts) && item.contacts.length > 0
+                      ? item.contacts[0].fullName ||
+                        item.contacts[0].email ||
+                        "Sin contacto"
+                      : "Sin contacto"}
                   </td>
                   <td>
                     {item.nextActionDueAt
@@ -2936,7 +2944,8 @@ function InteractionDetailModal({
                                                     ...item,
                                                     draft: {
                                                       ...item.draft,
-                                                      mobile: event.target.value,
+                                                      mobile:
+                                                        event.target.value,
                                                     },
                                                   }
                                                 : item,
@@ -5348,8 +5357,7 @@ function InteractionsPage({ can, currentUser }) {
         (overrides.sortBy ?? sortBy) || "createdAt",
       );
       const effectiveSortDir =
-        String((overrides.sortDir ?? sortDir) || "desc").toLowerCase() ===
-        "asc"
+        String((overrides.sortDir ?? sortDir) || "desc").toLowerCase() === "asc"
           ? "asc"
           : "desc";
 
@@ -5932,12 +5940,12 @@ function InteractionsPage({ can, currentUser }) {
     const hasInvalidSellerForLinkedAccount = Boolean(
       requiresSellerOwnerForLinkedAccount &&
       canSubmitCommercialAssignment &&
-        linkedAccountId &&
-        effectiveResolutionForm.sellerUserId &&
-        !sellerUsersForLinkedAccount.some(
-          (user) =>
-            Number(user.id) === Number(effectiveResolutionForm.sellerUserId),
-        ),
+      linkedAccountId &&
+      effectiveResolutionForm.sellerUserId &&
+      !sellerUsersForLinkedAccount.some(
+        (user) =>
+          Number(user.id) === Number(effectiveResolutionForm.sellerUserId),
+      ),
     );
 
     if (hasInvalidSellerForLinkedAccount) {
@@ -7104,6 +7112,16 @@ function InteractionsPage({ can, currentUser }) {
                     Vendedor {getLeadSortIndicator("sellerName")}
                   </button>
                 </th>
+                <th>Contacto</th>
+                <th>
+                  <button
+                    type="button"
+                    className="sort-header-btn"
+                    onClick={() => handleLeadSort("leadSource")}
+                  >
+                    Fuente {getLeadSortIndicator("leadSource")}
+                  </button>
+                </th>
                 <th>
                   <button
                     type="button"
@@ -7163,6 +7181,14 @@ function InteractionsPage({ can, currentUser }) {
                     <td>{item.accountName || "-"}</td>
                     <td>{item.primaryOpportunityName || "-"}</td>
                     <td>{item.sellerName || item.sellerEmail || "-"}</td>
+                    <td>
+                      {Array.isArray(item.contacts) && item.contacts.length > 0
+                        ? item.contacts[0].fullName ||
+                          item.contacts[0].email ||
+                          "-"
+                        : "-"}
+                    </td>
+                    <td>{getLeadSourceLabel(item.leadSource)}</td>
                     <td>{item.documentCount}</td>
                     <td>
                       <div className="interaction-status-stack">

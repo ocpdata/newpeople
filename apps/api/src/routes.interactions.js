@@ -1736,6 +1736,19 @@ function buildInteractionFilterContext(req, alias = "i") {
 function mapInteractionListRow(row) {
   const reasonCode = row.lead_reason_code || "";
   const requiredActionCode = row.lead_required_action_code || "";
+  let contacts = [];
+  try {
+    const contactsData = row.contacts
+      ? typeof row.contacts === "string"
+        ? JSON.parse(row.contacts)
+        : row.contacts
+      : [];
+    contacts = Array.isArray(contactsData)
+      ? contactsData.filter((c) => c !== null)
+      : [];
+  } catch (error) {
+    contacts = [];
+  }
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -1764,6 +1777,7 @@ function mapInteractionListRow(row) {
     leadRequiredActionCode: requiredActionCode,
     leadRequiredActionName:
       getLeadRequiredActionCatalogEntry(requiredActionCode)?.name || "",
+    contacts,
   };
 }
 
@@ -4478,12 +4492,27 @@ router.get(
               po.name AS primary_opportunity_name,
               su.full_name AS seller_user_name,
               su.email AS seller_user_email,
-              COUNT(DISTINCT d.id) AS document_count
+              COUNT(DISTINCT d.id) AS document_count,
+              JSON_ARRAYAGG(
+                CASE 
+                  WHEN c.id IS NOT NULL THEN JSON_OBJECT(
+                    'id', c.id,
+                    'fullName', CONCAT(COALESCE(c.first_name, ''), ' ', COALESCE(c.last_name, '')),
+                    'email', c.email,
+                    'phone', c.phone,
+                    'mobile', c.mobile,
+                    'positionTitle', c.position_title
+                  )
+                  ELSE NULL
+                END
+              ) AS contacts
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
        LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
        LEFT JOIN users su ON su.id = i.seller_user_id
        LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
+       LEFT JOIN interaction_contact_links icl ON icl.interaction_id = i.id
+       LEFT JOIN contacts c ON c.id = icl.contact_id
       ${filterContext.accessJoin}
        ${filterContext.whereClause}
       GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
