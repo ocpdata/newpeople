@@ -902,6 +902,7 @@ function OpportunitiesListSection({
                             runOpportunityAction(() =>
                               openAccountQuotationsModal(
                                 toOpportunityAccount(opportunity),
+                                opportunity.id,
                               ),
                             );
                           }}

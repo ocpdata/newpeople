@@ -88,16 +88,18 @@ export function useAccountRelatedRecords() {
     setContactModalStatusFilter("all");
   }
 
-  async function openAccountQuotationsModal(account) {
+  async function openAccountQuotationsModal(account, opportunityId) {
     const targetAccountId = Number(account?.id || 0);
     setEditAccountQuotations([]);
     setQuotationModalStatusFilter("all");
     setAccountQuotationsModalAccount(account);
     setLoadingAccountQuotations(true);
     try {
-      const { data: quotations } = await api.get(
-        `/api/quotations?accountId=${account.id}`,
-      );
+      let query = `/api/quotations?accountId=${account.id}`;
+      if (opportunityId) {
+        query += `&opportunityId=${opportunityId}`;
+      }
+      const { data: quotations } = await api.get(query);
       const safeQuotations = Array.isArray(quotations) ? quotations : [];
       const hasAccountInfo = safeQuotations.some(
         (quotation) =>
