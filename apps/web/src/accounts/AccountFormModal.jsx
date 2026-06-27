@@ -20,6 +20,7 @@ const ACCOUNT_NAME_CONNECTORS = new Set([
 
 const ACCOUNT_NAME_SPECIAL_TOKENS = new Map([
   ["accessq", "AccessQ"],
+  ["att", "AT&T"],
   ["openai", "OpenAI"],
   ["ebay", "eBay"],
   ["ishop", "iShop"],
@@ -495,6 +496,8 @@ function AccountFormModal({
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(false);
   const [showNameFormatConfirmation, setShowNameFormatConfirmation] =
     useState(false);
+  const [tempNameFormatConfirmation, setTempNameFormatConfirmation] =
+    useState("");
   const [pendingSubmitFormOverride, setPendingSubmitFormOverride] =
     useState(null);
   const [waitingCreateResponse, setWaitingCreateResponse] = useState(false);
@@ -570,6 +573,7 @@ function AccountFormModal({
       const { nextForm, normalizationState } = buildNextFormForSubmit();
       if (normalizationState.shouldConfirmOnSave) {
         setPendingSubmitFormOverride(nextForm);
+        setTempNameFormatConfirmation(nextForm.name);
         setShowNameFormatConfirmation(true);
         return;
       }
@@ -582,6 +586,7 @@ function AccountFormModal({
     const { nextForm, normalizationState } = buildNextFormForSubmit();
     if (normalizationState.shouldConfirmOnSave) {
       setPendingSubmitFormOverride(nextForm);
+      setTempNameFormatConfirmation(nextForm.name);
       setShowNameFormatConfirmation(true);
       return;
     }
@@ -620,6 +625,30 @@ function AccountFormModal({
   function handleCancelNameFormat() {
     setShowNameFormatConfirmation(false);
     setPendingSubmitFormOverride(null);
+    setTempNameFormatConfirmation("");
+  }
+
+  function handleConfirmNameFormatWithTemp() {
+    const nextForm = {
+      ...pendingSubmitFormOverride,
+      name: tempNameFormatConfirmation,
+    };
+    setShowNameFormatConfirmation(false);
+    setTempNameFormatConfirmation("");
+
+    if (!nextForm) {
+      return;
+    }
+
+    updateNameValue(nextForm.name);
+
+    if (editingAccountId) {
+      void onSubmit({ preventDefault() {} }, { formOverride: nextForm });
+      setPendingSubmitFormOverride(null);
+      return;
+    }
+
+    setShowCreateConfirmation(true);
   }
 
   const nameNormalizationState = getAccountNameNormalizationState(form.name);
@@ -643,16 +672,45 @@ function AccountFormModal({
           confirmText={creatingAccount ? "Creando..." : "Crear cuenta"}
           overlayClassName="modal-overlay-elevated"
         />
-        <ConfirmationModal
-          isOpen={showNameFormatConfirmation}
-          title="Confirmar formato del nombre"
-          message={`El nombre se guardará como: ${pendingSubmitFormOverride?.name || form.name}`}
-          onConfirm={handleConfirmNameFormat}
-          onCancel={handleCancelNameFormat}
-          confirmText="Confirmar formato"
-          cancelText="Revisar nombre"
-          overlayClassName="modal-overlay-elevated"
-        />
+        {showNameFormatConfirmation ? (
+          <div className="modal-overlay modal-overlay-elevated">
+            <div className="modal-dialog">
+              <h3 className="modal-title">Confirmar nombre</h3>
+              <div className="modal-content" style={{ padding: "20px" }}>
+                <div className="field-group">
+                  <label htmlFor="name-format-input">Nombre de la cuenta</label>
+                  <input
+                    id="name-format-input"
+                    type="text"
+                    value={tempNameFormatConfirmation}
+                    onChange={(e) =>
+                      setTempNameFormatConfirmation(e.target.value)
+                    }
+                    className="form-control"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="modal-buttons">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleCancelNameFormat}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleConfirmNameFormatWithTemp}
+                  disabled={!tempNameFormatConfirmation.trim()}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <AccountDuplicateReviewModal
           review={accountDuplicateReview}
           draftName={form.name}
