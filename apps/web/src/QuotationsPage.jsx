@@ -279,14 +279,21 @@ export default function QuotationsPage({ currentUser }) {
           (opportunity) =>
             Number(opportunity.id) === Number(selectedOpportunityId),
         );
+
+        // If we have a quotationId but no opportunityId, don't auto-select an opportunity
+        // This allows loading quotations from all opportunities to find the specific one
+        const shouldAutoSelectOpportunity = !initialSelectedQuotationId;
+
         const nextSelectedOpportunity =
           requestedOpportunity ||
           currentOpportunity ||
-          nextOpportunities.find(
-            (opportunity) =>
-              normalizeText(opportunity.activationStatusName) === "activada",
-          ) ||
-          nextOpportunities[0] ||
+          (shouldAutoSelectOpportunity
+            ? nextOpportunities.find(
+                (opportunity) =>
+                  normalizeText(opportunity.activationStatusName) ===
+                  "activada",
+              ) || nextOpportunities[0]
+            : null) ||
           null;
 
         const nextSelectedOpportunityId = nextSelectedOpportunity
@@ -338,24 +345,6 @@ export default function QuotationsPage({ currentUser }) {
     const timeoutId = window.setTimeout(() => setError(""), 10000);
     return () => window.clearTimeout(timeoutId);
   }, [error]);
-
-  useEffect(() => {
-    if (
-      !initialSelectedQuotationId ||
-      loadingContacts ||
-      !quotationsSectionRef.current
-    ) {
-      return;
-    }
-
-    const quotationIdToLoad = Number(initialSelectedQuotationId);
-    if (
-      quotationIdToLoad > 0 &&
-      quotationsSectionRef.current?.loadQuotationById
-    ) {
-      quotationsSectionRef.current.loadQuotationById(quotationIdToLoad);
-    }
-  }, [initialSelectedQuotationId, loadingContacts]);
 
   const hasAvailableAccounts = accounts.length > 0;
   const quotationPermissions = useMemo(
@@ -489,10 +478,11 @@ export default function QuotationsPage({ currentUser }) {
             }
             openProposalTemplateModal(versionId);
           }}
+          initialSelectedQuotationId={initialSelectedQuotationId}
           isOpen
           showHeader={false}
           showCreateButton={false}
-          showDetails={false}
+          showDetails={!!initialSelectedQuotationId}
         />
       ) : null}
 

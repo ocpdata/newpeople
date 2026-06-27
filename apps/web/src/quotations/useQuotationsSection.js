@@ -1695,11 +1695,12 @@ export function useQuotationsSection({
   onOpportunityFocusChange,
   isOpen,
   showDetails,
+  initialSelectedQuotationId,
 }) {
   const quotationsListEndpoint = showDetails
     ? opportunityId
       ? `/api/opportunities/${opportunityId}/quotations`
-      : null
+      : "/api/quotations"
     : "/api/quotations";
 
   const [quotations, setQuotations] = useState([]);
@@ -1889,6 +1890,8 @@ export function useQuotationsSection({
     setLoadingDuplicateTargetOpportunities,
   ] = useState(false);
   const [showEditQuotationModal, setShowEditQuotationModal] = useState(false);
+  const [forcedTableViewAfterAutoOpen, setForcedTableViewAfterAutoOpen] =
+    useState(false);
   const [quotationStatusFilter, setQuotationStatusFilter] = useState("all");
   const [quotationQuery, setQuotationQuery] = useState("");
   const [quotationSort, setQuotationSort] = useState({
@@ -1905,6 +1908,7 @@ export function useQuotationsSection({
   const createSectionDraftSequenceRef = useRef(1);
   const createItemDraftSequenceRef = useRef(1);
   const editSectionDraftSequenceRef = useRef(1);
+  const autoOpenedQuotationIdRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -2723,8 +2727,24 @@ export function useQuotationsSection({
 
     setShowEditQuotationModal(false);
     setOpenQuotationMenuId(null);
+
+    // If this modal was opened from initialSelectedQuotationId, clear the selected quotation
+    // to show an empty editor panel instead of the quotation details
+    if (initialSelectedQuotationId) {
+      setSelectedQuotationId(null);
+      setSelectedVersionId(null);
+      setSelectedVersion(null);
+      setVersionForm(buildVersionForm(null));
+      // Force showing the table view instead of sidebar
+      setForcedTableViewAfterAutoOpen(true);
+    }
+
     return true;
-  }, [confirmDiscardUnsavedChanges, hasEditUnsavedChanges]);
+  }, [
+    confirmDiscardUnsavedChanges,
+    hasEditUnsavedChanges,
+    initialSelectedQuotationId,
+  ]);
 
   const openQuotationPrintView = useCallback((printModel) => {
     if (typeof window === "undefined" || !printModel) {
@@ -3161,21 +3181,29 @@ export function useQuotationsSection({
   );
 
   const handleLoadQuotationById = useCallback(
-    async (quotationId) => {
-      const quotation = quotations.find(
-        (q) => Number(q.id) === Number(quotationId),
-      );
+    async (quotationId, retries = 0) => {
+      const normalizedId = Number(quotationId);
+      const quotation = quotations.find((q) => Number(q.id) === normalizedId);
+
+      // If quotation not found and we haven't exhausted retries, try again later
+      if (!quotation && retries < 5) {
+        // Wait 300ms and retry
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Recursive call with incremented retries counter
+        return handleLoadQuotationById(quotationId, retries + 1);
+      }
 
       if (!quotation) {
         return;
       }
 
-      await handleSelectQuotationVersion(
-        quotationId,
-        quotation.latestVersionId || quotationId,
-      );
+      // Wait a bit for catalogs to load if needed, then open in edit mode
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Open in edit mode instead of view mode
+      await openEditQuotationModal(quotation);
     },
-    [quotations, handleSelectQuotationVersion],
+    [quotations, openEditQuotationModal],
   );
 
   useEffect(() => {
@@ -3183,7 +3211,7 @@ export function useQuotationsSection({
   }, [selectedQuotationId]);
 
   useEffect(() => {
-    if (!isOpen || !quotationsListEndpoint) return;
+    if (!(isOpen || showDetails) || !quotationsListEndpoint) return;
 
     let cancelled = false;
 
@@ -3235,6 +3263,16 @@ export function useQuotationsSection({
             quotationsRes.data,
           );
           setQuotations(nextQuotations);
+
+          // If initialSelectedQuotationId is provided, don't auto-select in the editor panel
+          // The auto-open effect will handle opening it in the modal
+          if (initialSelectedQuotationId) {
+            setSelectedQuotationId(null);
+            setSelectedVersionId(null);
+            setSelectedVersion(null);
+            setVersionForm(buildVersionForm(null));
+            return;
+          }
 
           const preferredQuotation =
             nextQuotations.find(
@@ -3298,6 +3336,66 @@ export function useQuotationsSection({
   useEffect(() => {
     loadVersionRef.current = loadVersion;
   }, [loadVersion]);
+
+  // Auto-open quotation when initialSelectedQuotationId is provided and quotations are loaded
+  useEffect(() => {
+    if (!initialSelectedQuotationId || quotations.length === 0 || loading) {
+      return;
+    }
+
+    const quotationIdToLoad = Number(initialSelectedQuotationId);
+
+    // Only auto-open if we haven't already auto-opened this quotation
+    if (autoOpenedQuotationIdRef.current === quotationIdToLoad) {
+      return;
+    }
+
+    autoOpenedQuotationIdRef.current = quotationIdToLoad;
+    handleLoadQuotationById(quotationIdToLoad);
+  }, [
+    initialSelectedQuotationId,
+    quotations,
+    loading,
+    handleLoadQuotationById,
+  ]);
+
+  // When closing modal after auto-open, reload all quotations from /api/quotations
+  useEffect(() => {
+    if (!forcedTableViewAfterAutoOpen) return;
+
+    let cancelled = false;
+
+    async function reloadAllQuotations() {
+      try {
+        setLoading(true);
+        setError("");
+        const quotationsRes = await api.get("/api/quotations");
+
+        if (cancelled) return;
+
+        const normalized = normalizeQuotationListRecords(
+          quotationsRes.data || [],
+        );
+        setQuotations(normalized);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            getApiErrorMessage(err, "No fue posible recargar cotizaciones"),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    reloadAllQuotations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forcedTableViewAfterAutoOpen, normalizeQuotationListRecords]);
 
   const refreshQuotations = useCallback(
     async ({
@@ -7692,6 +7790,7 @@ export function useQuotationsSection({
 
   return {
     canCreateQuotation,
+    effectiveShowDetails: forcedTableViewAfterAutoOpen ? false : showDetails,
     isOpportunityActive,
     showCreateQuotationForm,
     busyAction,
@@ -7882,7 +7981,7 @@ export function useQuotationsSection({
         handleCreateSuggestedProviderDocumentImportItem,
     },
     listPanelProps: {
-      showDetails,
+      showDetails: forcedTableViewAfterAutoOpen ? false : showDetails,
       loading,
       quotations,
       duplicateTargetAccounts,

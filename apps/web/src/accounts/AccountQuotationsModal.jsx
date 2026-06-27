@@ -41,10 +41,14 @@ function AccountQuotationsModal({
   onClose,
   onQuotationSelect,
   getQuotationStatusBadgeClass,
+  selectedContact,
+  selectedContactOpportunities,
 }) {
   if (!account) return null;
 
   const selectedAccountId = Number(account.id || 0);
+
+  // Filter quotations by account
   const accountScopedQuotations = (quotations || []).filter((quotation) => {
     const quotationAccountId = Number(
       quotation?.accountId ?? quotation?.account_id ?? 0,
@@ -55,10 +59,25 @@ function AccountQuotationsModal({
     return quotationAccountId === selectedAccountId;
   });
 
+  // If a specific contact is selected, further filter to only their opportunity quotations
+  const filteredQuotations =
+    selectedContact &&
+    selectedContactOpportunities &&
+    selectedContactOpportunities.length > 0
+      ? accountScopedQuotations.filter((quotation) => {
+          const opportunityId = Number(
+            quotation?.opportunityId ?? quotation?.opportunity_id ?? 0,
+          );
+          return selectedContactOpportunities.some(
+            (opp) => Number(opp.id) === opportunityId,
+          );
+        })
+      : accountScopedQuotations;
+
   const visibleQuotations =
     statusFilter === "all"
-      ? accountScopedQuotations
-      : accountScopedQuotations.filter((quotation) => {
+      ? filteredQuotations
+      : filteredQuotations.filter((quotation) => {
           const inactive = isQuotationInactive(quotation);
           return statusFilter === "inactive" ? inactive : !inactive;
         });
@@ -81,7 +100,7 @@ function AccountQuotationsModal({
           </h3>
         </div>
 
-        {!loading && accountScopedQuotations.length > 0 && (
+        {!loading && filteredQuotations.length > 0 && (
           <div className="account-opps-filters">
             <div
               className="account-opps-pills"
@@ -110,9 +129,11 @@ function AccountQuotationsModal({
 
         {loading ? (
           <p className="account-opps-empty">Cargando cotizaciones...</p>
-        ) : accountScopedQuotations.length === 0 ? (
+        ) : filteredQuotations.length === 0 ? (
           <p className="account-opps-empty">
-            No hay cotizaciones registradas para esta cuenta.
+            {selectedContact
+              ? `No hay cotizaciones registradas para este contacto.`
+              : `No hay cotizaciones registradas para esta cuenta.`}
           </p>
         ) : visibleQuotations.length === 0 ? (
           <p className="account-opps-empty">

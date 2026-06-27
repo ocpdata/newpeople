@@ -24,6 +24,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     currentUser,
     onOpportunityFocusChange,
     onCreateProposalFromQuotationVersion,
+    initialSelectedQuotationId,
     isOpen,
     showHeader = true,
     showCreateButton = true,
@@ -33,6 +34,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
 ) {
   const {
     canCreateQuotation,
+    effectiveShowDetails,
     isOpportunityActive,
     showCreateQuotationForm,
     busyAction,
@@ -60,17 +62,20 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     onOpportunityFocusChange,
     isOpen,
     showDetails,
+    initialSelectedQuotationId,
   });
 
   useImperativeHandle(
     ref,
     () => ({
       openCreateQuotationModal,
+      openEditQuotationModal: editModalProps.openEditQuotationModal,
       loadVersion: listPanelProps.loadVersion,
       loadQuotationById: listPanelProps.loadQuotationById,
     }),
     [
       openCreateQuotationModal,
+      editModalProps.openEditQuotationModal,
       listPanelProps.loadVersion,
       listPanelProps.loadQuotationById,
     ],
@@ -93,7 +98,9 @@ const QuotationsSection = forwardRef(function QuotationsSection(
 
       <div
         className={
-          showDetails ? "quotation-layout" : "quotation-layout is-list-only"
+          effectiveShowDetails
+            ? "quotation-layout"
+            : "quotation-layout is-list-only"
         }
       >
         <QuotationsListPanel
@@ -103,7 +110,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
           }
         />
 
-        {showDetails ? (
+        {effectiveShowDetails ? (
           <div className="quotation-content">
             <QuotationEditorContent {...editorContentProps} />
           </div>

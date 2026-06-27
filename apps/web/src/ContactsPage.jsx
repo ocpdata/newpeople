@@ -37,6 +37,18 @@ function ContactsPage({ can, currentUser }) {
   const [accountModalError, setAccountModalError] = useState("");
   const [accountModalStatusFilter, setAccountModalStatusFilter] =
     useState("all");
+  const [
+    selectedContactForQuotationsModal,
+    setSelectedContactForQuotationsModal,
+  ] = useState(null);
+  const [
+    selectedContactQuotationsOpportunities,
+    setSelectedContactQuotationsOpportunities,
+  ] = useState([]);
+  const [
+    loadingSelectedContactQuotationsOpportunities,
+    setLoadingSelectedContactQuotationsOpportunities,
+  ] = useState(false);
   const helpRef = useRef(null);
   const {
     accountQuotationsModalAccount,
@@ -168,6 +180,25 @@ function ContactsPage({ can, currentUser }) {
     setAccountModalError("");
     setAccountModalStatusFilter("all");
     setAccountModalLoading(false);
+  }
+
+  async function openContactQuotationsModal(contact) {
+    setSelectedContactForQuotationsModal(contact);
+    setLoadingSelectedContactQuotationsOpportunities(true);
+    setSelectedContactQuotationsOpportunities([]);
+    try {
+      const { data: opportunities } = await api.get(
+        `/api/opportunities?contactId=${contact.id}`,
+      );
+      setSelectedContactQuotationsOpportunities(
+        Array.isArray(opportunities) ? opportunities : [],
+      );
+    } catch (err) {
+      setSelectedContactQuotationsOpportunities([]);
+    } finally {
+      setLoadingSelectedContactQuotationsOpportunities(false);
+    }
+    openAccountQuotationsModal(toContactAccount(contact));
   }
 
   function getAccountModalStatusCode(accountDetail) {
@@ -554,9 +585,17 @@ function ContactsPage({ can, currentUser }) {
         quotations={editAccountQuotations}
         statusFilter={quotationModalStatusFilter}
         setStatusFilter={setQuotationModalStatusFilter}
-        onClose={closeAccountQuotationsModal}
+        onClose={() => {
+          closeAccountQuotationsModal();
+          setSelectedContactForQuotationsModal(null);
+          setSelectedContactQuotationsOpportunities([]);
+        }}
+        selectedContact={selectedContactForQuotationsModal}
+        selectedContactOpportunities={selectedContactQuotationsOpportunities}
         onQuotationSelect={(quotation) => {
           closeAccountQuotationsModal();
+          setSelectedContactForQuotationsModal(null);
+          setSelectedContactQuotationsOpportunities([]);
           const opportunityId = Number(
             quotation?.opportunityId || quotation?.opportunity_id || 0,
           );
@@ -712,9 +751,7 @@ function ContactsPage({ can, currentUser }) {
                             onClick={(event) => {
                               event.stopPropagation();
                               runContactAction(() =>
-                                openAccountQuotationsModal(
-                                  toContactAccount(contact),
-                                ),
+                                openContactQuotationsModal(contact),
                               );
                             }}
                           >
