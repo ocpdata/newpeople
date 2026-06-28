@@ -102,6 +102,7 @@ const assetSchema = z.object({
   languageCode: z.string().trim().min(2).max(20).default("es"),
   manufacturerCodes: stringArraySchema.optional().default([]),
   solutionCodes: stringArraySchema.optional().default([]),
+  technologyCodes: stringArraySchema.optional().default([]),
   needCodes: stringArraySchema.optional().default([]),
   requirementCodes: stringArraySchema.optional().default([]),
   competitorCodes: stringArraySchema.optional().default([]),

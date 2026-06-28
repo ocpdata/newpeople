@@ -15,9 +15,30 @@ const TABS = [
 ];
 
 const CATALOG_ADMIN_TYPES = [
-  { type: "manufacturer", label: "Fabricantes" },
-  { type: "solution", label: "Soluciones" },
-  { type: "industry", label: "Industrias" },
+  {
+    adminKey: "manufacturer",
+    type: "manufacturer",
+    label: "Fabricantes",
+    singularLabel: "Fabricante",
+  },
+  {
+    adminKey: "technology",
+    type: "solution",
+    label: "Tecnologias",
+    singularLabel: "Tecnologia",
+  },
+  {
+    adminKey: "solution",
+    type: "technology",
+    label: "Soluciones",
+    singularLabel: "Solucion",
+  },
+  {
+    adminKey: "industry",
+    type: "industry",
+    label: "Industrias",
+    singularLabel: "Industria",
+  },
 ];
 
 const EMPTY_BOOTSTRAP = {
@@ -73,7 +94,7 @@ const EMPTY_PUBLISH_SECTION_ERRORS = {
 };
 
 const PUBLISH_SECTION_MESSAGES = {
-  catalogContext: "Debes indicar al menos un fabricante o una solucion",
+  catalogContext: "Debes indicar al menos un fabricante o una tecnologia",
 };
 
 const ASSET_FIELD_MESSAGES = {
@@ -107,6 +128,7 @@ function emptyDraft() {
     languageCode: "es",
     manufacturerCodes: [],
     solutionCodes: [],
+    technologyCodes: [],
     needCodes: [],
     requirementCodes: [],
     competitorCodes: [],
@@ -207,6 +229,7 @@ function buildDraftFromAsset(asset) {
     languageCode: asset.languageCode || "es",
     manufacturerCodes: getCatalogCodes(asset, "manufacturer"),
     solutionCodes: getCatalogCodes(asset, "solution"),
+    technologyCodes: getCatalogCodes(asset, "technology"),
     needCodes: getCatalogCodes(asset, "need"),
     requirementCodes: getCatalogCodes(asset, "requirement"),
     competitorCodes: getCatalogCodes(asset, "competitor"),
@@ -228,6 +251,7 @@ function buildAssetPayload(draftValue) {
     internalDescription: String(draftValue?.internalDescription || "").trim(),
     manufacturerCodes: uniqueStrings(draftValue?.manufacturerCodes),
     solutionCodes: uniqueStrings(draftValue?.solutionCodes),
+    technologyCodes: uniqueStrings(draftValue?.technologyCodes),
     needCodes: uniqueStrings(draftValue?.needCodes),
     requirementCodes: uniqueStrings(draftValue?.requirementCodes),
     competitorCodes: uniqueStrings(draftValue?.competitorCodes),
@@ -274,6 +298,7 @@ function buildFiltersForApi(filters, activeTab) {
     q: filters.q || "",
     manufacturerCodes: filters.manufacturerCodes.join(","),
     solutionCodes: filters.solutionCodes.join(","),
+    technologyCodes: filters.technologyCodes.join(","),
     needCodes: filters.needCodes.join(","),
     requirementCodes: filters.requirementCodes.join(","),
     competitorCodes: filters.competitorCodes.join(","),
@@ -387,7 +412,7 @@ function AnalyzeDocumentIcon() {
 
 function emptyCatalogAdminDrafts() {
   return CATALOG_ADMIN_TYPES.reduce((accumulator, entry) => {
-    accumulator[entry.type] = {
+    accumulator[entry.adminKey] = {
       name: "",
       description: "",
     };
@@ -697,6 +722,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     q: "",
     manufacturerCodes: [],
     solutionCodes: [],
+    technologyCodes: [],
     needCodes: [],
     requirementCodes: [],
     competitorCodes: [],
@@ -1047,36 +1073,51 @@ export default function CommercialEnablementPage({ currentUser }) {
     }));
   }
 
-  function startCatalogAdminEdit(entry) {
+  function buildCatalogAdminEditorKey(catalogKey, entry) {
+    if (!entry) return "";
+    return `${catalogKey}:${entry.publicId || entry.code || "item"}`;
+  }
+
+  function startCatalogAdminEdit(catalogKey, entry) {
     if (!entry?.publicId) return;
+    const editorKey = buildCatalogAdminEditorKey(catalogKey, entry);
+    if (!editorKey) return;
     setOpenCatalogAdminMenuId(null);
     setCatalogAdminEditors((current) => ({
       ...current,
-      [entry.publicId]: buildCatalogAdminEditor(entry),
+      [editorKey]: buildCatalogAdminEditor(entry),
     }));
   }
 
-  function updateCatalogAdminEditor(publicId, field, value) {
+  function updateCatalogAdminEditor(editorKey, field, value) {
+    if (!editorKey) return;
     setCatalogAdminEditors((current) => ({
       ...current,
-      [publicId]: {
-        ...current[publicId],
+      [editorKey]: {
+        ...current[editorKey],
         [field]: value,
       },
     }));
   }
 
-  function cancelCatalogAdminEdit(publicId) {
+  function cancelCatalogAdminEdit(editorKey) {
+    if (!editorKey) return;
     setCatalogAdminEditors((current) => {
       const next = { ...current };
-      delete next[publicId];
+      delete next[editorKey];
       return next;
     });
   }
 
-  function toggleCatalogAdminMenu(publicId) {
+  function buildCatalogAdminMenuKey(catalogKey, entry) {
+    if (!entry) return "";
+    return `${catalogKey}:${entry.publicId || entry.code || "item"}`;
+  }
+
+  function toggleCatalogAdminMenu(menuKey) {
+    if (!menuKey) return;
     setOpenCatalogAdminMenuId((currentValue) =>
-      currentValue === publicId ? null : publicId,
+      currentValue === menuKey ? null : menuKey,
     );
   }
 
@@ -2047,11 +2088,11 @@ export default function CommercialEnablementPage({ currentUser }) {
     );
   }
 
-  async function handleCreateCatalogEntry(event, catalogType) {
+  async function handleCreateCatalogEntry(event, catalogKey, catalogType) {
     event.preventDefault();
     if (!canAdmin) return;
 
-    const draftValue = catalogAdminDrafts[catalogType] || {};
+    const draftValue = catalogAdminDrafts[catalogKey] || {};
     const payload = {
       name: String(draftValue.name || "").trim(),
       description: String(draftValue.description || "").trim(),
@@ -2083,7 +2124,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       }));
       setCatalogAdminDrafts((current) => ({
         ...current,
-        [catalogType]: { name: "", description: "" },
+        [catalogKey]: { name: "", description: "" },
       }));
       setSuccess("Catalogo actualizado");
     } catch (requestError) {
@@ -2098,11 +2139,12 @@ export default function CommercialEnablementPage({ currentUser }) {
     }
   }
 
-  async function handleUpdateCatalogEntry(entry, overrides = {}) {
+  async function handleUpdateCatalogEntry(catalogKey, entry, overrides = {}) {
     if (!canAdmin || !entry?.publicId) return;
+    const editorKey = buildCatalogAdminEditorKey(catalogKey, entry);
 
     const draftValue =
-      catalogAdminEditors[entry.publicId] || buildCatalogAdminEditor(entry);
+      catalogAdminEditors[editorKey] || buildCatalogAdminEditor(entry);
     const payload = {
       name: String(draftValue.name || "").trim(),
       description: String(draftValue.description || "").trim(),
@@ -2134,7 +2176,7 @@ export default function CommercialEnablementPage({ currentUser }) {
           current.catalogs ||
           {},
       }));
-      cancelCatalogAdminEdit(entry.publicId);
+      cancelCatalogAdminEdit(editorKey);
       setSuccess(
         payload.isActive === false
           ? "Opcion desactivada"
@@ -2154,8 +2196,9 @@ export default function CommercialEnablementPage({ currentUser }) {
     }
   }
 
-  async function handleDeleteCatalogEntry(entry) {
+  async function handleDeleteCatalogEntry(catalogKey, entry) {
     if (!canAdmin || !entry?.publicId) return;
+    const editorKey = buildCatalogAdminEditorKey(catalogKey, entry);
     if (
       !window.confirm(
         `Se eliminara la opcion de catalogo "${entry.name}" de forma permanente. ¿Continuar?`,
@@ -2181,7 +2224,7 @@ export default function CommercialEnablementPage({ currentUser }) {
           current.catalogs ||
           {},
       }));
-      cancelCatalogAdminEdit(entry.publicId);
+      cancelCatalogAdminEdit(editorKey);
       setSuccess("Opcion eliminada");
     } catch (requestError) {
       setError(
@@ -2362,7 +2405,7 @@ export default function CommercialEnablementPage({ currentUser }) {
   const listItems = assetsResult.items || [];
   const publishMode = draft.status === "published";
   const catalogRequirementHint = publishMode
-    ? "Selecciona al menos un fabricante aquí o una solucion en la seccion vecina."
+    ? "Selecciona al menos un fabricante aquí o una tecnologia en la seccion vecina."
     : "";
   const primaryMetric =
     activeTab === "manage"
@@ -2441,7 +2484,7 @@ export default function CommercialEnablementPage({ currentUser }) {
           </span>
           <h1>Biblioteca comercial para preparar, comparar y compartir</h1>
           <p>
-            Encuentra material por fabricante, solucion, necesidad o
+            Encuentra material por fabricante, tecnologia, necesidad o
             requerimiento. Separa claramente el uso del contenido, la carga de
             nuevos activos y el gobierno de calidad.
           </p>
@@ -2574,10 +2617,18 @@ export default function CommercialEnablementPage({ currentUser }) {
                 }
               />
               <OptionPicker
-                title="Solucion"
+                title="Tecnologia"
                 options={catalogs.solution}
                 values={filters.solutionCodes}
                 onToggle={(value) => toggleFilterValue("solutionCodes", value)}
+              />
+              <OptionPicker
+                title="Soluciones"
+                options={catalogs.technology}
+                values={filters.technologyCodes}
+                onToggle={(value) =>
+                  toggleFilterValue("technologyCodes", value)
+                }
               />
               <OptionPicker
                 title="Industria"
@@ -2844,7 +2895,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                 <span>Cargar documento fuente</span>
                                 <input
                                   type="file"
-                                  accept=".pdf,.docx,.txt,.csv,.xlsx,.xls,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
+                                  accept=".pdf,.docx,.ppt,.pptx,.txt,.csv,.xlsx,.xls,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a"
                                   onChange={handleCreateIntakeSession}
                                 />
                               </label>
@@ -3148,7 +3199,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                         </span>
                         <h3>Clasificación</h3>
                         <p>
-                          Relaciona el material con fabricantes, soluciones,
+                          Relaciona el material con fabricantes, tecnologias,
                           industrias y momentos de uso.
                         </p>
                       </div>
@@ -3170,7 +3221,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                         }
                       />
                       <OptionPicker
-                        title="Solucion"
+                        title="Tecnologia"
                         options={catalogs.solution}
                         values={draft.solutionCodes}
                         onToggle={(value) =>
@@ -3181,6 +3232,14 @@ export default function CommercialEnablementPage({ currentUser }) {
                           publishSectionErrors.catalogContext
                             ? PUBLISH_SECTION_MESSAGES.catalogContext
                             : ""
+                        }
+                      />
+                      <OptionPicker
+                        title="Tipo de solucion"
+                        options={catalogs.technology}
+                        values={draft.technologyCodes}
+                        onToggle={(value) =>
+                          toggleDraftValue("technologyCodes", value)
                         }
                       />
                       <OptionPicker
@@ -3640,7 +3699,8 @@ export default function CommercialEnablementPage({ currentUser }) {
                   <h2>Catalogos administrables</h2>
                   <div className="enablement-library-stack">
                     <span>
-                      Crea opciones para Fabricante, Solucion e Industria
+                      Crea opciones para Fabricante, Tecnologia, Solucion e
+                      Industria
                     </span>
                     <div className="enablement-library-inline-actions">
                       <button
@@ -3672,10 +3732,10 @@ export default function CommercialEnablementPage({ currentUser }) {
                         : entry.isActive !== false,
                     );
                     const draftValue =
-                      catalogAdminDrafts[catalogConfig.type] || {};
+                      catalogAdminDrafts[catalogConfig.adminKey] || {};
                     return (
                       <section
-                        key={catalogConfig.type}
+                        key={catalogConfig.adminKey}
                         className="enablement-library-catalog-card"
                       >
                         <div className="enablement-library-catalog-card-header">
@@ -3691,26 +3751,30 @@ export default function CommercialEnablementPage({ currentUser }) {
                         <form
                           className="enablement-library-stack"
                           onSubmit={(event) =>
-                            handleCreateCatalogEntry(event, catalogConfig.type)
+                            handleCreateCatalogEntry(
+                              event,
+                              catalogConfig.adminKey,
+                              catalogConfig.type,
+                            )
                           }
                         >
                           <input
                             value={draftValue.name || ""}
                             onChange={(event) =>
                               updateCatalogAdminDraft(
-                                catalogConfig.type,
+                                catalogConfig.adminKey,
                                 "name",
                                 event.target.value,
                               )
                             }
-                            placeholder={`Nuevo ${catalogConfig.label.slice(0, -1) || catalogConfig.label}`}
+                            placeholder={`Nuevo ${catalogConfig.singularLabel || catalogConfig.label}`}
                           />
                           <textarea
                             rows={2}
                             value={draftValue.description || ""}
                             onChange={(event) =>
                               updateCatalogAdminDraft(
-                                catalogConfig.type,
+                                catalogConfig.adminKey,
                                 "description",
                                 event.target.value,
                               )
@@ -3728,11 +3792,19 @@ export default function CommercialEnablementPage({ currentUser }) {
                         <div className="enablement-library-mini-list">
                           {items.length ? (
                             items.map((entry) => {
+                              const menuKey = buildCatalogAdminMenuKey(
+                                catalogConfig.adminKey,
+                                entry,
+                              );
+                              const editorKey = buildCatalogAdminEditorKey(
+                                catalogConfig.adminKey,
+                                entry,
+                              );
                               const editorValue =
-                                catalogAdminEditors[entry.publicId] ||
+                                catalogAdminEditors[editorKey] ||
                                 buildCatalogAdminEditor(entry);
                               const isEditing = Boolean(
-                                catalogAdminEditors[entry.publicId],
+                                catalogAdminEditors[editorKey],
                               );
 
                               return isEditing ? (
@@ -3744,14 +3816,17 @@ export default function CommercialEnablementPage({ currentUser }) {
                                   className="enablement-library-mini-card static enablement-library-catalog-entry-editor"
                                   onSubmit={(event) => {
                                     event.preventDefault();
-                                    handleUpdateCatalogEntry(entry);
+                                    handleUpdateCatalogEntry(
+                                      catalogConfig.adminKey,
+                                      entry,
+                                    );
                                   }}
                                 >
                                   <input
                                     value={editorValue.name}
                                     onChange={(event) =>
                                       updateCatalogAdminEditor(
-                                        entry.publicId,
+                                        editorKey,
                                         "name",
                                         event.target.value,
                                       )
@@ -3763,7 +3838,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                     value={editorValue.description}
                                     onChange={(event) =>
                                       updateCatalogAdminEditor(
-                                        entry.publicId,
+                                        editorKey,
                                         "description",
                                         event.target.value,
                                       )
@@ -3782,7 +3857,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                                       type="button"
                                       className="enablement-library-action subtle"
                                       onClick={() =>
-                                        cancelCatalogAdminEdit(entry.publicId)
+                                        cancelCatalogAdminEdit(editorKey)
                                       }
                                       disabled={working}
                                     >
@@ -3792,9 +3867,13 @@ export default function CommercialEnablementPage({ currentUser }) {
                                       type="button"
                                       className="enablement-library-action subtle is-danger"
                                       onClick={() =>
-                                        handleUpdateCatalogEntry(entry, {
-                                          isActive: entry.isActive === false,
-                                        })
+                                        handleUpdateCatalogEntry(
+                                          catalogConfig.adminKey,
+                                          entry,
+                                          {
+                                            isActive: entry.isActive === false,
+                                          },
+                                        )
                                       }
                                       disabled={working}
                                     >
@@ -3806,7 +3885,10 @@ export default function CommercialEnablementPage({ currentUser }) {
                                       type="button"
                                       className="enablement-library-action subtle is-danger"
                                       onClick={() =>
-                                        handleDeleteCatalogEntry(entry)
+                                        handleDeleteCatalogEntry(
+                                          catalogConfig.adminKey,
+                                          entry,
+                                        )
                                       }
                                       disabled={working}
                                     >
@@ -3838,25 +3920,26 @@ export default function CommercialEnablementPage({ currentUser }) {
                                       type="button"
                                       className="kebab-btn"
                                       onClick={() =>
-                                        toggleCatalogAdminMenu(entry.publicId)
+                                        toggleCatalogAdminMenu(menuKey)
                                       }
                                       aria-label={`Abrir acciones para ${entry.name}`}
                                       aria-expanded={
-                                        openCatalogAdminMenuId ===
-                                        entry.publicId
+                                        openCatalogAdminMenuId === menuKey
                                       }
                                       disabled={working}
                                     >
                                       ⋮
                                     </button>
-                                    {openCatalogAdminMenuId ===
-                                    entry.publicId ? (
+                                    {openCatalogAdminMenuId === menuKey ? (
                                       <div className="user-kebab-menu">
                                         <button
                                           type="button"
                                           onClick={() => {
                                             setOpenCatalogAdminMenuId(null);
-                                            startCatalogAdminEdit(entry);
+                                            startCatalogAdminEdit(
+                                              catalogConfig.adminKey,
+                                              entry,
+                                            );
                                           }}
                                           disabled={working}
                                         >
@@ -3867,10 +3950,14 @@ export default function CommercialEnablementPage({ currentUser }) {
                                           className="user-kebab-menu-danger"
                                           onClick={() => {
                                             setOpenCatalogAdminMenuId(null);
-                                            handleUpdateCatalogEntry(entry, {
-                                              isActive:
-                                                entry.isActive === false,
-                                            });
+                                            handleUpdateCatalogEntry(
+                                              catalogConfig.adminKey,
+                                              entry,
+                                              {
+                                                isActive:
+                                                  entry.isActive === false,
+                                              },
+                                            );
                                           }}
                                           disabled={working}
                                         >
@@ -3883,7 +3970,10 @@ export default function CommercialEnablementPage({ currentUser }) {
                                           className="user-kebab-menu-danger"
                                           onClick={() => {
                                             setOpenCatalogAdminMenuId(null);
-                                            handleDeleteCatalogEntry(entry);
+                                            handleDeleteCatalogEntry(
+                                              catalogConfig.adminKey,
+                                              entry,
+                                            );
                                           }}
                                           disabled={working}
                                         >

@@ -939,6 +939,7 @@ function groupCatalogsForResponse(entries, options = {}) {
   const order = [
     "asset_type",
     "manufacturer",
+    "technology",
     "solution",
     "need",
     "requirement",
@@ -1000,6 +1001,7 @@ function filterItems(items, filters = {}) {
   const queryText = normalizeText(filters.q || "");
   const manufacturerCodes = parseCsvArray(filters.manufacturerCodes);
   const solutionCodes = parseCsvArray(filters.solutionCodes);
+  const technologyCodes = parseCsvArray(filters.technologyCodes);
   const needCodes = parseCsvArray(filters.needCodes);
   const requirementCodes = parseCsvArray(filters.requirementCodes);
   const competitorCodes = parseCsvArray(filters.competitorCodes);
@@ -1055,6 +1057,7 @@ function filterItems(items, filters = {}) {
     if (!itemHasCatalogCode(item, "manufacturer", manufacturerCodes))
       return false;
     if (!itemHasCatalogCode(item, "solution", solutionCodes)) return false;
+    if (!itemHasCatalogCode(item, "technology", technologyCodes)) return false;
     if (!itemHasCatalogCode(item, "need", needCodes)) return false;
     if (!itemHasCatalogCode(item, "requirement", requirementCodes))
       return false;
@@ -1227,8 +1230,7 @@ export async function getCommercialEnablementAssetDetail({
           createdAt: latestSourceContent.created_at || null,
           hasExtractedText:
             Number(latestSourceContent.extracted_char_count || 0) > 0,
-          hasSummary:
-            Number(latestSourceContent.summary_char_count || 0) > 0,
+          hasSummary: Number(latestSourceContent.summary_char_count || 0) > 0,
           canReanalyzeSummary:
             Number(latestSourceContent.extracted_char_count || 0) > 0 ||
             Number(latestSourceContent.summary_char_count || 0) > 0,
@@ -1263,6 +1265,7 @@ function buildAssetSearchPayload(body = {}) {
     isFeatured: Boolean(body.isFeatured),
     manufacturerCodes: uniqueStrings(body.manufacturerCodes),
     solutionCodes: uniqueStrings(body.solutionCodes),
+    technologyCodes: uniqueStrings(body.technologyCodes),
     needCodes: uniqueStrings(body.needCodes),
     requirementCodes: uniqueStrings(body.requirementCodes),
     competitorCodes: uniqueStrings(body.competitorCodes),
@@ -1379,6 +1382,7 @@ export async function createCommercialEnablementAsset({ body, user }) {
       payload.assetTypeCode,
       ...payload.manufacturerCodes,
       ...payload.solutionCodes,
+      ...payload.technologyCodes,
       ...payload.needCodes,
       ...payload.requirementCodes,
       ...payload.competitorCodes,
@@ -1424,6 +1428,7 @@ export async function createCommercialEnablementAsset({ body, user }) {
     await syncCatalogLinks(conn, itemId, {
       manufacturer: payload.manufacturerCodes,
       solution: payload.solutionCodes,
+      technology: payload.technologyCodes,
       need: payload.needCodes,
       requirement: payload.requirementCodes,
       competitor: payload.competitorCodes,
@@ -1475,6 +1480,7 @@ export async function updateCommercialEnablementAsset({
       payload.assetTypeCode,
       ...payload.manufacturerCodes,
       ...payload.solutionCodes,
+      ...payload.technologyCodes,
       ...payload.needCodes,
       ...payload.requirementCodes,
       ...payload.competitorCodes,
@@ -1518,6 +1524,7 @@ export async function updateCommercialEnablementAsset({
     await syncCatalogLinks(conn, Number(item.id), {
       manufacturer: payload.manufacturerCodes,
       solution: payload.solutionCodes,
+      technology: payload.technologyCodes,
       need: payload.needCodes,
       requirement: payload.requirementCodes,
       competitor: payload.competitorCodes,

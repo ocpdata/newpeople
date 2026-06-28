@@ -65,6 +65,108 @@ const LEAD_QUEUE_FILTER_OPTIONS = [
 const EMPTY_LEAD_SUBSTATUS_FILTER = "__none__";
 const OPERATIONS_SITUATION_PAGE_SIZE = 10;
 const LEAD_EMAIL_MAX_LIBRARY_ASSETS = 3;
+const LEAD_EXECUTION_CRITERIA_ITEMS = [
+  {
+    id: "interest",
+    badge: "Criterio 1",
+    title: "Detectar interés real",
+    description:
+      "Confirma que el cliente sí mostró interés en alguna de nuestras soluciones.",
+    routeLabel: "Ruta de interés",
+    routeSummary:
+      "Usa esta ruta cuando el cliente ya mostró intención de avanzar, pero todavía falta ordenar el siguiente paso.",
+    steps: [
+      {
+        title: "1. Leer el contexto",
+        description: "Revisa el lead y ubica qué solución despertó interés.",
+      },
+      {
+        title: "2. Confirmar interés",
+        description:
+          "Valida con el usuario qué le llamó la atención y por qué.",
+      },
+      {
+        title: "3. Cerrar con reunión",
+        description: "Agenda una siguiente reunión para profundizar el caso.",
+      },
+    ],
+    validations: [
+      "Confirmar la solución que despertó interés.",
+      "Dejar claro por qué le interesa.",
+      "Asegurar la siguiente reunión o demo.",
+    ],
+    emailHint:
+      "El correo acompaña la conversación y deja listo el siguiente contacto.",
+  },
+  {
+    id: "motive",
+    badge: "Criterio 2",
+    title: "Entender el motivo",
+    description:
+      "Aterriza por qué le interesa la solución y qué problema quiere resolver.",
+    routeLabel: "Ruta de motivo",
+    routeSummary:
+      "Selecciona esta ruta cuando ya sabes que hay interés, pero aún falta precisar el motivo real de negocio.",
+    steps: [
+      {
+        title: "1. Leer el contexto",
+        description:
+          "Recupera la situación actual y detecta el problema de negocio.",
+      },
+      {
+        title: "2. Profundizar en el motivo",
+        description:
+          "Pregunta qué problema resuelve, por qué ahora y qué resultado espera.",
+      },
+      {
+        title: "3. Preparar la demo",
+        description:
+          "Alinea la siguiente reunión técnica con ese motivo específico.",
+      },
+    ],
+    validations: [
+      "Registrar el motivo principal detectado.",
+      "Identificar el problema que el cliente quiere resolver.",
+      "Dejar la demo alineada al interés real.",
+    ],
+    emailHint:
+      "El correo debe reforzar el problema detectado y abrir la siguiente conversación.",
+  },
+  {
+    id: "meeting",
+    badge: "Criterio 3",
+    title: "Asegurar la siguiente reunión",
+    description:
+      "Deja lista la reunión técnica o la demo orientada al motivo de interés.",
+    routeLabel: "Ruta de reunión",
+    routeSummary:
+      "Usa esta ruta cuando ya hay interés y motivo definidos, pero falta asegurar el encuentro siguiente.",
+    steps: [
+      {
+        title: "1. Leer el contexto",
+        description:
+          "Confirma los datos relevantes antes de cerrar el calendario.",
+      },
+      {
+        title: "2. Confirmar la reunión",
+        description:
+          "Define asistentes, fecha y objetivo de la reunión técnica.",
+      },
+      {
+        title: "3. Cerrar con trazabilidad",
+        description:
+          "Deja el lead listo para seguimiento y comunicación posterior.",
+      },
+    ],
+    validations: [
+      "Confirmar fecha o ventana de reunión.",
+      "Asegurar participantes clave.",
+      "Dejar la reunión técnica o demo claramente agendada.",
+    ],
+    emailHint:
+      "El correo sirve para confirmar la reunión y dejar trazabilidad del acuerdo.",
+  },
+];
 
 function sortLeadStatusFilters(values) {
   if (!Array.isArray(values)) return [];
@@ -1104,6 +1206,279 @@ function formatLeadOutcomeDateLabel(value) {
     options: { day: "2-digit", month: "2-digit", year: "numeric" },
     fallback: "",
   });
+}
+
+function getLeadExecutionDefaultCriterionId(detail) {
+  const substatusCode = String(detail?.leadSubstatusCode || "");
+  const reasonCode = String(detail?.leadReasonCode || "");
+  const actionCode = String(detail?.leadRequiredActionCode || "");
+
+  if (
+    substatusCode === "meeting_requested" ||
+    substatusCode === "meeting_confirmed" ||
+    actionCode === "schedule_meeting"
+  ) {
+    return "meeting";
+  }
+
+  if (
+    reasonCode === "needs_more_information" ||
+    reasonCode === "follow_up_later_requested" ||
+    reasonCode === "budget_next_cycle" ||
+    reasonCode === "timing_not_right"
+  ) {
+    return "motive";
+  }
+
+  return "interest";
+}
+
+function LeadExecutionSection({
+  detail,
+  leadOutcomeCatalogs,
+  canOpenLeadEmailModal,
+  leadEmailDisabledHint,
+  onOpenLeadEmailModal,
+}) {
+  const [selectedCriteriaId, setSelectedCriteriaId] = useState(() =>
+    getLeadExecutionDefaultCriterionId(detail),
+  );
+
+  useEffect(() => {
+    setSelectedCriteriaId(getLeadExecutionDefaultCriterionId(detail));
+  }, [detail?.id]);
+
+  const leadSubstatus = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.substatuses,
+    detail?.leadSubstatusCode,
+  );
+  const leadReason = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.reasons,
+    detail?.leadReasonCode,
+  );
+  const leadRequiredAction = getLeadCatalogEntryByCode(
+    leadOutcomeCatalogs?.requiredActions,
+    detail?.leadRequiredActionCode,
+  );
+  const leadSubstatusGuide = getLeadCallOutcomeSubstatusGuide(
+    detail?.leadSubstatusCode,
+  );
+  const leadReasonGuide = getLeadCallOutcomeReasonGuide(detail?.leadReasonCode);
+  const leadRequiredActionGuide = getLeadCallOutcomeActionGuide(
+    detail?.leadRequiredActionCode,
+  );
+  const leadOutcomeTransitionRules = Array.isArray(
+    leadOutcomeCatalogs?.transitionRules,
+  )
+    ? leadOutcomeCatalogs.transitionRules
+    : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideSubstatusOptions = leadOutcomeTransitionRules.length
+    ? leadOutcomeTransitionRules
+        .map((rule) =>
+          getLeadCatalogEntryByCode(
+            leadOutcomeCatalogs?.substatuses,
+            rule.substatusCode,
+          ),
+        )
+        .filter(Boolean)
+        .filter(
+          (entry, index, entries) =>
+            entries.findIndex((candidate) => candidate.code === entry.code) ===
+            index,
+        )
+    : leadSubstatus
+      ? [leadSubstatus]
+      : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideReasonOptions = leadReason
+    ? [leadReason]
+    : EMPTY_LEAD_CATALOG;
+  const leadOutcomeGuideActionOptions = leadRequiredAction
+    ? [leadRequiredAction]
+    : EMPTY_LEAD_CATALOG;
+  const selectedCriteria =
+    LEAD_EXECUTION_CRITERIA_ITEMS.find(
+      (item) => item.id === selectedCriteriaId,
+    ) || LEAD_EXECUTION_CRITERIA_ITEMS[0];
+  const canSendExecutionEmail = Boolean(canOpenLeadEmailModal);
+
+  return (
+    <details
+      className="account-form-section account-modal-section interaction-detail-section lead-execution-section"
+      open
+    >
+      <summary className="lead-execution-summary-trigger">
+        <div className="lead-execution-header-copy">
+          <span className="lead-execution-kicker">Ejecución del lead</span>
+          <h4>Guía para orientar la conversación y cerrar el siguiente paso</h4>
+          <p className="field-hint lead-execution-header-description">
+            Usa esta guía para detectar interés, entender por qué le interesa al
+            cliente y dejar agendada la siguiente reunión técnica o demo.
+          </p>
+        </div>
+        <span className="lead-execution-summary-hint">
+          {selectedCriteria.routeLabel}
+        </span>
+      </summary>
+
+      <div className="lead-execution-content">
+        {leadEmailDisabledHint ? (
+          <p className="field-hint">{leadEmailDisabledHint}</p>
+        ) : null}
+
+        <article className="lead-execution-purpose-panel">
+          <strong>Propósito comercial</strong>
+          <p>
+            Lograr una reunión con el cliente para identificar su interés en una
+            solución, entender por qué le interesa y agendar una siguiente
+            reunión con más detalle técnico y una demostración enfocada en sus
+            motivos.
+          </p>
+        </article>
+
+        <div className="lead-execution-criteria-grid">
+          {LEAD_EXECUTION_CRITERIA_ITEMS.map((item) => {
+            const isSelected = item.id === selectedCriteriaId;
+
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className={`lead-execution-criteria-card${isSelected ? " is-selected" : ""}`}
+                aria-pressed={isSelected}
+                onClick={() => setSelectedCriteriaId(item.id)}
+              >
+                <div className="lead-execution-criteria-card-head">
+                  <span className="lead-follow-up-card-label">
+                    {item.badge}
+                  </span>
+                  {isSelected ? (
+                    <span className="lead-execution-selected-badge">
+                      Seleccionado
+                    </span>
+                  ) : null}
+                </div>
+                <strong>{item.title}</strong>
+                <p className="field-hint lead-follow-up-card-copy">
+                  {item.description}
+                </p>
+                <span className="lead-execution-criteria-card-footer">
+                  Ver ruta de ejecución
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <article className="lead-execution-route-panel">
+          <div className="lead-execution-route-head">
+            <div>
+              <span className="lead-execution-section-label">
+                {selectedCriteria.routeLabel}
+              </span>
+              <strong>{selectedCriteria.title}</strong>
+              <p className="field-hint lead-execution-route-copy">
+                {selectedCriteria.routeSummary}
+              </p>
+            </div>
+            <span className="lead-execution-summary-pill">Guía activa</span>
+          </div>
+
+          <div className="lead-execution-steps-grid">
+            {selectedCriteria.steps.map((step) => (
+              <article className="lead-execution-step-card" key={step.title}>
+                <span className="lead-follow-up-card-label">Paso</span>
+                <strong>{step.title}</strong>
+                <p className="field-hint lead-follow-up-card-copy">
+                  {step.description}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <div className="lead-execution-validation-card">
+            <div className="lead-execution-section-head">
+              <strong>Validaciones</strong>
+              <p className="field-hint">
+                El correo se habilita cuando esta ruta queda clara.
+              </p>
+            </div>
+            <ul className="lead-execution-validation-list">
+              {selectedCriteria.validations.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="lead-execution-guide-wrap">
+            <LeadCallOutcomeInlineGuide
+              title={`Guía de ${selectedCriteria.routeLabel.toLowerCase()}`}
+              summary={`Abrir ${selectedCriteria.routeLabel.toLowerCase()}`}
+              substatusEntries={leadOutcomeGuideSubstatusOptions}
+              reasonEntries={leadOutcomeGuideReasonOptions}
+              actionEntries={leadOutcomeGuideActionOptions}
+              selectedSubstatusCode={detail?.leadSubstatusCode}
+              selectedReasonCode={detail?.leadReasonCode}
+              selectedActionCode={detail?.leadRequiredActionCode}
+            />
+          </div>
+
+          {leadSubstatus || leadReason || leadRequiredAction ? (
+            <div className="lead-execution-summary-grid">
+              <article className="lead-execution-summary-card is-substatus">
+                <span className="lead-follow-up-card-label">Situación</span>
+                <strong>{leadSubstatus?.name || "Sin definir"}</strong>
+                <p className="field-hint lead-follow-up-card-copy">
+                  {leadSubstatusGuide?.optionHint ||
+                    leadSubstatusGuide?.whenToUse ||
+                    leadSubstatus?.description ||
+                    "Sin detalle adicional"}
+                </p>
+              </article>
+              <article className="lead-execution-summary-card is-reason">
+                <span className="lead-follow-up-card-label">
+                  Motivo principal
+                </span>
+                <strong>{leadReason?.name || "Sin definir"}</strong>
+                <p className="field-hint lead-follow-up-card-copy">
+                  {leadReasonGuide?.optionHint ||
+                    leadReasonGuide?.whenToUse ||
+                    "Sin detalle adicional"}
+                </p>
+              </article>
+              <article className="lead-execution-summary-card is-action">
+                <span className="lead-follow-up-card-label">
+                  Siguiente acción obligatoria
+                </span>
+                <strong>{leadRequiredAction?.name || "Sin definir"}</strong>
+                <p className="field-hint lead-follow-up-card-copy">
+                  {leadRequiredActionGuide?.optionHint ||
+                    leadRequiredActionGuide?.whenToUse ||
+                    "Sin detalle adicional"}
+                </p>
+              </article>
+            </div>
+          ) : null}
+
+          <div className="lead-execution-footer-actions">
+            <span className="field-hint">{selectedCriteria.emailHint}</span>
+            <button
+              type="button"
+              className="btn-secondary lead-follow-up-secondary-action"
+              onClick={onOpenLeadEmailModal}
+              disabled={!canSendExecutionEmail}
+            >
+              Enviar correo
+            </button>
+          </div>
+        </article>
+
+        <p className="field-hint lead-execution-alt-hint">
+          Si no ejecutas esta guía, usa Seguimiento comercial como alternativa
+          para registrar la situación del lead.
+        </p>
+      </div>
+    </details>
+  );
 }
 
 function getDocumentStageLabel(status, labels = {}) {
@@ -3415,16 +3790,24 @@ function InteractionDetailModal({
                 </>
               ) : null}
 
+              <LeadExecutionSection
+                detail={detail}
+                leadOutcomeCatalogs={leadOutcomeCatalogs}
+                canOpenLeadEmailModal={canOpenLeadEmailModal}
+                leadEmailDisabledHint={leadEmailDisabledHint}
+                onOpenLeadEmailModal={onOpenLeadEmailModal}
+              />
+
               {showLeadFollowUpSection ? (
                 <section className="account-form-section account-modal-section interaction-detail-section lead-follow-up-section">
                   <div className="interaction-resolution-header lead-follow-up-header">
                     <div className="lead-follow-up-header-copy">
                       <span className="lead-follow-up-kicker">
-                        Seguimiento comercial
+                        Seguimiento comercial alternativo
                       </span>
                       <p className="field-hint lead-follow-up-header-description">
-                        Registra nuevas situaciones del lead en una ventana
-                        aparte y conserva un historial de seguimiento.
+                        Usa este bloque si no ejecutaste la guía y necesitas
+                        registrar o revisar el seguimiento comercial directo.
                       </p>
                     </div>
                     <div className="lead-follow-up-actions-row">
@@ -3437,20 +3820,8 @@ function InteractionDetailModal({
                           Registrar nueva situación
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        className="btn-secondary lead-follow-up-secondary-action"
-                        onClick={onOpenLeadEmailModal}
-                        disabled={!canOpenLeadEmailModal}
-                      >
-                        Enviar correo
-                      </button>
                     </div>
                   </div>
-                  {leadEmailDisabledHint ? (
-                    <p className="field-hint">{leadEmailDisabledHint}</p>
-                  ) : null}
-
                   {leadSubstatus || leadReason || leadRequiredAction ? (
                     <div className="lead-follow-up-overview">
                       <div className="lead-follow-up-status-block">
@@ -3605,6 +3976,8 @@ function InteractionDetailModal({
 
                   <div className="lead-follow-up-guide-wrap">
                     <LeadCallOutcomeInlineGuide
+                      title="Guía de seguimiento comercial"
+                      summary="Abrir guía de seguimiento comercial"
                       substatusEntries={leadOutcomeGuideSubstatusOptions}
                       reasonEntries={leadOutcomeGuideReasonOptions}
                       actionEntries={leadOutcomeGuideActionOptions}

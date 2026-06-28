@@ -8,6 +8,7 @@ import { simpleParser } from "mailparser";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import XLSX from "xlsx";
+import JSZip from "jszip";
 import { parseBuffer as parseAudioBuffer } from "music-metadata";
 import { getUserAuthContext } from "../auth.js";
 import { query, withTransaction } from "../db.js";
@@ -26,6 +27,8 @@ const PIPELINE_VERSION = "v1";
 const FILE_LIMITS = {
   ".pdf": { maxBytes: 20 * 1024 * 1024, kind: "pdf" },
   ".docx": { maxBytes: 15 * 1024 * 1024, kind: "docx" },
+  ".ppt": { maxBytes: 20 * 1024 * 1024, kind: "presentation" },
+  ".pptx": { maxBytes: 20 * 1024 * 1024, kind: "presentation" },
   ".xlsx": { maxBytes: 10 * 1024 * 1024, kind: "spreadsheet" },
   ".xls": { maxBytes: 10 * 1024 * 1024, kind: "spreadsheet" },
   ".csv": { maxBytes: 5 * 1024 * 1024, kind: "spreadsheet" },
@@ -87,6 +90,55 @@ function calculateSimilarity(left, right) {
 
 function detectExtension(fileName) {
   return String(path.extname(fileName || "") || "").toLowerCase();
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) =>
+      String.fromCodePoint(parseInt(hex, 16)),
+    )
+    .replace(/&#(\d+);/g, (_match, dec) =>
+      String.fromCodePoint(parseInt(dec, 10)),
+    )
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractSlideTextFromXml(xml) {
+  return Array.from(String(xml || "").matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/gi))
+    .map((match) => decodeXmlEntities(match[1]))
+    .filter(Boolean);
+}
+
+function extractSlideNumber(filePath) {
+  const match = String(filePath || "").match(/slide(\d+)\.xml$/i);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+async function extractPptxText(buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  const slidePaths = Object.keys(zip.files)
+    .filter((filePath) => /^ppt\/slides\/slide\d+\.xml$/i.test(filePath))
+    .sort(
+      (left, right) => extractSlideNumber(left) - extractSlideNumber(right),
+    );
+
+  const slideBlocks = [];
+  for (const slidePath of slidePaths) {
+    const slideXml = await zip.file(slidePath)?.async("string");
+    if (!slideXml) continue;
+    const slideNumber = extractSlideNumber(slidePath);
+    const lines = extractSlideTextFromXml(slideXml);
+    if (!lines.length) continue;
+    slideBlocks.push(`Diapositiva ${slideNumber}\n${lines.join("\n")}`);
+  }
+
+  return slideBlocks.join("\n\n").trim();
 }
 
 function sanitizeFileName(fileName) {
@@ -696,6 +748,53 @@ export async function extractContentFromBuffer({
   if (resolvedExtension === ".docx") {
     const result = await mammoth.extractRawText({ buffer });
     const text = String(result.value || "").trim();
+    return {
+      extractionStatus: "completed",
+      transcriptionStatus: "pending",
+      detectedFormat,
+      rawText: text,
+      normalizedText: summarizeForPrompt(text, 120000),
+      structuredContentJson: null,
+      transcriptText: null,
+      transcriptionLanguage: null,
+      transcriptionConfidence: null,
+      durationSeconds: null,
+      pageCount: null,
+      contentSummary: summarizeForPrompt(text, 300),
+    };
+  }
+
+  if (resolvedExtension === ".pptx") {
+    const extractedText = await extractPptxText(buffer);
+    const text =
+      extractedText ||
+      [
+        `Presentacion cargada: ${String(fileName || "archivo")}`,
+        "No se encontro texto legible en las diapositivas PPTX.",
+        "Agrega contexto en la pista para mejorar la sugerencia inicial.",
+      ].join("\n");
+    return {
+      extractionStatus: "completed",
+      transcriptionStatus: "pending",
+      detectedFormat,
+      rawText: text,
+      normalizedText: summarizeForPrompt(text, 120000),
+      structuredContentJson: null,
+      transcriptText: null,
+      transcriptionLanguage: null,
+      transcriptionConfidence: null,
+      durationSeconds: null,
+      pageCount: null,
+      contentSummary: summarizeForPrompt(text, 300),
+    };
+  }
+
+  if (resolvedExtension === ".ppt") {
+    const text = [
+      `Presentacion cargada: ${String(fileName || "archivo")}`,
+      "La extraccion automatica de texto para PPT no esta habilitada en este flujo.",
+      "Agrega contexto en la pista para mejorar la sugerencia inicial.",
+    ].join("\n");
     return {
       extractionStatus: "completed",
       transcriptionStatus: "pending",
