@@ -151,6 +151,14 @@ async function ensureInteractionLeadColumns() {
     );
   }
 
+  if (!(await columnExists("interactions", "lead_execution_plan_json"))) {
+    await query(
+      `ALTER TABLE interactions
+       ADD COLUMN lead_execution_plan_json LONGTEXT NULL
+       AFTER lead_referred_area_name`,
+    );
+  }
+
   if (
     !(await indexExists("interactions", "idx_interactions_processing_created"))
   ) {

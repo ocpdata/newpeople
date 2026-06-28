@@ -2918,6 +2918,29 @@ const STAGE_WEIGHT_DEFAULTS = {
   anulada: 0,
 };
 
+const LEAD_EXECUTION_GUIDE_DEFAULTS = {
+  company_intro:
+    "Indicar que la empresa tiene 15 años en el mercado mexicano y que somos parte de un grupo de empresas ubicadas en Peru, Chile y Mexico con un total de mas de 900 personas. En Mexico somos partners principales de las marcas F5 y Bluecat y contamos con ingenieros certificados y con mucha experiencia en estos dos fabricantes.",
+  expectation_confirmation:
+    "Si el prospecto indicó expectativas para esta reunion, confírmalas para alinearte con el. Si no las indicó, explica que presentaremos nuestras soluciones y que podemos profundizar en la que le haga mas sentido.",
+  solution_presentation_start:
+    "Inicia la presentacion con el contexto de la solucion seleccionada y valida que el enfoque siga alineado con la prioridad del prospecto.",
+  pain_focus:
+    "Enfoca los primeros slides en el dolor, reto o problema principal del prospecto. Esta es la parte mas importante para que el resto de la presentacion tenga sentido.",
+  problem_resolution:
+    "Explica de forma clara como resolvemos el problema, reto o dolor identificado y por que nuestro enfoque reduce riesgo o friccion.",
+  key_points:
+    "Muestra de dos a tres puntos clave de valor de la solucion. Evita saturar con demasiados detalles tecnicos en esta etapa.",
+  conclusion:
+    "Cierra resumiendo el dolor identificado, la solucion propuesta y los puntos clave de valor para confirmar entendimiento compartido.",
+  storytelling:
+    "Despues de cada bloque, cuenta una historia breve o caso real para mantener interes y aterrizar el valor en un contexto cercano al cliente.",
+  demo_offer:
+    "Ofrece una demostracion y solicita una reunion mas tecnica para profundizar. Sugiere invitar personal tecnico del prospecto.",
+  next_meeting:
+    "Define fecha y hora de la siguiente reunion antes de cerrar la conversacion y confirma responsables de seguimiento.",
+};
+
 const DEFAULT_BUSINESS_TIMEZONE =
   String(config.app?.businessTimezone || "America/Mexico_City").trim() ||
   "America/Mexico_City";
@@ -2948,6 +2971,7 @@ function buildFallbackCommercialSettings() {
     businessTimezone: DEFAULT_BUSINESS_TIMEZONE,
     stageSlaMap: { ...STAGE_SLA_DEFAULTS },
     stageWeightMap: { ...STAGE_WEIGHT_DEFAULTS },
+    leadExecutionGuides: { ...LEAD_EXECUTION_GUIDE_DEFAULTS },
     updatedAt: null,
     updatedByUserId: null,
     updatedByUserName: "",
@@ -2964,6 +2988,7 @@ function normalizeCommercialSettingsRow(row) {
 
   let stageSlaMap;
   let stageWeightMap;
+  let leadExecutionGuides;
   try {
     const parsed =
       typeof row.stage_sla_days_json === "string"
@@ -3010,12 +3035,35 @@ function normalizeCommercialSettingsRow(row) {
     stageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
   }
 
+  try {
+    const parsed =
+      typeof row.lead_execution_guides_json === "string"
+        ? JSON.parse(row.lead_execution_guides_json)
+        : row.lead_execution_guides_json;
+    leadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
+    if (parsed && typeof parsed === "object") {
+      Object.entries(parsed).forEach(([guideKey, guideText]) => {
+        if (
+          Object.prototype.hasOwnProperty.call(
+            LEAD_EXECUTION_GUIDE_DEFAULTS,
+            guideKey,
+          )
+        ) {
+          leadExecutionGuides[guideKey] = String(guideText || "").trim();
+        }
+      });
+    }
+  } catch {
+    leadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
+  }
+
   return {
     id: Number(row.id),
     singletonKey: String(row.singleton_key || "default"),
     businessTimezone: normalizeBusinessTimezone(row.business_timezone),
     stageSlaMap,
     stageWeightMap,
+    leadExecutionGuides,
     updatedAt: row.updated_at || null,
     updatedByUserId: row.updated_by_user_id
       ? Number(row.updated_by_user_id)
@@ -3038,6 +3086,7 @@ async function ensureCommercialSettingsTable() {
         business_timezone VARCHAR(80) NOT NULL,
         stage_sla_days_json JSON NOT NULL,
         forecast_stage_weights_json JSON NOT NULL,
+        lead_execution_guides_json LONGTEXT NULL,
         created_by_user_id BIGINT UNSIGNED NULL,
         updated_by_user_id BIGINT UNSIGNED NULL,
         created_at DATETIME(3) NOT NULL,
@@ -3063,6 +3112,11 @@ async function ensureCommercialSettingsTable() {
     "forecast_stage_weights_json",
     "ADD COLUMN forecast_stage_weights_json JSON NOT NULL AFTER stage_sla_days_json",
   );
+  await ensureTableColumn(
+    "commercial_settings",
+    "lead_execution_guides_json",
+    "ADD COLUMN lead_execution_guides_json LONGTEXT NULL AFTER forecast_stage_weights_json",
+  );
 }
 
 async function ensureDefaultCommercialSettings() {
@@ -3070,9 +3124,10 @@ async function ensureDefaultCommercialSettings() {
   await query(
     `INSERT INTO commercial_settings
       (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
+         lead_execution_guides_json,
        created_by_user_id, updated_by_user_id,
        created_at, updated_at)
-     SELECT 'default', ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
+       SELECT 'default', ?, ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
      WHERE NOT EXISTS (
        SELECT 1 FROM commercial_settings WHERE singleton_key = 'default'
      )`,
@@ -3080,7 +3135,16 @@ async function ensureDefaultCommercialSettings() {
       DEFAULT_BUSINESS_TIMEZONE,
       JSON.stringify(STAGE_SLA_DEFAULTS),
       JSON.stringify(STAGE_WEIGHT_DEFAULTS),
+      JSON.stringify(LEAD_EXECUTION_GUIDE_DEFAULTS),
     ],
+  );
+
+  await query(
+    `UPDATE commercial_settings
+       SET lead_execution_guides_json = ?
+       WHERE singleton_key = 'default'
+         AND (lead_execution_guides_json IS NULL OR lead_execution_guides_json = '')`,
+    [JSON.stringify(LEAD_EXECUTION_GUIDE_DEFAULTS)],
   );
 }
 
@@ -3117,6 +3181,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
 
   const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
   const nextStageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
+  const nextLeadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);
@@ -3143,18 +3208,37 @@ export async function saveCommercialSettings(settings, actorUserId) {
       }
     });
   }
+  if (
+    settings.leadExecutionGuides &&
+    typeof settings.leadExecutionGuides === "object"
+  ) {
+    Object.entries(settings.leadExecutionGuides).forEach(
+      ([guideKey, guideText]) => {
+        if (
+          Object.prototype.hasOwnProperty.call(
+            LEAD_EXECUTION_GUIDE_DEFAULTS,
+            guideKey,
+          )
+        ) {
+          nextLeadExecutionGuides[guideKey] = String(guideText || "").trim();
+        }
+      },
+    );
+  }
 
   if (existingId) {
     await query(
       `UPDATE commercial_settings
        SET business_timezone = ?,
            stage_sla_days_json = ?, forecast_stage_weights_json = ?,
+           lead_execution_guides_json = ?,
            updated_by_user_id = ?, updated_at = ?
        WHERE id = ?`,
       [
         nextBusinessTimezone,
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
+        JSON.stringify(nextLeadExecutionGuides),
         actorUserId || null,
         now,
         existingId,
@@ -3164,13 +3248,15 @@ export async function saveCommercialSettings(settings, actorUserId) {
     await query(
       `INSERT INTO commercial_settings
         (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
+         lead_execution_guides_json,
          created_by_user_id, updated_by_user_id,
          created_at, updated_at)
-       VALUES ('default', ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nextBusinessTimezone,
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
+        JSON.stringify(nextLeadExecutionGuides),
         actorUserId || null,
         actorUserId || null,
         now,
@@ -3182,7 +3268,11 @@ export async function saveCommercialSettings(settings, actorUserId) {
   return getCommercialSettings();
 }
 
-export { STAGE_SLA_DEFAULTS, STAGE_WEIGHT_DEFAULTS };
+export {
+  STAGE_SLA_DEFAULTS,
+  STAGE_WEIGHT_DEFAULTS,
+  LEAD_EXECUTION_GUIDE_DEFAULTS,
+};
 
 export async function getCompanyProfile() {
   await ensureCompanyProfileTable();

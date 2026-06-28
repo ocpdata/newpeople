@@ -87,10 +87,59 @@ const DEFAULT_STAGE_WEIGHT_MAP = {
   anulada: 0,
 };
 
+const LEAD_EXECUTION_GUIDE_ENTRIES = [
+  { key: "company_intro", label: "Presentación de la empresa" },
+  {
+    key: "expectation_confirmation",
+    label: "Confirmación de expectativas del prospecto",
+  },
+  {
+    key: "solution_presentation_start",
+    label: "Inicio de presentación de la solución",
+  },
+  {
+    key: "pain_focus",
+    label: "Enfoque en dolor, reto o situación",
+  },
+  { key: "problem_resolution", label: "Cómo resolvemos el problema" },
+  { key: "key_points", label: "Puntos clave de la solución" },
+  { key: "conclusion", label: "Conclusión de la presentación" },
+  { key: "storytelling", label: "Historias entre secciones" },
+  {
+    key: "demo_offer",
+    label: "Oferta de demostración y reunión técnica",
+  },
+  { key: "next_meeting", label: "Definir fecha de siguiente reunión" },
+];
+
+const DEFAULT_LEAD_EXECUTION_GUIDES = {
+  company_intro:
+    "Indicar que la empresa tiene 15 años en el mercado mexicano y que somos parte de un grupo de empresas ubicadas en Peru, Chile y Mexico con un total de mas de 900 personas. En Mexico somos partners principales de las marcas F5 y Bluecat y contamos con ingenieros certificados y con mucha experiencia en estos dos fabricantes.",
+  expectation_confirmation:
+    "Si el prospecto indicó expectativas para esta reunion, confírmalas para alinearte con el. Si no las indicó, explica que presentaremos nuestras soluciones y que podemos profundizar en la que le haga mas sentido.",
+  solution_presentation_start:
+    "Inicia la presentacion con el contexto de la solucion seleccionada y valida que el enfoque siga alineado con la prioridad del prospecto.",
+  pain_focus:
+    "Enfoca los primeros slides en el dolor, reto o problema principal del prospecto. Esta es la parte mas importante para que el resto de la presentacion tenga sentido.",
+  problem_resolution:
+    "Explica de forma clara como resolvemos el problema, reto o dolor identificado y por que nuestro enfoque reduce riesgo o friccion.",
+  key_points:
+    "Muestra de dos a tres puntos clave de valor de la solucion. Evita saturar con demasiados detalles tecnicos en esta etapa.",
+  conclusion:
+    "Cierra resumiendo el dolor identificado, la solucion propuesta y los puntos clave de valor para confirmar entendimiento compartido.",
+  storytelling:
+    "Despues de cada bloque, cuenta una historia breve o caso real para mantener interes y aterrizar el valor en un contexto cercano al cliente.",
+  demo_offer:
+    "Ofrece una demostracion y solicita una reunion mas tecnica para profundizar. Sugiere invitar personal tecnico del prospecto.",
+  next_meeting:
+    "Define fecha y hora de la siguiente reunion antes de cerrar la conversacion y confirma responsables de seguimiento.",
+};
+
 const EMPTY_COMMERCIAL_SETTINGS = {
   businessTimezone: "America/Mexico_City",
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
   stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
+  leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
   updatedAt: null,
   updatedByUserName: "",
 };
@@ -582,11 +631,13 @@ function normalizeCommercialSettings(settings) {
       ...EMPTY_COMMERCIAL_SETTINGS,
       stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
       stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
+      leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
     };
   }
 
   const stageSlaMap = { ...DEFAULT_STAGE_SLA_MAP };
   const stageWeightMap = { ...DEFAULT_STAGE_WEIGHT_MAP };
+  const leadExecutionGuides = { ...DEFAULT_LEAD_EXECUTION_GUIDES };
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);
@@ -613,6 +664,18 @@ function normalizeCommercialSettings(settings) {
       }
     });
   }
+  if (
+    settings.leadExecutionGuides &&
+    typeof settings.leadExecutionGuides === "object"
+  ) {
+    Object.entries(settings.leadExecutionGuides).forEach(([key, value]) => {
+      if (
+        Object.prototype.hasOwnProperty.call(DEFAULT_LEAD_EXECUTION_GUIDES, key)
+      ) {
+        leadExecutionGuides[key] = String(value || "").trim();
+      }
+    });
+  }
 
   return {
     businessTimezone:
@@ -620,6 +683,7 @@ function normalizeCommercialSettings(settings) {
       EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
     stageSlaMap,
     stageWeightMap,
+    leadExecutionGuides,
     updatedAt: settings.updatedAt || null,
     updatedByUserName: String(settings.updatedByUserName || ""),
   };
@@ -630,6 +694,7 @@ function serializeCommercialSettings(settings) {
     businessTimezone: String(settings?.businessTimezone || "").trim(),
     stageSlaMap: settings?.stageSlaMap || {},
     stageWeightMap: settings?.stageWeightMap || {},
+    leadExecutionGuides: settings?.leadExecutionGuides || {},
   });
 }
 
@@ -642,6 +707,7 @@ function deserializeCommercialSettingsSnapshot(snapshot) {
       ...EMPTY_COMMERCIAL_SETTINGS,
       stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
       stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
+      leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
     };
   }
 }
@@ -1300,6 +1366,16 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCommercialGuideSetting(guideKey, guideText) {
+    setCommercialSettings((current) => ({
+      ...current,
+      leadExecutionGuides: {
+        ...(current.leadExecutionGuides || {}),
+        [guideKey]: String(guideText || ""),
+      },
+    }));
+  }
+
   async function saveCommercialSettings() {
     setSavingCommercialSettings(true);
     setError("");
@@ -1312,6 +1388,7 @@ export function useConfigurationPage() {
             EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
           stageSlaMap: commercialSettings.stageSlaMap,
           stageWeightMap: commercialSettings.stageWeightMap,
+          leadExecutionGuides: commercialSettings.leadExecutionGuides,
         }),
         api.get("/api/settings/audit?limit=25"),
       ]);
@@ -2343,6 +2420,7 @@ export function useConfigurationPage() {
     sectionItems,
     stageSlaEntries: STAGE_SLA_ENTRIES,
     stageWeightEntries: STAGE_WEIGHT_ENTRIES,
+    leadExecutionGuideEntries: LEAD_EXECUTION_GUIDE_ENTRIES,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -2357,6 +2435,7 @@ export function useConfigurationPage() {
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
+    updateCommercialGuideSetting,
     saveCommercialSettings,
     reloadAiWalletSummaries,
     reloadAiPricingRates,

@@ -8,6 +8,7 @@ export const COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
 export const COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES = 3;
 export const COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
   "application/pdf",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
@@ -187,6 +188,7 @@ export function normalizeCommercialLibraryFilters(filters = {}) {
     q: String(filters?.q || "").trim(),
     manufacturerCodes: normalizeArray(filters?.manufacturerCodes),
     solutionCodes: normalizeArray(filters?.solutionCodes),
+    technologyCodes: normalizeArray(filters?.technologyCodes),
     industryCodes: normalizeArray(filters?.industryCodes),
     sort: String(filters?.sort || "updated_desc").trim() || "updated_desc",
   };
@@ -241,6 +243,10 @@ export async function listCommercialLibraryFilesForEmail({ user }) {
           "manufacturer",
         );
         const solution = getCommercialAttachmentCatalogMeta(asset, "solution");
+        const technology = getCommercialAttachmentCatalogMeta(
+          asset,
+          "technology",
+        );
         const industry = getCommercialAttachmentCatalogMeta(asset, "industry");
 
         return {
@@ -262,6 +268,8 @@ export async function listCommercialLibraryFilesForEmail({ user }) {
           manufacturerLabels: manufacturer.labels,
           solutionCodes: solution.codes,
           solutionLabels: solution.labels,
+          technologyCodes: technology.codes,
+          technologyLabels: technology.labels,
           industryCodes: industry.codes,
           industryLabels: industry.labels,
           createdAt: file.createdAt || asset.updatedAt || asset.createdAt || "",

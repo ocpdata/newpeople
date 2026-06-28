@@ -1228,6 +1228,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   lead_next_action_due_at DATETIME(3) NULL,
   lead_referred_contact_name VARCHAR(255) NULL,
   lead_referred_area_name VARCHAR(255) NULL,
+  lead_execution_plan_json LONGTEXT NULL,
   created_by BIGINT UNSIGNED NOT NULL,
   updated_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME(3) NOT NULL DEFAULT NOW(3),

@@ -1419,6 +1419,10 @@ const commercialSettingsSchema = z.object({
     .optional(),
   stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
   stageWeightMap: z.record(z.string(), z.number().min(0).max(1)).optional(),
+  leadExecutionGuides: z
+    .record(z.string(), z.string().max(5000))
+    .optional()
+    .default({}),
 });
 
 router.get(

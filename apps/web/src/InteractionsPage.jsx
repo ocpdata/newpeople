@@ -167,6 +167,55 @@ const LEAD_EXECUTION_CRITERIA_ITEMS = [
       "El correo sirve para confirmar la reunión y dejar trazabilidad del acuerdo.",
   },
 ];
+const LEAD_EXECUTION_WIZARD_STEPS = [
+  { id: 1, label: "Contexto" },
+  { id: 2, label: "Secuencia" },
+  { id: 3, label: "Resultado" },
+  { id: 4, label: "Correo" },
+];
+const LEAD_EXECUTION_SEQUENCE_ITEMS = [
+  { id: "company_intro", title: "Presentación de la empresa" },
+  {
+    id: "confirm_expectations",
+    title: "Confirmación de expectativas del prospecto",
+  },
+  { id: "solution_intro", title: "Iniciar la presentación de la solución" },
+  { id: "pain_slides", title: "Dolor, reto o problema del prospecto" },
+  { id: "how_we_solve", title: "Cómo resolvemos el problema" },
+  {
+    id: "solution_highlights",
+    title: "Puntos clave de la solución (2–3 puntos)",
+  },
+  { id: "conclusion", title: "Conclusión: dolor → solución → puntos clave" },
+  {
+    id: "storytelling",
+    title: "Historia o caso de uso para mantener el interés",
+  },
+  { id: "demo_request", title: "Ofrecer demo y solicitar reunión técnica" },
+  { id: "next_meeting", title: "Definir fecha y hora de la siguiente reunión" },
+];
+const LEAD_EXECUTION_GUIDE_DEFAULTS = {
+  company_intro:
+    "Presenta brevemente quiénes somos, qué hacemos y por qué somos relevantes para el prospecto. Mantén esta parte corta: no más de 2-3 minutos.",
+  confirm_expectations:
+    "Pregunta al prospecto qué espera de esta reunión y qué temas le interesan más. Esto te permite ajustar el enfoque antes de empezar.",
+  solution_intro:
+    "Haz una introducción general de la solución que vas a presentar. Contextualiza el portafolio antes de entrar al detalle.",
+  pain_slides:
+    "Esta es la parte más importante. Presenta el dolor, reto o problema que puede estar enfrentando el prospecto. El objetivo es que se identifique con la situación para que el resto de la presentación tenga sentido.",
+  how_we_solve:
+    "Explica de forma clara y concisa cómo la solución resuelve el problema presentado. Conecta directamente el dolor con la propuesta de valor.",
+  solution_highlights:
+    "Muestra 2 o 3 puntos clave que diferencian la solución. No más de eso para no perder la atención. Apóyate en evidencia, datos o casos concretos.",
+  conclusion:
+    "Resume los tres elementos: el problema que identificamos, cómo lo resolvemos y los puntos más importantes. Cierra con una idea clara y memorable.",
+  storytelling:
+    "Después de cada bloque importante puedes compartir una historia breve o caso de uso real para mantener al cliente interesado y hacer la propuesta más tangible.",
+  demo_request:
+    "Ofrece una demostración práctica y propón una reunión técnica de seguimiento. Sugiere al prospecto que invite a personal técnico de su equipo para poder profundizar.",
+  next_meeting:
+    "Cierra la reunión acordando una fecha y hora concretas para el siguiente encuentro. No salgas sin un compromiso claro.",
+};
 
 function sortLeadStatusFilters(values) {
   if (!Array.isArray(values)) return [];
@@ -177,7 +226,6 @@ function sortLeadStatusFilters(values) {
   );
   return LEAD_STATUS_FILTER_VALUES.filter((value) => selected.has(value));
 }
-
 function normalizeLeadStatusFilters(values) {
   const sorted = sortLeadStatusFilters(values);
   return sorted.length ? sorted : [...LEAD_STATUS_FILTER_VALUES];
@@ -1208,98 +1256,405 @@ function formatLeadOutcomeDateLabel(value) {
   });
 }
 
-function getLeadExecutionDefaultCriterionId(detail) {
-  const substatusCode = String(detail?.leadSubstatusCode || "");
-  const reasonCode = String(detail?.leadReasonCode || "");
-  const actionCode = String(detail?.leadRequiredActionCode || "");
+function hasLeadSituationInformation(detail) {
+  if (!detail) return false;
+  if (normalizeText(detail.summary)) return true;
+  if (normalizeText(detail.accountName)) return true;
+  if (Array.isArray(detail.contacts) && detail.contacts.length) return true;
+  if (Array.isArray(detail.documents) && detail.documents.length) return true;
+  return false;
+}
 
-  if (
-    substatusCode === "meeting_requested" ||
-    substatusCode === "meeting_confirmed" ||
-    actionCode === "schedule_meeting"
-  ) {
-    return "meeting";
+function buildLeadSituationNarrative(detail) {
+  if (!hasLeadSituationInformation(detail)) {
+    return "No hay información suficiente para generar el análisis narrativo de la situación actual del lead.";
   }
 
-  if (
-    reasonCode === "needs_more_information" ||
-    reasonCode === "follow_up_later_requested" ||
-    reasonCode === "budget_next_cycle" ||
-    reasonCode === "timing_not_right"
-  ) {
-    return "motive";
+  const accountName = normalizeText(detail?.accountName);
+  const firstContact = Array.isArray(detail?.contacts)
+    ? detail.contacts[0]
+    : null;
+  const contactName = normalizeText(firstContact?.fullName);
+  const baseSummary = normalizeText(detail?.summary);
+  const inferredNeed = Array.isArray(detail?.topics) ? detail.topics[0] : "";
+
+  const chunks = [];
+  chunks.push(
+    `Situación actual: ${accountName ? `la cuenta asociada es ${accountName}` : "aún no hay cuenta vinculada"}${contactName ? ` y el contacto principal identificado es ${contactName}` : " y no hay contacto principal confirmado"}.`,
+  );
+
+  if (baseSummary) {
+    chunks.push(`Contexto narrativo detectado: ${baseSummary}`);
   }
 
-  return "interest";
+  if (normalizeText(inferredNeed)) {
+    chunks.push(
+      `Señal principal de interés o reto: ${normalizeText(inferredNeed)}.`,
+    );
+  }
+
+  chunks.push(
+    "Siguiente enfoque recomendado: confirmar interés real, validar el motivo del interés y cerrar una siguiente reunión técnica con demostración orientada al caso.",
+  );
+
+  return chunks.join("\n\n");
+}
+
+function isPresentationAttachment(option) {
+  const fileName = String(option?.fileName || "").toLowerCase();
+  const mimeType = String(option?.mimeType || "").toLowerCase();
+  const assetTypeLabel = String(option?.assetTypeLabel || "").toLowerCase();
+  return (
+    fileName.endsWith(".ppt") ||
+    fileName.endsWith(".pptx") ||
+    fileName.endsWith(".pdf") ||
+    mimeType.includes("presentation") ||
+    assetTypeLabel.includes("present")
+  );
+}
+
+function buildDefaultLeadExecutionPlan(detail) {
+  const existing =
+    detail?.leadExecutionPlan && typeof detail.leadExecutionPlan === "object"
+      ? detail.leadExecutionPlan
+      : {};
+  const checklistDefaults = Object.fromEntries(
+    LEAD_EXECUTION_SEQUENCE_ITEMS.map((item) => [item.id, false]),
+  );
+  const existingChecklist =
+    existing?.screen2?.checklist &&
+    typeof existing.screen2.checklist === "object"
+      ? existing.screen2.checklist
+      : {};
+
+  return {
+    activeScreen: Number(existing.activeScreen || 1),
+    screen1: {
+      selectedSolutionCode: String(
+        existing?.screen1?.selectedSolutionCode || "",
+      ),
+      selectedSolutionLabel: String(
+        existing?.screen1?.selectedSolutionLabel || "",
+      ),
+      selectedPresentationIds: Array.isArray(
+        existing?.screen1?.selectedPresentationIds,
+      )
+        ? existing.screen1.selectedPresentationIds
+        : [],
+      narrative: String(existing?.screen1?.narrative || ""),
+    },
+    screen2: {
+      checklist: {
+        ...checklistDefaults,
+        ...Object.fromEntries(
+          Object.entries(existingChecklist).map(([key, value]) => [
+            key,
+            Boolean(value),
+          ]),
+        ),
+      },
+    },
+    screen3: {
+      lastStatusCode: String(existing?.screen3?.lastStatusCode || ""),
+      lastSubstatusCode: String(existing?.screen3?.lastSubstatusCode || ""),
+      lastReasonCode: String(existing?.screen3?.lastReasonCode || ""),
+      lastActionCode: String(existing?.screen3?.lastActionCode || ""),
+    },
+    screen4: {
+      aiInstructionText: String(existing?.screen4?.aiInstructionText || ""),
+    },
+    updatedAt: String(existing?.updatedAt || ""),
+  };
 }
 
 function LeadExecutionSection({
   detail,
-  leadOutcomeCatalogs,
   canOpenLeadEmailModal,
   leadEmailDisabledHint,
   onOpenLeadEmailModal,
+  onOpenLeadCallOutcomeModal,
+  canManageLeadCallOutcome,
 }) {
-  const [selectedCriteriaId, setSelectedCriteriaId] = useState(() =>
-    getLeadExecutionDefaultCriterionId(detail),
+  const [wizardPlan, setWizardPlan] = useState(() =>
+    buildDefaultLeadExecutionPlan(detail),
   );
+  const [guides, setGuides] = useState({ ...LEAD_EXECUTION_GUIDE_DEFAULTS });
+  const [activeGuideItemId, setActiveGuideItemId] = useState("");
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState("");
+  const [solutionOptions, setSolutionOptions] = useState([]);
+  const [presentationOptions, setPresentationOptions] = useState([]);
+  const [savingPlan, setSavingPlan] = useState(false);
+  const canSendExecutionEmail = Boolean(canOpenLeadEmailModal);
+  const selectedSolutionCode = String(
+    wizardPlan?.screen1?.selectedSolutionCode || "",
+  );
+  const selectedSolutionLabel = String(
+    wizardPlan?.screen1?.selectedSolutionLabel || "",
+  );
+  const selectedSolutionOption = useMemo(
+    () =>
+      solutionOptions.find((entry) => entry.code === selectedSolutionCode) ||
+      null,
+    [selectedSolutionCode, solutionOptions],
+  );
+  const visiblePresentationOptions = useMemo(() => {
+    if (!selectedSolutionCode) return [];
+    const selectedCode = selectedSolutionCode.toLowerCase();
+
+    if (selectedCode === "company_solutions_overview") {
+      return presentationOptions;
+    }
+
+    return presentationOptions.filter((item) => {
+      const codes = Array.isArray(item?.solutionCodes)
+        ? item.solutionCodes
+        : [];
+      const labels = Array.isArray(item?.solutionLabels)
+        ? item.solutionLabels
+        : [];
+
+      return codes.some(
+        (code) => normalizeText(code).toLowerCase() === selectedCode,
+      );
+    });
+  }, [presentationOptions, selectedSolutionCode]);
 
   useEffect(() => {
-    setSelectedCriteriaId(getLeadExecutionDefaultCriterionId(detail));
+    setWizardPlan(buildDefaultLeadExecutionPlan(detail));
   }, [detail?.id]);
 
-  const leadSubstatus = getLeadCatalogEntryByCode(
-    leadOutcomeCatalogs?.substatuses,
-    detail?.leadSubstatusCode,
+  const activeScreen = Math.min(
+    4,
+    Math.max(1, Number(wizardPlan?.activeScreen || 1)),
   );
-  const leadReason = getLeadCatalogEntryByCode(
-    leadOutcomeCatalogs?.reasons,
-    detail?.leadReasonCode,
-  );
-  const leadRequiredAction = getLeadCatalogEntryByCode(
-    leadOutcomeCatalogs?.requiredActions,
-    detail?.leadRequiredActionCode,
-  );
-  const leadSubstatusGuide = getLeadCallOutcomeSubstatusGuide(
-    detail?.leadSubstatusCode,
-  );
-  const leadReasonGuide = getLeadCallOutcomeReasonGuide(detail?.leadReasonCode);
-  const leadRequiredActionGuide = getLeadCallOutcomeActionGuide(
-    detail?.leadRequiredActionCode,
-  );
-  const leadOutcomeTransitionRules = Array.isArray(
-    leadOutcomeCatalogs?.transitionRules,
-  )
-    ? leadOutcomeCatalogs.transitionRules
-    : EMPTY_LEAD_CATALOG;
-  const leadOutcomeGuideSubstatusOptions = leadOutcomeTransitionRules.length
-    ? leadOutcomeTransitionRules
-        .map((rule) =>
-          getLeadCatalogEntryByCode(
-            leadOutcomeCatalogs?.substatuses,
-            rule.substatusCode,
-          ),
-        )
-        .filter(Boolean)
+
+  const narrativeText = useMemo(() => {
+    const persistedNarrative = normalizeText(wizardPlan?.screen1?.narrative);
+    if (persistedNarrative) return persistedNarrative;
+    return buildLeadSituationNarrative(detail);
+  }, [detail, wizardPlan?.screen1?.narrative]);
+
+  async function persistPlan(nextPlan) {
+    if (!detail?.id) return;
+    setSavingPlan(true);
+    try {
+      await api.put(`/api/interactions/${detail.id}/lead-execution-plan`, {
+        plan: {
+          ...nextPlan,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    } catch {
+      // Keep local state to avoid interrupting user flow on transient failures.
+    } finally {
+      setSavingPlan(false);
+    }
+  }
+
+  function updateWizardPlan(updater) {
+    setWizardPlan((current) => {
+      const nextPlan =
+        typeof updater === "function" ? updater(current) : updater;
+      void persistPlan(nextPlan);
+      return nextPlan;
+    });
+  }
+
+  async function loadGuideTexts() {
+    try {
+      const { data } = await api.get("/api/interactions/lead-execution-guides");
+      const nextGuides = {
+        ...LEAD_EXECUTION_GUIDE_DEFAULTS,
+        ...(data?.guides && typeof data.guides === "object" ? data.guides : {}),
+      };
+      setGuides(nextGuides);
+    } catch {
+      setGuides({ ...LEAD_EXECUTION_GUIDE_DEFAULTS });
+    }
+  }
+
+  async function loadPresentationOptions(solutionCode = "") {
+    if (!detail?.id) return;
+    setLibraryLoading(true);
+    setLibraryError("");
+    try {
+      const [attachmentsResponse, catalogsResponse] = await Promise.all([
+        api.get(`/api/interactions/${detail.id}/email-attachments/options`, {
+          params: {
+            q: "",
+          },
+        }),
+        api.get("/api/commercial-enablement/catalogs"),
+      ]);
+
+      const { data } = attachmentsResponse;
+
+      const rawLibraryOptions = Array.isArray(data?.libraryFiles)
+        ? data.libraryFiles
+        : [];
+
+      const presentationItems = rawLibraryOptions
+        .filter((item) => isPresentationAttachment(item))
+        .map((item) => ({
+          id: normalizeText(item?.id),
+          resourcePublicId: normalizeText(item?.resourcePublicId),
+          filePublicId: normalizeText(item?.filePublicId),
+          fileName: normalizeText(item?.fileName),
+          title: normalizeText(item?.title),
+          summary: normalizeText(item?.summary),
+          sourceLabel: normalizeText(item?.sourceLabel || "Biblioteca"),
+          mimeType: normalizeText(item?.mimeType),
+          assetTypeLabel: normalizeText(item?.assetTypeLabel),
+          solutionCodes: Array.isArray(item?.solutionCodes)
+            ? item.solutionCodes
+            : [],
+          solutionLabels: Array.isArray(item?.solutionLabels)
+            ? item.solutionLabels
+            : [],
+          technologyCodes: Array.isArray(item?.technologyCodes)
+            ? item.technologyCodes
+            : [],
+          technologyLabels: Array.isArray(item?.technologyLabels)
+            ? item.technologyLabels
+            : [],
+        }))
         .filter(
-          (entry, index, entries) =>
-            entries.findIndex((candidate) => candidate.code === entry.code) ===
-            index,
-        )
-    : leadSubstatus
-      ? [leadSubstatus]
-      : EMPTY_LEAD_CATALOG;
-  const leadOutcomeGuideReasonOptions = leadReason
-    ? [leadReason]
-    : EMPTY_LEAD_CATALOG;
-  const leadOutcomeGuideActionOptions = leadRequiredAction
-    ? [leadRequiredAction]
-    : EMPTY_LEAD_CATALOG;
-  const selectedCriteria =
-    LEAD_EXECUTION_CRITERIA_ITEMS.find(
-      (item) => item.id === selectedCriteriaId,
-    ) || LEAD_EXECUTION_CRITERIA_ITEMS[0];
-  const canSendExecutionEmail = Boolean(canOpenLeadEmailModal);
+          (item) => item.id && item.resourcePublicId && item.filePublicId,
+        );
+
+      const catalogSolutions = Array.isArray(catalogsResponse?.data?.solution)
+        ? catalogsResponse.data.solution
+        : [];
+
+      const normalizedSolutions = catalogSolutions.map((entry) => ({
+        code: normalizeText(entry?.code),
+        label: String(entry?.name || entry?.label || entry?.code || "").trim(),
+      }));
+
+      setSolutionOptions(normalizedSolutions.filter((entry) => entry.code));
+      setPresentationOptions(presentationItems);
+    } catch (error) {
+      setLibraryError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar presentaciones de biblioteca comercial.",
+        ),
+      );
+      setPresentationOptions([]);
+      setSolutionOptions([]);
+    } finally {
+      setLibraryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadGuideTexts();
+  }, [detail?.id]);
+
+  useEffect(() => {
+    void loadPresentationOptions(
+      wizardPlan?.screen1?.selectedSolutionCode || "",
+    );
+  }, [detail?.id, wizardPlan?.screen1?.selectedSolutionCode]);
+
+  function updateActiveScreen(nextScreen) {
+    updateWizardPlan((current) => ({
+      ...current,
+      activeScreen: Math.min(4, Math.max(1, Number(nextScreen || 1))),
+    }));
+  }
+
+  function handleSelectSolution(solutionCode, solutionLabel) {
+    updateWizardPlan((current) => ({
+      ...current,
+      screen1: {
+        ...current.screen1,
+        selectedSolutionCode: solutionCode,
+        selectedSolutionLabel: solutionLabel,
+        narrative: narrativeText,
+      },
+    }));
+  }
+
+  function togglePresentationSelection(itemId) {
+    updateWizardPlan((current) => {
+      const selectedIds = Array.isArray(
+        current?.screen1?.selectedPresentationIds,
+      )
+        ? current.screen1.selectedPresentationIds
+        : [];
+      const nextIds = selectedIds.includes(itemId)
+        ? selectedIds.filter((id) => id !== itemId)
+        : [...selectedIds, itemId];
+
+      return {
+        ...current,
+        screen1: {
+          ...current.screen1,
+          selectedPresentationIds: nextIds,
+          narrative: narrativeText,
+        },
+      };
+    });
+  }
+
+  function toggleChecklistItem(itemId) {
+    updateWizardPlan((current) => ({
+      ...current,
+      screen2: {
+        ...current.screen2,
+        checklist: {
+          ...(current?.screen2?.checklist || {}),
+          [itemId]: !Boolean(current?.screen2?.checklist?.[itemId]),
+        },
+      },
+    }));
+  }
+
+  function buildExecutionEmailInstruction() {
+    const selectedSolutionLabel =
+      normalizeText(wizardPlan?.screen1?.selectedSolutionLabel) ||
+      "sin solución seleccionada";
+    const completedChecklist = LEAD_EXECUTION_SEQUENCE_ITEMS.filter((item) =>
+      Boolean(wizardPlan?.screen2?.checklist?.[item.id]),
+    ).map((item) => item.title);
+
+    const outcomeSummary = [
+      detail?.leadSubstatusCode
+        ? `Situación: ${detail.leadSubstatusCode}`
+        : "Situación: sin registrar",
+      detail?.leadReasonCode
+        ? `Motivo: ${detail.leadReasonCode}`
+        : "Motivo: sin registrar",
+      detail?.leadRequiredActionCode
+        ? `Acción: ${detail.leadRequiredActionCode}`
+        : "Acción: sin registrar",
+    ].join(" | ");
+
+    return [
+      "Genera un correo comercial formal en español para continuar el lead.",
+      `Solución seleccionada por el vendedor: ${selectedSolutionLabel}.`,
+      `Resumen de ejecución de presentación (checklist): ${completedChecklist.length ? completedChecklist.join(", ") : "sin items marcados"}.`,
+      `Resultado de la reunión: ${outcomeSummary}.`,
+      "Objetivo del correo: confirmar lo conversado, proponer siguiente reunión técnica/demo y cerrar una fecha tentativa.",
+    ].join("\n");
+  }
+
+  function openExecutionEmailStep() {
+    if (!canSendExecutionEmail) return;
+    onOpenLeadEmailModal({
+      purposeOther: "meeting_request",
+      aiInstructionText: buildExecutionEmailInstruction(),
+      autoGenerateAi: true,
+    });
+  }
+
+  const selectedGuide = activeGuideItemId
+    ? LEAD_EXECUTION_SEQUENCE_ITEMS.find(
+        (item) => item.id === activeGuideItemId,
+      )
+    : null;
 
   return (
     <details
@@ -1309,174 +1664,312 @@ function LeadExecutionSection({
       <summary className="lead-execution-summary-trigger">
         <div className="lead-execution-header-copy">
           <span className="lead-execution-kicker">Ejecución del lead</span>
-          <h4>Guía para orientar la conversación y cerrar el siguiente paso</h4>
+          <h4>Flujo guiado de reunión comercial</h4>
           <p className="field-hint lead-execution-header-description">
-            Usa esta guía para detectar interés, entender por qué le interesa al
-            cliente y dejar agendada la siguiente reunión técnica o demo.
+            Navega entre 4 pantallas para preparar la reunión, ejecutar la
+            secuencia, registrar resultado y enviar correo al cliente.
           </p>
         </div>
         <span className="lead-execution-summary-hint">
-          {selectedCriteria.routeLabel}
+          Pantalla {activeScreen} de 4
         </span>
       </summary>
 
       <div className="lead-execution-content">
-        {leadEmailDisabledHint ? (
-          <p className="field-hint">{leadEmailDisabledHint}</p>
-        ) : null}
-
-        <article className="lead-execution-purpose-panel">
-          <strong>Propósito comercial</strong>
-          <p>
-            Lograr una reunión con el cliente para identificar su interés en una
-            solución, entender por qué le interesa y agendar una siguiente
-            reunión con más detalle técnico y una demostración enfocada en sus
-            motivos.
-          </p>
-        </article>
-
-        <div className="lead-execution-criteria-grid">
-          {LEAD_EXECUTION_CRITERIA_ITEMS.map((item) => {
-            const isSelected = item.id === selectedCriteriaId;
-
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={`lead-execution-criteria-card${isSelected ? " is-selected" : ""}`}
-                aria-pressed={isSelected}
-                onClick={() => setSelectedCriteriaId(item.id)}
-              >
-                <div className="lead-execution-criteria-card-head">
-                  <span className="lead-follow-up-card-label">
-                    {item.badge}
-                  </span>
-                  {isSelected ? (
-                    <span className="lead-execution-selected-badge">
-                      Seleccionado
-                    </span>
-                  ) : null}
-                </div>
-                <strong>{item.title}</strong>
-                <p className="field-hint lead-follow-up-card-copy">
-                  {item.description}
-                </p>
-                <span className="lead-execution-criteria-card-footer">
-                  Ver ruta de ejecución
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <article className="lead-execution-route-panel">
-          <div className="lead-execution-route-head">
-            <div>
-              <span className="lead-execution-section-label">
-                {selectedCriteria.routeLabel}
-              </span>
-              <strong>{selectedCriteria.title}</strong>
-              <p className="field-hint lead-execution-route-copy">
-                {selectedCriteria.routeSummary}
-              </p>
-            </div>
-            <span className="lead-execution-summary-pill">Guía activa</span>
-          </div>
-
-          <div className="lead-execution-steps-grid">
-            {selectedCriteria.steps.map((step) => (
-              <article className="lead-execution-step-card" key={step.title}>
-                <span className="lead-follow-up-card-label">Paso</span>
-                <strong>{step.title}</strong>
-                <p className="field-hint lead-follow-up-card-copy">
-                  {step.description}
-                </p>
-              </article>
-            ))}
-          </div>
-
-          <div className="lead-execution-validation-card">
-            <div className="lead-execution-section-head">
-              <strong>Validaciones</strong>
-              <p className="field-hint">
-                El correo se habilita cuando esta ruta queda clara.
-              </p>
-            </div>
-            <ul className="lead-execution-validation-list">
-              {selectedCriteria.validations.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="lead-execution-guide-wrap">
-            <LeadCallOutcomeInlineGuide
-              title={`Guía de ${selectedCriteria.routeLabel.toLowerCase()}`}
-              summary={`Abrir ${selectedCriteria.routeLabel.toLowerCase()}`}
-              substatusEntries={leadOutcomeGuideSubstatusOptions}
-              reasonEntries={leadOutcomeGuideReasonOptions}
-              actionEntries={leadOutcomeGuideActionOptions}
-              selectedSubstatusCode={detail?.leadSubstatusCode}
-              selectedReasonCode={detail?.leadReasonCode}
-              selectedActionCode={detail?.leadRequiredActionCode}
-            />
-          </div>
-
-          {leadSubstatus || leadReason || leadRequiredAction ? (
-            <div className="lead-execution-summary-grid">
-              <article className="lead-execution-summary-card is-substatus">
-                <span className="lead-follow-up-card-label">Situación</span>
-                <strong>{leadSubstatus?.name || "Sin definir"}</strong>
-                <p className="field-hint lead-follow-up-card-copy">
-                  {leadSubstatusGuide?.optionHint ||
-                    leadSubstatusGuide?.whenToUse ||
-                    leadSubstatus?.description ||
-                    "Sin detalle adicional"}
-                </p>
-              </article>
-              <article className="lead-execution-summary-card is-reason">
-                <span className="lead-follow-up-card-label">
-                  Motivo principal
-                </span>
-                <strong>{leadReason?.name || "Sin definir"}</strong>
-                <p className="field-hint lead-follow-up-card-copy">
-                  {leadReasonGuide?.optionHint ||
-                    leadReasonGuide?.whenToUse ||
-                    "Sin detalle adicional"}
-                </p>
-              </article>
-              <article className="lead-execution-summary-card is-action">
-                <span className="lead-follow-up-card-label">
-                  Siguiente acción obligatoria
-                </span>
-                <strong>{leadRequiredAction?.name || "Sin definir"}</strong>
-                <p className="field-hint lead-follow-up-card-copy">
-                  {leadRequiredActionGuide?.optionHint ||
-                    leadRequiredActionGuide?.whenToUse ||
-                    "Sin detalle adicional"}
-                </p>
-              </article>
-            </div>
-          ) : null}
-
-          <div className="lead-execution-footer-actions">
-            <span className="field-hint">{selectedCriteria.emailHint}</span>
+        <div className="lead-execution-wizard-nav">
+          {LEAD_EXECUTION_WIZARD_STEPS.map((step) => (
             <button
               type="button"
-              className="btn-secondary lead-follow-up-secondary-action"
-              onClick={onOpenLeadEmailModal}
+              key={step.id}
+              className={`lead-execution-wizard-step${activeScreen === step.id ? " is-active" : ""}${activeScreen > step.id ? " is-complete" : ""}`}
+              onClick={() => updateActiveScreen(step.id)}
+            >
+              <span className="lead-execution-wizard-step-number">
+                {step.id}
+              </span>
+              <span className="lead-execution-wizard-step-label">
+                {step.label}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {activeScreen === 1 ? (
+          <section className="lead-execution-screen">
+            <article className="lead-execution-purpose-panel">
+              <strong>Objetivo de la reunión</strong>
+              <p>
+                Identificar o confirmar el interés del cliente, entender por qué
+                le interesa y agendar una siguiente reunión con detalle técnico
+                y demostración orientada a sus motivos.
+              </p>
+            </article>
+
+            <article className="lead-execution-ai-narrative">
+              <div className="lead-execution-ai-narrative-header">
+                <strong>Análisis narrativo de situación actual</strong>
+                <span className="lead-execution-ai-pill">✦ IA</span>
+              </div>
+              <div className="lead-execution-ai-narrative-body">
+                {narrativeText
+                  .split("\n\n")
+                  .filter(Boolean)
+                  .filter((_, i) => i !== 1)
+                  .map((chunk, i) => (
+                    <p key={i}>{chunk}</p>
+                  ))}
+              </div>
+            </article>
+
+            <div className="lead-execution-solutions-wrap">
+              <div className="lead-execution-section-head">
+                <strong>Soluciones</strong>
+                <p className="field-hint">
+                  Selecciona una solución para ver debajo solo sus archivos
+                  asociados.
+                </p>
+              </div>
+
+              <div className="lead-execution-solution-list" role="list">
+                {solutionOptions.map((entry) => {
+                  const selected = entry.code === selectedSolutionCode;
+                  return (
+                    <button
+                      type="button"
+                      key={entry.code}
+                      role="listitem"
+                      className={`lead-execution-solution-card${selected ? " is-selected" : ""}`}
+                      onClick={() =>
+                        handleSelectSolution(entry.code, entry.label)
+                      }
+                    >
+                      <strong>{entry.label}</strong>
+                      {selected ? <span>Seleccionada</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedSolutionCode ? (
+                <p className="field-hint lead-execution-selected-solution-note">
+                  Archivos para:{" "}
+                  {selectedSolutionOption?.label ||
+                    selectedSolutionLabel ||
+                    selectedSolutionCode}
+                </p>
+              ) : (
+                <p className="field-hint lead-execution-selected-solution-note">
+                  Selecciona una solución para ver sus archivos.
+                </p>
+              )}
+            </div>
+
+            <div className="lead-execution-presentations-wrap">
+              <div className="lead-execution-section-head">
+                <strong>Archivos de la solución seleccionada</strong>
+              </div>
+
+              {libraryLoading ? (
+                <p className="field-hint">Cargando archivos...</p>
+              ) : null}
+              {libraryError ? (
+                <p className="form-error">{libraryError}</p>
+              ) : null}
+
+              {!libraryLoading &&
+              selectedSolutionCode &&
+              visiblePresentationOptions.length === 0 ? (
+                <p className="field-hint">
+                  No hay archivos para la solución seleccionada.
+                </p>
+              ) : null}
+
+              {selectedSolutionCode && visiblePresentationOptions.length ? (
+                <div className="lead-execution-presentation-list">
+                  {visiblePresentationOptions.map((item) => {
+                    const downloadUrl = `/api/commercial-enablement/assets/${encodeURIComponent(
+                      item.resourcePublicId,
+                    )}/files/${encodeURIComponent(item.filePublicId)}/content`;
+                    return (
+                      <article
+                        key={item.id}
+                        className="lead-execution-presentation-card"
+                      >
+                        <div>
+                          <strong>
+                            {item.fileName || item.title || "Archivo"}
+                          </strong>
+                          <p className="field-hint">
+                            {item.title || "Biblioteca comercial"}
+                          </p>
+                        </div>
+                        <a
+                          className="interaction-detail-icon-btn"
+                          href={downloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Descargar"
+                          aria-label="Descargar"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            focusable="false"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 4v10" />
+                            <path d="M8.5 10.5 12 14l3.5-3.5" />
+                            <path d="M5 19h14" />
+                          </svg>
+                        </a>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {activeScreen === 2 ? (
+          <section className="lead-execution-screen">
+            <div className="lead-execution-section-head">
+              <strong>Secuencia de presentación</strong>
+              <p className="field-hint">
+                Marca cada punto que hayas ejecutado. No es obligatorio
+                completar toda la secuencia para continuar.
+              </p>
+            </div>
+            <div className="lead-execution-checklist">
+              {LEAD_EXECUTION_SEQUENCE_ITEMS.map((item, index) => {
+                const done = Boolean(wizardPlan?.screen2?.checklist?.[item.id]);
+                return (
+                  <article
+                    key={item.id}
+                    className={`lead-execution-checklist-item${done ? " is-done" : ""}`}
+                  >
+                    <span className="lead-execution-checklist-step">
+                      {done ? (
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                    <label className="lead-execution-checklist-label">
+                      <input
+                        type="checkbox"
+                        checked={done}
+                        onChange={() => toggleChecklistItem(item.id)}
+                      />
+                      <span>{item.title}</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="lead-execution-guide-button"
+                      onClick={() => setActiveGuideItemId(item.id)}
+                      aria-label={`Ver guía para ${item.title}`}
+                      title="Ver guía"
+                    >
+                      ?
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {activeScreen === 3 ? (
+          <section className="lead-execution-screen">
+            <div className="lead-execution-section-head">
+              <strong>Resultado de la reunión</strong>
+              <p className="field-hint">
+                Registra la situación de la reunión usando el mismo flujo actual
+                de resultado comercial del lead.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onOpenLeadCallOutcomeModal}
+              disabled={!canManageLeadCallOutcome}
+            >
+              Registrar situación del lead
+            </button>
+          </section>
+        ) : null}
+
+        {activeScreen === 4 ? (
+          <section className="lead-execution-screen">
+            <div className="lead-execution-section-head">
+              <strong>Correo al cliente</strong>
+              <p className="field-hint">
+                El correo se abrirá prellenado con recomendación de IA basada en
+                lo registrado en los pasos 1, 2 y 3.
+              </p>
+            </div>
+            {leadEmailDisabledHint ? (
+              <p className="field-hint">{leadEmailDisabledHint}</p>
+            ) : null}
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={openExecutionEmailStep}
               disabled={!canSendExecutionEmail}
             >
-              Enviar correo
+              Abrir correo prellenado
             </button>
-          </div>
-        </article>
+          </section>
+        ) : null}
 
-        <p className="field-hint lead-execution-alt-hint">
-          Si no ejecutas esta guía, usa Seguimiento comercial como alternativa
-          para registrar la situación del lead.
-        </p>
+        <div className="lead-execution-wizard-actions">
+          {savingPlan ? (
+            <span className="field-hint">Guardando checklist y avance...</span>
+          ) : null}
+        </div>
       </div>
+
+      {selectedGuide ? (
+        <div className="modal-overlay">
+          <div className="modal-dialog lead-execution-guide-modal">
+            <div className="lead-execution-guide-modal-header">
+              <span className="lead-execution-guide-modal-kicker">
+                Guía de ejecución
+              </span>
+              <button
+                type="button"
+                className="lead-execution-guide-modal-close"
+                onClick={() => setActiveGuideItemId("")}
+                aria-label="Cerrar guía"
+                title="Cerrar"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="lead-execution-guide-modal-body">
+              <p className="lead-execution-guide-modal-step">
+                Paso{" "}
+                {LEAD_EXECUTION_SEQUENCE_ITEMS.findIndex(
+                  (i) => i.id === selectedGuide.id,
+                ) + 1}{" "}
+                de {LEAD_EXECUTION_SEQUENCE_ITEMS.length}
+              </p>
+              <h3 className="lead-execution-guide-modal-title">
+                {selectedGuide.title}
+              </h3>
+              <p className="lead-execution-guide-modal-text">
+                {guides[selectedGuide.id] ||
+                  LEAD_EXECUTION_GUIDE_DEFAULTS[selectedGuide.id] ||
+                  "Sin guía configurada"}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </details>
   );
 }
@@ -1878,18 +2371,22 @@ function CreateInteractionModal({
             </button>
             <div className="interaction-create-header">
               <div className="interaction-create-heading">
-                <span className="interaction-create-kicker">Editar lead</span>
+                <span className="interaction-create-kicker">Nuevo lead</span>
                 <div className="account-modal-title-row">
                   <h3 className="modal-title">Crear lead</h3>
                   <ModalInlineHelp helpKey="lead.create" />
                 </div>
+                <p className="interaction-create-subtitle">
+                  Reúne evidencia, agrega contexto en texto y deja listo el lead
+                  para análisis y seguimiento.
+                </p>
               </div>
               <div className="interaction-create-header-meta">
                 <span className="interaction-documents-count-badge">
                   {files.length} {files.length === 1 ? "archivo" : "archivos"}
                 </span>
                 <span className="interaction-documents-count-badge">
-                  {pastedText.trim() ? "Texto cargado" : "Sin texto"}
+                  {pastedText.trim() ? "Texto listo" : "Sin texto"}
                 </span>
                 <span className="interaction-create-format-pill">
                   PDF, Office, EML, imágenes y audio
@@ -1956,21 +2453,30 @@ function CreateInteractionModal({
 
                   <div className="interaction-create-guidance">
                     <div className="interaction-create-guidance-card">
-                      <strong>1. Carga evidencia</strong>
+                      <span className="interaction-create-guidance-step">
+                        Paso 1
+                      </span>
+                      <strong>Carga evidencia</strong>
                       <p>
                         Reúne los archivos que explican el contexto comercial
                         del caso.
                       </p>
                     </div>
                     <div className="interaction-create-guidance-card">
-                      <strong>2. Crea el lead</strong>
+                      <span className="interaction-create-guidance-step">
+                        Paso 2
+                      </span>
+                      <strong>Crea el lead</strong>
                       <p>
                         El lead se guarda con la evidencia documental que
                         cargaste.
                       </p>
                     </div>
                     <div className="interaction-create-guidance-card">
-                      <strong>3. Analiza y resuelve</strong>
+                      <span className="interaction-create-guidance-step">
+                        Paso 3
+                      </span>
+                      <strong>Analiza y resuelve</strong>
                       <p>
                         Abre el lead y usa "Analizar documentos para llenar
                         información" antes de resolver vínculos en el CRM.
@@ -3792,10 +4298,11 @@ function InteractionDetailModal({
 
               <LeadExecutionSection
                 detail={detail}
-                leadOutcomeCatalogs={leadOutcomeCatalogs}
                 canOpenLeadEmailModal={canOpenLeadEmailModal}
                 leadEmailDisabledHint={leadEmailDisabledHint}
                 onOpenLeadEmailModal={onOpenLeadEmailModal}
+                onOpenLeadCallOutcomeModal={onOpenLeadCallOutcomeModal}
+                canManageLeadCallOutcome={canManageLeadCallOutcome}
               />
 
               {showLeadFollowUpSection ? (
@@ -4965,16 +5472,33 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
-  async function handleOpenLeadEmailModal() {
+  async function handleOpenLeadEmailModal(prefill = null) {
     if (!detail || !canOpenLeadEmailModal) return;
 
-    setLeadEmailDraft(buildLeadEmailDefaultDraft(detail, currentUser));
+    const baseDraft = buildLeadEmailDefaultDraft(detail, currentUser);
+    const nextPurpose =
+      normalizeText(prefill?.purposeOther) || baseDraft.purposeOther;
+    const templateDraft =
+      nextPurpose === baseDraft.purposeOther
+        ? baseDraft
+        : {
+            ...baseDraft,
+            ...buildLeadEmailTemplate(detail, currentUser, nextPurpose),
+            purposeOther: nextPurpose,
+          };
+
+    setLeadEmailDraft({
+      ...templateDraft,
+      subject: normalizeText(prefill?.subject) || templateDraft.subject,
+      messageBody:
+        normalizeText(prefill?.messageBody) || templateDraft.messageBody,
+    });
     setLeadEmailError("");
     setLeadEmailNotice("");
     setLeadEmailLibraryError("");
     setLeadEmailLibraryQuery("");
     setLeadEmailSelectedLibraryAttachmentIds([]);
-    setLeadEmailAiInstructionText("");
+    setLeadEmailAiInstructionText(normalizeText(prefill?.aiInstructionText));
     setLeadEmailAiSuggestion({
       subject: "",
       messageBody: "",
@@ -4987,6 +5511,51 @@ function InteractionsPage({ can, currentUser }) {
     const googleStatus = await loadLeadEmailGoogleMailStatus({ silent: true });
     if (!googleStatus?.canSend) {
       setLeadEmailNotice("Conecta Google para habilitar el envio desde Leads.");
+    }
+
+    if (prefill?.autoGenerateAi) {
+      try {
+        setLeadEmailGeneratingAiDraft(true);
+        const response = await api.post(
+          `/api/interactions/${detail.id}/email-suggestion`,
+          {
+            details: {
+              recipient: normalizeText(templateDraft.recipient),
+              cc: normalizeText(templateDraft.cc),
+              subject: normalizeText(templateDraft.subject),
+              messageBody: normalizeText(templateDraft.messageBody),
+              purpose: "other",
+              purposeOther: normalizeText(nextPurpose) || "meeting_request",
+              aiInstructionText: normalizeText(prefill?.aiInstructionText),
+              attachments: [],
+            },
+          },
+        );
+
+        const aiSubject = normalizeText(response?.data?.subject);
+        const aiMessageBody = normalizeText(response?.data?.messageBody);
+        setLeadEmailAiSuggestion({
+          subject: aiSubject,
+          messageBody: aiMessageBody,
+          source: normalizeText(response?.data?.source || "fallback"),
+          sourceReason: normalizeText(response?.data?.sourceReason),
+        });
+        setLeadEmailDraft((current) => ({
+          ...(current || templateDraft),
+          subject: aiSubject || current?.subject || templateDraft.subject,
+          messageBody:
+            aiMessageBody || current?.messageBody || templateDraft.messageBody,
+        }));
+      } catch (err) {
+        setLeadEmailError(
+          getApiErrorMessage(
+            err,
+            "No fue posible generar la recomendación IA para el correo.",
+          ),
+        );
+      } finally {
+        setLeadEmailGeneratingAiDraft(false);
+      }
     }
   }
 

@@ -950,6 +950,28 @@ const LEAD_OUTCOME_EVENT_TYPE_LIST = [
   "admin_correction",
   "legacy_snapshot",
 ];
+const LEAD_EXECUTION_GUIDE_DEFAULTS = {
+  company_intro:
+    "Indicar que la empresa tiene 15 años en el mercado mexicano y que somos parte de un grupo de empresas ubicadas en Peru, Chile y Mexico con un total de mas de 900 personas. En Mexico somos partners principales de las marcas F5 y Bluecat y contamos con ingenieros certificados y con mucha experiencia en estos dos fabricantes.",
+  expectation_confirmation:
+    "Si el prospecto indicó expectativas para esta reunion, confírmalas para alinearte con el. Si no las indicó, explica que presentaremos nuestras soluciones y que podemos profundizar en la que le haga mas sentido.",
+  solution_presentation_start:
+    "Inicia la presentacion con el contexto de la solucion seleccionada y valida que el enfoque siga alineado con la prioridad del prospecto.",
+  pain_focus:
+    "Enfoca los primeros slides en el dolor, reto o problema principal del prospecto. Esta es la parte mas importante para que el resto de la presentacion tenga sentido.",
+  problem_resolution:
+    "Explica de forma clara como resolvemos el problema, reto o dolor identificado y por que nuestro enfoque reduce riesgo o friccion.",
+  key_points:
+    "Muestra de dos a tres puntos clave de valor de la solucion. Evita saturar con demasiados detalles tecnicos en esta etapa.",
+  conclusion:
+    "Cierra resumiendo el dolor identificado, la solucion propuesta y los puntos clave de valor para confirmar entendimiento compartido.",
+  storytelling:
+    "Despues de cada bloque, cuenta una historia breve o caso real para mantener interes y aterrizar el valor en un contexto cercano al cliente.",
+  demo_offer:
+    "Ofrece una demostracion y solicita una reunion mas tecnica para profundizar. Sugiere invitar personal tecnico del prospecto.",
+  next_meeting:
+    "Define fecha y hora de la siguiente reunion antes de cerrar la conversacion y confirma responsables de seguimiento.",
+};
 const INTERACTION_ANALYSIS_JOB_LEASE_SECONDS = 30;
 const INTERACTION_ANALYSIS_JOB_RESULT_TTL_MINUTES = 15;
 const INTERACTION_ANALYSIS_JOB_POLL_AFTER_MS = 3000;
@@ -1077,6 +1099,34 @@ const resolutionSchema = editableInteractionSchema.extend({
     .optional()
     .default([]),
 });
+
+const leadExecutionPlanSchema = z.object({
+  plan: z
+    .object({
+      activeScreen: z.number().int().min(1).max(4).optional(),
+      screen1: z.record(z.string(), z.unknown()).optional(),
+      screen2: z.record(z.string(), z.unknown()).optional(),
+      screen3: z.record(z.string(), z.unknown()).optional(),
+      screen4: z.record(z.string(), z.unknown()).optional(),
+      updatedAt: z.string().max(80).optional(),
+    })
+    .optional()
+    .default({}),
+});
+
+function normalizeLeadExecutionGuides(rawGuides) {
+  const nextGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
+  if (!rawGuides || typeof rawGuides !== "object") {
+    return nextGuides;
+  }
+
+  Object.entries(rawGuides).forEach(([guideKey, guideText]) => {
+    if (!Object.prototype.hasOwnProperty.call(nextGuides, guideKey)) return;
+    nextGuides[guideKey] = String(guideText || "").trim();
+  });
+
+  return nextGuides;
+}
 
 function isQualifiedLeadStatus(status) {
   return status === "lead_qualified";
@@ -2490,6 +2540,7 @@ async function fetchInteractionDetail(interactionId, user = null) {
     leadNextActionDueAt,
     leadReferredContactName: row.lead_referred_contact_name || "",
     leadReferredAreaName: row.lead_referred_area_name || "",
+    leadExecutionPlan: parseJsonField(row.lead_execution_plan_json, {}),
     leadOutcomeHistory,
     createdByName: row.created_by_name,
     updatedByName: row.updated_by_name,
@@ -4298,6 +4349,7 @@ function scoreLeadLibraryAttachment(asset, draft) {
     String(asset?.summary || ""),
     String(asset?.assetTypeLabel || ""),
     ...(Array.isArray(asset?.solutionLabels) ? asset.solutionLabels : []),
+    ...(Array.isArray(asset?.technologyLabels) ? asset.technologyLabels : []),
     ...(Array.isArray(asset?.industryLabels) ? asset.industryLabels : []),
   ]
     .join(" ")
@@ -5032,6 +5084,19 @@ router.post(
 );
 
 router.get(
+  "/lead-execution-guides",
+  requireAnyPermission(interactionReadPermissions),
+  async (_req, res) => {
+    const commercialSettings = await getCommercialSettings();
+    return res.json({
+      guides: normalizeLeadExecutionGuides(
+        commercialSettings?.leadExecutionGuides,
+      ),
+    });
+  },
+);
+
+router.get(
   "/:interactionId",
   requireAnyPermission(interactionReadPermissions),
   async (req, res) => {
@@ -5048,6 +5113,58 @@ router.get(
     }
     const detail = await fetchInteractionDetail(interactionId, req.user);
     return res.json(detail);
+  },
+);
+
+router.put(
+  "/:interactionId/lead-execution-plan",
+  requireAnyPermission(interactionUpdatePermissions),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const access = await requireAccessibleInteractionOr404({
+      user: req.user,
+      interactionId,
+    });
+    if (!access.ok) {
+      return res.status(access.response.status).json(access.response.body);
+    }
+
+    const parsed = leadExecutionPlanSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const normalizedPlan =
+      parsed.data.plan && typeof parsed.data.plan === "object"
+        ? parsed.data.plan
+        : {};
+
+    await query(
+      `UPDATE interactions
+       SET lead_execution_plan_json = ?,
+           updated_by = ?,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [normalizeForStorage(normalizedPlan), Number(req.user.id), interactionId],
+    );
+
+    await logAuditEvent({
+      req,
+      module: "interacciones",
+      action: "updated",
+      entityType: "interaction",
+      entityId: interactionId,
+      detail: "Plan de ejecucion del lead actualizado",
+    });
+
+    return res.json(await fetchInteractionDetail(interactionId, req.user));
   },
 );
 
@@ -5273,6 +5390,7 @@ router.get(
         q: req.query?.q,
         manufacturerCodes: req.query?.manufacturerCodes,
         solutionCodes: req.query?.solutionCodes,
+        technologyCodes: req.query?.technologyCodes,
         industryCodes: req.query?.industryCodes,
         sort: req.query?.sort,
       },

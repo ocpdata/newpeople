@@ -1512,6 +1512,7 @@ function CommercialSettingsCard({
   settings,
   stageSlaEntries,
   stageWeightEntries,
+  leadExecutionGuideEntries,
   latestUpdateText,
   saving,
   canSave,
@@ -1519,6 +1520,7 @@ function CommercialSettingsCard({
   onChange,
   onTimezoneChange,
   onWeightChange,
+  onGuideChange,
   onSave,
 }) {
   const commonTimezones = [
@@ -1602,10 +1604,39 @@ function CommercialSettingsCard({
               min="0"
               max="100"
               step="1"
-              value={Math.round((settings.stageWeightMap?.[entry.code] ?? 0) * 100)}
+              value={Math.round(
+                (settings.stageWeightMap?.[entry.code] ?? 0) * 100,
+              )}
               onChange={(event) =>
                 onWeightChange(entry.code, Number(event.target.value || 0))
               }
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Guías de ejecución para leads</h4>
+          <p>
+            Ajusta el texto que se muestra en el modal de guía por cada etapa de
+            la secuencia comercial.
+          </p>
+        </div>
+      </div>
+
+      <div className="configuration-form-grid">
+        {leadExecutionGuideEntries.map((entry) => (
+          <div
+            key={entry.key}
+            className="field-group configuration-grid-span-full"
+          >
+            <label>{entry.label}</label>
+            <textarea
+              rows={3}
+              value={settings.leadExecutionGuides?.[entry.key] || ""}
+              onChange={(event) => onGuideChange(entry.key, event.target.value)}
+              placeholder="Escribe la guía para esta etapa"
             />
           </div>
         ))}
@@ -4245,6 +4276,7 @@ export default function ConfigurationPage() {
     sectionItems,
     stageSlaEntries,
     stageWeightEntries,
+    leadExecutionGuideEntries,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -4259,6 +4291,7 @@ export default function ConfigurationPage() {
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
+    updateCommercialGuideSetting,
     saveCommercialSettings,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
@@ -4941,6 +4974,7 @@ export default function ConfigurationPage() {
                 settings={commercialSettings}
                 stageSlaEntries={stageSlaEntries}
                 stageWeightEntries={stageWeightEntries}
+                leadExecutionGuideEntries={leadExecutionGuideEntries}
                 latestUpdateText={latestCommercialSettingsUpdateText}
                 saving={savingCommercialSettings}
                 canSave={commercialSettingsDirty}
@@ -4948,6 +4982,7 @@ export default function ConfigurationPage() {
                 onChange={updateCommercialSetting}
                 onTimezoneChange={updateCommercialBusinessTimezone}
                 onWeightChange={updateCommercialWeightSetting}
+                onGuideChange={updateCommercialGuideSetting}
                 onSave={saveCommercialSettings}
               />
 

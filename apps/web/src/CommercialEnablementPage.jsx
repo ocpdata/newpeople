@@ -23,13 +23,13 @@ const CATALOG_ADMIN_TYPES = [
   },
   {
     adminKey: "technology",
-    type: "solution",
+    type: "technology",
     label: "Tecnologias",
     singularLabel: "Tecnologia",
   },
   {
     adminKey: "solution",
-    type: "technology",
+    type: "solution",
     label: "Soluciones",
     singularLabel: "Solucion",
   },
@@ -418,13 +418,6 @@ function emptyCatalogAdminDrafts() {
     };
     return accumulator;
   }, {});
-}
-
-function buildCatalogAdminEditor(entry) {
-  return {
-    name: entry?.name || "",
-    description: entry?.description || "",
-  };
 }
 
 function getIntakeStatusLabel(status) {
@@ -896,8 +889,33 @@ export default function CommercialEnablementPage({ currentUser }) {
       api.get("/api/commercial-enablement/analytics/overview"),
       api.get("/api/commercial-enablement/governance/overview"),
     ]);
-    setAnalytics(analyticsResponse.data || EMPTY_ANALYTICS);
-    setGovernance(governanceResponse.data || EMPTY_GOVERNANCE);
+    setAnalytics({
+      ...EMPTY_ANALYTICS,
+      ...(analyticsResponse.data || {}),
+      totals: {
+        ...EMPTY_ANALYTICS.totals,
+        ...(analyticsResponse.data?.totals || {}),
+      },
+    });
+    setGovernance({
+      ...EMPTY_GOVERNANCE,
+      ...(governanceResponse.data || {}),
+      summary: {
+        ...EMPTY_GOVERNANCE.summary,
+        ...(governanceResponse.data?.summary || {}),
+      },
+      qualityIssues: Array.isArray(governanceResponse.data?.qualityIssues)
+        ? governanceResponse.data.qualityIssues
+        : [],
+      duplicateCandidates: Array.isArray(
+        governanceResponse.data?.duplicateCandidates,
+      )
+        ? governanceResponse.data.duplicateCandidates
+        : [],
+      manageableItems: Array.isArray(governanceResponse.data?.manageableItems)
+        ? governanceResponse.data.manageableItems
+        : [],
+    });
   }, [canAdmin, canManage]);
 
   const refreshAll = useCallback(
@@ -1071,6 +1089,13 @@ export default function CommercialEnablementPage({ currentUser }) {
         [field]: value,
       },
     }));
+  }
+
+  function buildCatalogAdminEditor(entry) {
+    return {
+      name: String(entry?.name || "").trim(),
+      description: String(entry?.description || "").trim(),
+    };
   }
 
   function buildCatalogAdminEditorKey(catalogKey, entry) {
@@ -2402,6 +2427,8 @@ export default function CommercialEnablementPage({ currentUser }) {
   }
 
   const summary = bootstrap.summary || EMPTY_BOOTSTRAP.summary;
+  const analyticsTotals = analytics?.totals || EMPTY_ANALYTICS.totals;
+  const governanceSummary = governance?.summary || EMPTY_GOVERNANCE.summary;
   const listItems = assetsResult.items || [];
   const publishMode = draft.status === "published";
   const catalogRequirementHint = publishMode
@@ -2422,12 +2449,12 @@ export default function CommercialEnablementPage({ currentUser }) {
   const governanceMetrics = [
     {
       label: "Activos totales",
-      value: metricValue(analytics.totals.totalAssets),
+      value: metricValue(analyticsTotals.totalAssets),
       helper: "Todo el inventario del módulo",
     },
     {
       label: "Publicados",
-      value: metricValue(analytics.totals.publishedAssets),
+      value: metricValue(analyticsTotals.publishedAssets),
       helper: "Material disponible para uso inmediato",
       tone: "positive",
     },
@@ -2617,18 +2644,18 @@ export default function CommercialEnablementPage({ currentUser }) {
                 }
               />
               <OptionPicker
-                title="Tecnologia"
-                options={catalogs.solution}
-                values={filters.solutionCodes}
-                onToggle={(value) => toggleFilterValue("solutionCodes", value)}
-              />
-              <OptionPicker
-                title="Soluciones"
+                title="Tecnologias"
                 options={catalogs.technology}
                 values={filters.technologyCodes}
                 onToggle={(value) =>
                   toggleFilterValue("technologyCodes", value)
                 }
+              />
+              <OptionPicker
+                title="Soluciones"
+                options={catalogs.solution}
+                values={filters.solutionCodes}
+                onToggle={(value) => toggleFilterValue("solutionCodes", value)}
               />
               <OptionPicker
                 title="Industria"
@@ -3221,11 +3248,11 @@ export default function CommercialEnablementPage({ currentUser }) {
                         }
                       />
                       <OptionPicker
-                        title="Tecnologia"
-                        options={catalogs.solution}
-                        values={draft.solutionCodes}
+                        title="Tecnologias"
+                        options={catalogs.technology}
+                        values={draft.technologyCodes}
                         onToggle={(value) =>
-                          toggleDraftValue("solutionCodes", value)
+                          toggleDraftValue("technologyCodes", value)
                         }
                         requirementHint={catalogRequirementHint}
                         invalidMessage={
@@ -3235,11 +3262,11 @@ export default function CommercialEnablementPage({ currentUser }) {
                         }
                       />
                       <OptionPicker
-                        title="Tipo de solucion"
-                        options={catalogs.technology}
-                        values={draft.technologyCodes}
+                        title="Soluciones"
+                        options={catalogs.solution}
+                        values={draft.solutionCodes}
                         onToggle={(value) =>
-                          toggleDraftValue("technologyCodes", value)
+                          toggleDraftValue("solutionCodes", value)
                         }
                       />
                       <OptionPicker
@@ -3666,30 +3693,50 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <span>Acciones directas desde Gobierno</span>
               </div>
               <div className="enablement-library-governance-list" role="list">
-                {governance.manageableItems.map((item) => (
-                  <GovernanceAssetListRow
-                    key={item.publicId}
-                    item={item}
-                    meta={`${item.assetTypeLabel} · ${item.usageCount} uso(s) · ${item.status} · Actualizado ${item.updatedAt}`}
-                    isDuplicate={duplicateCandidateIds.has(item.publicId)}
-                    menuOpen={openGovernanceMenuId === item.publicId}
-                    onToggleMenu={toggleGovernanceMenu}
-                    onCloseMenu={() => setOpenGovernanceMenuId(null)}
-                    onOpen={(publicId) => {
-                      handleSelectAsset(publicId);
-                      setActiveTab(canUpload ? "manage" : "use");
-                    }}
-                    onDeactivate={(asset) =>
-                      handleGovernanceAssetStatus(
-                        asset,
-                        "obsolete",
-                        "Activo marcado como obsoleto",
+                {(Array.isArray(governance.manageableItems)
+                  ? governance.manageableItems.filter(
+                      (item) => item && item.publicId,
+                    )
+                  : []
+                ).length ? (
+                  (Array.isArray(governance.manageableItems)
+                    ? governance.manageableItems.filter(
+                        (item) => item && item.publicId,
                       )
-                    }
-                    onDelete={handleGovernanceAssetDelete}
-                    working={working}
-                  />
-                ))}
+                    : []
+                  ).map((item) => (
+                    <GovernanceAssetListRow
+                      key={item.publicId}
+                      item={item}
+                      meta={`${item.assetTypeLabel} · ${item.usageCount} uso(s) · ${item.status} · Actualizado ${item.updatedAt}`}
+                      isDuplicate={duplicateCandidateIds.has(item.publicId)}
+                      menuOpen={openGovernanceMenuId === item.publicId}
+                      onToggleMenu={toggleGovernanceMenu}
+                      onCloseMenu={() => setOpenGovernanceMenuId(null)}
+                      onOpen={(publicId) => {
+                        handleSelectAsset(publicId);
+                        setActiveTab(canUpload ? "manage" : "use");
+                      }}
+                      onDeactivate={(asset) =>
+                        handleGovernanceAssetStatus(
+                          asset,
+                          "obsolete",
+                          "Activo marcado como obsoleto",
+                        )
+                      }
+                      onDelete={handleGovernanceAssetDelete}
+                      working={working}
+                    />
+                  ))
+                ) : (
+                  <div className="enablement-library-mini-card static">
+                    <strong>No hay activos administrables</strong>
+                    <span>
+                      Cuando existan activos con problemas de calidad,
+                      duplicados o acciones pendientes, aparecerán aquí.
+                    </span>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -3722,7 +3769,13 @@ export default function CommercialEnablementPage({ currentUser }) {
                 </div>
                 <div className="enablement-library-catalog-grid">
                   {CATALOG_ADMIN_TYPES.map((catalogConfig) => {
-                    const allItems = adminCatalogs[catalogConfig.type] || [];
+                    const allItems = Array.isArray(
+                      adminCatalogs[catalogConfig.type],
+                    )
+                      ? adminCatalogs[catalogConfig.type].filter(
+                          (entry) => entry && entry.code,
+                        )
+                      : [];
                     const activeCount = allItems.filter(
                       (entry) => entry.isActive !== false,
                     ).length;

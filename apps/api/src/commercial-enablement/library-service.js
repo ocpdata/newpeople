@@ -654,12 +654,287 @@ async function migrateLegacyResourcesIfNeeded() {
   });
 }
 
+const TECHNOLOGY_CATALOG_HINTS = [
+  "ciberseguridad",
+  "ddi",
+  "distributed cloud services",
+  "distributed cloud",
+  "micetro",
+  "general",
+  "nginx",
+  "kubernetes",
+];
+
+const SOLUTION_CATALOG_HINTS = [
+  "eliminar la complejidad",
+  "mayor seguridad",
+  "soluciones de ciberseguridad",
+  "unificacion y optimizacion",
+  "operacion en ambientes",
+  "multinube",
+  "hibridos",
+  "hibridos",
+  "visibilidad en ambientes",
+];
+
+function isTechnologyCatalogEntryLike(entry) {
+  const normalizedName = normalizeText(entry?.name || entry?.code || "");
+  if (!normalizedName) return false;
+  if (TECHNOLOGY_CATALOG_HINTS.some((hint) => normalizedName.includes(hint))) {
+    return true;
+  }
+  return normalizedName.split(" ").filter(Boolean).length <= 3;
+}
+
+function isSolutionCatalogEntryLike(entry) {
+  const normalizedName = normalizeText(entry?.name || entry?.code || "");
+  if (!normalizedName) return false;
+  if (SOLUTION_CATALOG_HINTS.some((hint) => normalizedName.includes(hint))) {
+    return true;
+  }
+  return normalizedName.split(" ").filter(Boolean).length >= 4;
+}
+
+async function migrateSwappedSolutionTechnologyCatalogsIfNeeded() {
+  const rows = await query(
+    `SELECT id, catalog_type, code, name
+       FROM commercial_enablement_catalog_entries
+      WHERE catalog_type IN ('solution', 'technology')`,
+  );
+
+  const technologyRows = rows.filter(
+    (row) => String(row.catalog_type) === "technology",
+  );
+  const solutionRows = rows.filter(
+    (row) => String(row.catalog_type) === "solution",
+  );
+
+  if (!technologyRows.length || !solutionRows.length) {
+    return;
+  }
+
+  const technologyLooksLikeSolutions = technologyRows.filter(
+    isSolutionCatalogEntryLike,
+  );
+  const solutionLooksLikeTechnologies = solutionRows.filter(
+    isTechnologyCatalogEntryLike,
+  );
+
+  const shouldSwap =
+    technologyLooksLikeSolutions.length >=
+      Math.max(1, Math.ceil(technologyRows.length / 2)) &&
+    solutionLooksLikeTechnologies.length >=
+      Math.max(1, Math.ceil(solutionRows.length / 2));
+
+  if (!shouldSwap) {
+    return;
+  }
+
+  await withTransaction(async (conn) => {
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_entries
+          SET catalog_type = 'solution_swap_tmp'
+        WHERE catalog_type = 'solution'`,
+    );
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_entries
+          SET catalog_type = 'solution'
+        WHERE catalog_type = 'technology'`,
+    );
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_entries
+          SET catalog_type = 'technology'
+        WHERE catalog_type = 'solution_swap_tmp'`,
+    );
+
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_seed_tombstones
+          SET catalog_type = 'solution_swap_tmp'
+        WHERE catalog_type = 'solution'`,
+    );
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_seed_tombstones
+          SET catalog_type = 'solution'
+        WHERE catalog_type = 'technology'`,
+    );
+    await execSql(
+      conn,
+      `UPDATE commercial_enablement_catalog_seed_tombstones
+          SET catalog_type = 'technology'
+        WHERE catalog_type = 'solution_swap_tmp'`,
+    );
+  });
+}
+
+const SOLUTION_TARGET_KEYS = {
+  simplifyMulticloud:
+    "eliminar la complejidad de la operacion en ambientes multinube e hibridos",
+  optimizeDdi: "unificacion y optimizacion del ddi",
+  cybersecurity: "soluciones de ciberseguridad",
+  nginxKubernetes:
+    "mayor seguridad performance y visibilidad de ambientes nginx y kubernetes",
+};
+
+function findBestSolutionEntryId(solutionRows, targetKey) {
+  const normalizedTarget = normalizeText(targetKey);
+  if (!normalizedTarget) return null;
+
+  const exactCode = solutionRows.find(
+    (entry) => normalizeText(entry.code) === normalizedTarget,
+  );
+  if (exactCode) return Number(exactCode.id);
+
+  const exactName = solutionRows.find(
+    (entry) => normalizeText(entry.name) === normalizedTarget,
+  );
+  if (exactName) return Number(exactName.id);
+
+  const targetTokens = normalizedTarget.split(" ").filter(Boolean);
+  const scored = solutionRows
+    .map((entry) => {
+      const haystack = `${normalizeText(entry.code)} ${normalizeText(entry.name)}`;
+      const score = targetTokens.reduce(
+        (acc, token) => (haystack.includes(token) ? acc + 1 : acc),
+        0,
+      );
+      return { id: Number(entry.id), score };
+    })
+    .sort((left, right) => right.score - left.score);
+
+  return scored[0]?.score ? scored[0].id : null;
+}
+
+function chooseSolutionTargetForItem({ title, summary, technologyCodes }) {
+  const normalizedTechCodes = uniqueStrings(technologyCodes).map((code) =>
+    normalizeText(code),
+  );
+  const text = normalizeText(`${title || ""} ${summary || ""}`);
+
+  const hasTech = (token) => normalizedTechCodes.some((code) => code === token);
+
+  if (
+    hasTech("ddi") ||
+    hasTech("micetro") ||
+    /\bddi\b|\bdns\b|\bdhcp\b|\bipam\b/.test(text)
+  ) {
+    return "optimizeDdi";
+  }
+
+  if (text.includes("nginx") || text.includes("kubernetes")) {
+    return "nginxKubernetes";
+  }
+
+  if (
+    hasTech("distributed_cloud_services") ||
+    text.includes("distributed cloud") ||
+    text.includes("multinube") ||
+    text.includes("hibrid")
+  ) {
+    return "simplifyMulticloud";
+  }
+
+  if (
+    hasTech("ciberseguridad") ||
+    text.includes("seguridad") ||
+    text.includes("ddos") ||
+    text.includes("waap") ||
+    text.includes("bot defense")
+  ) {
+    return "cybersecurity";
+  }
+
+  return null;
+}
+
+async function migrateMissingSolutionLinksFromTechnologiesIfNeeded() {
+  const solutionRows = await query(
+    `SELECT id, code, name
+       FROM commercial_enablement_catalog_entries
+      WHERE catalog_type = 'solution' AND is_active = 1`,
+  );
+
+  if (!solutionRows.length) {
+    return;
+  }
+
+  const solutionIdsByTarget = {
+    simplifyMulticloud: findBestSolutionEntryId(
+      solutionRows,
+      SOLUTION_TARGET_KEYS.simplifyMulticloud,
+    ),
+    optimizeDdi: findBestSolutionEntryId(
+      solutionRows,
+      SOLUTION_TARGET_KEYS.optimizeDdi,
+    ),
+    cybersecurity: findBestSolutionEntryId(
+      solutionRows,
+      SOLUTION_TARGET_KEYS.cybersecurity,
+    ),
+    nginxKubernetes: findBestSolutionEntryId(
+      solutionRows,
+      SOLUTION_TARGET_KEYS.nginxKubernetes,
+    ),
+  };
+
+  const itemRows = await query(
+    `SELECT i.id, i.title, i.summary,
+            GROUP_CONCAT(DISTINCT CASE WHEN e.catalog_type = 'technology' THEN e.code END) AS technology_codes,
+            SUM(CASE WHEN e.catalog_type = 'solution' THEN 1 ELSE 0 END) AS solution_count
+       FROM commercial_enablement_items i
+  LEFT JOIN commercial_enablement_item_catalog_links l ON l.item_id = i.id
+  LEFT JOIN commercial_enablement_catalog_entries e ON e.id = l.catalog_entry_id
+      WHERE i.is_deleted = 0
+      GROUP BY i.id, i.title, i.summary
+     HAVING solution_count = 0
+        AND technology_codes IS NOT NULL
+        AND technology_codes <> ''`,
+  );
+
+  if (!itemRows.length) {
+    return;
+  }
+
+  await withTransaction(async (conn) => {
+    for (const item of itemRows) {
+      const technologyCodes = String(item.technology_codes || "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+      const targetKey = chooseSolutionTargetForItem({
+        title: item.title,
+        summary: item.summary,
+        technologyCodes,
+      });
+      if (!targetKey) continue;
+
+      const solutionEntryId = Number(solutionIdsByTarget[targetKey] || 0);
+      if (!solutionEntryId) continue;
+
+      await execSql(
+        conn,
+        `INSERT IGNORE INTO commercial_enablement_item_catalog_links
+          (item_id, catalog_entry_id, created_at)
+         VALUES (?, ?, NOW(3))`,
+        [Number(item.id), solutionEntryId],
+      );
+    }
+  });
+}
+
 export async function ensureCommercialEnablementStarterData() {
   if (!ensureCommercialEnablementStarterDataPromise) {
     ensureCommercialEnablementStarterDataPromise = (async () => {
       await ensureCommercialEnablementSchema();
       await seedStaticCatalogs();
       await migrateLegacyResourcesIfNeeded();
+      await migrateSwappedSolutionTechnologyCatalogsIfNeeded();
+      await migrateMissingSolutionLinksFromTechnologiesIfNeeded();
     })().catch((error) => {
       ensureCommercialEnablementStarterDataPromise = null;
       throw error;
