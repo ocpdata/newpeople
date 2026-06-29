@@ -538,6 +538,39 @@ function AssetListCard({ asset, isSelected, onSelect }) {
   );
 }
 
+function getUseResultPrimaryLabel(asset) {
+  if (Array.isArray(asset?.files) && asset.files.length) {
+    return String(asset.files[0]?.originalFileName || "").trim() || "Archivo";
+  }
+  if (Array.isArray(asset?.links) && asset.links.length) {
+    return String(asset.links[0]?.label || asset.links[0]?.url || "").trim() ||
+      "URL";
+  }
+  return String(asset?.title || "").trim() || "Material";
+}
+
+function UseResultListItem({ asset, isSelected, onSelect }) {
+  const primaryLabel = getUseResultPrimaryLabel(asset);
+  const secondaryLabel = String(asset?.title || "").trim();
+
+  return (
+    <button
+      type="button"
+      className={`enablement-library-use-result-row ${isSelected ? "is-selected" : ""}`.trim()}
+      onClick={() => onSelect(asset.publicId)}
+      title={primaryLabel}
+    >
+      <div className="enablement-library-use-result-main">
+        <strong>{primaryLabel}</strong>
+        <span>{secondaryLabel || "Sin titulo"}</span>
+      </div>
+      <span className="enablement-library-use-result-meta">
+        {asset.assetTypeLabel}
+      </span>
+    </button>
+  );
+}
+
 function EmptyState({ title, helper }) {
   return (
     <div className="enablement-library-empty">
@@ -2706,9 +2739,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                 </span>
               </div>
               {listItems.length ? (
-                <div className="enablement-library-card-list">
+                <div className="enablement-library-use-result-list" role="list">
                   {listItems.map((asset) => (
-                    <AssetListCard
+                    <UseResultListItem
                       key={asset.publicId}
                       asset={asset}
                       isSelected={asset.publicId === selectedAsset?.publicId}

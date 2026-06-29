@@ -18704,6 +18704,62 @@ td {
   overflow: auto;
 }
 
+.enablement-library-use-result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.enablement-library-use-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #d9e5ee;
+  border-radius: 12px;
+  background: #fcfeff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.enablement-library-use-result-row.is-selected {
+  border-color: #2d7d78;
+  box-shadow: inset 0 0 0 1px rgba(45, 125, 120, 0.18);
+  background: #f4fbfa;
+}
+
+.enablement-library-use-result-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.enablement-library-use-result-main strong {
+  color: #173853;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.enablement-library-use-result-main span {
+  color: #5b6f84;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.enablement-library-use-result-meta {
+  color: #4e6981;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: #eef5fb;
+  padding: 4px 8px;
+  flex: 0 0 auto;
+}
+
 .enablement-library-card {
   display: grid;
   gap: 10px;
