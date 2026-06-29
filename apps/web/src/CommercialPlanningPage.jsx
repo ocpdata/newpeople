@@ -270,6 +270,7 @@ export default function CommercialPlanningPage({ can }) {
   const [closingPeriod, setClosingPeriod] = useState(false);
   const [creatingPeriod, setCreatingPeriod] = useState(false);
   const [publishJustification, setPublishJustification] = useState("");
+  const publishJustificationRef = useRef(null);
   const helpPopoverRef = useRef(null);
   const [periodForm, setPeriodForm] = useState(() => {
     const now = new Date();
@@ -640,6 +641,13 @@ export default function CommercialPlanningPage({ can }) {
   }
 
   async function handlePublishVersion() {
+    const openSummaryAndFocusJustification = () => {
+      setActiveTab("summary");
+      requestAnimationFrame(() => {
+        publishJustificationRef.current?.focus();
+      });
+    };
+
     if (!versionDetail?.version?.id) {
       setError("Selecciona una versión antes de publicarla");
       setSuccess("");
@@ -657,6 +665,7 @@ export default function CommercialPlanningPage({ can }) {
       ? validation.errors.length
       : 0;
     if (hardErrors > 0) {
+      setActiveTab("summary");
       setError(
         "La versión tiene errores duros pendientes. Corrígelos antes de publicar.",
       );
@@ -669,6 +678,7 @@ export default function CommercialPlanningPage({ can }) {
       : 0;
     const justification = String(publishJustification || "").trim();
     if (warningCount > 0 && !canOverrideValidation) {
+      setActiveTab("summary");
       setError(
         "La versión tiene advertencias y tu perfil no tiene permiso para publicarla con advertencias.",
       );
@@ -676,6 +686,7 @@ export default function CommercialPlanningPage({ can }) {
       return;
     }
     if (warningCount > 0 && !justification) {
+      openSummaryAndFocusJustification();
       setError(
         "Debes capturar una justificación para publicar una versión con advertencias.",
       );
@@ -1300,6 +1311,7 @@ export default function CommercialPlanningPage({ can }) {
                 <label>
                   Justificación de publicación
                   <textarea
+                    ref={publishJustificationRef}
                     rows="3"
                     value={publishJustification}
                     onChange={(event) =>

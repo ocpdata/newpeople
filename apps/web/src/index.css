@@ -18547,6 +18547,16 @@ td {
   grid-template-columns: 1fr;
 }
 
+.enablement-library-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.enablement-library-search-row input {
+  flex: 1 1 auto;
+}
+
 .enablement-library-inline-fields,
 .enablement-library-inline-actions,
 .enablement-library-editor-actions,
@@ -18914,6 +18924,16 @@ td {
   padding: 6px;
   min-width: 32px;
   min-height: 32px;
+}
+
+.enablement-library-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .enablement-library-inline-button > svg + span {

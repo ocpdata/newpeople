@@ -1650,6 +1650,60 @@ function LeadExecutionSection({
     });
   }
 
+  async function handleDownloadPresentationFile(item) {
+    const assetPublicId = String(item?.resourcePublicId || "").trim();
+    const filePublicId = String(item?.filePublicId || "").trim();
+    if (!assetPublicId || !filePublicId || typeof window === "undefined") {
+      return;
+    }
+
+    setLibraryError("");
+    try {
+      const response = await api.get(
+        `/api/commercial-enablement/assets/${encodeURIComponent(assetPublicId)}/files/${encodeURIComponent(filePublicId)}/content`,
+        {
+          responseType: "blob",
+          timeout: 60000,
+        },
+      );
+
+      const contentDisposition = String(
+        response?.headers?.["content-disposition"] || "",
+      );
+      const utfFileNameMatch = contentDisposition.match(
+        /filename\*=UTF-8''([^;]+)/i,
+      );
+      const plainFileNameMatch = contentDisposition.match(
+        /filename="?([^";]+)"?/i,
+      );
+      const decodedFileName = utfFileNameMatch?.[1]
+        ? decodeURIComponent(utfFileNameMatch[1])
+        : plainFileNameMatch?.[1] || item?.fileName || item?.title || "archivo";
+
+      const blob = new Blob([response.data], {
+        type:
+          String(response?.headers?.["content-type"] || "").trim() ||
+          item?.mimeType ||
+          "application/octet-stream",
+      });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = objectUrl;
+      link.download = decodedFileName;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (requestError) {
+      setLibraryError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible descargar el archivo seleccionado.",
+        ),
+      );
+    }
+  }
+
   const selectedGuide = activeGuideItemId
     ? LEAD_EXECUTION_SEQUENCE_ITEMS.find(
         (item) => item.id === activeGuideItemId,
@@ -1787,9 +1841,6 @@ function LeadExecutionSection({
               {selectedSolutionCode && visiblePresentationOptions.length ? (
                 <div className="lead-execution-presentation-list">
                   {visiblePresentationOptions.map((item) => {
-                    const downloadUrl = `/api/commercial-enablement/assets/${encodeURIComponent(
-                      item.resourcePublicId,
-                    )}/files/${encodeURIComponent(item.filePublicId)}/content`;
                     return (
                       <article
                         key={item.id}
@@ -1803,11 +1854,12 @@ function LeadExecutionSection({
                             {item.title || "Biblioteca comercial"}
                           </p>
                         </div>
-                        <a
+                        <button
+                          type="button"
                           className="interaction-detail-icon-btn"
-                          href={downloadUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                          onClick={() => {
+                            void handleDownloadPresentationFile(item);
+                          }}
                           title="Descargar"
                           aria-label="Descargar"
                         >
@@ -1820,7 +1872,7 @@ function LeadExecutionSection({
                             <path d="M8.5 10.5 12 14l3.5-3.5" />
                             <path d="M5 19h14" />
                           </svg>
-                        </a>
+                        </button>
                       </article>
                     );
                   })}

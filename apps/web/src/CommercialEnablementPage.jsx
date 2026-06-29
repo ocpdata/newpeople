@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -730,8 +729,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     status: "published",
     sort: "updated_desc",
   });
-
-  const deferredQuery = useDeferredValue(filters.q);
+  const [searchQueryDraft, setSearchQueryDraft] = useState("");
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -760,10 +758,7 @@ export default function CommercialEnablementPage({ currentUser }) {
     return true;
   });
 
-  const activeFilters = useMemo(
-    () => ({ ...filters, q: deferredQuery }),
-    [filters, deferredQuery],
-  );
+  const activeFilters = filters;
 
   const selectedAssetFromList = useMemo(
     () =>
@@ -997,6 +992,10 @@ export default function CommercialEnablementPage({ currentUser }) {
   }, [activeTab, loadGovernance]);
 
   useEffect(() => {
+    setSearchQueryDraft(String(filters.q || ""));
+  }, [filters.q]);
+
+  useEffect(() => {
     if (!openGovernanceMenuId) return undefined;
 
     function handleOutsideClick(event) {
@@ -1055,6 +1054,15 @@ export default function CommercialEnablementPage({ currentUser }) {
 
   function updateFilter(field, value) {
     setFilters((current) => ({ ...current, [field]: value }));
+  }
+
+  function applySearchFilters(event) {
+    event?.preventDefault();
+    const nextQuery = String(searchQueryDraft || "");
+    setFilters((current) => {
+      if (current.q === nextQuery) return current;
+      return { ...current, q: nextQuery };
+    });
   }
 
   function toggleGovernanceMenu(publicId) {
@@ -2587,11 +2595,27 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <span>{assetsResult.total} resultado(s)</span>
               </div>
               <div className="enablement-library-form-grid single-column">
-                <input
-                  value={filters.q}
-                  onChange={(event) => updateFilter("q", event.target.value)}
-                  placeholder="Buscar por titulo, resumen o contexto"
-                />
+                <form
+                  className="enablement-library-search-row"
+                  onSubmit={applySearchFilters}
+                >
+                  <input
+                    value={searchQueryDraft}
+                    onChange={(event) => setSearchQueryDraft(event.target.value)}
+                    placeholder="Buscar por titulo, resumen o contexto"
+                  />
+                  <button
+                    type="submit"
+                    className="enablement-library-inline-button enablement-library-icon-button"
+                    title="Buscar"
+                    aria-label="Buscar"
+                  >
+                    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                      <circle cx="11" cy="11" r="6" />
+                      <path d="m16 16 5 5" />
+                    </svg>
+                  </button>
+                </form>
                 <div className="enablement-library-inline-fields">
                   <select
                     value={filters.sort}
@@ -2821,11 +2845,27 @@ export default function CommercialEnablementPage({ currentUser }) {
                 </div>
               </div>
               <div className="enablement-library-form-grid">
-                <input
-                  value={filters.q}
-                  onChange={(event) => updateFilter("q", event.target.value)}
-                  placeholder="Buscar para editar"
-                />
+                <form
+                  className="enablement-library-search-row"
+                  onSubmit={applySearchFilters}
+                >
+                  <input
+                    value={searchQueryDraft}
+                    onChange={(event) => setSearchQueryDraft(event.target.value)}
+                    placeholder="Buscar para editar"
+                  />
+                  <button
+                    type="submit"
+                    className="enablement-library-inline-button enablement-library-icon-button"
+                    title="Buscar"
+                    aria-label="Buscar"
+                  >
+                    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                      <circle cx="11" cy="11" r="6" />
+                      <path d="m16 16 5 5" />
+                    </svg>
+                  </button>
+                </form>
                 <select
                   value={filters.status}
                   onChange={(event) =>
