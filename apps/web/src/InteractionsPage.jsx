@@ -2327,20 +2327,30 @@ function buildEditableForm(detail) {
   };
 }
 
+function normalizeTagEditorLines(value) {
+  return String(value || "")
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function TagEditor({ label, values, onChange, placeholder }) {
+  const [draftValue, setDraftValue] = useState(() => values.join("\n"));
+
+  useEffect(() => {
+    const nextValue = values.join("\n");
+    setDraftValue((currentValue) =>
+      currentValue === nextValue ? currentValue : nextValue,
+    );
+  }, [values]);
+
   return (
     <div className="field-group interaction-tag-editor">
       <label>{label}</label>
       <textarea
-        value={values.join("\n")}
-        onChange={(event) =>
-          onChange(
-            event.target.value
-              .split("\n")
-              .map((item) => item.trim())
-              .filter(Boolean),
-          )
-        }
+        value={draftValue}
+        onChange={(event) => setDraftValue(event.target.value)}
+        onBlur={() => onChange(normalizeTagEditorLines(draftValue))}
         placeholder={placeholder}
       />
     </div>
