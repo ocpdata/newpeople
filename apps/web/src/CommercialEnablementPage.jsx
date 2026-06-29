@@ -1733,6 +1733,11 @@ export default function CommercialEnablementPage({ currentUser }) {
     if (saved?.publicId) {
       setIsCreatingNewAsset(false);
       setSelectedAssetPublicId(saved.publicId);
+      // Actualizar selectedAsset con los datos del response para garantizar que
+      // los cambios de categorías (como soluciones) se reflejen correctamente
+      setSelectedAsset(saved);
+      // Reconstruir draft desde los datos actualizados
+      setDraft(buildDraftFromAsset(saved));
     }
 
     if (!saved?.publicId || !isCreating) {
