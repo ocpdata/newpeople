@@ -780,6 +780,9 @@ const SOLUTION_TARGET_KEYS = {
     "mayor seguridad performance y visibilidad de ambientes nginx y kubernetes",
 };
 
+const MISSING_SOLUTIONS_MIGRATION_MARKER =
+  "missing_solution_links_from_technologies_v1";
+
 function findBestSolutionEntryId(solutionRows, targetKey) {
   const normalizedTarget = normalizeText(targetKey);
   if (!normalizedTarget) return null;
@@ -852,6 +855,17 @@ function chooseSolutionTargetForItem({ title, summary, technologyCodes }) {
 }
 
 async function migrateMissingSolutionLinksFromTechnologiesIfNeeded() {
+  const markerRows = await query(
+    `SELECT 1
+       FROM commercial_enablement_catalog_seed_tombstones
+      WHERE catalog_type = '__migration__' AND code = ?
+      LIMIT 1`,
+    [MISSING_SOLUTIONS_MIGRATION_MARKER],
+  );
+  if (markerRows.length) {
+    return;
+  }
+
   const solutionRows = await query(
     `SELECT id, code, name
        FROM commercial_enablement_catalog_entries
@@ -895,10 +909,6 @@ async function migrateMissingSolutionLinksFromTechnologiesIfNeeded() {
         AND technology_codes <> ''`,
   );
 
-  if (!itemRows.length) {
-    return;
-  }
-
   await withTransaction(async (conn) => {
     for (const item of itemRows) {
       const technologyCodes = String(item.technology_codes || "")
@@ -924,6 +934,14 @@ async function migrateMissingSolutionLinksFromTechnologiesIfNeeded() {
         [Number(item.id), solutionEntryId],
       );
     }
+
+    await execSql(
+      conn,
+      `INSERT IGNORE INTO commercial_enablement_catalog_seed_tombstones
+        (catalog_type, code, deleted_by_user_id, deleted_at)
+       VALUES ('__migration__', ?, NULL, NOW(3))`,
+      [MISSING_SOLUTIONS_MIGRATION_MARKER],
+    );
   });
 }
 
