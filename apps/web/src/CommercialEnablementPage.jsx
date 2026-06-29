@@ -501,38 +501,18 @@ function OptionPicker({
   );
 }
 
-function AssetListCard({ asset, isSelected, onSelect }) {
-  const manufacturers = asset.catalogs
-    ?.filter((entry) => entry.catalogType === "manufacturer")
-    .map((entry) => entry.name)
-    .slice(0, 2);
+function EditableAssetListItem({ asset, isSelected, onSelect }) {
+  const primaryLabel = getUseResultPrimaryLabel(asset);
+
   return (
     <button
       type="button"
-      className={`enablement-library-card ${isSelected ? "is-selected" : ""}`}
+      className={`enablement-library-use-result-row enablement-library-editable-result-row ${isSelected ? "is-selected" : ""}`.trim()}
       onClick={() => onSelect(asset.publicId)}
+      title={primaryLabel}
     >
-      <div className="enablement-library-card-topline">
-        <span>{asset.assetTypeLabel}</span>
-        <strong>{asset.statusLabel}</strong>
-      </div>
-      <h3>{asset.title}</h3>
-      <p>{asset.summary || "Sin resumen"}</p>
-      <div className="enablement-library-card-meta">
-        <span>{asset.visibilityLabel}</span>
-        <span>{asset.audienceLabel}</span>
-        <span>{asset.files.length} archivo(s)</span>
-        <span>{asset.links.length} URL(s)</span>
-      </div>
-      {manufacturers?.length ? (
-        <div className="enablement-library-card-tags">
-          {manufacturers.map((name) => (
-            <span key={`${asset.publicId}-${name}`}>{name}</span>
-          ))}
-        </div>
-      ) : null}
-      <div className="enablement-library-card-actions">
-        <small>{asset.usageCount} uso(s)</small>
+      <div className="enablement-library-use-result-main">
+        <strong>{primaryLabel}</strong>
       </div>
     </button>
   );
@@ -2912,9 +2892,9 @@ export default function CommercialEnablementPage({ currentUser }) {
                   <option value="archived">Archivados</option>
                 </select>
               </div>
-              <div className="enablement-library-card-list compact">
+              <div className="enablement-library-use-result-list enablement-library-use-result-list-compact">
                 {listItems.map((asset) => (
-                  <AssetListCard
+                  <EditableAssetListItem
                     key={asset.publicId}
                     asset={asset}
                     isSelected={asset.publicId === selectedAsset?.publicId}

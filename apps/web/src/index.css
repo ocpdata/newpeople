@@ -18490,10 +18490,7 @@ td {
 }
 
 .enablement-library-layout.manage-layout {
-  grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.6fr) minmax(
-      260px,
-      0.8fr
-    );
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 2.15fr);
 }
 
 .enablement-library-sidebar,
@@ -18709,6 +18706,11 @@ td {
   gap: 8px;
 }
 
+.enablement-library-use-result-list.enablement-library-use-result-list-compact {
+  max-height: 780px;
+  overflow: auto;
+}
+
 .enablement-library-use-result-row {
   display: flex;
   align-items: center;
@@ -18758,6 +18760,17 @@ td {
   background: #eef5fb;
   padding: 4px 8px;
   flex: 0 0 auto;
+}
+
+.enablement-library-editable-result-row .enablement-library-use-result-main {
+  gap: 2px;
+}
+
+.enablement-library-editable-result-row .enablement-library-use-result-main strong,
+.enablement-library-editable-result-row .enablement-library-use-result-main span {
+  font-size: 12px;
+  font-weight: 400;
+  color: #35556f;
 }
 
 .enablement-library-card {
@@ -19431,6 +19444,15 @@ td {
   .enablement-library-sidebar,
   .enablement-library-results {
     grid-column: span 2;
+  }
+
+  .enablement-library-layout.manage-layout {
+    grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.7fr);
+  }
+
+  .enablement-library-layout.manage-layout .enablement-library-results,
+  .enablement-library-layout.manage-layout .enablement-library-detail {
+    grid-column: span 1;
   }
 }
 
