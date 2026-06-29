@@ -4318,6 +4318,20 @@ function InteractionDetailModal({
                       </p>
                     </div>
                     <div className="lead-follow-up-actions-row">
+                      <button
+                        type="button"
+                        className="btn-secondary lead-follow-up-secondary-action"
+                        onClick={() =>
+                          onOpenLeadEmailModal({
+                            purposeOther: "meeting_request",
+                          })
+                        }
+                        disabled={!canOpenLeadEmailModal}
+                        title="Enviar correo"
+                        aria-label="Enviar correo"
+                      >
+                        Enviar correo
+                      </button>
                       {canManageLeadCallOutcome ? (
                         <button
                           type="button"
@@ -4329,6 +4343,11 @@ function InteractionDetailModal({
                       ) : null}
                     </div>
                   </div>
+                  {!canOpenLeadEmailModal && leadEmailDisabledHint ? (
+                    <p className="field-hint lead-follow-up-header-description">
+                      {leadEmailDisabledHint}
+                    </p>
+                  ) : null}
                   {leadSubstatus || leadReason || leadRequiredAction ? (
                     <div className="lead-follow-up-overview">
                       <div className="lead-follow-up-status-block">
@@ -4480,19 +4499,6 @@ function InteractionDetailModal({
                       </p>
                     </div>
                   )}
-
-                  <div className="lead-follow-up-guide-wrap">
-                    <LeadCallOutcomeInlineGuide
-                      title="Guía de seguimiento comercial"
-                      summary="Abrir guía de seguimiento comercial"
-                      substatusEntries={leadOutcomeGuideSubstatusOptions}
-                      reasonEntries={leadOutcomeGuideReasonOptions}
-                      actionEntries={leadOutcomeGuideActionOptions}
-                      selectedSubstatusCode={detail?.leadSubstatusCode}
-                      selectedReasonCode={detail?.leadReasonCode}
-                      selectedActionCode={detail?.leadRequiredActionCode}
-                    />
-                  </div>
                 </section>
               ) : null}
             </div>

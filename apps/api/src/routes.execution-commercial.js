@@ -3842,6 +3842,50 @@ function mapLeadFollowUpCalendarItem(row, timeZone = BUSINESS_TIMEZONE) {
   };
 }
 
+function mapCompletedLeadOutcomeCalendarItem(
+  row,
+  timeZone = BUSINESS_TIMEZONE,
+) {
+  const actionLabel = getLeadFollowUpActionLabel(row.lead_required_action_code);
+  const leadTitle = String(row.interaction_title || "").trim();
+  const effectiveAt = row.event_effective_at || row.event_created_at || null;
+  const scheduledDate = effectiveAt
+    ? formatDateInTimeZone(effectiveAt, timeZone)
+    : "";
+  const leadSubstatusCode = String(row.lead_substatus_code || "").trim();
+  const leadSubstatusName =
+    LEAD_SUBSTATUS_LABELS[leadSubstatusCode] || leadSubstatusCode || "";
+
+  return {
+    id: Number(row.event_id || row.id),
+    interactionId: Number(row.interaction_id || row.id),
+    calendarSource: "interaction",
+    opportunityId:
+      row.primary_opportunity_id === null
+        ? null
+        : Number(row.primary_opportunity_id),
+    opportunityName:
+      row.primary_opportunity_name || actionLabel || "Lead comercial",
+    accountName: row.account_name || "",
+    activityType: "lead_follow_up",
+    status: "done",
+    scheduledAt: effectiveAt,
+    scheduledDate,
+    title: leadTitle || actionLabel || "Seguimiento de lead",
+    note: row.summary || actionLabel || "",
+    isPrimaryNextStep: false,
+    stageName: "Lead",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "Sin vendedor",
+    closeDate: row.close_date || null,
+    amountUsd: Number(row.amount_usd || 0),
+    readonlyByStatus: true,
+    leadSubstatusCode,
+    leadSubstatusName,
+  };
+}
+
 async function listCalendarLeadFollowUps({
   user,
   startDateTime,
@@ -3859,9 +3903,9 @@ async function listCalendarLeadFollowUps({
     : "LEFT JOIN account_owners ao_interaction_scope ON ao_interaction_scope.account_id = i.account_id AND ao_interaction_scope.user_id = ?";
   const sellerExpression = "COALESCE(i.seller_user_id, po.seller_user_id)";
   const where = [
-    `e.required_action_code IS NOT NULL`,
-    `e.next_action_due_at IS NOT NULL`,
-    `e.to_status_code <> 'lead_disqualified'`,
+    `i.lead_required_action_code IS NOT NULL`,
+    `i.lead_next_action_due_at IS NOT NULL`,
+    `COALESCE(i.lead_substatus_code, '') NOT IN ('disqualified_temporary', 'disqualified_definitive')`,
   ];
 
   if (!hasCalendarGlobalScope(user)) {
@@ -3871,13 +3915,98 @@ async function listCalendarLeadFollowUps({
   const normalizedStartDate = String(startDate || "").trim();
   const normalizedEndDate = String(endDate || "").trim();
   if (normalizedStartDate && normalizedEndDate) {
-    where.push(`DATE(e.next_action_due_at) BETWEEN ? AND ?`);
+    where.push(`DATE(i.lead_next_action_due_at) BETWEEN ? AND ?`);
     params.push(normalizedStartDate, normalizedEndDate);
   } else {
-    where.push(`e.next_action_due_at >= ?`);
-    where.push(`e.next_action_due_at < ?`);
+    where.push(`i.lead_next_action_due_at >= ?`);
+    where.push(`i.lead_next_action_due_at < ?`);
     params.push(startDateTime, endExclusiveDateTime);
   }
+
+  if (year !== null && quarter !== null) {
+    const quarterRange = getQuarterDateRange(year, quarter);
+    where.push(`po.close_date BETWEEN ? AND ?`);
+    params.push(quarterRange.startDate, quarterRange.endDate);
+  }
+
+  if (Number.isInteger(Number(sellerUserId)) && Number(sellerUserId) > 0) {
+    where.push(`${sellerExpression} = ?`);
+    params.push(Number(sellerUserId));
+  }
+
+  if (!hasCalendarGlobalScope(user)) {
+    where.push(`(
+      (${sellerExpression} IS NOT NULL AND ${sellerExpression} = ?)
+      OR
+      (${sellerExpression} IS NULL AND (ao_interaction_scope.user_id IS NOT NULL OR i.created_by = ?))
+    )`);
+    params.push(Number(user.id), Number(user.id));
+  }
+
+  const rows = await query(
+    `SELECT i.id,
+            e_latest.id AS event_id,
+            e_latest.interaction_id,
+            i.title AS interaction_title,
+            COALESCE(e_latest.commercial_comment, i.summary) AS summary,
+            i.lead_substatus_code AS lead_substatus_code,
+            i.lead_required_action_code AS lead_required_action_code,
+            i.lead_next_action_due_at AS lead_next_action_due_at,
+            DATE_FORMAT(i.lead_next_action_due_at, '%Y-%m-%d') AS lead_next_action_due_date,
+            i.primary_opportunity_id,
+            po.name AS primary_opportunity_name,
+            po.close_date,
+            po.amount_usd,
+            ${sellerExpression} AS seller_user_id,
+            a.name AS account_name,
+            su.full_name AS seller_user_name
+     FROM interactions i
+     LEFT JOIN interaction_lead_outcome_events e_latest
+       ON e_latest.id = (
+         SELECT e2.id
+         FROM interaction_lead_outcome_events e2
+         WHERE e2.interaction_id = i.id
+         ORDER BY e2.created_at DESC, e2.id DESC
+         LIMIT 1
+       )
+     LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
+     LEFT JOIN accounts a ON a.id = COALESCE(i.account_id, po.account_id)
+     LEFT JOIN users su ON su.id = ${sellerExpression}
+     ${accessJoin}
+     WHERE ${where.join(" AND ")}
+     ORDER BY i.lead_next_action_due_at ASC, i.id ASC`,
+    params,
+  ).catch(() => []);
+
+  return rows.map((row) => mapLeadFollowUpCalendarItem(row, timeZone));
+}
+
+async function listCalendarCompletedLeadOutcomeHistory({
+  user,
+  startDateTime,
+  endExclusiveDateTime,
+  sellerUserId = null,
+  year = null,
+  quarter = null,
+  timeZone = BUSINESS_TIMEZONE,
+}) {
+  const params = [];
+  const accessJoin = hasCalendarGlobalScope(user)
+    ? ""
+    : "LEFT JOIN account_owners ao_interaction_scope ON ao_interaction_scope.account_id = i.account_id AND ao_interaction_scope.user_id = ?";
+  const sellerExpression = "COALESCE(i.seller_user_id, po.seller_user_id)";
+  const where = [
+    `e.required_action_code IS NOT NULL`,
+    `e.invalidated_at IS NULL`,
+    `COALESCE(e.effective_at, e.created_at) >= ?`,
+    `COALESCE(e.effective_at, e.created_at) < ?`,
+  ];
+
+  if (!hasCalendarGlobalScope(user)) {
+    params.push(Number(user.id));
+  }
+
+  params.push(startDateTime, endExclusiveDateTime);
 
   if (year !== null && quarter !== null) {
     const quarterRange = getQuarterDateRange(year, quarter);
@@ -3905,10 +4034,10 @@ async function listCalendarLeadFollowUps({
             e.interaction_id,
             i.title AS interaction_title,
             COALESCE(e.commercial_comment, i.summary) AS summary,
-            COALESCE(e.substatus_code, i.lead_substatus_code) AS lead_substatus_code,
+            e.substatus_code AS lead_substatus_code,
             e.required_action_code AS lead_required_action_code,
-            COALESCE(e.next_action_due_at, i.lead_next_action_due_at) AS lead_next_action_due_at,
-            DATE_FORMAT(COALESCE(e.next_action_due_at, i.lead_next_action_due_at), '%Y-%m-%d') AS lead_next_action_due_date,
+            e.effective_at AS event_effective_at,
+            e.created_at AS event_created_at,
             i.primary_opportunity_id,
             po.name AS primary_opportunity_name,
             po.close_date,
@@ -3916,18 +4045,18 @@ async function listCalendarLeadFollowUps({
             ${sellerExpression} AS seller_user_id,
             a.name AS account_name,
             su.full_name AS seller_user_name
-     FROM interactions i
-     LEFT JOIN interaction_lead_outcome_events e ON e.interaction_id = i.id
+     FROM interaction_lead_outcome_events e
+     INNER JOIN interactions i ON i.id = e.interaction_id
      LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
      LEFT JOIN accounts a ON a.id = COALESCE(i.account_id, po.account_id)
      LEFT JOIN users su ON su.id = ${sellerExpression}
      ${accessJoin}
      WHERE ${where.join(" AND ")}
-     ORDER BY COALESCE(e.next_action_due_at, i.lead_next_action_due_at) ASC, e.id ASC`,
+     ORDER BY COALESCE(e.effective_at, e.created_at) ASC, e.id ASC`,
     params,
   ).catch(() => []);
 
-  return rows.map((row) => mapLeadFollowUpCalendarItem(row, timeZone));
+  return rows.map((row) => mapCompletedLeadOutcomeCalendarItem(row, timeZone));
 }
 
 function buildCommercialActivitySummary(actions) {
@@ -6524,7 +6653,7 @@ async function listCommercialCalendarActivities({
     params.push(Number(user.id));
   }
 
-  const [rows, leadFollowUps] = await Promise.all([
+  const [rows, leadFollowUps, completedLeadHistory] = await Promise.all([
     query(
       `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
               a.scheduled_at, a.is_primary_next_step,
@@ -6556,6 +6685,17 @@ async function listCommercialCalendarActivities({
       quarter,
       timeZone,
     }),
+    includeCompleted
+      ? listCalendarCompletedLeadOutcomeHistory({
+          user,
+          startDateTime: range.startDateTime,
+          endExclusiveDateTime: range.endExclusiveDateTime,
+          sellerUserId,
+          year,
+          quarter,
+          timeZone,
+        })
+      : Promise.resolve([]),
   ]);
 
   const items = rows.map((row) => ({
@@ -6580,6 +6720,7 @@ async function listCommercialCalendarActivities({
   }));
 
   items.push(...leadFollowUps);
+  items.push(...completedLeadHistory);
   items.sort((left, right) => {
     const leftTime = left.scheduledAt
       ? new Date(left.scheduledAt).getTime()

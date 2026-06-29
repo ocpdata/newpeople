@@ -275,6 +275,18 @@ function formatActivityContext(item) {
   return parts.join(" · ") || "Sin contexto comercial";
 }
 
+function formatCalendarSchedule(item) {
+  const dateText = String(item?.scheduledDate || "").trim();
+  if (dateText) {
+    const timeText = formatTime(item?.scheduledAt);
+    if (timeText && timeText !== "Sin hora") {
+      return `${formatDate(dateText)} ${timeText}`;
+    }
+    return formatDate(dateText);
+  }
+  return formatDateTime(item?.scheduledAt);
+}
+
 function formatActivityTitle(item, fallback = "Sin objetivo") {
   const baseTitle = String(item?.title || "").trim() || fallback;
   return baseTitle;
@@ -305,7 +317,9 @@ function getCalendarSourceBadgeClass(value) {
 }
 
 function getCalendarActivityStatusCardClass(statusValue) {
-  const status = String(statusValue || "").trim().toLowerCase();
+  const status = String(statusValue || "")
+    .trim()
+    .toLowerCase();
   if (status === "done") return "is-status-done";
   if (status === "cancelled" || status === "canceled") {
     return "is-status-cancelled";
@@ -314,7 +328,9 @@ function getCalendarActivityStatusCardClass(statusValue) {
 }
 
 function getCalendarActivityStatusBadgeClass(statusValue) {
-  const status = String(statusValue || "").trim().toLowerCase();
+  const status = String(statusValue || "")
+    .trim()
+    .toLowerCase();
   if (status === "done") return "is-done";
   if (status === "cancelled" || status === "canceled") {
     return "is-cancelled";
@@ -596,9 +612,24 @@ function CalendarActivityEditorModal({
                         focusable="false"
                         aria-hidden="true"
                       >
-                        <path d="M5 3h11l3 3v15H5z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                        <path d="M8 3h8v5H8z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                        <path d="M8 14h8v5H8z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                        <path
+                          d="M5 3h11l3 3v15H5z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                        <path
+                          d="M8 3h8v5H8z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                        <path
+                          d="M8 14h8v5H8z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
                       </svg>
                     )}
                   </button>
@@ -722,7 +753,8 @@ function CalendarDayActivitiesModal({
                       </div>
                       <strong>{formatActivityTitle(item)}</strong>
                       <small>
-                        Cuenta: {String(item.accountName || "Sin cuenta asignada")}
+                        Cuenta:{" "}
+                        {String(item.accountName || "Sin cuenta asignada")}
                       </small>
                     </div>
                   </button>
@@ -896,7 +928,9 @@ export default function CalendarPage({ currentUser }) {
       if (!interactionId) return;
       setError("");
       try {
-        const detailResponse = await api.get(`/api/interactions/${interactionId}`);
+        const detailResponse = await api.get(
+          `/api/interactions/${interactionId}`,
+        );
         const detailData = detailResponse.data || null;
         const catalogsResponse = await api.get(
           "/api/interactions/call-outcome-catalogs",
@@ -1078,7 +1112,10 @@ export default function CalendarPage({ currentUser }) {
       ? `Se marcara la actividad como realizada.\n\nResultado registrado:\n${resultText}\n\n¿Deseas continuar?`
       : "No has indicado un resultado en el campo Resultado.\n\nTe recomendamos ingresarlo antes de marcar la actividad como realizada.\n\n¿Deseas continuar de todos modos?";
 
-    if (typeof window !== "undefined" && !window.confirm(doneConfirmationMessage)) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(doneConfirmationMessage)
+    ) {
       return;
     }
 
@@ -1252,7 +1289,9 @@ export default function CalendarPage({ currentUser }) {
         <div className="calendar-module-section-header calendar-module-activities-header">
           <div className="calendar-module-activities-title">
             <h3>Actividades en calendario</h3>
-            <p>Vista laboral (lunes a viernes), en lista continua por horario.</p>
+            <p>
+              Vista laboral (lunes a viernes), en lista continua por horario.
+            </p>
           </div>
           <div className="calendar-module-activities-meta">
             <span className="calendar-module-badge">
@@ -1337,8 +1376,9 @@ export default function CalendarPage({ currentUser }) {
                                 >
                                   {getCalendarSourceLabel(item.calendarSource)}
                                 </span>
-                                {normalizeCalendarSource(item.calendarSource) !==
-                                "interaction" ? (
+                                {normalizeCalendarSource(
+                                  item.calendarSource,
+                                ) !== "interaction" ? (
                                   <span
                                     className="calendar-module-type-badge"
                                     aria-label={`Tipo: ${activityTypeLabel(item.activityType)}`}
@@ -1347,8 +1387,9 @@ export default function CalendarPage({ currentUser }) {
                                     {activityTypeLabel(item.activityType)}
                                   </span>
                                 ) : null}
-                                {normalizeCalendarSource(item.calendarSource) ===
-                                "interaction" ? (
+                                {normalizeCalendarSource(
+                                  item.calendarSource,
+                                ) === "interaction" ? (
                                   <span
                                     className="calendar-module-lead-situation-badge"
                                     aria-label={`Situación: ${getLeadSituationLabel(item)}`}
@@ -1422,7 +1463,7 @@ export default function CalendarPage({ currentUser }) {
                       <strong>{formatActivityTitle(item, "Actividad")}</strong>
                       <p>
                         {formatActivityContext(item)} ·{" "}
-                        {formatDateTime(item.scheduledAt)}
+                        {formatCalendarSchedule(item)}
                       </p>
                     </div>
                     <div className="calendar-module-alert-meta">
@@ -1457,7 +1498,7 @@ export default function CalendarPage({ currentUser }) {
                           Solo lectura
                         </span>
                       ) : null}
-                      <span>{formatDateTime(item.scheduledAt)}</span>
+                      <span>{formatCalendarSchedule(item)}</span>
                       <strong>{formatActivityTitle(item, "Actividad")}</strong>
                       <small>{formatActivityContext(item)}</small>
                     </button>
