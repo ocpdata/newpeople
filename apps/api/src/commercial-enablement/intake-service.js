@@ -90,6 +90,12 @@ function mapProviderError(status) {
   });
 }
 
+function shouldFallbackToHeuristicSummary(error) {
+  const code = String(error?.code || "").trim().toLowerCase();
+  if (!code) return false;
+  return code.startsWith("ai_");
+}
+
 function isAiValidatedRow(row) {
   return (
     String(row?.analysis_status || "") === "completed" &&
@@ -1240,24 +1246,55 @@ export async function reanalyzeCommercialEnablementAssetSummary({
     throw error;
   }
 
-  const aiSuggestion = await requestOpenAiSummarySuggestion({
-    text: sourceText,
-    fileName: source.source_file_name || asset.title || "documento",
-    hint: asset.summary || asset.title || "",
-    aiUsageContext: user?.id
-      ? {
-          userId: Number(user.id),
-          featureCode: "commercial_enablement.asset_summary_reanalysis",
-          jobType: "commercial_enablement_asset_summary_reanalysis",
-          jobId: Number(asset.id),
-          internalRequestId: `commercial_enablement_asset_summary_reanalysis:${Number(asset.id)}:${Date.now()}`,
-        }
-      : null,
-  });
-  const summaryText = summarizeText(
-    aiSuggestion?.summary || "",
-    MAX_SUMMARY_OUTPUT_CHARS,
-  );
+  let aiSuggestion = null;
+  let summaryText = "";
+
+  try {
+    aiSuggestion = await requestOpenAiSummarySuggestion({
+      text: sourceText,
+      fileName: source.source_file_name || asset.title || "documento",
+      hint: asset.summary || asset.title || "",
+      aiUsageContext: user?.id
+        ? {
+            userId: Number(user.id),
+            featureCode: "commercial_enablement.asset_summary_reanalysis",
+            jobType: "commercial_enablement_asset_summary_reanalysis",
+            jobId: Number(asset.id),
+            internalRequestId: `commercial_enablement_asset_summary_reanalysis:${Number(asset.id)}:${Date.now()}`,
+          }
+        : null,
+    });
+    summaryText = summarizeText(
+      aiSuggestion?.summary || "",
+      MAX_SUMMARY_OUTPUT_CHARS,
+    );
+  } catch (error) {
+    if (!shouldFallbackToHeuristicSummary(error)) {
+      throw error;
+    }
+
+    summaryText = summarizeNaturalText(
+      buildSpanishSummary({
+        titleBase: buildTitleBase(source.source_file_name || asset.title || ""),
+        hint: asset.summary || asset.title || "",
+        text: sourceText,
+      }),
+      MAX_SUMMARY_OUTPUT_CHARS,
+    );
+    aiSuggestion = {
+      aiRun: {
+        used: false,
+        provider: "openai",
+        model: ANALYSIS_MODEL,
+        requestId: null,
+        latencyMs: null,
+        inputChars: summarizeText(sourceText, MAX_SUMMARY_SOURCE_TEXT_CHARS)
+          .length,
+        outputChars: summaryText.length,
+      },
+    };
+  }
+
   if (!summaryText) {
     throw createAiOnlyError({
       status: 502,
@@ -1277,7 +1314,7 @@ export async function reanalyzeCommercialEnablementAssetSummary({
       sourceFileName: source.source_file_name || "",
     },
     meta: {
-      usedAi: true,
+      usedAi: Boolean(aiSuggestion?.aiRun?.used),
       aiRun: aiSuggestion.aiRun || null,
       charCount: summaryText.length,
     },

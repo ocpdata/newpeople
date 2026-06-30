@@ -141,6 +141,78 @@ function emptyDraft() {
   };
 }
 
+function createDefaultFilters() {
+  return {
+    q: "",
+    manufacturerCodes: [],
+    solutionCodes: [],
+    technologyCodes: [],
+    needCodes: [],
+    requirementCodes: [],
+    competitorCodes: [],
+    industryCodes: [],
+    assetTypeCodes: [],
+    audienceCodes: [],
+    visibilityLevels: [],
+    languageCodes: [],
+    stageCodes: [],
+    tags: [],
+    onlyClientSafe: false,
+    status: "published",
+    sort: "updated_desc",
+  };
+}
+
+function DismissibleMessage({ tone = "success", message, onClose }) {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) return null;
+
+  return (
+    <div
+      className={`enablement-library-dismissible-message ${
+        tone === "error" ? "form-error" : "form-success"
+      }`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      <span>{normalizedMessage}</span>
+      <button
+        type="button"
+        className="enablement-library-dismissible-close"
+        onClick={onClose}
+        aria-label="Cerrar mensaje"
+      >
+        Cerrar
+      </button>
+    </div>
+  );
+}
+
+function getCatalogOptionName(options, code, fallback = "") {
+  const normalizedCode = String(code || "").trim();
+  if (!Array.isArray(options) || !normalizedCode) {
+    return String(fallback || normalizedCode).trim();
+  }
+  const match = options.find(
+    (entry) => String(entry?.code || "").trim() === normalizedCode,
+  );
+  return String(match?.name || fallback || normalizedCode).trim();
+}
+
+function getStatusLabel(status) {
+  switch (String(status || "").trim()) {
+    case "draft":
+      return "Borrador";
+    case "published":
+      return "Vigente";
+    case "obsolete":
+      return "Obsoleto";
+    case "archived":
+      return "Archivado";
+    default:
+      return String(status || "").trim() || "Sin estado";
+  }
+}
+
 function uniqueStrings(values) {
   return Array.from(
     new Set(
@@ -149,14 +221,6 @@ function uniqueStrings(values) {
         .filter(Boolean),
     ),
   );
-}
-
-function splitCommaValues(value) {
-  return uniqueStrings(String(value || "").split(","));
-}
-
-function joinCommaValues(values) {
-  return Array.isArray(values) ? values.join(", ") : "";
 }
 
 function matchesStatusFilter(statusFilter, assetStatus) {
@@ -294,7 +358,7 @@ function deriveSourceType(baseSourceType, fileCount, linkCount) {
 function buildFiltersForApi(filters, activeTab) {
   const includeDrafts = activeTab === "manage" ? "true" : "false";
   return {
-    q: filters.q || "",
+    q: "",
     manufacturerCodes: filters.manufacturerCodes.join(","),
     solutionCodes: filters.solutionCodes.join(","),
     technologyCodes: filters.technologyCodes.join(","),
@@ -324,21 +388,6 @@ function buildFiltersForApi(filters, activeTab) {
 
 function metricValue(value) {
   return new Intl.NumberFormat("es-PE").format(Number(value || 0));
-}
-
-function getManageStatusHelper(status) {
-  switch (status) {
-    case "draft":
-      return "Borradores listos para completar, adjuntar y publicar";
-    case "published":
-      return "Activos vigentes disponibles para mantenimiento";
-    case "obsolete":
-      return "Material retirado de uso, pendiente de depuracion o reemplazo";
-    case "archived":
-      return "Activos archivados conservados solo para referencia";
-    default:
-      return "Incluye borradores y activos vigentes disponibles para gestion";
-  }
 }
 
 function getPublishSectionErrors(assetLike) {
@@ -384,18 +433,6 @@ function getAssetFieldErrorsFromIssues(issues) {
     title: issues.includes(ASSET_FIELD_MESSAGES.title),
     summary: issues.includes(ASSET_FIELD_MESSAGES.summary),
   };
-}
-
-function SummaryCard({ label, value, helper, tone = "default" }) {
-  return (
-    <article
-      className={`enablement-library-metric enablement-library-metric-${tone}`}
-    >
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{helper}</p>
-    </article>
-  );
 }
 
 function AnalyzeDocumentIcon() {
@@ -450,102 +487,242 @@ function OptionPicker({
   requirementHint,
   invalidMessage,
   sectionRef,
+  collapsible = false,
+  defaultExpanded = true,
 }) {
   const hasOptions = Array.isArray(options) && options.length > 0;
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const selectedCount = Array.isArray(values) ? values.length : 0;
   if (!hasOptions && !requirementHint && !invalidMessage) return null;
+
+  const shouldShowContent = !collapsible || isExpanded;
+  const toggleExpanded = () => {
+    if (!collapsible) return;
+    setIsExpanded((current) => !current);
+  };
 
   return (
     <section
       ref={sectionRef}
-      className={`enablement-library-picker ${invalidMessage ? "is-invalid" : ""}`}
+      className={`enablement-library-picker ${invalidMessage ? "is-invalid" : ""} ${collapsible ? "is-collapsible" : ""} ${collapsible && isExpanded ? "is-expanded" : ""}`}
     >
-      <div className="enablement-library-picker-header">
-        <div className="enablement-library-picker-title">{title}</div>
-        {requirementHint ? (
-          <span className="enablement-library-picker-required">
-            Obligatorio para publicar
-          </span>
-        ) : null}
-      </div>
-      {hasOptions ? (
-        <div className="enablement-library-chip-cloud">
-          {options.map((option) => {
-            const isActive = values.includes(option.code);
-            return (
-              <button
-                key={`${title}-${option.code}`}
-                type="button"
-                className={`enablement-library-chip ${isActive ? "is-active" : ""}`}
-                onClick={() => onToggle(option.code)}
-              >
-                {option.name}
-              </button>
-            );
-          })}
-        </div>
+      {collapsible ? (
+        <button
+          type="button"
+          className="enablement-library-picker-toggle"
+          onClick={toggleExpanded}
+          aria-expanded={isExpanded}
+        >
+          <div className="enablement-library-picker-header">
+            <div className="enablement-library-picker-title">{title}</div>
+            <div className="enablement-library-picker-header-meta">
+              {selectedCount > 0 ? (
+                <span className="enablement-library-picker-count">
+                  {selectedCount} seleccionados
+                </span>
+              ) : null}
+              {requirementHint ? (
+                <span className="enablement-library-picker-required">
+                  Obligatorio para publicar
+                </span>
+              ) : null}
+              <span className="enablement-library-picker-caret" aria-hidden="true">
+                ▾
+              </span>
+            </div>
+          </div>
+        </button>
       ) : (
-        <div className="enablement-library-picker-empty">
-          No hay opciones disponibles en este catalogo.
+        <div className="enablement-library-picker-header">
+          <div className="enablement-library-picker-title">{title}</div>
+          {requirementHint ? (
+            <span className="enablement-library-picker-required">
+              Obligatorio para publicar
+            </span>
+          ) : null}
         </div>
       )}
-      {invalidMessage ? (
-        <div className="enablement-library-picker-helper is-error">
-          {invalidMessage}
-        </div>
-      ) : requirementHint ? (
-        <div className="enablement-library-picker-helper">
-          {requirementHint}
-        </div>
+      {shouldShowContent ? (
+        <>
+          {hasOptions ? (
+            <div className="enablement-library-chip-cloud">
+              {options.map((option) => {
+                const isActive = values.includes(option.code);
+                return (
+                  <button
+                    key={`${title}-${option.code}`}
+                    type="button"
+                    className={`enablement-library-chip ${isActive ? "is-active" : ""}`}
+                    onClick={() => onToggle(option.code)}
+                  >
+                    {option.name}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="enablement-library-picker-empty">
+              No hay opciones disponibles en este catalogo.
+            </div>
+          )}
+          {invalidMessage ? (
+            <div className="enablement-library-picker-helper is-error">
+              {invalidMessage}
+            </div>
+          ) : requirementHint ? (
+            <div className="enablement-library-picker-helper">
+              {requirementHint}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </section>
   );
 }
 
-function EditableAssetListItem({ asset, isSelected, onSelect }) {
-  const primaryLabel = getUseResultPrimaryLabel(asset);
+function ChipSelect({
+  label,
+  value,
+  onChange,
+  ariaLabel,
+  icon = "document",
+  children,
+}) {
+  const iconPaths =
+    icon === "status"
+      ? ["M6 12.5 10 16.5 18 8.5"]
+      : icon === "visibility"
+        ? ["M3 12s3.5-5 9-5 9 5 9 5-3.5 5-9 5-9-5-9-5z", "M12 10a2 2 0 1 0 0.01 0"]
+        : icon === "audience"
+          ? ["M8 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z", "M16 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4z", "M4 18c0-2.2 1.9-4 4.2-4h.4c2.3 0 4.2 1.8 4.2 4", "M13 18c.2-1.6 1.6-2.8 3.3-2.8h.2c1.7 0 3.1 1.2 3.3 2.8"]
+          : icon === "language"
+            ? ["M4 6h10", "M9 6c0 6-2.5 10-5 12", "M9 6c0 3 2.2 6.5 5 9", "M14 17h6", "M17 14l3 6"]
+            : ["M5 5h14v14H5z", "M8 10h8M8 14h5"];
 
   return (
-    <button
-      type="button"
-      className={`enablement-library-use-result-row enablement-library-editable-result-row ${isSelected ? "is-selected" : ""}`.trim()}
-      onClick={() => onSelect(asset.publicId)}
-      title={primaryLabel}
-    >
-      <div className="enablement-library-use-result-main">
-        <strong>{primaryLabel}</strong>
-      </div>
-    </button>
+    <div className="enablement-library-chip-dropdown enablement-library-chip-dropdown-field">
+      <span className="enablement-library-chip-dropdown-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          {iconPaths.map((pathValue) => (
+            <path key={pathValue} d={pathValue} />
+          ))}
+        </svg>
+      </span>
+      <span className="enablement-library-chip-dropdown-content">
+        <span className="enablement-library-chip-dropdown-label">{label}</span>
+        <select
+          className="enablement-library-chip-dropdown-select"
+          value={value}
+          onChange={onChange}
+          aria-label={ariaLabel}
+        >
+          {children}
+        </select>
+      </span>
+      <span className="enablement-library-chip-dropdown-caret" aria-hidden="true">
+        ▾
+      </span>
+    </div>
   );
 }
 
-function getUseResultPrimaryLabel(asset) {
-  if (Array.isArray(asset?.files) && asset.files.length) {
-    return String(asset.files[0]?.originalFileName || "").trim() || "Archivo";
-  }
-  if (Array.isArray(asset?.links) && asset.links.length) {
-    return String(asset.links[0]?.label || asset.links[0]?.url || "").trim() ||
-      "URL";
-  }
-  return String(asset?.title || "").trim() || "Material";
+function ChipInput({
+  label,
+  value,
+  onChange,
+  ariaLabel,
+  placeholder,
+  minLength,
+  required,
+  inputRef,
+}) {
+  return (
+    <div className="enablement-library-chip-dropdown enablement-library-chip-dropdown-field">
+      <span className="enablement-library-chip-dropdown-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M5 5h14v14H5z" />
+          <path d="M8 10h8M8 14h5" />
+        </svg>
+      </span>
+      <span className="enablement-library-chip-dropdown-content">
+        <span className="enablement-library-chip-dropdown-label">{label}</span>
+        <input
+          ref={inputRef}
+          className="enablement-library-chip-dropdown-input"
+          value={value}
+          onChange={onChange}
+          aria-label={ariaLabel}
+          placeholder={placeholder}
+          minLength={minLength}
+          required={required}
+        />
+      </span>
+    </div>
+  );
 }
 
-function UseResultListItem({ asset, isSelected, onSelect }) {
-  const primaryLabel = getUseResultPrimaryLabel(asset);
-  const secondaryLabel = String(asset?.title || "").trim();
+function EditableAssetListItem({ asset, isSelected, onSelect }) {
+  const displayLabel = String(asset?.title || "").trim() || "Sin titulo";
+  const assetTypeChipLabel = getAssetTypeChipLabelEs(asset);
 
   return (
     <button
       type="button"
       className={`enablement-library-use-result-row ${isSelected ? "is-selected" : ""}`.trim()}
       onClick={() => onSelect(asset.publicId)}
-      title={primaryLabel}
+      title={displayLabel}
     >
       <div className="enablement-library-use-result-main">
-        <strong>{primaryLabel}</strong>
-        <span>{secondaryLabel || "Sin titulo"}</span>
+        <span>{displayLabel}</span>
       </div>
       <span className="enablement-library-use-result-meta">
-        {asset.assetTypeLabel}
+        {assetTypeChipLabel}
+      </span>
+    </button>
+  );
+}
+
+function getAssetTypeChipLabelEs(asset) {
+  const code = String(asset?.assetTypeCode || "").trim().toLowerCase();
+  const rawLabel = String(asset?.assetTypeLabel || "").trim();
+  const normalizedLabel = rawLabel.toLowerCase();
+  const lookup = {
+    presentation: "Presentacion",
+    infographic: "Infografia",
+    success_case: "Caso de exito",
+    comparison: "Comparativo competitivo",
+    solution_sheet: "Ficha de solucion",
+    manufacturer_sheet: "Ficha de fabricante",
+    internal_guide: "Guia interna",
+    client_document: "Documento para cliente",
+    template: "Plantilla",
+    url_reference: "Referencia URL",
+  };
+
+  if (code && lookup[code]) return lookup[code];
+  if (normalizedLabel && lookup[normalizedLabel]) {
+    return lookup[normalizedLabel];
+  }
+  return rawLabel || "Tipo";
+}
+
+function UseResultListItem({ asset, isSelected, onSelect }) {
+  const secondaryLabel = String(asset?.title || "").trim();
+  const displayLabel = secondaryLabel || "Sin titulo";
+  const assetTypeChipLabel = getAssetTypeChipLabelEs(asset);
+
+  return (
+    <button
+      type="button"
+      className={`enablement-library-use-result-row ${isSelected ? "is-selected" : ""}`.trim()}
+      onClick={() => onSelect(asset.publicId)}
+      title={displayLabel}
+    >
+      <div className="enablement-library-use-result-main">
+        <span>{displayLabel}</span>
+      </div>
+      <span className="enablement-library-use-result-meta">
+        {assetTypeChipLabel}
       </span>
     </button>
   );
@@ -723,26 +900,11 @@ export default function CommercialEnablementPage({ currentUser }) {
   const [publishSectionErrors, setPublishSectionErrors] = useState(
     EMPTY_PUBLISH_SECTION_ERRORS,
   );
-  const [filters, setFilters] = useState({
-    q: "",
-    manufacturerCodes: [],
-    solutionCodes: [],
-    technologyCodes: [],
-    needCodes: [],
-    requirementCodes: [],
-    competitorCodes: [],
-    industryCodes: [],
-    assetTypeCodes: [],
-    audienceCodes: [],
-    visibilityLevels: [],
-    languageCodes: [],
-    stageCodes: [],
-    tags: [],
-    onlyClientSafe: false,
-    status: "published",
-    sort: "updated_desc",
-  });
+  const [filters, setFilters] = useState(() => createDefaultFilters());
   const [searchQueryDraft, setSearchQueryDraft] = useState("");
+  const [useTitleSearchQuery, setUseTitleSearchQuery] = useState("");
+  const [useSummarySearchQuery, setUseSummarySearchQuery] = useState("");
+  const [governanceSearchQuery, setGovernanceSearchQuery] = useState("");
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -1091,6 +1253,12 @@ export default function CommercialEnablementPage({ currentUser }) {
     }));
   }
 
+  function clearUseFilters() {
+    setUseTitleSearchQuery("");
+    setUseSummarySearchQuery("");
+    setFilters(createDefaultFilters());
+  }
+
   function updateDraftField(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
   }
@@ -1410,6 +1578,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       const nextSummary = String(
         response.data?.summarySuggestion?.text || "",
       ).trim();
+      const usedFallback = response.data?.meta?.usedAi === false;
       if (!nextSummary) {
         throw new Error("No se recibio una propuesta de resumen valida");
       }
@@ -1418,13 +1587,12 @@ export default function CommercialEnablementPage({ currentUser }) {
         ...current,
         summary: nextSummary,
       }));
-      setSuccess(
-        "Se genero una nueva propuesta de resumen. Revisa el texto antes de guardar.",
-      );
+      const successMessage = usedFallback
+        ? "Se usó resumen automático de respaldo. Revisa el texto antes de guardar."
+        : "Se genero una nueva propuesta de resumen. Revisa el texto antes de guardar.";
       setAssetSaveFeedback({
         tone: "success",
-        message:
-          "Se genero una nueva propuesta de resumen. Revisa el texto antes de guardar.",
+        message: successMessage,
       });
       window.requestAnimationFrame(() => {
         const element = summaryInputRef.current;
@@ -2452,58 +2620,54 @@ export default function CommercialEnablementPage({ currentUser }) {
     }
   }
 
-  const summary = bootstrap.summary || EMPTY_BOOTSTRAP.summary;
-  const analyticsTotals = analytics?.totals || EMPTY_ANALYTICS.totals;
-  const governanceSummary = governance?.summary || EMPTY_GOVERNANCE.summary;
   const listItems = assetsResult.items || [];
   const publishMode = draft.status === "published";
   const catalogRequirementHint = publishMode
     ? "Selecciona al menos un fabricante aquí o una tecnologia en la seccion vecina."
     : "";
-  const primaryMetric =
-    activeTab === "manage"
-      ? {
-          label: "Activos editables",
-          value: metricValue(assetsResult.total || listItems.length),
-          helper: getManageStatusHelper(filters.status),
-        }
-      : {
-          label: "Activos visibles",
-          value: metricValue(summary.totalVisibleAssets),
-          helper: "Material listo para consultar en la biblioteca",
-        };
-  const governanceMetrics = [
-    {
-      label: "Activos totales",
-      value: metricValue(analyticsTotals.totalAssets),
-      helper: "Todo el inventario del módulo",
-    },
-    {
-      label: "Publicados",
-      value: metricValue(analyticsTotals.publishedAssets),
-      helper: "Material disponible para uso inmediato",
-      tone: "positive",
-    },
-  ];
-  const usageMetrics = [
-    {
-      label: "Compartibles con cliente",
-      value: metricValue(summary.clientSafeAssets),
-      helper: "Documentos y enlaces aptos para envio externo",
-      tone: "positive",
-    },
-    {
-      label: "Internos",
-      value: metricValue(summary.internalAssets),
-      helper: "Soporte comercial para preparacion interna",
-    },
-  ];
-  const headerMetrics =
-    activeTab === "governance"
-      ? [...usageMetrics, ...governanceMetrics]
-      : activeTab === "manage"
-        ? [primaryMetric, ...usageMetrics]
-        : usageMetrics;
+  const businessFilterCount =
+    filters.assetTypeCodes.length +
+    filters.manufacturerCodes.length +
+    filters.technologyCodes.length +
+    filters.solutionCodes.length +
+    filters.industryCodes.length;
+  const normalizedUseTitleSearchQuery = String(useTitleSearchQuery || "")
+    .trim()
+    .toLowerCase();
+  const normalizedUseSummarySearchQuery = String(useSummarySearchQuery || "")
+    .trim()
+    .toLowerCase();
+  const filteredUseListItems =
+    normalizedUseTitleSearchQuery || normalizedUseSummarySearchQuery
+    ? listItems.filter((asset) => {
+        const normalizedTitle = String(asset?.title || "").toLowerCase();
+        const normalizedSummary = String(asset?.summary || "").toLowerCase();
+        const matchesTitle = normalizedUseTitleSearchQuery
+          ? normalizedTitle.includes(normalizedUseTitleSearchQuery)
+          : true;
+        const matchesSummary = normalizedUseSummarySearchQuery
+          ? normalizedSummary.includes(normalizedUseSummarySearchQuery)
+          : true;
+        return matchesTitle && matchesSummary;
+      })
+    : listItems;
+  const normalizedManageSearchQuery = String(searchQueryDraft || "")
+    .trim()
+    .toLowerCase();
+  const filteredManageListItems = normalizedManageSearchQuery
+    ? listItems.filter((asset) =>
+        String(asset?.title || "")
+          .toLowerCase()
+          .includes(normalizedManageSearchQuery),
+      )
+    : listItems;
+  const hasActiveUseFilters =
+    Boolean(String(useTitleSearchQuery || "").trim()) ||
+    Boolean(String(useSummarySearchQuery || "").trim()) ||
+    filters.onlyClientSafe ||
+    filters.status !== "published" ||
+    filters.sort !== "updated_desc" ||
+    businessFilterCount > 0;
   const displayedFiles = selectedAsset?.publicId
     ? selectedAsset.files || []
     : pendingFiles;
@@ -2527,6 +2691,31 @@ export default function CommercialEnablementPage({ currentUser }) {
   const intakeWarnings = Array.isArray(intakeSession?.warnings)
     ? intakeSession.warnings
     : [];
+  const manageableGovernanceItems = Array.isArray(governance.manageableItems)
+    ? governance.manageableItems.filter((item) => item && item.publicId)
+    : [];
+  const normalizedGovernanceSearch = String(governanceSearchQuery || "")
+    .trim()
+    .toLowerCase();
+  const filteredManageableGovernanceItems = normalizedGovernanceSearch
+    ? manageableGovernanceItems.filter((item) => {
+        const searchableText = [item.title, item.summary, item.publicId]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        return searchableText.includes(normalizedGovernanceSearch);
+      })
+    : manageableGovernanceItems;
+  const statusBadgeLabel = `Estado: ${getStatusLabel(draft.status || "published")}`;
+  const visibilityBadgeLabel = `Visibilidad: ${getCatalogOptionName(
+    catalogs.visibility,
+    draft.visibilityLevel || "client_safe",
+    "Compartible con cliente",
+  )}`;
+  const audienceBadgeLabel = `Audiencia: ${getCatalogOptionName(
+    catalogs.audience,
+    draft.audienceCode || "mixed",
+    "Mixto",
+  )}`;
 
   return (
     <div className="enablement-library-page">
@@ -2560,20 +2749,20 @@ export default function CommercialEnablementPage({ currentUser }) {
         </div>
       </header>
 
-      <section className="enablement-library-metrics">
-        {headerMetrics.map((metric) => (
-          <SummaryCard
-            key={metric.label}
-            label={metric.label}
-            value={metric.value}
-            helper={metric.helper}
-            tone={metric.tone}
-          />
-        ))}
-      </section>
-
-      {error ? <div className="form-error">{error}</div> : null}
-      {success ? <div className="form-success">{success}</div> : null}
+      {error ? (
+        <DismissibleMessage
+          tone="error"
+          message={error}
+          onClose={() => setError("")}
+        />
+      ) : null}
+      {success ? (
+        <DismissibleMessage
+          tone="success"
+          message={success}
+          onClose={() => setSuccess("")}
+        />
+      ) : null}
 
       {loading ? (
         <div className="enablement-library-loading">
@@ -2602,109 +2791,183 @@ export default function CommercialEnablementPage({ currentUser }) {
       {!loading && activeTab === "use" ? (
         <div className="enablement-library-layout">
           <aside className="enablement-library-sidebar">
-            <section className="enablement-library-panel">
+            <section className="enablement-library-panel enablement-library-discovery-panel">
               <div className="enablement-library-panel-header">
-                <h2>Buscar material</h2>
-                <span>{assetsResult.total} resultado(s)</span>
+                <h2>Descubrir material</h2>
+                <span>{filteredUseListItems.length} resultado(s)</span>
               </div>
-              <div className="enablement-library-form-grid single-column">
-                <form
-                  className="enablement-library-search-row"
-                  onSubmit={applySearchFilters}
-                >
+              <p className="enablement-library-discovery-intro">
+                Busca por contexto y afina con filtros rápidos y de negocio en
+                un solo flujo.
+              </p>
+              <div className="enablement-library-form-grid single-column enablement-library-discovery-search">
+                <div className="enablement-library-search-row">
                   <input
-                    value={searchQueryDraft}
-                    onChange={(event) => setSearchQueryDraft(event.target.value)}
-                    placeholder="Buscar por titulo, resumen o contexto"
+                    value={useTitleSearchQuery}
+                    onChange={(event) =>
+                      setUseTitleSearchQuery(event.target.value)
+                    }
+                    placeholder="Buscar por titulo"
+                    aria-label="Buscar por titulo"
                   />
-                  <button
-                    type="submit"
-                    className="enablement-library-inline-button enablement-library-icon-button"
-                    title="Buscar"
-                    aria-label="Buscar"
-                  >
-                    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                      <circle cx="11" cy="11" r="6" />
-                      <path d="m16 16 5 5" />
-                    </svg>
-                  </button>
-                </form>
-                <div className="enablement-library-inline-fields">
-                  <select
-                    value={filters.sort}
-                    onChange={(event) =>
-                      updateFilter("sort", event.target.value)
-                    }
-                  >
-                    <option value="updated_desc">
-                      Actualizados recientemente
-                    </option>
-                    <option value="title_asc">Titulo A-Z</option>
-                    <option value="most_used">Más usados</option>
-                  </select>
-                  <select
-                    value={filters.status}
-                    onChange={(event) =>
-                      updateFilter("status", event.target.value)
-                    }
-                  >
-                    <option value="published">Solo vigentes</option>
-                    <option value="all">Todo visible</option>
-                    <option value="obsolete">Obsoletos</option>
-                  </select>
                 </div>
-                <label className="enablement-library-check">
+                <div className="enablement-library-search-row">
                   <input
-                    type="checkbox"
-                    checked={filters.onlyClientSafe}
+                    value={useSummarySearchQuery}
                     onChange={(event) =>
-                      updateFilter("onlyClientSafe", event.target.checked)
+                      setUseSummarySearchQuery(event.target.value)
                     }
+                    placeholder="Buscar por resumen"
+                    aria-label="Buscar por resumen"
                   />
-                  Solo compartibles con cliente
-                </label>
+                </div>
+                <div className="enablement-library-discovery-quick">
+                  <div className="enablement-library-discovery-controls">
+                    <label className="enablement-library-chip-dropdown">
+                      <span
+                        className="enablement-library-chip-dropdown-icon"
+                        aria-hidden="true"
+                      >
+                        <svg viewBox="0 0 24 24" focusable="false">
+                          <path d="M4 7h16M7 12h10M10 17h4" />
+                        </svg>
+                      </span>
+                      <span className="enablement-library-chip-dropdown-content">
+                        <span className="enablement-library-chip-dropdown-label">
+                          Ordenar
+                        </span>
+                        <select
+                          className="enablement-library-chip-dropdown-select"
+                          aria-label="Ordenar resultados"
+                          value={filters.sort}
+                          onChange={(event) =>
+                            updateFilter("sort", event.target.value)
+                          }
+                        >
+                          <option value="updated_desc">
+                            Actualizados recientemente
+                          </option>
+                          <option value="title_asc">Titulo A-Z</option>
+                          <option value="most_used">Más usados</option>
+                        </select>
+                      </span>
+                      <span
+                        className="enablement-library-chip-dropdown-caret"
+                        aria-hidden="true"
+                      >
+                        ▾
+                      </span>
+                    </label>
+                    <label className="enablement-library-chip-dropdown">
+                      <span
+                        className="enablement-library-chip-dropdown-icon"
+                        aria-hidden="true"
+                      >
+                        <svg viewBox="0 0 24 24" focusable="false">
+                          <path d="M5 5h14v14H5z" />
+                          <path d="M8 10h8M8 14h5" />
+                        </svg>
+                      </span>
+                      <span className="enablement-library-chip-dropdown-content">
+                        <span className="enablement-library-chip-dropdown-label">
+                          Estado
+                        </span>
+                        <select
+                          className="enablement-library-chip-dropdown-select"
+                          aria-label="Filtrar por estado"
+                          value={filters.status}
+                          onChange={(event) =>
+                            updateFilter("status", event.target.value)
+                          }
+                        >
+                          <option value="published">Solo vigentes</option>
+                          <option value="all">Todo visible</option>
+                          <option value="obsolete">Obsoletos</option>
+                        </select>
+                      </span>
+                      <span
+                        className="enablement-library-chip-dropdown-caret"
+                        aria-hidden="true"
+                      >
+                        ▾
+                      </span>
+                    </label>
+                  </div>
+                  <label className="enablement-library-check enablement-library-check-quick">
+                    <input
+                      type="checkbox"
+                      checked={filters.onlyClientSafe}
+                      onChange={(event) =>
+                        updateFilter("onlyClientSafe", event.target.checked)
+                      }
+                    />
+                    Solo compartibles con cliente
+                  </label>
+                </div>
+                <div className="enablement-library-discovery-meta">
+                  <span>{businessFilterCount} filtros de negocio activos</span>
+                  <button
+                    type="button"
+                    className="enablement-library-inline-button"
+                    onClick={clearUseFilters}
+                    disabled={!hasActiveUseFilters}
+                  >
+                    Limpiar filtros
+                  </button>
+                </div>
               </div>
-            </section>
-
-            <section className="enablement-library-panel">
               <div className="enablement-library-panel-header">
                 <h2>Filtros de negocio</h2>
                 <span>Seleccion multiple</span>
               </div>
-              <OptionPicker
-                title="Tipo de activo"
-                options={catalogs.asset_type}
-                values={filters.assetTypeCodes}
-                onToggle={(value) => toggleFilterValue("assetTypeCodes", value)}
-              />
-              <OptionPicker
-                title="Fabricante"
-                options={catalogs.manufacturer}
-                values={filters.manufacturerCodes}
-                onToggle={(value) =>
-                  toggleFilterValue("manufacturerCodes", value)
-                }
-              />
-              <OptionPicker
-                title="Tecnologias"
-                options={catalogs.technology}
-                values={filters.technologyCodes}
-                onToggle={(value) =>
-                  toggleFilterValue("technologyCodes", value)
-                }
-              />
-              <OptionPicker
-                title="Soluciones"
-                options={catalogs.solution}
-                values={filters.solutionCodes}
-                onToggle={(value) => toggleFilterValue("solutionCodes", value)}
-              />
-              <OptionPicker
-                title="Industria"
-                options={catalogs.industry}
-                values={filters.industryCodes}
-                onToggle={(value) => toggleFilterValue("industryCodes", value)}
-              />
+              <div className="enablement-library-discovery-groups">
+                <OptionPicker
+                  title="Tipo de activo"
+                  options={catalogs.asset_type}
+                  values={filters.assetTypeCodes}
+                  onToggle={(value) => toggleFilterValue("assetTypeCodes", value)}
+                  collapsible
+                  defaultExpanded
+                />
+                <OptionPicker
+                  title="Fabricante"
+                  options={catalogs.manufacturer}
+                  values={filters.manufacturerCodes}
+                  onToggle={(value) =>
+                    toggleFilterValue("manufacturerCodes", value)
+                  }
+                  collapsible
+                  defaultExpanded
+                />
+                <OptionPicker
+                  title="Tecnologias"
+                  options={catalogs.technology}
+                  values={filters.technologyCodes}
+                  onToggle={(value) =>
+                    toggleFilterValue("technologyCodes", value)
+                  }
+                  collapsible
+                  defaultExpanded={false}
+                />
+                <OptionPicker
+                  title="Soluciones"
+                  options={catalogs.solution}
+                  values={filters.solutionCodes}
+                  onToggle={(value) =>
+                    toggleFilterValue("solutionCodes", value)
+                  }
+                  collapsible
+                  defaultExpanded={false}
+                />
+                <OptionPicker
+                  title="Industria"
+                  options={catalogs.industry}
+                  values={filters.industryCodes}
+                  onToggle={(value) => toggleFilterValue("industryCodes", value)}
+                  collapsible
+                  defaultExpanded={false}
+                />
+              </div>
             </section>
           </aside>
 
@@ -2715,12 +2978,12 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <span>
                   {loadingAssets
                     ? "Actualizando..."
-                    : `${listItems.length} en esta vista`}
+                    : `${filteredUseListItems.length} en esta vista`}
                 </span>
               </div>
-              {listItems.length ? (
+              {filteredUseListItems.length ? (
                 <div className="enablement-library-use-result-list" role="list">
-                  {listItems.map((asset) => (
+                  {filteredUseListItems.map((asset) => (
                     <UseResultListItem
                       key={asset.publicId}
                       asset={asset}
@@ -2846,54 +3109,65 @@ export default function CommercialEnablementPage({ currentUser }) {
             <section className="enablement-library-panel">
               <div className="enablement-library-panel-header">
                 <h2>Activos editables</h2>
-                <span>{assetsResult.total} en esta vista</span>
+                <span>{filteredManageListItems.length} en esta vista</span>
                 <div className="enablement-library-inline-actions">
                   <button
                     type="button"
                     className="enablement-library-action"
                     onClick={handleStartNewAsset}
                   >
-                    Nuevo activo
+                    Subir nuevo archivo
                   </button>
                 </div>
               </div>
-              <div className="enablement-library-form-grid">
-                <form
-                  className="enablement-library-search-row"
-                  onSubmit={applySearchFilters}
-                >
+              <div className="enablement-library-form-grid enablement-library-manage-toolbar">
+                <div className="enablement-library-search-row enablement-library-search-row-manage">
                   <input
                     value={searchQueryDraft}
                     onChange={(event) => setSearchQueryDraft(event.target.value)}
-                    placeholder="Buscar para editar"
+                    placeholder="Buscar por titulo para editar"
+                    aria-label="Buscar por titulo para editar"
                   />
-                  <button
-                    type="submit"
-                    className="enablement-library-inline-button enablement-library-icon-button"
-                    title="Buscar"
-                    aria-label="Buscar"
+                </div>
+                <label className="enablement-library-chip-dropdown enablement-library-chip-dropdown-manage">
+                  <span
+                    className="enablement-library-chip-dropdown-icon"
+                    aria-hidden="true"
                   >
-                    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                      <circle cx="11" cy="11" r="6" />
-                      <path d="m16 16 5 5" />
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M5 5h14v14H5z" />
+                      <path d="M8 10h8M8 14h5" />
                     </svg>
-                  </button>
-                </form>
-                <select
-                  value={filters.status}
-                  onChange={(event) =>
-                    updateFilter("status", event.target.value)
-                  }
-                >
-                  <option value="all">Todos</option>
-                  <option value="draft">Borradores</option>
-                  <option value="published">Vigentes</option>
-                  <option value="obsolete">Obsoletos</option>
-                  <option value="archived">Archivados</option>
-                </select>
+                  </span>
+                  <span className="enablement-library-chip-dropdown-content">
+                    <span className="enablement-library-chip-dropdown-label">
+                      Estado
+                    </span>
+                    <select
+                      className="enablement-library-chip-dropdown-select"
+                      aria-label="Filtrar activos por estado"
+                      value={filters.status}
+                      onChange={(event) =>
+                        updateFilter("status", event.target.value)
+                      }
+                    >
+                      <option value="all">Todos</option>
+                      <option value="draft">Borradores</option>
+                      <option value="published">Vigentes</option>
+                      <option value="obsolete">Obsoletos</option>
+                      <option value="archived">Archivados</option>
+                    </select>
+                  </span>
+                  <span
+                    className="enablement-library-chip-dropdown-caret"
+                    aria-hidden="true"
+                  >
+                    ▾
+                  </span>
+                </label>
               </div>
               <div className="enablement-library-use-result-list enablement-library-use-result-list-compact">
-                {listItems.map((asset) => (
+                {filteredManageListItems.map((asset) => (
                   <EditableAssetListItem
                     key={asset.publicId}
                     asset={asset}
@@ -2912,18 +3186,26 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <span>{selectedAsset?.publicId || "Nuevo registro"}</span>
               </div>
               {assetSaveFeedback ? (
-                <div
-                  className={
-                    assetSaveFeedback.tone === "error"
-                      ? "form-error"
-                      : "form-success"
-                  }
-                >
-                  {assetSaveFeedback.message}
-                </div>
+                <DismissibleMessage
+                  tone={assetSaveFeedback.tone}
+                  message={assetSaveFeedback.message}
+                  onClose={() => setAssetSaveFeedback(null)}
+                />
               ) : null}
-              {error ? <div className="form-error">{error}</div> : null}
-              {success ? <div className="form-success">{success}</div> : null}
+              {error ? (
+                <DismissibleMessage
+                  tone="error"
+                  message={error}
+                  onClose={() => setError("")}
+                />
+              ) : null}
+              {success ? (
+                <DismissibleMessage
+                  tone="success"
+                  message={success}
+                  onClose={() => setSuccess("")}
+                />
+              ) : null}
               <form
                 ref={assetEditorFormRef}
                 className="enablement-library-editor"
@@ -3101,7 +3383,7 @@ export default function CommercialEnablementPage({ currentUser }) {
                     </section>
                   ) : null}
 
-                  <section className="enablement-library-editor-section is-primary">
+                  <section className="enablement-library-editor-section is-primary enablement-library-editor-section-base">
                     <div className="enablement-library-editor-section-header">
                       <div>
                         <span className="enablement-library-editor-kicker">
@@ -3112,28 +3394,30 @@ export default function CommercialEnablementPage({ currentUser }) {
                           Define el material, su estado y a quien va dirigido.
                         </p>
                       </div>
-                      <div className="enablement-library-card-topline">
-                        <span>{draft.status || "published"}</span>
-                        <span>{draft.visibilityLevel || "client_safe"}</span>
-                        <span>{draft.audienceCode || "mixed"}</span>
+                      <div className="enablement-library-card-topline enablement-library-base-topline">
+                        <span>{statusBadgeLabel}</span>
+                        <span>{visibilityBadgeLabel}</span>
+                        <span>{audienceBadgeLabel}</span>
                       </div>
                     </div>
-                    <div className="enablement-library-form-grid enablement-library-editor-meta-grid">
-                      <label className="enablement-library-field-span-2">
-                        Titulo
-                        <input
-                          ref={titleInputRef}
+                    <div className="enablement-library-form-grid enablement-library-editor-meta-grid enablement-library-editor-meta-grid-base">
+                      <div className="enablement-library-editor-select-cell enablement-library-field-span-2">
+                        <ChipInput
+                          label="Titulo"
+                          inputRef={titleInputRef}
                           required
                           minLength={3}
                           value={draft.title}
                           onChange={(event) =>
                             updateDraftField("title", event.target.value)
                           }
+                          ariaLabel="Titulo"
                         />
-                      </label>
-                      <label>
-                        Tipo de activo
-                        <select
+                      </div>
+                      <div className="enablement-library-editor-select-cell">
+                        <ChipSelect
+                          label="Tipo de activo"
+                          icon="asset"
                           value={draft.assetTypeCode}
                           onChange={(event) =>
                             updateDraftField(
@@ -3141,31 +3425,35 @@ export default function CommercialEnablementPage({ currentUser }) {
                               event.target.value,
                             )
                           }
+                          ariaLabel="Tipo de activo"
                         >
                           {(catalogs.asset_type || []).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.name}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                      <label>
-                        Estado
-                        <select
+                        </ChipSelect>
+                      </div>
+                      <div className="enablement-library-editor-select-cell">
+                        <ChipSelect
+                          label="Estado"
+                          icon="status"
                           value={draft.status}
                           onChange={(event) =>
                             updateDraftField("status", event.target.value)
                           }
+                          ariaLabel="Estado"
                         >
                           <option value="draft">Borrador</option>
                           <option value="published">Vigente</option>
                           <option value="obsolete">Obsoleto</option>
                           <option value="archived">Archivado</option>
-                        </select>
-                      </label>
-                      <label>
-                        Visibilidad
-                        <select
+                        </ChipSelect>
+                      </div>
+                      <div className="enablement-library-editor-select-cell">
+                        <ChipSelect
+                          label="Visibilidad"
+                          icon="visibility"
                           value={draft.visibilityLevel}
                           onChange={(event) =>
                             updateDraftField(
@@ -3173,36 +3461,41 @@ export default function CommercialEnablementPage({ currentUser }) {
                               event.target.value,
                             )
                           }
+                          ariaLabel="Visibilidad"
                         >
                           {(catalogs.visibility || []).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.name}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                      <label>
-                        Audiencia
-                        <select
+                        </ChipSelect>
+                      </div>
+                      <div className="enablement-library-editor-select-cell">
+                        <ChipSelect
+                          label="Audiencia"
+                          icon="audience"
                           value={draft.audienceCode}
                           onChange={(event) =>
                             updateDraftField("audienceCode", event.target.value)
                           }
+                          ariaLabel="Audiencia"
                         >
                           {(catalogs.audience || []).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.name}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                      <label>
-                        Idioma
-                        <select
+                        </ChipSelect>
+                      </div>
+                      <div className="enablement-library-editor-select-cell">
+                        <ChipSelect
+                          label="Idioma"
+                          icon="language"
                           value={draft.languageCode}
                           onChange={(event) =>
                             updateDraftField("languageCode", event.target.value)
                           }
+                          ariaLabel="Idioma"
                         >
                           {(
                             catalogs.language || [
@@ -3213,8 +3506,8 @@ export default function CommercialEnablementPage({ currentUser }) {
                               {option.name}
                             </option>
                           ))}
-                        </select>
-                      </label>
+                        </ChipSelect>
+                      </div>
                     </div>
                   </section>
 
@@ -3335,60 +3628,6 @@ export default function CommercialEnablementPage({ currentUser }) {
                           toggleDraftValue("industryCodes", value)
                         }
                       />
-                    </div>
-                    <div className="enablement-library-form-grid">
-                      <label>
-                        Etapas relacionadas
-                        <input
-                          value={joinCommaValues(draft.stageCodes)}
-                          onChange={(event) =>
-                            updateDraftField(
-                              "stageCodes",
-                              splitCommaValues(event.target.value),
-                            )
-                          }
-                          placeholder="contacto_inicial, desarrollo, cotizacion"
-                        />
-                      </label>
-                      <label>
-                        Temas
-                        <input
-                          value={joinCommaValues(draft.themeTags)}
-                          onChange={(event) =>
-                            updateDraftField(
-                              "themeTags",
-                              splitCommaValues(event.target.value),
-                            )
-                          }
-                          placeholder="presentacion, diferenciacion, discovery"
-                        />
-                      </label>
-                      <label>
-                        Personas / roles
-                        <input
-                          value={joinCommaValues(draft.personaTags)}
-                          onChange={(event) =>
-                            updateDraftField(
-                              "personaTags",
-                              splitCommaValues(event.target.value),
-                            )
-                          }
-                          placeholder="cfo, ti, operaciones"
-                        />
-                      </label>
-                      <label>
-                        Roles recomendados
-                        <input
-                          value={joinCommaValues(draft.recommendedRoleTags)}
-                          onChange={(event) =>
-                            updateDraftField(
-                              "recommendedRoleTags",
-                              splitCommaValues(event.target.value),
-                            )
-                          }
-                          placeholder="seller, manager, presales"
-                        />
-                      </label>
                     </div>
                   </section>
 
@@ -3750,19 +3989,22 @@ export default function CommercialEnablementPage({ currentUser }) {
                 <h2>Activos administrables</h2>
                 <span>Acciones directas desde Gobierno</span>
               </div>
+              <div className="enablement-library-form-grid single-column enablement-library-discovery-search">
+                <div className="enablement-library-search-row">
+                  <input
+                    type="search"
+                    value={governanceSearchQuery}
+                    onChange={(event) =>
+                      setGovernanceSearchQuery(event.target.value)
+                    }
+                    placeholder="Buscar por titulo, resumen o contexto"
+                    aria-label="Buscar"
+                  />
+                </div>
+              </div>
               <div className="enablement-library-governance-list" role="list">
-                {(Array.isArray(governance.manageableItems)
-                  ? governance.manageableItems.filter(
-                      (item) => item && item.publicId,
-                    )
-                  : []
-                ).length ? (
-                  (Array.isArray(governance.manageableItems)
-                    ? governance.manageableItems.filter(
-                        (item) => item && item.publicId,
-                      )
-                    : []
-                  ).map((item) => (
+                {filteredManageableGovernanceItems.length ? (
+                  filteredManageableGovernanceItems.map((item) => (
                     <GovernanceAssetListRow
                       key={item.publicId}
                       item={item}
@@ -3788,11 +4030,23 @@ export default function CommercialEnablementPage({ currentUser }) {
                   ))
                 ) : (
                   <div className="enablement-library-mini-card static">
-                    <strong>No hay activos administrables</strong>
-                    <span>
-                      Cuando existan activos con problemas de calidad,
-                      duplicados o acciones pendientes, aparecerán aquí.
-                    </span>
+                    {normalizedGovernanceSearch ? (
+                      <>
+                        <strong>No se encontraron activos para la busqueda</strong>
+                        <span>
+                          Ajusta el texto o limpia el filtro para ver todos
+                          los activos administrables.
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <strong>No hay activos administrables</strong>
+                        <span>
+                          Cuando existan activos con problemas de calidad,
+                          duplicados o acciones pendientes, aparecerán aquí.
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
