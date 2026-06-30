@@ -809,6 +809,7 @@ export default function CalendarPage({ currentUser }) {
   const [dayActivitiesModalOpen, setDayActivitiesModalOpen] = useState(false);
   const [dayActivitiesDate, setDayActivitiesDate] = useState("");
   const [dayActivitiesItems, setDayActivitiesItems] = useState([]);
+  const [alertTrafficFilter, setAlertTrafficFilter] = useState("all");
 
   const loadCalendarModule = useCallback(async () => {
     setLoading(true);
@@ -861,6 +862,16 @@ export default function CalendarPage({ currentUser }) {
   const alerts = data?.alerts || {};
   const myDay = data?.myDay || [];
   const indicators = data?.indicators || {};
+  const filteredPrioritizedAlerts = (alerts?.prioritized || [])
+    .filter((item) => {
+      if (alertTrafficFilter === "all") return true;
+      return (
+        String(item?.trafficLight || "")
+          .trim()
+          .toLowerCase() === alertTrafficFilter
+      );
+    })
+    .slice(0, 20);
   const totalActivities = weekdays.reduce(
     (sum, day) => sum + getDayActivityCount(day),
     0,
@@ -1436,16 +1447,40 @@ export default function CalendarPage({ currentUser }) {
       <section className="calendar-module-section">
         <div className="calendar-module-section-header">
           <h3>Alertas del dia</h3>
-          <span>
-            Total: {Number(alerts?.counters?.total || 0)} · Vencidas:{" "}
-            {Number(alerts?.counters?.overdue || 0)}
-          </span>
+          <div className="calendar-module-alerts-header-controls">
+            <span>
+              Total: {Number(alerts?.counters?.total || 0)} · Vencidas:{" "}
+              {Number(alerts?.counters?.overdue || 0)}
+            </span>
+            <div className="calendar-module-alert-filter" role="group" aria-label="Filtrar alertas por semaforo">
+              {[
+                { value: "all", label: "Todas" },
+                { value: "red", label: "Rojas" },
+                { value: "amber", label: "Ambar" },
+                { value: "green", label: "Verdes" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`calendar-module-badge calendar-module-alert-filter-badge ${
+                    `is-${option.value}`
+                  } ${
+                    alertTrafficFilter === option.value ? "is-active" : ""
+                  }`.trim()}
+                  onClick={() => setAlertTrafficFilter(option.value)}
+                  aria-pressed={alertTrafficFilter === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="calendar-module-alerts-layout">
           <article className="calendar-module-panel">
             <h4>Bandeja de alertas priorizadas por riesgo</h4>
             <ul className="calendar-module-alert-list">
-              {(alerts?.prioritized || []).slice(0, 20).map((item) => (
+              {filteredPrioritizedAlerts.map((item) => (
                 <li
                   key={`alert-${item.calendarSource || "unknown"}-${item.id}-${item.scheduledAt || "no-date"}`}
                 >
@@ -1477,6 +1512,19 @@ export default function CalendarPage({ currentUser }) {
                   </button>
                 </li>
               ))}
+              {!filteredPrioritizedAlerts.length ? (
+                <li>
+                  {alertTrafficFilter === "all"
+                    ? "Sin alertas para hoy."
+                    : `Sin alertas ${
+                        alertTrafficFilter === "red"
+                          ? "rojas"
+                          : alertTrafficFilter === "amber"
+                            ? "ambar"
+                            : "verdes"
+                      } para hoy.`}
+                </li>
+              ) : null}
             </ul>
           </article>
 

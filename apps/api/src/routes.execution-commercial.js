@@ -6936,7 +6936,13 @@ async function buildCommercialCalendarInsights({
       const scheduledAtMs = item.scheduledAt
         ? new Date(item.scheduledAt).getTime()
         : Number.NaN;
-      const isOverdue = Number.isFinite(scheduledAtMs) && scheduledAtMs < nowMs;
+      const hasRegisteredLeadSituation =
+        String(item.calendarSource || "") === "interaction" &&
+        String(item.leadSubstatusCode || "").trim().length > 0;
+      const isOverdue =
+        Number.isFinite(scheduledAtMs) &&
+        scheduledAtMs < nowMs &&
+        !hasRegisteredLeadSituation;
       const isToday =
         Number.isFinite(scheduledAtMs) &&
         todayWindow.start &&
@@ -6986,6 +6992,7 @@ async function buildCommercialCalendarInsights({
           isBlocked,
           hasOverdueDependency,
           isSilenceRisk,
+          hasRegisteredLeadSituation,
         },
         daysWithoutActivity,
         dependencies: deps,
