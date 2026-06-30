@@ -36,6 +36,8 @@ const MORNING_CUTOFF_HOUR = 12;
 const CALENDAR_SOURCE_LABELS = {
   opportunity: "Oportunidad",
   interaction: "Lead",
+  lead: "Lead",
+  standalone: "Independiente",
   unknown: "No definido",
 };
 
@@ -179,7 +181,24 @@ function normalizeCalendarActivityDraft(activity) {
   if (!activity) {
     return {
       id: null,
+      kind: "standalone",
       opportunityId: null,
+      interactionId: null,
+      accountId: null,
+      contactId: null,
+      accountLinkMode: "none",
+      contactLinkMode: "none",
+      accountDraftName: "",
+      accountDraftPhone: "",
+      accountDraftCity: "",
+      accountDraftStateRegion: "",
+      accountDraftWebsite: "",
+      accountDraftDescription: "",
+      contactDraftFirstName: "",
+      contactDraftLastName: "",
+      contactDraftEmail: "",
+      contactDraftPhone: "",
+      contactDraftPositionTitle: "",
       opportunityName: "",
       accountName: "",
       activityType: "call",
@@ -196,7 +215,39 @@ function normalizeCalendarActivityDraft(activity) {
 
   return {
     id: Number(activity.id || 0) || null,
+    kind:
+      String(
+        activity.kind || activity.calendarSource || "opportunity",
+      ).trim() || "opportunity",
     opportunityId: Number(activity.opportunityId || 0) || null,
+    interactionId: Number(activity.interactionId || 0) || null,
+    accountId: Number(activity.accountId || 0) || null,
+    contactId: Number(activity.contactId || 0) || null,
+    accountLinkMode:
+      String(activity.accountLinkMode || "none").trim() || "none",
+    contactLinkMode:
+      String(activity.contactLinkMode || "none").trim() || "none",
+    accountDraftName: String(activity.accountDraft?.name || "").trim(),
+    accountDraftPhone: String(activity.accountDraft?.phone || "").trim(),
+    accountDraftCity: String(activity.accountDraft?.city || "").trim(),
+    accountDraftStateRegion: String(
+      activity.accountDraft?.stateRegion || "",
+    ).trim(),
+    accountDraftWebsite: String(activity.accountDraft?.website || "").trim(),
+    accountDraftDescription: String(
+      activity.accountDraft?.description || "",
+    ).trim(),
+    contactDraftFirstName: String(
+      activity.contactDraft?.firstName || "",
+    ).trim(),
+    contactDraftLastName: String(
+      activity.contactDraft?.lastName || "",
+    ).trim(),
+    contactDraftEmail: String(activity.contactDraft?.email || "").trim(),
+    contactDraftPhone: String(activity.contactDraft?.phone || "").trim(),
+    contactDraftPositionTitle: String(
+      activity.contactDraft?.positionTitle || "",
+    ).trim(),
     opportunityName: String(activity.opportunityName || "").trim(),
     accountName: String(activity.accountName || "").trim(),
     activityType: String(activity.activityType || "call").trim() || "call",
@@ -258,6 +309,22 @@ function getDayPart(value) {
     : "tarde";
 }
 
+function getAccountOptionLabel(account) {
+  const name = String(account?.name || account?.account_name || "").trim();
+  return name || `Cuenta #${Number(account?.id || 0)}`;
+}
+
+function getContactOptionLabel(contact) {
+  const fullName =
+    String(contact?.full_name || "").trim() ||
+    `${String(contact?.first_name || "").trim()} ${String(contact?.last_name || "").trim()}`.trim();
+  const email = String(contact?.email || "").trim();
+  if (fullName && email) return `${fullName} (${email})`;
+  if (fullName) return fullName;
+  if (email) return email;
+  return `Contacto #${Number(contact?.id || 0)}`;
+}
+
 function groupItemsByDayPart(items) {
   return (items || []).reduce(
     (groups, item) => {
@@ -302,6 +369,8 @@ function normalizeCalendarSource(value) {
   const source = String(value || "").trim();
   if (source === "opportunity") return "opportunity";
   if (source === "interaction") return "interaction";
+  if (source === "lead") return "lead";
+  if (source === "standalone") return "standalone";
   return "unknown";
 }
 
@@ -312,6 +381,8 @@ function getCalendarSourceLabel(value) {
 function getCalendarSourceBadgeClass(value) {
   const source = normalizeCalendarSource(value);
   if (source === "interaction") return "is-lead";
+  if (source === "lead") return "is-lead";
+  if (source === "standalone") return "is-unknown";
   if (source === "opportunity") return "is-opportunity";
   return "is-unknown";
 }
@@ -372,15 +443,26 @@ function CalendarActivityEditorModal({
   onSave,
   onMarkDone,
   onCancelActivity,
+  accountOptions,
+  contactOptions,
+  loadingAccounts,
+  loadingContacts,
+  calendarLeadOptions,
+  calendarLeadsLoading,
+  calendarOpportunityOptions,
+  calendarOpportunitiesLoading,
 }) {
   if (!isOpen) return null;
+
+  const isCreateMode = !Number(draft?.id || 0);
 
   const { date: scheduledDate, time: scheduledTime } = splitDateTimeInputValue(
     draft?.scheduledAt,
   );
   const currentStatusLabel = activityStatusLabel(draft?.status);
-  const sourceLabel = getCalendarSourceLabel(draft?.calendarSource);
-  const sourceBadgeClass = getCalendarSourceBadgeClass(draft?.calendarSource);
+  const sourceKey = String(draft?.kind || draft?.calendarSource || "unknown");
+  const sourceLabel = getCalendarSourceLabel(sourceKey);
+  const sourceBadgeClass = getCalendarSourceBadgeClass(sourceKey);
   const typeLabel = activityTypeLabel(draft?.activityType);
 
   const applyAgendaDate = (nextDate) => {
@@ -408,11 +490,15 @@ function CalendarActivityEditorModal({
       <div className="modal-dialog calendar-activity-editor-modal">
         <div className="modal-header calendar-activity-editor-header">
           <div>
-            <h3 className="modal-title">Actualizar registro</h3>
+            <h3 className="modal-title">
+              {isCreateMode ? "Nueva actividad" : "Actualizar registro"}
+            </h3>
             <div className="calendar-module-chips-row calendar-activity-editor-chips-row">
-              <span className="calendar-activity-editor-status-pill">
-                Estado actual: {currentStatusLabel}
-              </span>
+              {!isCreateMode ? (
+                <span className="calendar-activity-editor-status-pill">
+                  Estado actual: {currentStatusLabel}
+                </span>
+              ) : null}
               <span
                 className={`calendar-module-source-badge ${sourceBadgeClass}`}
                 aria-label={`Origen: ${sourceLabel}`}
@@ -461,114 +547,500 @@ function CalendarActivityEditorModal({
               </p>
             ) : null}
 
-            <div className="calendar-activity-editor-grid">
-              <label className="calendar-activity-editor-full-width">
-                Objetivo
-                <textarea
-                  rows="3"
-                  value={draft.objective}
-                  disabled={readOnly || saving}
-                  onChange={(event) =>
-                    onChange("objective", event.target.value)
-                  }
-                  placeholder="Define el objetivo de la actividad"
-                />
-              </label>
+            <div className="calendar-activity-editor-hero">
+              <div className="calendar-activity-editor-hero-copy">
+                <span className="calendar-activity-editor-kicker">
+                  {isCreateMode ? "Captura rapida" : "Edicion de actividad"}
+                </span>
+                <h4>{draft.objective?.trim() || "Nueva actividad"}</h4>
+                <p>
+                  Define origen, vinculos y agenda sin perder contexto ni
+                  saltar entre modales.
+                </p>
+              </div>
+              <div className="calendar-activity-editor-hero-meta">
+                <span className="calendar-activity-editor-hero-chip">
+                  {sourceLabel}
+                </span>
+                <span className="calendar-activity-editor-hero-chip is-muted">
+                  {typeLabel}
+                </span>
+                <span className="calendar-activity-editor-hero-chip is-muted">
+                  {currentStatusLabel}
+                </span>
+              </div>
+            </div>
 
-              <label className="calendar-activity-editor-full-width">
-                Nota
-                <textarea
-                  rows="3"
-                  value={draft.note}
-                  disabled={readOnly || saving}
-                  onChange={(event) => onChange("note", event.target.value)}
-                  placeholder="Agrega contexto o seguimiento"
-                />
-              </label>
-
-              <div className="calendar-activity-editor-full-width calendar-activity-editor-agenda-block">
-                <strong>Agenda</strong>
-                <div className="calendar-activity-editor-agenda-grid">
-                  <label>
-                    Fecha
-                    <input
-                      type="date"
-                      value={scheduledDate}
-                      disabled={readOnly || saving}
-                      onChange={(event) => applyAgendaDate(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Hora
-                    <input
-                      type="time"
-                      value={scheduledTime}
-                      disabled={readOnly || saving}
-                      onChange={(event) => applyAgendaTime(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <div className="calendar-activity-editor-quick-chips">
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-chip"
-                    disabled={readOnly || saving}
-                    onClick={() => applyAgendaDate(toDateInputValue())}
-                  >
-                    Hoy
-                  </button>
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-chip"
-                    disabled={readOnly || saving}
-                    onClick={() =>
-                      applyAgendaDate(
-                        shiftDateInputValue(toDateInputValue(), 1),
-                      )
-                    }
-                  >
-                    Manana
-                  </button>
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-chip"
-                    disabled={readOnly || saving}
-                    onClick={() => applyAgendaTime("09:00")}
-                  >
-                    09:00
-                  </button>
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-chip"
-                    disabled={readOnly || saving}
-                    onClick={() => applyAgendaTime("12:00")}
-                  >
-                    12:00
-                  </button>
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-chip"
-                    disabled={readOnly || saving}
-                    onClick={() => applyAgendaTime("16:00")}
-                  >
-                    16:00
-                  </button>
+            <section className="calendar-activity-editor-section">
+              <div className="calendar-activity-editor-section-header">
+                <div>
+                  <strong>Contexto</strong>
+                  <p>Tipo de origen, estado y tipo de interacción.</p>
                 </div>
               </div>
+              <div className="calendar-activity-editor-grid is-tight">
+                <label>
+                  Tipo de origen
+                  <select
+                    value={draft.kind || "standalone"}
+                    disabled={!isCreateMode || readOnly || saving}
+                    onChange={(event) => onChange("kind", event.target.value)}
+                  >
+                    <option value="standalone">Independiente</option>
+                    <option value="lead">Lead</option>
+                    <option value="opportunity">Oportunidad</option>
+                  </select>
+                </label>
 
-              <label className="calendar-activity-editor-full-width">
-                Resultado
-                <textarea
-                  rows="3"
-                  value={draft.successCriteria}
+                <label>
+                  Estado
+                  <select
+                    value={draft.status}
+                    disabled={readOnly || saving}
+                    onChange={(event) => onChange("status", event.target.value)}
+                  >
+                    {CALENDAR_ACTIVITY_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="calendar-activity-editor-full-width">
+                  Tipo
+                  <select
+                    value={draft.activityType}
+                    disabled={readOnly || saving}
+                    onChange={(event) =>
+                      onChange("activityType", event.target.value)
+                    }
+                  >
+                    {CALENDAR_ACTIVITY_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {String(draft.kind || "standalone") === "opportunity" ? (
+                  <label>
+                    Oportunidad abierta
+                    <select
+                      value={draft.opportunityId || ""}
+                      disabled={readOnly || saving || calendarOpportunitiesLoading}
+                      onChange={(event) =>
+                        onChange("opportunityId", event.target.value)
+                      }
+                    >
+                      <option value="">
+                        {calendarOpportunitiesLoading
+                          ? "Cargando oportunidades..."
+                          : "Selecciona una oportunidad"}
+                      </option>
+                      {calendarOpportunityOptions.map((opportunity) => {
+                        const accountName = String(opportunity.accountName || "")
+                          .trim();
+                        const stageName = String(opportunity.stageName || "")
+                          .trim();
+                        const label = [opportunity.opportunityName, accountName, stageName]
+                          .filter(Boolean)
+                          .join(" · ");
+                        return (
+                          <option key={opportunity.opportunityId} value={opportunity.opportunityId}>
+                            {label || `Oportunidad ${opportunity.opportunityId}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                ) : null}
+
+                {String(draft.kind || "standalone") === "lead" ? (
+                  <label>
+                    Lead existente
+                    <select
+                      value={draft.interactionId || ""}
+                      disabled={readOnly || saving || calendarLeadsLoading}
+                      onChange={(event) =>
+                        onChange("interactionId", event.target.value)
+                      }
+                    >
+                      <option value="">
+                        {calendarLeadsLoading
+                          ? "Cargando leads..."
+                          : "Selecciona un lead"}
+                      </option>
+                      {calendarLeadOptions.map((lead) => {
+                        const leadStatus = String(lead.analysisStatus || "")
+                          .trim()
+                          .replace(/_/g, " ");
+                        const accountName = String(lead.accountName || "")
+                          .trim();
+                        const label = [lead.title, accountName, leadStatus]
+                          .filter(Boolean)
+                          .join(" · ");
+                        return (
+                          <option key={lead.id} value={lead.id}>
+                            {label || `Lead ${lead.id}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            </section>
+
+            {String(draft.kind || "standalone") === "standalone" ? (
+              <section className="calendar-activity-editor-section">
+                <div className="calendar-activity-editor-section-header">
+                  <div>
+                    <strong>Cuentas y contactos</strong>
+                    <p>
+                      Puedes vincular existentes o crear nuevos desde aqui.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="calendar-activity-editor-grid is-tight">
+                  <label>
+                    Cuenta
+                    <select
+                      value={draft.accountLinkMode || "none"}
+                      disabled={readOnly || saving}
+                      onChange={(event) =>
+                        onChange("accountLinkMode", event.target.value)
+                      }
+                    >
+                      <option value="none">Sin cuenta</option>
+                      <option value="existing">Seleccionar existente</option>
+                      <option value="create_new">Crear nueva</option>
+                    </select>
+                  </label>
+
+                  {String(draft.accountLinkMode || "none") === "existing" ? (
+                    <label>
+                      Cuenta existente
+                      <select
+                        value={draft.accountId || ""}
+                        disabled={readOnly || saving}
+                        onChange={(event) =>
+                          onChange("accountId", event.target.value)
+                        }
+                      >
+                        <option value="">
+                          {loadingAccounts
+                            ? "Cargando cuentas..."
+                            : "Selecciona cuenta"}
+                        </option>
+                        {(accountOptions || []).map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {getAccountOptionLabel(account)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {String(draft.accountLinkMode || "none") === "create_new" ? (
+                    <>
+                      <label>
+                        Nombre de cuenta
+                        <input
+                          type="text"
+                          value={draft.accountDraftName || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange("accountDraftName", event.target.value)
+                          }
+                          placeholder="Ej. Empresa ABC"
+                        />
+                      </label>
+                      <label>
+                        Telefono
+                        <input
+                          type="text"
+                          value={draft.accountDraftPhone || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange("accountDraftPhone", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Ciudad
+                        <input
+                          type="text"
+                          value={draft.accountDraftCity || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange("accountDraftCity", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Estado
+                        <input
+                          type="text"
+                          value={draft.accountDraftStateRegion || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange(
+                              "accountDraftStateRegion",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </>
+                  ) : null}
+
+                  <label>
+                    Contacto
+                    <select
+                      value={draft.contactLinkMode || "none"}
+                      disabled={readOnly || saving}
+                      onChange={(event) =>
+                        onChange("contactLinkMode", event.target.value)
+                      }
+                    >
+                      <option value="none">Sin contacto</option>
+                      <option value="existing">Seleccionar existente</option>
+                      <option value="create_new">Crear nuevo</option>
+                    </select>
+                  </label>
+
+                  {String(draft.contactLinkMode || "none") === "existing" ? (
+                    <label>
+                      Contacto existente
+                      <select
+                        value={draft.contactId || ""}
+                        disabled={
+                          readOnly ||
+                          saving ||
+                          !Number(draft.accountId || 0) ||
+                          loadingContacts ||
+                          String(draft.accountLinkMode || "none") !==
+                            "existing"
+                        }
+                        onChange={(event) =>
+                          onChange("contactId", event.target.value)
+                        }
+                      >
+                        <option value="">
+                          {String(draft.accountLinkMode || "none") !==
+                          "existing"
+                            ? "Primero selecciona cuenta existente"
+                            : !Number(draft.accountId || 0)
+                              ? "Selecciona una cuenta primero"
+                              : loadingContacts
+                                ? "Cargando contactos..."
+                                : (contactOptions || []).length
+                                  ? "Selecciona contacto"
+                                  : "Sin contactos para esta cuenta"}
+                        </option>
+                        {(contactOptions || []).map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {getContactOptionLabel(contact)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {String(draft.contactLinkMode || "none") === "create_new" ? (
+                    <>
+                      <label>
+                        Nombre
+                        <input
+                          type="text"
+                          value={draft.contactDraftFirstName || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange(
+                              "contactDraftFirstName",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Apellido
+                        <input
+                          type="text"
+                          value={draft.contactDraftLastName || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange(
+                              "contactDraftLastName",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Correo
+                        <input
+                          type="email"
+                          value={draft.contactDraftEmail || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange("contactDraftEmail", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Telefono
+                        <input
+                          type="text"
+                          value={draft.contactDraftPhone || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange("contactDraftPhone", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Cargo
+                        <input
+                          type="text"
+                          value={draft.contactDraftPositionTitle || ""}
+                          disabled={readOnly || saving}
+                          onChange={(event) =>
+                            onChange(
+                              "contactDraftPositionTitle",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            <section className="calendar-activity-editor-section">
+              <div className="calendar-activity-editor-section-header">
+                <div>
+                  <strong>Detalle</strong>
+                  <p>Describe la intencion y el resultado esperado.</p>
+                </div>
+              </div>
+              <div className="calendar-activity-editor-grid is-tight">
+                <label className="calendar-activity-editor-full-width">
+                  Objetivo
+                  <textarea
+                    rows="3"
+                    value={draft.objective}
+                    disabled={readOnly || saving}
+                    onChange={(event) =>
+                      onChange("objective", event.target.value)
+                    }
+                    placeholder="Define el objetivo de la actividad"
+                  />
+                </label>
+
+                <label className="calendar-activity-editor-full-width">
+                  Nota
+                  <textarea
+                    rows="3"
+                    value={draft.note}
+                    disabled={readOnly || saving}
+                    onChange={(event) => onChange("note", event.target.value)}
+                    placeholder="Agrega contexto o seguimiento"
+                  />
+                </label>
+
+                <label className="calendar-activity-editor-full-width">
+                  Resultado esperado
+                  <textarea
+                    rows="3"
+                    value={draft.successCriteria}
+                    disabled={readOnly || saving}
+                    onChange={(event) =>
+                      onChange("successCriteria", event.target.value)
+                    }
+                    placeholder="Describe el resultado de la gestion"
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="calendar-activity-editor-section calendar-activity-editor-section-is-accent">
+              <div className="calendar-activity-editor-section-header">
+                <div>
+                  <strong>Agenda</strong>
+                  <p>Fecha y hora para mantener el compromiso visible.</p>
+                </div>
+              </div>
+              <div className="calendar-activity-editor-agenda-grid">
+                <label>
+                  Fecha
+                  <input
+                    type="date"
+                    value={scheduledDate}
+                    disabled={readOnly || saving}
+                    onChange={(event) => applyAgendaDate(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Hora
+                  <input
+                    type="time"
+                    value={scheduledTime}
+                    disabled={readOnly || saving}
+                    onChange={(event) => applyAgendaTime(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="calendar-activity-editor-quick-chips">
+                <button
+                  type="button"
+                  className="calendar-activity-editor-chip"
                   disabled={readOnly || saving}
-                  onChange={(event) =>
-                    onChange("successCriteria", event.target.value)
+                  onClick={() => applyAgendaDate(toDateInputValue())}
+                >
+                  Hoy
+                </button>
+                <button
+                  type="button"
+                  className="calendar-activity-editor-chip"
+                  disabled={readOnly || saving}
+                  onClick={() =>
+                    applyAgendaDate(shiftDateInputValue(toDateInputValue(), 1))
                   }
-                  placeholder="Describe el resultado de la gestion"
-                />
-              </label>
-            </div>
+                >
+                  Mañana
+                </button>
+                <button
+                  type="button"
+                  className="calendar-activity-editor-chip"
+                  disabled={readOnly || saving}
+                  onClick={() => applyAgendaTime("09:00")}
+                >
+                  09:00
+                </button>
+                <button
+                  type="button"
+                  className="calendar-activity-editor-chip"
+                  disabled={readOnly || saving}
+                  onClick={() => applyAgendaTime("12:00")}
+                >
+                  12:00
+                </button>
+                <button
+                  type="button"
+                  className="calendar-activity-editor-chip"
+                  disabled={readOnly || saving}
+                  onClick={() => applyAgendaTime("16:00")}
+                >
+                  16:00
+                </button>
+              </div>
+            </section>
 
             {!readOnly ? (
               <div className="calendar-activity-editor-actions-block">
@@ -576,32 +1048,36 @@ function CalendarActivityEditorModal({
                   <p className="calendar-activity-editor-notice">{notice}</p>
                 ) : null}
                 <div className="calendar-activity-editor-icon-actions">
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-icon-button is-done"
-                    onClick={onMarkDone}
-                    disabled={saving}
-                    aria-label="Marcar realizada"
-                    title="Marcar realizada"
-                  >
-                    ✓
-                  </button>
-                  <button
-                    type="button"
-                    className="calendar-activity-editor-icon-button is-cancel"
-                    onClick={onCancelActivity}
-                    disabled={saving}
-                    aria-label="Cancelar actividad"
-                    title="Cancelar actividad"
-                  >
-                    ×
-                  </button>
+                  {!isCreateMode ? (
+                    <button
+                      type="button"
+                      className="calendar-activity-editor-icon-button is-done"
+                      onClick={onMarkDone}
+                      disabled={saving}
+                      aria-label="Marcar realizada"
+                      title="Marcar realizada"
+                    >
+                      ✓
+                    </button>
+                  ) : null}
+                  {!isCreateMode ? (
+                    <button
+                      type="button"
+                      className="calendar-activity-editor-icon-button is-cancel"
+                      onClick={onCancelActivity}
+                      disabled={saving}
+                      aria-label="Cancelar actividad"
+                      title="Cancelar actividad"
+                    >
+                      ×
+                    </button>
+                  ) : null}
                   <button
                     type="submit"
                     className="calendar-activity-editor-icon-button is-save"
                     disabled={saving}
                     aria-label="Guardar cambios"
-                    title="Guardar cambios"
+                    title={isCreateMode ? "Crear actividad" : "Guardar cambios"}
                   >
                     {saving ? (
                       "..."
@@ -778,9 +1254,7 @@ export default function CalendarPage({ currentUser }) {
     [currentUser],
   );
   const canReadAll = permissionSet.has("calendario_comercial.read_all");
-  const canUpdateActivities =
-    permissionSet.has("desarrollo_comercial.update") &&
-    permissionSet.has("oportunidades.update");
+  const canUpdateActivities = permissionSet.has("calendario_comercial.update");
 
   const [calendarView, setCalendarView] = useState("week");
   const [calendarDate, setCalendarDate] = useState(toDateInputValue());
@@ -810,6 +1284,14 @@ export default function CalendarPage({ currentUser }) {
   const [dayActivitiesDate, setDayActivitiesDate] = useState("");
   const [dayActivitiesItems, setDayActivitiesItems] = useState([]);
   const [alertTrafficFilter, setAlertTrafficFilter] = useState("all");
+  const [calendarAccountOptions, setCalendarAccountOptions] = useState([]);
+  const [calendarContactOptions, setCalendarContactOptions] = useState([]);
+  const [calendarLeadOptions, setCalendarLeadOptions] = useState([]);
+  const [calendarOpportunityOptions, setCalendarOpportunityOptions] = useState([]);
+  const [calendarAccountsLoading, setCalendarAccountsLoading] = useState(false);
+  const [calendarContactsLoading, setCalendarContactsLoading] = useState(false);
+  const [calendarLeadsLoading, setCalendarLeadsLoading] = useState(false);
+  const [calendarOpportunitiesLoading, setCalendarOpportunitiesLoading] = useState(false);
 
   const loadCalendarModule = useCallback(async () => {
     setLoading(true);
@@ -927,6 +1409,127 @@ export default function CalendarPage({ currentUser }) {
     setDayActivitiesItems([]);
   };
 
+  const loadCalendarAccountOptions = useCallback(async () => {
+    setCalendarAccountsLoading(true);
+    try {
+      const response = await api.get("/api/accounts");
+      const payload = response.data;
+      const options = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+      setCalendarAccountOptions(options);
+    } catch {
+      setCalendarAccountOptions([]);
+    } finally {
+      setCalendarAccountsLoading(false);
+    }
+  }, []);
+
+  const loadCalendarContactOptions = useCallback(async (accountId) => {
+    const normalizedAccountId = Number(accountId || 0);
+    if (!normalizedAccountId) {
+      setCalendarContactOptions([]);
+      return;
+    }
+    setCalendarContactsLoading(true);
+    try {
+      const response = await api.get("/api/contacts", {
+        params: { accountId: normalizedAccountId },
+      });
+      const payload = response.data;
+      const options = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+      setCalendarContactOptions(options);
+    } catch {
+      setCalendarContactOptions([]);
+    } finally {
+      setCalendarContactsLoading(false);
+    }
+  }, []);
+
+  const loadCalendarLeadOptions = useCallback(async () => {
+    setCalendarLeadsLoading(true);
+    try {
+      const response = await api.get("/api/interactions", {
+        params: {
+          page: 1,
+          pageSize: 200,
+          sortBy: "updatedAt",
+          sortDir: "desc",
+          status: "lead_unassigned,lead_assigned",
+        },
+      });
+      const payload = response.data;
+      const options = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+      setCalendarLeadOptions(
+        options.filter((lead) => {
+          const status = String(lead?.analysisStatus || "").trim();
+          return status === "lead_unassigned" || status === "lead_assigned";
+        }),
+      );
+    } catch {
+      setCalendarLeadOptions([]);
+    } finally {
+      setCalendarLeadsLoading(false);
+    }
+  }, []);
+
+  const loadCalendarOpportunityOptions = useCallback(async () => {
+    setCalendarOpportunitiesLoading(true);
+    try {
+      const params = {
+        quickFilter: "all",
+      };
+      if (selectedSellerId && selectedSellerId !== "all") {
+        params.sellerUserId = Number(selectedSellerId);
+      }
+      const response = await api.get("/api/commercial-tracking/open-opportunities", {
+        params,
+      });
+      const payload = response.data;
+      const options = Array.isArray(payload?.items) ? payload.items : [];
+      setCalendarOpportunityOptions(options);
+    } catch {
+      setCalendarOpportunityOptions([]);
+    } finally {
+      setCalendarOpportunitiesLoading(false);
+    }
+  }, [selectedSellerId]);
+
+  const openNewActivityModal = () => {
+    clearActivityModalCloseTimer();
+    setActivityModalOpen(true);
+    setActivityLoading(false);
+    setActivityError("");
+    setActivityNotice("");
+    setActivityDraft(
+      normalizeCalendarActivityDraft({
+        id: null,
+        kind: "standalone",
+        calendarSource: "standalone",
+        status: "pending",
+        activityType: "call",
+        scheduledAt: `${toDateInputValue()}T09:00`,
+        objective: "",
+        note: "",
+        successCriteria: "",
+      }),
+    );
+    setCalendarContactOptions([]);
+    setCalendarLeadOptions([]);
+    setCalendarOpportunityOptions([]);
+    loadCalendarAccountOptions();
+  };
+
   const openActivityModal = async (item) => {
     const opportunityId = Number(item?.opportunityId || 0);
     const activityId = Number(item?.id || 0);
@@ -935,7 +1538,7 @@ export default function CalendarPage({ currentUser }) {
       String(item?.calendarSource || "opportunity").trim() || "opportunity";
     if (!activityId) return;
 
-    if (calendarSource !== "opportunity") {
+    if (calendarSource === "interaction") {
       if (!interactionId) return;
       setError("");
       try {
@@ -978,7 +1581,7 @@ export default function CalendarPage({ currentUser }) {
       }),
     );
 
-    if (!opportunityId) {
+    if (calendarSource === "opportunity" && !opportunityId) {
       setActivityLoading(false);
       setActivityError(
         "No fue posible identificar la oportunidad de esta actividad.",
@@ -989,10 +1592,24 @@ export default function CalendarPage({ currentUser }) {
     setActivityLoading(true);
 
     try {
-      const response = await api.get(
-        `/api/commercial-development/opportunities/${opportunityId}/activities/${activityId}`,
-      );
-      setActivityDraft(normalizeCalendarActivityDraft(response.data));
+      const response =
+        calendarSource === "opportunity"
+          ? await api.get(
+              `/api/commercial-development/opportunities/${opportunityId}/activities/${activityId}`,
+            )
+          : await api.get(
+              `/api/commercial-development/calendar/activities/${activityId}`,
+            );
+      const normalized = normalizeCalendarActivityDraft(response.data);
+      setActivityDraft(normalized);
+      if (String(normalized.kind || "") === "standalone") {
+        loadCalendarAccountOptions();
+        if (Number(normalized.accountId || 0) > 0) {
+          loadCalendarContactOptions(normalized.accountId);
+        } else {
+          setCalendarContactOptions([]);
+        }
+      }
     } catch (requestError) {
       setActivityError(
         getApiErrorMessage(
@@ -1012,6 +1629,87 @@ export default function CalendarPage({ currentUser }) {
 
   const handleActivityFieldChange = (field, value) => {
     clearActivityModalCloseTimer();
+    if (field === "kind") {
+      if (value === "standalone") {
+        loadCalendarAccountOptions();
+      } else if (value === "lead") {
+        loadCalendarLeadOptions();
+      } else if (value === "opportunity") {
+        loadCalendarOpportunityOptions();
+      } else {
+        setCalendarContactOptions([]);
+      }
+      setActivityDraft((current) => ({
+        ...current,
+        kind: value,
+        calendarSource: value,
+        opportunityId: value === "opportunity" ? current.opportunityId : null,
+        interactionId: value === "lead" ? current.interactionId : null,
+        accountId: value === "standalone" ? current.accountId : null,
+        contactId: value === "standalone" ? current.contactId : null,
+        accountLinkMode: value === "standalone" ? current.accountLinkMode : "none",
+        contactLinkMode: value === "standalone" ? current.contactLinkMode : "none",
+      }));
+      setActivityError("");
+      setActivityNotice("");
+      return;
+    }
+
+    if (field === "accountLinkMode") {
+      const mode = String(value || "none").trim() || "none";
+      setActivityDraft((current) => ({
+        ...current,
+        accountLinkMode: mode,
+        accountId: mode === "existing" ? current.accountId : null,
+        contactId: null,
+        contactLinkMode: mode === "none" ? "none" : current.contactLinkMode,
+      }));
+      if (mode === "existing") {
+        loadCalendarAccountOptions();
+      } else {
+        setCalendarContactOptions([]);
+      }
+      setActivityError("");
+      setActivityNotice("");
+      return;
+    }
+
+    if (field === "contactLinkMode") {
+      const mode = String(value || "none").trim() || "none";
+      setActivityDraft((current) => ({
+        ...current,
+        contactLinkMode: mode,
+        contactId: mode === "existing" ? current.contactId : null,
+      }));
+      setActivityError("");
+      setActivityNotice("");
+      return;
+    }
+
+    if (field === "accountId") {
+      const nextAccountId = Number(value || 0) || null;
+      setActivityDraft((current) => ({
+        ...current,
+        accountId: nextAccountId,
+        contactId: null,
+      }));
+      loadCalendarContactOptions(nextAccountId);
+      setActivityError("");
+      setActivityNotice("");
+      return;
+    }
+
+    if (field === "contactId") {
+      const nextContactId = Number(value || 0) || null;
+      setActivityDraft((current) => ({
+        ...current,
+        contactId: nextContactId,
+      }));
+      setActivityError("");
+      setActivityNotice("");
+      return;
+    }
+
     setActivityDraft((current) => ({
       ...current,
       [field]: value,
@@ -1024,19 +1722,20 @@ export default function CalendarPage({ currentUser }) {
     event.preventDefault();
     if (activityReadOnly || activityLoading || activitySaving) return;
 
-    const opportunityId = Number(activityDraft?.opportunityId || 0);
     const activityId = Number(activityDraft?.id || 0);
-    if (!opportunityId || !activityId) {
-      setActivityError("No se encontro la actividad a actualizar.");
-      return;
-    }
     if (!activityDraft?.scheduledAt || !activityDraft?.objective?.trim()) {
       setActivityError("Completa fecha/hora y objetivo para guardar.");
       return;
     }
 
+    if (!activityId) {
+      await createCalendarActivity();
+      return;
+    }
+
     await updateCalendarActivity(
       {
+        kind: activityDraft.kind,
         entryKind: "activity",
         activityType: activityDraft.activityType,
         scheduledAt: activityDraft.scheduledAt,
@@ -1045,6 +1744,10 @@ export default function CalendarPage({ currentUser }) {
         note: activityDraft.note.trim(),
         successCriteria: activityDraft.successCriteria.trim(),
         isPrimaryNextStep: Boolean(activityDraft.isPrimaryNextStep),
+        opportunityId: Number(activityDraft.opportunityId || 0) || undefined,
+        interactionId: Number(activityDraft.interactionId || 0) || undefined,
+        accountId: Number(activityDraft.accountId || 0) || undefined,
+        contactId: Number(activityDraft.contactId || 0) || undefined,
       },
       "Actividad actualizada.",
       "No fue posible actualizar la actividad.",
@@ -1063,7 +1766,7 @@ export default function CalendarPage({ currentUser }) {
   ) => {
     const opportunityId = Number(activityDraft?.opportunityId || 0);
     const activityId = Number(activityDraft?.id || 0);
-    if (!opportunityId || !activityId) {
+    if (!activityId) {
       setActivityError("No se encontro la actividad a actualizar.");
       return false;
     }
@@ -1072,10 +1775,21 @@ export default function CalendarPage({ currentUser }) {
     setActivityError("");
     setActivityNotice("");
     try {
-      await api.patch(
-        `/api/commercial-development/opportunities/${opportunityId}/activities/${activityId}`,
-        payload,
-      );
+      if ((activityDraft?.kind || activityDraft?.calendarSource) === "opportunity") {
+        if (!opportunityId) {
+          setActivityError("No se encontro la oportunidad de la actividad.");
+          return false;
+        }
+        await api.patch(
+          `/api/commercial-development/opportunities/${opportunityId}/activities/${activityId}`,
+          payload,
+        );
+      } else {
+        await api.patch(
+          `/api/commercial-development/calendar/activities/${activityId}`,
+          payload,
+        );
+      }
       await loadCalendarModule();
       setActivityDraft((current) => ({
         ...current,
@@ -1104,6 +1818,155 @@ export default function CalendarPage({ currentUser }) {
     } catch (requestError) {
       setActivityError(getApiErrorMessage(requestError, fallbackErrorMessage));
       return false;
+    } finally {
+      setActivitySaving(false);
+    }
+  };
+
+  const createCalendarActivity = async () => {
+    const kind = String(activityDraft?.kind || "standalone").trim();
+    const accountLinkMode =
+      kind === "standalone"
+        ? String(activityDraft.accountLinkMode || "none").trim() || "none"
+        : "none";
+    const contactLinkMode =
+      kind === "standalone"
+        ? String(activityDraft.contactLinkMode || "none").trim() || "none"
+        : "none";
+
+    const accountDraft =
+      accountLinkMode === "create_new"
+        ? {
+            name: String(activityDraft.accountDraftName || "").trim(),
+            phone: String(activityDraft.accountDraftPhone || "").trim(),
+            city: String(activityDraft.accountDraftCity || "").trim(),
+            stateRegion: String(
+              activityDraft.accountDraftStateRegion || "",
+            ).trim(),
+            website: String(activityDraft.accountDraftWebsite || "").trim(),
+            description: String(
+              activityDraft.accountDraftDescription || "",
+            ).trim(),
+          }
+        : undefined;
+
+    const contactDraft =
+      contactLinkMode === "create_new"
+        ? {
+            firstName: String(activityDraft.contactDraftFirstName || "").trim(),
+            lastName: String(activityDraft.contactDraftLastName || "").trim(),
+            email: String(activityDraft.contactDraftEmail || "").trim(),
+            phone: String(activityDraft.contactDraftPhone || "").trim(),
+            positionTitle: String(
+              activityDraft.contactDraftPositionTitle || "",
+            ).trim(),
+          }
+        : undefined;
+
+    const payload = {
+      kind,
+      activityType: activityDraft.activityType,
+      scheduledAt: activityDraft.scheduledAt,
+      status: activityDraft.status,
+      objective: String(activityDraft.objective || "").trim(),
+      note: String(activityDraft.note || "").trim(),
+      successCriteria: String(activityDraft.successCriteria || "").trim(),
+      opportunityId: Number(activityDraft.opportunityId || 0) || undefined,
+      interactionId: Number(activityDraft.interactionId || 0) || undefined,
+      accountId:
+        accountLinkMode === "existing"
+          ? Number(activityDraft.accountId || 0) || undefined
+          : undefined,
+      contactId:
+        contactLinkMode === "existing"
+          ? Number(activityDraft.contactId || 0) || undefined
+          : undefined,
+      accountLinkMode,
+      contactLinkMode,
+      accountDraft,
+      contactDraft,
+    };
+
+    if (kind === "opportunity" && !payload.opportunityId) {
+      setActivityError("Para oportunidad debes indicar Opportunity ID.");
+      return;
+    }
+    if (kind === "lead" && !payload.interactionId) {
+      setActivityError("Para lead debes indicar Interaction ID.");
+      return;
+    }
+    if (kind === "standalone" && accountLinkMode === "existing" && !payload.accountId) {
+      setActivityError("Selecciona una cuenta existente.");
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      accountLinkMode === "create_new" &&
+      !String(accountDraft?.name || "").trim()
+    ) {
+      setActivityError("Para crear cuenta, indica el nombre.");
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      contactLinkMode === "existing" &&
+      !payload.contactId
+    ) {
+      setActivityError("Selecciona un contacto existente.");
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      contactLinkMode === "existing" &&
+      accountLinkMode !== "existing"
+    ) {
+      setActivityError(
+        "Para usar contacto existente, selecciona una cuenta existente.",
+      );
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      contactLinkMode === "create_new" &&
+      !String(contactDraft?.firstName || "").trim()
+    ) {
+      setActivityError("Para crear contacto, indica el nombre.");
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      contactLinkMode === "create_new" &&
+      !String(contactDraft?.lastName || "").trim()
+    ) {
+      setActivityError("Para crear contacto, indica el apellido.");
+      return;
+    }
+    if (
+      kind === "standalone" &&
+      contactLinkMode === "create_new" &&
+      accountLinkMode === "none"
+    ) {
+      setActivityError(
+        "Para crear contacto, primero selecciona o crea una cuenta.",
+      );
+      return;
+    }
+
+    setActivitySaving(true);
+    setActivityError("");
+    setActivityNotice("");
+    try {
+      await api.post("/api/commercial-development/calendar/activities", payload);
+      await loadCalendarModule();
+      setActivityNotice("Actividad creada.");
+      clearActivityModalCloseTimer();
+      activityModalCloseTimerRef.current = window.setTimeout(() => {
+        closeActivityModal();
+      }, 1400);
+    } catch (requestError) {
+      setActivityError(
+        getApiErrorMessage(requestError, "No fue posible crear la actividad."),
+      );
     } finally {
       setActivitySaving(false);
     }
@@ -1285,11 +2148,40 @@ export default function CalendarPage({ currentUser }) {
           </label>
           <button
             type="button"
-            className="btn-primary"
+            className="calendar-module-toolbar-icon-button"
             onClick={loadCalendarModule}
             disabled={loading}
+            aria-label="Actualizar calendario"
+            title={loading ? "Actualizando..." : "Actualizar calendario"}
           >
-            {loading ? "Actualizando..." : "Actualizar"}
+            {loading ? (
+              <svg
+                className="calendar-module-toolbar-icon-spinner"
+                viewBox="0 0 24 24"
+                focusable="false"
+                aria-hidden="true"
+              >
+                <path
+                  d="M20 12a8 8 0 1 1-2.35-5.66M20 4v6h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path
+                  d="M20 12a8 8 0 1 1-2.35-5.66M20 4v6h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
           </button>
         </div>
       </header>
@@ -1315,6 +2207,24 @@ export default function CalendarPage({ currentUser }) {
               Zona horaria oficial:{" "}
               {data?.businessTimezone || "America/Mexico_City"}
             </span>
+            {canUpdateActivities ? (
+              <button
+                type="button"
+                className="calendar-module-toolbar-icon-button"
+                onClick={openNewActivityModal}
+                aria-label="Nueva actividad"
+                title="Nueva actividad"
+              >
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="calendar-module-grid calendar-module-activities-grid">
@@ -1660,6 +2570,14 @@ export default function CalendarPage({ currentUser }) {
         onSave={handleSaveActivity}
         onMarkDone={handleMarkActivityDone}
         onCancelActivity={handleCancelActivity}
+        accountOptions={calendarAccountOptions}
+        contactOptions={calendarContactOptions}
+        loadingAccounts={calendarAccountsLoading}
+        loadingContacts={calendarContactsLoading}
+        calendarLeadOptions={calendarLeadOptions}
+        calendarLeadsLoading={calendarLeadsLoading}
+        calendarOpportunityOptions={calendarOpportunityOptions}
+        calendarOpportunitiesLoading={calendarOpportunitiesLoading}
       />
 
       <CalendarDayActivitiesModal

@@ -11,6 +11,7 @@
     "seed:demo:capture": "node scripts/captureDemoSeedSnapshot.js",
     "seed:demo": "node scripts/seedDemo.js",
     "seed:demo:reset-db": "node scripts/resetDemoDb.js",
+    "test:quick:calendar-create-rules": "node scripts/quickCalendarActivityCreationChecks.js",
     "test:db:prepare": "node test/setupTestDb.js",
     "test": "npm run test:db:prepare && vitest run --maxWorkers=1",
     "test:watch": "npm run test:db:prepare && vitest --maxWorkers=1"

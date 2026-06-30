@@ -373,6 +373,298 @@ Un cambio puede considerarse validado si:
 - el build del frontend sigue pasando;
 - la auditoria conserva los eventos esperados cuando aplica.
 
+## Plan de pruebas - Calendario (actividades unificadas)
+
+Esta seccion cubre la especificacion acordada para creacion de actividades de:
+
+- oportunidad
+- lead
+- suelta
+
+Reglas de negocio cerradas para esta bateria:
+
+1. una actividad suelta puede convertirse luego en lead u oportunidad;
+2. una actividad de lead siempre requiere `interactionId`;
+3. una actividad suelta requiere `scheduledAt` y `objective`;
+4. las actividades sueltas tambien entran al SLA y semaforo.
+
+### Objetivo de pruebas
+
+Validar que el calendario permita crear, listar, editar y convertir actividades
+sin romper permisos, semaforo y consistencia de relaciones comerciales.
+
+### Alcance
+
+Incluye:
+
+- pruebas funcionales UI (flujo usuario)
+- pruebas de integracion API (contrato y reglas)
+- pruebas de permisos por rol
+- pruebas de validaciones negativas
+- pruebas de conversion de suelta -> lead/oportunidad
+
+No incluye:
+
+- rendimiento/carga
+- pruebas de seguridad ofensiva
+
+### Datos base de prueba
+
+Preparar como minimo:
+
+1. 1 vendedor con permisos completos de calendario y comerciales.
+2. 1 usuario solo lectura de calendario.
+3. 1 oportunidad activa (`opp_A`).
+4. 1 lead/interaccion existente (`lead_A`) con `interactionId` valido.
+5. 1 cuenta existente (`acc_A`).
+6. 1 contacto existente (`con_A`) ligado a `acc_A`.
+
+### Matriz de permisos a verificar
+
+Roles sugeridos:
+
+1. `calendar_manager_full`:
+  - `calendario_comercial.read`
+  - `calendario_comercial.update`
+  - `desarrollo_comercial.update`
+  - `oportunidades.read`
+  - `oportunidades.update`
+  - `interacciones.read`
+  - `interacciones.create`
+  - `cuentas.create` (o `cuentas.request`)
+  - `contactos.create` (o `contactos.request`)
+2. `calendar_readonly`:
+  - `calendario_comercial.read`
+  - sin permisos `*.update`/`*.create`
+3. `calendar_partial`:
+  - `calendario_comercial.update`
+  - sin `interacciones.create`
+  - sin `oportunidades.update`
+
+### Casos funcionales (happy path)
+
+#### F-01 Crear actividad de oportunidad
+
+Pasos:
+
+1. Abrir calendario.
+2. Crear actividad con tipo `opportunity` vinculada a `opp_A`.
+3. Guardar con fecha/hora y objetivo.
+
+Esperado:
+
+- se crea correctamente;
+- aparece en `Actividades en calendario`;
+- aparece en `Alertas del dia` segun su riesgo.
+
+#### F-02 Crear actividad de lead
+
+Pasos:
+
+1. Crear actividad tipo `lead` con `interactionId = lead_A`.
+2. Guardar.
+
+Esperado:
+
+- creacion exitosa;
+- item visible con fuente `Lead`;
+- al abrir detalle mantiene relacion con `interactionId`.
+
+#### F-03 Crear actividad suelta minima
+
+Pasos:
+
+1. Crear actividad tipo `standalone` sin cuenta ni contacto.
+2. Informar solo `scheduledAt` + `objective`.
+3. Guardar.
+
+Esperado:
+
+- creacion exitosa;
+- activity list muestra fuente `Suelta`;
+- entra en semaforo/SLA.
+
+#### F-04 Crear suelta vinculando cuenta/contacto existentes
+
+Pasos:
+
+1. Crear `standalone`.
+2. Relacionar `accountId = acc_A` y `contactId = con_A`.
+
+Esperado:
+
+- creacion exitosa;
+- se visualiza contexto de cuenta/contacto en tarjeta/modal.
+
+#### F-05 Crear suelta creando cuenta/contacto
+
+Pasos:
+
+1. Crear `standalone`.
+2. Seleccionar modo `create_new` para cuenta y contacto.
+3. Guardar.
+
+Esperado:
+
+- se crean cuenta/contacto y luego actividad;
+- actividad queda ligada a entidades nuevas.
+
+#### F-06 Convertir suelta a lead
+
+Pasos:
+
+1. Seleccionar actividad suelta existente.
+2. Convertir a `lead` (link existing o create new lead).
+
+Esperado:
+
+- conversion exitosa;
+- actividad cambia a fuente `Lead`;
+- queda `interactionId` persistido.
+
+#### F-07 Convertir suelta a oportunidad
+
+Pasos:
+
+1. Seleccionar actividad suelta existente.
+2. Convertir a `opportunity` (link existing o create new).
+
+Esperado:
+
+- conversion exitosa;
+- actividad cambia a fuente `Oportunidad`;
+- queda `opportunityId` persistido.
+
+### Casos funcionales de permisos
+
+#### P-01 Readonly no crea ni edita
+
+Esperado:
+
+- no ve acciones de crear/guardar;
+- API responde `403` si intenta forzar.
+
+#### P-02 Sin `interacciones.create` bloquea conversion/create lead con create_new
+
+Esperado:
+
+- `403` y mensaje claro.
+
+#### P-03 Sin `oportunidades.update` bloquea create/convert de oportunidad
+
+Esperado:
+
+- `403` y mensaje claro.
+
+#### P-04 Sin `cuentas.create` o `contactos.create` bloquea create_new correspondiente
+
+Esperado:
+
+- rechazo controlado;
+- permite continuar si se cambia a `link_existing` o `none`.
+
+### Casos funcionales de validaciones
+
+#### V-01 Lead sin interactionId
+
+Request/UI: `kind = lead`, sin `interactionId`.
+
+Esperado:
+
+- validacion `400`;
+- mensaje explicito: `interactionId es obligatorio para actividad de lead`.
+
+#### V-02 Suelta sin fecha
+
+Request/UI: `kind = standalone`, sin `scheduledAt`.
+
+Esperado: `400`.
+
+#### V-03 Suelta sin objetivo
+
+Request/UI: `kind = standalone`, sin `objective`.
+
+Esperado: `400`.
+
+#### V-04 Objetivo vacio o corto
+
+Esperado: `400`.
+
+#### V-05 Fecha invalida
+
+Esperado: `400`.
+
+#### V-06 Conversion no permitida desde tipo no suelto
+
+Intentar convertir actividad que ya es lead/oportunidad.
+
+Esperado: `409` o `400` segun contrato final, con mensaje claro.
+
+### Casos SLA y semaforo
+
+#### S-01 Suelta vencida aparece en rojo
+
+1. Crear suelta con fecha pasada y estado abierto.
+2. Refrescar calendario.
+
+Esperado:
+
+- aparece en alertas priorizadas;
+- `trafficLight = red`;
+- contador de vencidas incrementa.
+
+#### S-02 Suelta de hoy aparece en ambar
+
+Esperado: `trafficLight = amber` (si no esta vencida).
+
+#### S-03 Suelta futura aparece en verde
+
+Esperado: `trafficLight = green` en condiciones normales.
+
+### Matriz de integracion API
+
+Endpoints del contrato objetivo:
+
+1. `POST /api/commercial-development/calendar/activities`
+2. `PATCH /api/commercial-development/calendar/activities/:id`
+3. `GET /api/commercial-development/calendar/activities`
+4. `POST /api/commercial-development/calendar/activities/:id/convert`
+
+Pruebas minimas por endpoint:
+
+1. create
+  - 3 felices: opportunity, lead, standalone
+  - 4 negativas: permiso, validacion, relaciones invalidas, fecha invalida
+2. update
+  - feliz: cambio de fecha/objetivo/status
+  - negativa: actualizar con permisos insuficientes
+3. list
+  - feliz: filtros por `kinds`, `traffic`, `sellerUserId`
+  - negativa: query invalida
+4. convert
+  - feliz: standalone->lead y standalone->opportunity
+  - negativa: sin permisos, target invalido, origen no standalone
+
+### Checklist de regresion obligatoria
+
+Tras implementar esta especificacion, ejecutar:
+
+1. flujo actual de editar actividad de oportunidad en calendario;
+2. apertura de situacion de lead desde calendario;
+3. alertas del dia (filtro por color y contadores);
+4. build web;
+5. suite API de calendario/comercial;
+6. auditoria de eventos `created`, `updated`, `converted`.
+
+### Evidencia recomendada
+
+Guardar por corrida:
+
+- capturas de UI de cada tipo de actividad;
+- request/response de API (happy + error);
+- ids creados y trazabilidad de conversion;
+- snapshot de contadores SLA antes/despues.
+
 ## Estado actual de la aplicacion (2026-06)
 
 - Leads/interacciones: la subida de documentos esta desacoplada del analisis; al crear un lead queda en estado sin analizar hasta ejecutar el analisis manual.

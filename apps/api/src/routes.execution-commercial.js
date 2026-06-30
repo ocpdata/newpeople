@@ -36,9 +36,12 @@ import { buildQuotationPdfBuffer } from "./quotationPdf.js";
 import {
   getCommercialSettings,
   getCompanyDocumentBranding,
+  getTemporaryFeatureSettings,
   STAGE_SLA_DEFAULTS,
 } from "./settings.js";
 import { sendCommercialActionEmail } from "./utils.js";
+import { validateAccountDuplicates } from "./routes.accounts.js";
+import { validateContactDuplicates } from "./routes.contacts.js";
 
 const router = express.Router();
 
@@ -214,6 +217,16 @@ const CALENDAR_DEFAULT_REMINDER_LEAD_MINUTES = Math.max(
   Number(config.app?.calendarReminderLeadMinutes || 60),
 );
 const CALENDAR_ALERT_LOOKBACK_DAYS = 45;
+const CALENDAR_ACTIVITY_KINDS = new Set([
+  "opportunity",
+  "lead",
+  "standalone",
+]);
+const CALENDAR_CUSTOM_ACTIVITY_KINDS = new Set(["lead", "standalone"]);
+const CALENDAR_CUSTOM_ACTIVITY_TYPES = new Set([
+  ...COMMERCIAL_ACTIVITY_ACTION_TYPES,
+  "lead_follow_up",
+]);
 const LEAD_FOLLOW_UP_ACTION_LABELS = {
   schedule_meeting: "Agendar reunion",
   send_follow_up_message: "Enviar seguimiento",
@@ -275,12 +288,45 @@ router.use(async (_req, _res, next) => {
     await Promise.all([
       ensureCommercialExecutionSchema(),
       ensureCommercialPlanningSchema(),
+      ensureCommercialCalendarActivitiesSchema(),
     ]);
     next();
   } catch (error) {
     next(error);
   }
 });
+
+async function ensureCommercialCalendarActivitiesSchema() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS commercial_calendar_activities (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      kind VARCHAR(20) NOT NULL,
+      activity_type VARCHAR(60) NOT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      scheduled_at DATETIME NULL,
+      due_date DATE NULL,
+      objective VARCHAR(255) NOT NULL,
+      note TEXT NULL,
+      success_criteria TEXT NULL,
+      seller_user_id BIGINT UNSIGNED NULL,
+      opportunity_id BIGINT UNSIGNED NULL,
+      interaction_id BIGINT UNSIGNED NULL,
+      account_id BIGINT UNSIGNED NULL,
+      contact_id BIGINT UNSIGNED NULL,
+      is_primary_next_step TINYINT(1) NOT NULL DEFAULT 0,
+      created_by BIGINT UNSIGNED NOT NULL,
+      updated_by BIGINT UNSIGNED NOT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+      KEY idx_cca_schedule_status (scheduled_at, status),
+      KEY idx_cca_kind_status (kind, status),
+      KEY idx_cca_seller (seller_user_id),
+      KEY idx_cca_opportunity (opportunity_id),
+      KEY idx_cca_interaction (interaction_id),
+      KEY idx_cca_account (account_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
+}
 
 function getQuarterLabel(year, quarter) {
   return `T${quarter} ${year}`;
@@ -3178,6 +3224,920 @@ function getDiffDays(fromDate, toDate = new Date()) {
     return 0;
   }
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
+}
+
+function normalizeCalendarActivityKind(value) {
+  const kind = String(value || "").trim();
+  return CALENDAR_ACTIVITY_KINDS.has(kind) ? kind : "";
+}
+
+function resolveCalendarCreateStatusForKind(kind) {
+  if (kind === "opportunity") {
+    return "pending";
+  }
+  return "pending";
+}
+
+function resolveCalendarUpdateStatusForKind(kind, status) {
+  const normalized = String(status || "").trim();
+  if (!normalized) {
+    return "pending";
+  }
+  if (kind === "opportunity") {
+    return COMMERCIAL_ACTIVITY_STATUSES.has(normalized) ? normalized : "";
+  }
+  return COMMERCIAL_ACTIVITY_STATUSES.has(normalized) ? normalized : "";
+}
+
+async function getCatalogIdByCode(tableName, code) {
+  const rows = await query(
+    `SELECT id FROM ${tableName} WHERE code = ? LIMIT 1`,
+    [String(code || "").trim()],
+  );
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
+function hasAccountCreateCapability(user) {
+  return (
+    userHasPermission(user, "cuentas.create") ||
+    userHasPermission(user, "cuentas.request")
+  );
+}
+
+function canCreateAccountsDirect(user) {
+  return userHasPermission(user, "cuentas.create");
+}
+
+function canRequestAccounts(user) {
+  return userHasPermission(user, "cuentas.request");
+}
+
+function hasContactCreateCapability(user) {
+  return (
+    userHasPermission(user, "contactos.create") ||
+    userHasPermission(user, "contactos.request")
+  );
+}
+
+function canCreateContactsDirect(user) {
+  return userHasPermission(user, "contactos.create");
+}
+
+function canRequestContacts(user) {
+  return userHasPermission(user, "contactos.request");
+}
+
+function normalizeAccountLinkMode(value) {
+  const mode = String(value || "none").trim();
+  if (["existing", "create_new", "none"].includes(mode)) {
+    return mode;
+  }
+  return "none";
+}
+
+function normalizeContactLinkMode(value) {
+  const mode = String(value || "none").trim();
+  if (["existing", "create_new", "none"].includes(mode)) {
+    return mode;
+  }
+  return "none";
+}
+
+async function loadScopedCalendarAccount(user, accountId) {
+  const parsedAccountId = Number(accountId || 0);
+  if (!Number.isInteger(parsedAccountId) || parsedAccountId <= 0) {
+    return null;
+  }
+
+  let scopeWhere = "";
+  if (!hasCalendarGlobalScope(user)) {
+    scopeWhere =
+      " AND (ao_scope.user_id IS NOT NULL OR a.created_by = ? OR o.id IS NOT NULL)";
+  }
+
+  const rows = await query(
+    `SELECT a.id, a.name, a.country_id
+     FROM accounts a
+     INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+     LEFT JOIN account_owners ao_scope ON ao_scope.account_id = a.id AND ao_scope.user_id = ?
+     LEFT JOIN opportunities o ON o.account_id = a.id AND o.seller_user_id = ?
+     WHERE a.id = ?
+       AND aas.code IN ('activada', 'pendiente_activacion')
+       ${scopeWhere}
+     LIMIT 1`,
+    hasCalendarGlobalScope(user)
+      ? [Number(user.id), Number(user.id), parsedAccountId]
+      : [
+          Number(user.id),
+          Number(user.id),
+          parsedAccountId,
+          Number(user.id),
+        ],
+  );
+  return rows[0]
+    ? {
+        id: Number(rows[0].id),
+        name: rows[0].name || "",
+        countryId: rows[0].country_id ? Number(rows[0].country_id) : null,
+      }
+    : null;
+}
+
+async function loadScopedCalendarContact(user, contactId, accountId = null) {
+  const parsedContactId = Number(contactId || 0);
+  if (!Number.isInteger(parsedContactId) || parsedContactId <= 0) {
+    return null;
+  }
+  const parsedAccountId = Number(accountId || 0);
+  const params = [parsedContactId];
+  let accountWhere = "";
+  if (Number.isInteger(parsedAccountId) && parsedAccountId > 0) {
+    accountWhere = " AND c.account_id = ?";
+    params.push(parsedAccountId);
+  }
+
+  let scopeWhere = "";
+  if (!hasCalendarGlobalScope(user)) {
+    scopeWhere = " AND (ao_scope.user_id IS NOT NULL OR c.created_by = ?)";
+    params.push(Number(user.id));
+  }
+
+  const rows = await query(
+    `SELECT c.id, c.account_id, c.first_name, c.last_name
+     FROM contacts c
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+     LEFT JOIN account_owners ao_scope ON ao_scope.account_id = c.account_id AND ao_scope.user_id = ?
+     WHERE c.id = ?
+       AND cas.code IN ('activado', 'pendiente_activacion')
+       ${accountWhere}
+       ${scopeWhere}
+     LIMIT 1`,
+    [Number(user.id), ...params],
+  );
+  return rows[0]
+    ? {
+        id: Number(rows[0].id),
+        accountId: rows[0].account_id ? Number(rows[0].account_id) : null,
+        fullName: `${rows[0].first_name || ""} ${rows[0].last_name || ""}`.trim(),
+      }
+    : null;
+}
+
+async function loadScopedCalendarInteraction(user, interactionId) {
+  const parsedInteractionId = Number(interactionId || 0);
+  if (!Number.isInteger(parsedInteractionId) || parsedInteractionId <= 0) {
+    return null;
+  }
+  const params = [parsedInteractionId];
+  let scopeWhere = "";
+  if (!hasCalendarGlobalScope(user)) {
+    scopeWhere = " AND (i.seller_user_id = ? OR ao_scope.user_id IS NOT NULL)";
+    params.push(Number(user.id));
+  }
+  const rows = await query(
+    `SELECT i.id, i.title, i.account_id, i.contact_id, i.seller_user_id,
+            a.name AS account_name,
+            c.first_name AS contact_first_name,
+            c.last_name AS contact_last_name,
+            su.full_name AS seller_user_name
+     FROM interactions i
+     INNER JOIN accounts a ON a.id = i.account_id
+     LEFT JOIN contacts c ON c.id = i.contact_id
+     LEFT JOIN users su ON su.id = i.seller_user_id
+     LEFT JOIN account_owners ao_scope ON ao_scope.account_id = i.account_id AND ao_scope.user_id = ?
+     WHERE i.id = ?
+       ${scopeWhere}
+     LIMIT 1`,
+    [Number(user.id), ...params],
+  );
+  return rows[0]
+    ? {
+        id: Number(rows[0].id),
+        title: rows[0].title || "",
+        accountId: rows[0].account_id ? Number(rows[0].account_id) : null,
+        accountName: rows[0].account_name || "",
+        contactId: rows[0].contact_id ? Number(rows[0].contact_id) : null,
+        contactName: `${rows[0].contact_first_name || ""} ${rows[0].contact_last_name || ""}`.trim(),
+        sellerUserId:
+          rows[0].seller_user_id === null ? null : Number(rows[0].seller_user_id),
+        sellerUserName: rows[0].seller_user_name || "Sin vendedor",
+      }
+    : null;
+}
+
+async function createCalendarAccountFromDraft(user, draft = {}) {
+  if (!hasAccountCreateCapability(user)) {
+    throw Object.assign(new Error("No autorizado para crear cuentas"), {
+      status: 403,
+    });
+  }
+  const name = String(draft?.name || "").trim();
+  if (!name) {
+    throw Object.assign(new Error("El nombre de la cuenta es obligatorio"), {
+      status: 400,
+    });
+  }
+
+  let activationCode = null;
+  if (canCreateAccountsDirect(user)) {
+    activationCode = "activada";
+  } else if (canRequestAccounts(user)) {
+    const temporaryFeatures = await getTemporaryFeatureSettings();
+    activationCode = temporaryFeatures?.accountsPendingEnabled
+      ? "pendiente_activacion"
+      : null;
+  }
+  if (!activationCode) {
+    throw Object.assign(new Error("No autorizado"), {
+      status: 403,
+    });
+  }
+
+  const [accountTypeId, economicSectorId, activationStatusId] =
+    await Promise.all([
+      getCatalogIdByCode("account_types", "prospecto"),
+      getCatalogIdByCode("economic_sectors", "otros"),
+      getCatalogIdByCode("account_activation_statuses", activationCode),
+    ]);
+  if (!accountTypeId || !economicSectorId || !activationStatusId) {
+    throw Object.assign(
+      new Error("No fue posible resolver catalogos para crear la cuenta"),
+      {
+        status: 500,
+      },
+    );
+  }
+
+  const countryRows = await query(
+    `SELECT id FROM countries WHERE iso2 = 'MX' LIMIT 1`,
+  );
+  const countryId = Number(draft?.countryId || 0) || Number(countryRows?.[0]?.id || 0) || null;
+  if (!countryId) {
+    throw Object.assign(new Error("No fue posible resolver el pais"), {
+      status: 500,
+    });
+  }
+
+  const duplicateValidation = await validateAccountDuplicates({
+    draft: {
+      name,
+      accountTypeId,
+      registrationCode: null,
+      phone: String(draft?.phone || "").trim(),
+      economicSectorId,
+      website: String(draft?.website || "").trim(),
+      city: String(draft?.city || "").trim(),
+      stateRegion: String(draft?.stateRegion || "").trim(),
+      countryId,
+      companyDescription: String(draft?.description || "").trim(),
+      description: String(draft?.description || "").trim(),
+      addressLine: "",
+      postalCode: "",
+      activationStatusId,
+      ownerUserIds: [Number(user.id)],
+    },
+    user,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(
+        duplicateValidation.duplicateDecision === "review_required"
+          ? "Detectamos una coincidencia fuerte con cuentas existentes. Antes de crear una cuenta nueva, revisa si en realidad estas frente a un duplicado."
+          : "Detectamos una coincidencia probable con cuentas existentes. Verifica si corresponde a la misma organizacion antes de continuar.",
+      ),
+      {
+        status: 409,
+      },
+    );
+  }
+
+  const registrationCode =
+    `CAL-${Date.now()}-${Math.floor(Math.random() * 100000)}`.slice(0, 80);
+  const now = new Date();
+  const insertResult = await query(
+    `INSERT INTO accounts
+       (name, account_type_id, registration_code, phone, economic_sector_id, website,
+        city, state_region, country_id, description, address_line, postal_code,
+        activation_status_id, created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+    [
+      name,
+      accountTypeId,
+      registrationCode,
+      String(draft?.phone || "").trim() || null,
+      economicSectorId,
+      String(draft?.website || "").trim() || null,
+      String(draft?.city || "").trim() || null,
+      String(draft?.stateRegion || "").trim() || null,
+      countryId,
+      String(draft?.description || "").trim() || null,
+      activationStatusId,
+      Number(user.id),
+      now,
+      Number(user.id),
+      now,
+    ],
+  );
+
+  const accountId = Number(insertResult.insertId || 0);
+  if (!accountId) {
+    throw Object.assign(new Error("No fue posible crear la cuenta"), {
+      status: 500,
+    });
+  }
+
+  await query(
+    `INSERT INTO account_owners (account_id, user_id, assigned_at, assigned_by)
+     SELECT ?, ?, NOW(3), ?
+     WHERE NOT EXISTS (
+       SELECT 1 FROM account_owners WHERE account_id = ? AND user_id = ? LIMIT 1
+     )`,
+    [accountId, Number(user.id), Number(user.id), accountId, Number(user.id)],
+  );
+
+  return accountId;
+}
+
+async function createCalendarContactFromDraft(user, accountId, draft = {}) {
+  if (!hasContactCreateCapability(user)) {
+    throw Object.assign(new Error("No autorizado para crear contactos"), {
+      status: 403,
+    });
+  }
+  const firstName = String(draft?.firstName || "").trim();
+  const lastName = String(draft?.lastName || "").trim();
+  if (!firstName || !lastName) {
+    throw Object.assign(
+      new Error("Nombre y apellido del contacto son obligatorios"),
+      {
+        status: 400,
+      },
+    );
+  }
+  let activationCode = null;
+  if (canCreateContactsDirect(user)) {
+    activationCode = "activado";
+  } else if (canRequestContacts(user)) {
+    const temporaryFeatures = await getTemporaryFeatureSettings();
+    activationCode = temporaryFeatures?.contactsPendingEnabled
+      ? "pendiente_activacion"
+      : null;
+  }
+  if (!activationCode) {
+    throw Object.assign(new Error("No autorizado"), {
+      status: 403,
+    });
+  }
+
+  const [
+    purchaseParticipationId,
+    relationshipTypeId,
+    hierarchyLevelId,
+    influenceLevelId,
+    employmentStatusId,
+    activationStatusId,
+  ] = await Promise.all([
+    getCatalogIdByCode("contact_purchase_participations", "ninguno"),
+    getCatalogIdByCode("contact_relationship_types", "media"),
+    getCatalogIdByCode("contact_hierarchy_levels", "usuario"),
+    getCatalogIdByCode("contact_influence_levels", "media"),
+    getCatalogIdByCode("contact_employment_statuses", "labora"),
+    getCatalogIdByCode("contact_activation_statuses", activationCode),
+  ]);
+  if (
+    !purchaseParticipationId ||
+    !relationshipTypeId ||
+    !hierarchyLevelId ||
+    !influenceLevelId ||
+    !employmentStatusId ||
+    !activationStatusId
+  ) {
+    throw Object.assign(
+      new Error("No fue posible resolver catalogos para crear el contacto"),
+      {
+        status: 500,
+      },
+    );
+  }
+
+  const accountRows = await query(
+    `SELECT country_id FROM accounts WHERE id = ? LIMIT 1`,
+    [Number(accountId)],
+  );
+  const countryId = Number(draft?.countryId || 0) || Number(accountRows?.[0]?.country_id || 0) || null;
+
+  const duplicateValidation = await validateContactDuplicates({
+    draft: {
+      firstName,
+      lastName,
+      accountId: Number(accountId),
+      positionTitle: String(draft?.positionTitle || "").trim(),
+      phone: String(draft?.phone || "").trim(),
+      phoneExtension: String(draft?.phoneExtension || "").trim(),
+      mobile: String(draft?.mobile || "").trim(),
+      email: String(draft?.email || "").trim(),
+      department: String(draft?.department || "").trim(),
+      countryId,
+      stateRegion: String(draft?.stateRegion || "").trim(),
+      city: String(draft?.city || "").trim(),
+      addressLine: "",
+      postalCode: "",
+      purchaseParticipationId,
+      hierarchyLevelId,
+      relationshipTypeId,
+      influenceLevelId,
+      employmentStatusId,
+      activationStatusId,
+      managerContactId: null,
+      influencesContactId: null,
+    },
+    user,
+  });
+  if (duplicateValidation.duplicateDecision !== "clear") {
+    throw Object.assign(
+      new Error(
+        "No se creo el contacto porque detectamos una coincidencia con contactos existentes y el sistema esta configurado para evitar duplicados automaticamente.",
+      ),
+      {
+        status: 409,
+      },
+    );
+  }
+
+  const now = new Date();
+  const insertResult = await query(
+    `INSERT INTO contacts
+       (first_name, last_name, account_id, position_title, phone, phone_extension,
+        mobile, email, department, country_id, state_region, city, address_line,
+        postal_code, purchase_participation_id, relationship_type_id,
+        hierarchy_level_id, influence_level_id, employment_status_id,
+        activation_status_id, manager_contact_id, influences_contact_id,
+        created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+    [
+      firstName,
+      lastName,
+      Number(accountId),
+      String(draft?.positionTitle || "").trim() || null,
+      String(draft?.phone || "").trim() || null,
+      String(draft?.phoneExtension || "").trim() || null,
+      String(draft?.mobile || "").trim() || null,
+      String(draft?.email || "").trim() || null,
+      String(draft?.department || "").trim() || null,
+      countryId,
+      String(draft?.stateRegion || "").trim() || null,
+      String(draft?.city || "").trim() || null,
+      purchaseParticipationId,
+      relationshipTypeId,
+      hierarchyLevelId,
+      influenceLevelId,
+      employmentStatusId,
+      activationStatusId,
+      Number(user.id),
+      now,
+      Number(user.id),
+      now,
+    ],
+  );
+  return Number(insertResult.insertId || 0);
+}
+
+async function resolveCalendarActivityRelations(user, payload = {}, options = {}) {
+  const kind = normalizeCalendarActivityKind(payload.kind);
+  const allowCreate = options.allowCreate !== false;
+
+  let accountId = null;
+  let contactId = null;
+  let interactionId = null;
+  let opportunityId = null;
+  let sellerUserId = null;
+
+  if (kind === "opportunity") {
+    const parsedOpportunityId = Number(payload.opportunityId || 0);
+    if (!Number.isInteger(parsedOpportunityId) || parsedOpportunityId <= 0) {
+      throw Object.assign(new Error("opportunityId es obligatorio"), {
+        status: 400,
+      });
+    }
+    const opportunity = await loadOpportunityForExecution(user, parsedOpportunityId);
+    if (!opportunity) {
+      throw Object.assign(new Error("Oportunidad no encontrada"), {
+        status: 404,
+      });
+    }
+    opportunityId = Number(opportunity.id);
+    accountId = Number(opportunity.account_id || opportunity.accountId || 0) || null;
+    sellerUserId = Number(opportunity.seller_user_id || opportunity.sellerUserId || 0) || null;
+  }
+
+  if (kind === "lead") {
+    if (!hasInteractionReadPermission(user)) {
+      throw Object.assign(new Error("No autorizado para usar leads"), {
+        status: 403,
+      });
+    }
+    const parsedInteractionId = Number(payload.interactionId || 0);
+    if (!Number.isInteger(parsedInteractionId) || parsedInteractionId <= 0) {
+      throw Object.assign(new Error("interactionId es obligatorio"), {
+        status: 400,
+      });
+    }
+    const interaction = await loadScopedCalendarInteraction(user, parsedInteractionId);
+    if (!interaction) {
+      throw Object.assign(new Error("Lead no encontrado"), {
+        status: 404,
+      });
+    }
+    interactionId = Number(interaction.id);
+    accountId = interaction.accountId;
+    contactId = interaction.contactId;
+    sellerUserId = interaction.sellerUserId;
+  }
+
+  const accountLinkMode = normalizeAccountLinkMode(payload.accountLinkMode);
+  const contactLinkMode = normalizeContactLinkMode(payload.contactLinkMode);
+
+  if (accountLinkMode === "existing") {
+    const scopedAccount = await loadScopedCalendarAccount(user, payload.accountId);
+    if (!scopedAccount) {
+      throw Object.assign(new Error("Cuenta no encontrada o sin acceso"), {
+        status: 404,
+      });
+    }
+    accountId = scopedAccount.id;
+  } else if (accountLinkMode === "create_new") {
+    if (!allowCreate) {
+      throw Object.assign(new Error("No se puede crear cuenta en esta operacion"), {
+        status: 400,
+      });
+    }
+    accountId = await createCalendarAccountFromDraft(user, payload.accountDraft || {});
+  }
+
+  if (contactLinkMode === "existing") {
+    const scopedContact = await loadScopedCalendarContact(user, payload.contactId, accountId);
+    if (!scopedContact) {
+      throw Object.assign(new Error("Contacto no encontrado o sin acceso"), {
+        status: 404,
+      });
+    }
+    contactId = scopedContact.id;
+    if (!accountId && scopedContact.accountId) {
+      accountId = Number(scopedContact.accountId);
+    }
+  } else if (contactLinkMode === "create_new") {
+    if (!allowCreate) {
+      throw Object.assign(new Error("No se puede crear contacto en esta operacion"), {
+        status: 400,
+      });
+    }
+    if (!accountId) {
+      throw Object.assign(new Error("Para crear contacto, primero define una cuenta"), {
+        status: 400,
+      });
+    }
+    contactId = await createCalendarContactFromDraft(
+      user,
+      accountId,
+      payload.contactDraft || {},
+    );
+  }
+
+  if (!sellerUserId) {
+    const requestedSellerUserId = Number(payload.sellerUserId || 0);
+    if (
+      requestedSellerUserId > 0 &&
+      hasCalendarGlobalScope(user)
+    ) {
+      sellerUserId = requestedSellerUserId;
+    } else {
+      sellerUserId = Number(user.id);
+    }
+  }
+
+  return {
+    opportunityId,
+    interactionId,
+    accountId,
+    contactId,
+    sellerUserId,
+    accountLinkMode,
+    contactLinkMode,
+  };
+}
+
+function mapCustomCalendarActivityRow(row, timeZone = BUSINESS_TIMEZONE) {
+  const kind = String(row.kind || "standalone").trim() || "standalone";
+  return {
+    id: Number(row.id),
+    calendarSource: kind,
+    opportunityId:
+      row.opportunity_id === null ? null : Number(row.opportunity_id),
+    opportunityName: row.opportunity_name || "",
+    interactionId: row.interaction_id === null ? null : Number(row.interaction_id),
+    accountId: row.account_id === null ? null : Number(row.account_id),
+    accountName: row.account_name || "",
+    contactId: row.contact_id === null ? null : Number(row.contact_id),
+    contactName: row.contact_name || "",
+    activityType: String(row.activity_type || "other").trim() || "other",
+    status: String(row.status || "pending").trim() || "pending",
+    scheduledAt: row.scheduled_at,
+    scheduledDate: formatDateInTimeZone(row.scheduled_at, timeZone),
+    title: row.objective || "",
+    objective: row.objective || "",
+    note: row.note || "",
+    successCriteria: row.success_criteria || "",
+    isPrimaryNextStep: Boolean(row.is_primary_next_step),
+    stageName: kind === "lead" ? "Lead" : kind === "standalone" ? "Independiente" : "",
+    sellerUserId:
+      row.seller_user_id === null ? null : Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "Sin vendedor",
+    readonlyByStatus: ["done", "cancelled"].includes(String(row.status || "")),
+    amountUsd: 0,
+    closeDate: null,
+  };
+}
+
+async function listCommercialCustomCalendarActivities({
+  user,
+  range,
+  allowedStatuses,
+  sellerUserId = null,
+}) {
+  const params = [
+    range.startDateTime,
+    range.endExclusiveDateTime,
+    ...Array.from(CALENDAR_CUSTOM_ACTIVITY_KINDS),
+    ...allowedStatuses,
+  ];
+  const where = [
+    "cca.scheduled_at >= ?",
+    "cca.scheduled_at < ?",
+    `cca.kind IN (${Array.from(CALENDAR_CUSTOM_ACTIVITY_KINDS)
+      .map(() => "?")
+      .join(", ")})`,
+    `cca.status IN (${allowedStatuses.map(() => "?").join(", ")})`,
+  ];
+
+  if (Number.isInteger(Number(sellerUserId)) && Number(sellerUserId) > 0) {
+    where.push("cca.seller_user_id = ?");
+    params.push(Number(sellerUserId));
+  }
+
+  if (!hasCalendarGlobalScope(user)) {
+    where.push("(cca.seller_user_id = ? OR cca.created_by = ?)");
+    params.push(Number(user.id), Number(user.id));
+  }
+
+  return query(
+    `SELECT cca.id, cca.kind, cca.activity_type, cca.status, cca.scheduled_at,
+            cca.objective, cca.note, cca.success_criteria, cca.is_primary_next_step,
+            cca.seller_user_id, su.full_name AS seller_user_name,
+            cca.opportunity_id, o.name AS opportunity_name,
+            cca.interaction_id,
+            cca.account_id, a.name AS account_name,
+            cca.contact_id, CONCAT(c.first_name, ' ', c.last_name) AS contact_name
+     FROM commercial_calendar_activities cca
+     LEFT JOIN users su ON su.id = cca.seller_user_id
+     LEFT JOIN opportunities o ON o.id = cca.opportunity_id
+     LEFT JOIN accounts a ON a.id = cca.account_id
+     LEFT JOIN contacts c ON c.id = cca.contact_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY cca.scheduled_at ASC, cca.id ASC`,
+    params,
+  );
+}
+
+async function loadCustomCalendarActivityById(user, activityId) {
+  const parsedActivityId = Number(activityId || 0);
+  if (!Number.isInteger(parsedActivityId) || parsedActivityId <= 0) {
+    return null;
+  }
+  const params = [parsedActivityId];
+  let scopeWhere = "";
+  if (!hasCalendarGlobalScope(user)) {
+    scopeWhere = " AND (cca.seller_user_id = ? OR cca.created_by = ?)";
+    params.push(Number(user.id), Number(user.id));
+  }
+
+  const rows = await query(
+    `SELECT cca.id, cca.kind, cca.activity_type, cca.status, cca.scheduled_at,
+            cca.due_date, cca.objective, cca.note, cca.success_criteria,
+            cca.seller_user_id, su.full_name AS seller_user_name,
+            cca.opportunity_id, o.name AS opportunity_name,
+            cca.interaction_id,
+            cca.account_id, a.name AS account_name,
+            cca.contact_id, CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+            cca.is_primary_next_step
+     FROM commercial_calendar_activities cca
+     LEFT JOIN users su ON su.id = cca.seller_user_id
+     LEFT JOIN opportunities o ON o.id = cca.opportunity_id
+     LEFT JOIN accounts a ON a.id = cca.account_id
+     LEFT JOIN contacts c ON c.id = cca.contact_id
+     WHERE cca.id = ?
+       ${scopeWhere}
+     LIMIT 1`,
+    params,
+  );
+
+  return rows[0] || null;
+}
+
+function parseCalendarScheduledAt(scheduledAtRaw, timeZone) {
+  const scheduledAt = toBusinessDateTimeUtc(scheduledAtRaw, timeZone);
+  if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+    return null;
+  }
+  return scheduledAt;
+}
+
+async function createCustomCalendarActivity({
+  user,
+  payload,
+  businessTimezone,
+}) {
+  const kind = normalizeCalendarActivityKind(payload.kind);
+  if (!CALENDAR_CUSTOM_ACTIVITY_KINDS.has(kind)) {
+    throw Object.assign(new Error("kind invalido"), { status: 400 });
+  }
+
+  const activityType = String(payload.activityType || "").trim();
+  if (!CALENDAR_CUSTOM_ACTIVITY_TYPES.has(activityType)) {
+    throw Object.assign(new Error("activityType invalido"), { status: 400 });
+  }
+
+  const objective = String(payload.objective || "").trim();
+  if (!objective) {
+    throw Object.assign(new Error("El objetivo es obligatorio"), {
+      status: 400,
+    });
+  }
+
+  const scheduledAtRaw = String(payload.scheduledAt || "").trim();
+  const scheduledAt = parseCalendarScheduledAt(scheduledAtRaw, businessTimezone);
+  if (!scheduledAt) {
+    throw Object.assign(new Error("scheduledAt invalido"), { status: 400 });
+  }
+
+  const status = resolveCalendarUpdateStatusForKind(
+    kind,
+    payload.status || resolveCalendarCreateStatusForKind(kind),
+  );
+  if (!status) {
+    throw Object.assign(new Error("status invalido"), { status: 400 });
+  }
+
+  const relations = await resolveCalendarActivityRelations(user, payload, {
+    allowCreate: true,
+  });
+
+  const dueDate = formatDateInTimeZone(scheduledAt, businessTimezone);
+  const insertResult = await query(
+    `INSERT INTO commercial_calendar_activities
+       (kind, activity_type, status, scheduled_at, due_date, objective, note,
+        success_criteria, seller_user_id, opportunity_id, interaction_id,
+        account_id, contact_id, is_primary_next_step, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      kind,
+      activityType,
+      status,
+      scheduledAt,
+      dueDate,
+      objective,
+      String(payload.note || "").trim() || null,
+      String(payload.successCriteria || "").trim() || null,
+      relations.sellerUserId || null,
+      relations.opportunityId || null,
+      relations.interactionId || null,
+      relations.accountId || null,
+      relations.contactId || null,
+      0,
+      Number(user.id),
+      Number(user.id),
+    ],
+  );
+  return Number(insertResult.insertId || 0);
+}
+
+async function updateCustomCalendarActivity({
+  user,
+  activityId,
+  payload,
+  businessTimezone,
+}) {
+  const current = await loadCustomCalendarActivityById(user, activityId);
+  if (!current) {
+    throw Object.assign(new Error("Actividad no encontrada"), {
+      status: 404,
+    });
+  }
+
+  const kind = String(current.kind || "standalone").trim() || "standalone";
+  const activityType =
+    payload.activityType === undefined
+      ? String(current.activity_type || "other")
+      : String(payload.activityType || "").trim();
+  if (!CALENDAR_CUSTOM_ACTIVITY_TYPES.has(activityType)) {
+    throw Object.assign(new Error("activityType invalido"), { status: 400 });
+  }
+
+  const objective =
+    payload.objective === undefined
+      ? String(current.objective || "")
+      : String(payload.objective || "").trim();
+  if (!objective) {
+    throw Object.assign(new Error("El objetivo es obligatorio"), {
+      status: 400,
+    });
+  }
+
+  const status =
+    payload.status === undefined
+      ? String(current.status || "pending")
+      : resolveCalendarUpdateStatusForKind(kind, payload.status);
+  if (!status || !COMMERCIAL_ACTIVITY_STATUSES.has(status)) {
+    throw Object.assign(new Error("status invalido"), { status: 400 });
+  }
+
+  const scheduledAtRaw =
+    payload.scheduledAt === undefined
+      ? current.scheduled_at
+      : String(payload.scheduledAt || "").trim();
+  const scheduledAt = parseCalendarScheduledAt(scheduledAtRaw, businessTimezone);
+  if (!scheduledAt) {
+    throw Object.assign(new Error("scheduledAt invalido"), { status: 400 });
+  }
+
+  const nextPayload = {
+    kind,
+    accountLinkMode:
+      payload.accountLinkMode === undefined ? "none" : payload.accountLinkMode,
+    accountId:
+      payload.accountId === undefined ? current.account_id : payload.accountId,
+    accountDraft: payload.accountDraft,
+    contactLinkMode:
+      payload.contactLinkMode === undefined ? "none" : payload.contactLinkMode,
+    contactId:
+      payload.contactId === undefined ? current.contact_id : payload.contactId,
+    contactDraft: payload.contactDraft,
+    interactionId:
+      payload.interactionId === undefined
+        ? current.interaction_id
+        : payload.interactionId,
+    opportunityId:
+      payload.opportunityId === undefined
+        ? current.opportunity_id
+        : payload.opportunityId,
+    sellerUserId:
+      payload.sellerUserId === undefined
+        ? current.seller_user_id
+        : payload.sellerUserId,
+  };
+
+  const relations = await resolveCalendarActivityRelations(user, nextPayload, {
+    allowCreate: true,
+  });
+  const dueDate = formatDateInTimeZone(scheduledAt, businessTimezone);
+
+  await query(
+    `UPDATE commercial_calendar_activities
+     SET activity_type = ?,
+         status = ?,
+         scheduled_at = ?,
+         due_date = ?,
+         objective = ?,
+         note = ?,
+         success_criteria = ?,
+         seller_user_id = ?,
+         opportunity_id = ?,
+         interaction_id = ?,
+         account_id = ?,
+         contact_id = ?,
+         updated_by = ?,
+         updated_at = NOW(3)
+     WHERE id = ?`,
+    [
+      activityType,
+      status,
+      scheduledAt,
+      dueDate,
+      objective,
+      payload.note === undefined
+        ? String(current.note || "") || null
+        : String(payload.note || "").trim() || null,
+      payload.successCriteria === undefined
+        ? String(current.success_criteria || "") || null
+        : String(payload.successCriteria || "").trim() || null,
+      relations.sellerUserId || null,
+      relations.opportunityId || null,
+      relations.interactionId || null,
+      relations.accountId || null,
+      relations.contactId || null,
+      Number(user.id),
+      Number(activityId),
+    ],
+  );
 }
 
 function normalizeJsonArray(value) {
@@ -6653,7 +7613,8 @@ async function listCommercialCalendarActivities({
     params.push(Number(user.id));
   }
 
-  const [rows, leadFollowUps, completedLeadHistory] = await Promise.all([
+  const [rows, leadFollowUps, completedLeadHistory, customRows] =
+    await Promise.all([
     query(
       `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
               a.scheduled_at, a.is_primary_next_step,
@@ -6685,18 +7646,24 @@ async function listCommercialCalendarActivities({
       quarter,
       timeZone,
     }),
-    includeCompleted
-      ? listCalendarCompletedLeadOutcomeHistory({
-          user,
-          startDateTime: range.startDateTime,
-          endExclusiveDateTime: range.endExclusiveDateTime,
-          sellerUserId,
-          year,
-          quarter,
-          timeZone,
-        })
-      : Promise.resolve([]),
-  ]);
+      includeCompleted
+        ? listCalendarCompletedLeadOutcomeHistory({
+            user,
+            startDateTime: range.startDateTime,
+            endExclusiveDateTime: range.endExclusiveDateTime,
+            sellerUserId,
+            year,
+            quarter,
+            timeZone,
+          })
+        : Promise.resolve([]),
+      listCommercialCustomCalendarActivities({
+        user,
+        range,
+        allowedStatuses,
+        sellerUserId,
+      }),
+    ]);
 
   const items = rows.map((row) => ({
     id: Number(row.id),
@@ -6721,6 +7688,9 @@ async function listCommercialCalendarActivities({
 
   items.push(...leadFollowUps);
   items.push(...completedLeadHistory);
+  items.push(
+    ...customRows.map((row) => mapCustomCalendarActivityRow(row, timeZone)),
+  );
   items.sort((left, right) => {
     const leftTime = left.scheduledAt
       ? new Date(left.scheduledAt).getTime()
@@ -6819,7 +7789,7 @@ async function listCalendarAlertActivities({
     params.push(Number(user.id));
   }
 
-  const [rows, leadFollowUps] = await Promise.all([
+  const [rows, leadFollowUps, customRows] = await Promise.all([
     query(
       `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
               a.scheduled_at,
@@ -6846,6 +7816,15 @@ async function listCalendarAlertActivities({
       sellerUserId,
       timeZone,
     }),
+    listCommercialCustomCalendarActivities({
+      user,
+      range: {
+        startDateTime: lookbackStart,
+        endExclusiveDateTime: next24h,
+      },
+      allowedStatuses,
+      sellerUserId,
+    }),
   ]);
 
   const items = rows.map((row) => ({
@@ -6866,6 +7845,9 @@ async function listCalendarAlertActivities({
   }));
 
   items.push(...leadFollowUps);
+  items.push(
+    ...customRows.map((row) => mapCustomCalendarActivityRow(row, timeZone)),
+  );
   items.sort((left, right) => {
     const leftTime = left.scheduledAt
       ? new Date(left.scheduledAt).getTime()
@@ -7644,6 +8626,343 @@ router.get(
       alerts: insights.alerts,
       indicators: insights.indicators,
     });
+  },
+);
+
+router.get(
+  "/calendar/activities/:activityId",
+  requireAnyPermission([
+    "calendario_comercial.read",
+    "calendario_comercial.update",
+  ]),
+  async (req, res) => {
+    const activityId = Number(req.params.activityId || 0);
+    if (!Number.isInteger(activityId) || activityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const businessTimezone = await loadBusinessTimezone();
+    const activity = await loadCustomCalendarActivityById(req.user, activityId);
+    if (!activity) {
+      return res.status(404).json({ message: "Actividad no encontrada" });
+    }
+    const mapped = mapCustomCalendarActivityRow(activity, businessTimezone);
+    return res.json({
+      ...mapped,
+      kind: String(activity.kind || "standalone").trim() || "standalone",
+      dueDate: activity.due_date || null,
+      objective: String(activity.objective || "").trim(),
+      note: String(activity.note || "").trim(),
+      successCriteria: String(activity.success_criteria || "").trim(),
+      readonlyByStatus: ["done", "cancelled"].includes(
+        String(activity.status || "").trim(),
+      ),
+    });
+  },
+);
+
+router.post(
+  "/calendar/activities",
+  requirePermission("calendario_comercial.update"),
+  async (req, res) => {
+    const businessTimezone = await loadBusinessTimezone();
+    const kind = normalizeCalendarActivityKind(req.body?.kind);
+    if (!kind) {
+      return res.status(400).json({ message: "kind invalido" });
+    }
+
+    try {
+      if (kind === "opportunity") {
+        if (
+          !userHasPermission(req.user, "desarrollo_comercial.update") ||
+          !userHasPermission(req.user, "oportunidades.update")
+        ) {
+          return res.status(403).json({ message: "No autorizado" });
+        }
+
+        const relations = await resolveCalendarActivityRelations(req.user, req.body, {
+          allowCreate: false,
+        });
+        const opportunityId = Number(relations.opportunityId || 0);
+        if (!opportunityId) {
+          return res.status(400).json({ message: "opportunityId es obligatorio" });
+        }
+
+        const activityType = String(req.body?.activityType || "").trim();
+        if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(activityType)) {
+          return res.status(400).json({ message: "activityType invalido" });
+        }
+        const objective = String(req.body?.objective || "").trim();
+        if (!objective) {
+          return res.status(400).json({ message: "El objetivo es obligatorio" });
+        }
+        const scheduledAtRaw = String(req.body?.scheduledAt || "").trim();
+        const scheduledAt = parseCalendarScheduledAt(
+          scheduledAtRaw,
+          businessTimezone,
+        );
+        if (!scheduledAt) {
+          return res.status(400).json({ message: "scheduledAt invalido" });
+        }
+        const dueDate = formatDateInTimeZone(scheduledAt, businessTimezone);
+
+        const actionId = await saveOpportunityAction({
+          opportunityId,
+          actionId: null,
+          payload: {
+            linked_stage_id: Number(req.body?.linkedStageId || 0) || null,
+            action_type: activityType,
+            priority: "medium",
+            title: objective,
+            owner_user_id: Number(relations.sellerUserId || req.user.id),
+            due_date: dueDate,
+            scheduled_at: scheduledAt,
+            success_criteria: String(req.body?.successCriteria || "").trim(),
+            notes: String(req.body?.note || "").trim() || null,
+            is_primary_next_step: 0,
+            details_json: null,
+            status: "pending",
+          },
+          userId: Number(req.user.id),
+        });
+
+        await logAuditEvent({
+          req,
+          module: "commercial.calendar",
+          action: "calendar_activity_created",
+          entityType: "opportunity",
+          entityId: opportunityId,
+          detail: `Actividad creada en calendario: ${objective}`,
+          after: {
+            kind,
+            activityId: actionId,
+            activityType,
+            scheduledAt,
+          },
+        });
+
+        return res.status(201).json({
+          id: Number(actionId),
+          kind: "opportunity",
+          calendarSource: "opportunity",
+          message: "Actividad creada",
+        });
+      }
+
+      const activityId = await createCustomCalendarActivity({
+        user: req.user,
+        payload: req.body || {},
+        businessTimezone,
+      });
+
+      await logAuditEvent({
+        req,
+        module: "commercial.calendar",
+        action: "calendar_activity_created",
+        entityType: "commercial_calendar_activity",
+        entityId: Number(activityId),
+        detail: `Actividad ${kind} creada en calendario`,
+        after: {
+          kind,
+          activityId,
+          objective: String(req.body?.objective || "").trim(),
+          activityType: String(req.body?.activityType || "").trim(),
+        },
+      });
+
+      return res.status(201).json({
+        id: Number(activityId),
+        kind,
+        calendarSource: kind,
+        message: "Actividad creada",
+      });
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible crear la actividad",
+      });
+    }
+  },
+);
+
+router.patch(
+  "/calendar/activities/:activityId",
+  requirePermission("calendario_comercial.update"),
+  async (req, res) => {
+    const activityId = Number(req.params.activityId || 0);
+    if (!Number.isInteger(activityId) || activityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    if (normalizeCalendarActivityKind(req.body?.kind) === "opportunity") {
+      return res.status(400).json({
+        message:
+          "Para actividades de oportunidad usa el endpoint /opportunities/:id/activities/:activityId",
+      });
+    }
+
+    const businessTimezone = await loadBusinessTimezone();
+    try {
+      await updateCustomCalendarActivity({
+        user: req.user,
+        activityId,
+        payload: req.body || {},
+        businessTimezone,
+      });
+      await logAuditEvent({
+        req,
+        module: "commercial.calendar",
+        action: "calendar_activity_updated",
+        entityType: "commercial_calendar_activity",
+        entityId: activityId,
+        detail: "Actividad de calendario actualizada",
+        after: {
+          status: String(req.body?.status || "").trim() || null,
+          objective: String(req.body?.objective || "").trim() || null,
+        },
+      });
+      return res.json({
+        id: activityId,
+        message: "Actividad actualizada",
+      });
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible actualizar la actividad",
+      });
+    }
+  },
+);
+
+router.post(
+  "/calendar/activities/:activityId/convert",
+  requirePermission("calendario_comercial.update"),
+  async (req, res) => {
+    const activityId = Number(req.params.activityId || 0);
+    if (!Number.isInteger(activityId) || activityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const current = await loadCustomCalendarActivityById(req.user, activityId);
+    if (!current) {
+      return res.status(404).json({ message: "Actividad no encontrada" });
+    }
+
+    const sourceKind = String(current.kind || "standalone").trim();
+    if (sourceKind !== "standalone") {
+      return res.status(400).json({
+        message: "Solo las actividades standalone pueden convertirse",
+      });
+    }
+
+    const targetKind = String(req.body?.targetKind || "").trim();
+    if (!["lead", "opportunity"].includes(targetKind)) {
+      return res.status(400).json({ message: "targetKind invalido" });
+    }
+
+    try {
+      if (targetKind === "lead") {
+        const relations = await resolveCalendarActivityRelations(
+          req.user,
+          {
+            kind: "lead",
+            interactionId: req.body?.interactionId,
+            accountLinkMode: "none",
+            contactLinkMode: "none",
+          },
+          { allowCreate: false },
+        );
+        await query(
+          `UPDATE commercial_calendar_activities
+           SET kind = 'lead',
+               interaction_id = ?,
+               opportunity_id = NULL,
+               account_id = ?,
+               contact_id = ?,
+               seller_user_id = ?,
+               updated_by = ?,
+               updated_at = NOW(3)
+           WHERE id = ?`,
+          [
+            relations.interactionId || null,
+            relations.accountId || null,
+            relations.contactId || null,
+            relations.sellerUserId || null,
+            Number(req.user.id),
+            activityId,
+          ],
+        );
+        return res.json({
+          id: activityId,
+          kind: "lead",
+          message: "Actividad convertida a lead",
+        });
+      }
+
+      if (
+        !userHasPermission(req.user, "desarrollo_comercial.update") ||
+        !userHasPermission(req.user, "oportunidades.update")
+      ) {
+        return res.status(403).json({ message: "No autorizado" });
+      }
+
+      const relations = await resolveCalendarActivityRelations(
+        req.user,
+        {
+          kind: "opportunity",
+          opportunityId: req.body?.opportunityId,
+          sellerUserId: req.body?.sellerUserId || current.seller_user_id,
+        },
+        { allowCreate: false },
+      );
+      const businessTimezone = await loadBusinessTimezone();
+      const dueDate = formatDateInTimeZone(current.scheduled_at, businessTimezone);
+      const actionId = await saveOpportunityAction({
+        opportunityId: Number(relations.opportunityId),
+        actionId: null,
+        payload: {
+          linked_stage_id: null,
+          action_type: String(current.activity_type || "other"),
+          priority: "medium",
+          title: String(current.objective || "").trim() || "Actividad",
+          owner_user_id: Number(relations.sellerUserId || req.user.id),
+          due_date: dueDate,
+          scheduled_at: current.scheduled_at,
+          success_criteria: String(current.success_criteria || "").trim(),
+          notes: String(current.note || "").trim() || null,
+          is_primary_next_step: 0,
+          details_json: null,
+          status: "pending",
+        },
+        userId: Number(req.user.id),
+      });
+
+      await query(
+        `UPDATE commercial_calendar_activities
+         SET status = 'cancelled',
+             note = CONCAT(COALESCE(note, ''),
+               CASE WHEN COALESCE(note, '') = '' THEN '' ELSE '\n' END,
+               'Convertida a oportunidad #', ?),
+             updated_by = ?,
+             updated_at = NOW(3)
+         WHERE id = ?`,
+        [Number(actionId), Number(req.user.id), activityId],
+      );
+
+      return res.json({
+        id: activityId,
+        kind: "opportunity",
+        opportunityActivityId: Number(actionId),
+        message: "Actividad convertida a oportunidad",
+      });
+    } catch (error) {
+      return res.status(error?.status || 500).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible convertir la actividad",
+      });
+    }
   },
 );
 
