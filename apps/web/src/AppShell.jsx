@@ -47,6 +47,7 @@ const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
 const ProposalsPage = lazy(() => import("./ProposalsPage"));
 const ProposalPrintPage = lazy(() => import("./ProposalPrintPage"));
+const LandingModulePage = lazy(() => import("./LandingModulePage"));
 
 function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
   return (
@@ -198,6 +199,13 @@ export default function AppShell({
     can("enablement_comercial.analytics");
   const canAccessManufacturerRegistrations =
     can("registros_fabricantes.read") || can("registros_fabricantes.read_all");
+  const canAccessLandingModule =
+    can("landing.read") ||
+    can("landing.create") ||
+    can("landing.update") ||
+    can("landing.publish") ||
+    can("landing.submissions.read") ||
+    can("landing.submissions.reprocess");
   const canAccessAnyDashboard =
     canAccessCommercialTracking ||
     canAccessCommercialPlanning ||
@@ -445,6 +453,12 @@ export default function AppShell({
           }
         />
         <Route
+          path="/landing"
+          element={
+            canAccessLandingModule ? <LandingModulePage /> : <Navigate to="/" />
+          }
+        />
+        <Route
           path="/contacts"
           element={
             canReadContacts ? (
@@ -614,7 +628,8 @@ export default function AppShell({
             )}
 
             {(can("proveedores.read") ||
-              (canAccessManufacturerRegistrations && canReadOpportunities)) && (
+              (canAccessManufacturerRegistrations && canReadOpportunities) ||
+              canAccessLandingModule) && (
               <SidebarNavGroup title="Operacion comercial">
                 {can("proveedores.read") && (
                   <GuardedNavLink
@@ -630,6 +645,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Registros de fabricantes
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessLandingModule ? (
+                  <GuardedNavLink
+                    to="/landing"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Landing por evento
                   </GuardedNavLink>
                 ) : null}
               </SidebarNavGroup>

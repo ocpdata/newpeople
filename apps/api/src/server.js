@@ -42,6 +42,9 @@ import { ensureCorePermissions } from "./permissions.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
 import { ensureChatbotSchema } from "./chatbot/schema.js";
 import { startChatbotWorker } from "./routes.chatbot.js";
+import { ensureLandingPermissions } from "./landing/permissions.js";
+import { ensureLandingSchema } from "./landing/schema.js";
+import { startLandingWorker } from "./routes.landing.js";
 
 export async function startServer() {
   validateConfig();
@@ -56,6 +59,7 @@ export async function startServer() {
   await ensureCommercialPlanningPermissions();
   await ensureManufacturerRegistrationPermissions();
   await ensureProcessCommercialConfigPermissions();
+  await ensureLandingPermissions();
   await ensureAccountDraftAnalysisJobSchema();
   await ensureAccountInteractionsSchema();
   await ensureCommercialNarrativeJobSchema();
@@ -73,6 +77,7 @@ export async function startServer() {
   await ensureCommercialEnablementStarterData();
   await ensureCommercialPlanningSchema();
   await ensureManufacturerRegistrationsSchema();
+  await ensureLandingSchema();
   await startAuditRetentionJob();
   await startAccountDraftAnalysisWorker();
   await startCommercialNarrativeWorker();
@@ -83,6 +88,7 @@ export async function startServer() {
   await startOpportunityStageAnswerSuggestionWorker();
   await startOpportunityStageValidationWorker();
   await startChatbotWorker();
+  await startLandingWorker();
   return app.listen(config.port, () => {
     console.log(`API running on http://localhost:${config.port}`);
   });
