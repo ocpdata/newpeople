@@ -63,6 +63,14 @@ describe("API integration baseline", () => {
     await ensureManufacturerRegistrationPermissions();
     await ensureManufacturerRegistrationsSchema();
 
+    await query(
+      `INSERT INTO contact_relationship_types (code, name, is_active)
+       VALUES ('ninguno', 'Ninguno', 0)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         is_active = VALUES(is_active)`,
+    );
+
     const sellerRole = await ensureNamedRole("Vendedor");
     if (sellerRole.created) {
       cleanup.roleIds.push(sellerRole.roleId);
@@ -10681,6 +10689,125 @@ describe("API integration baseline", () => {
       request(app),
       `${TEST_PREFIX}.interactions.manager@example.com`,
     );
+
+  test("desarrollo comercial evita duplicar un lead con varios eventos en el mismo dia", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_development_calendar_lead_dedup`,
+    );
+
+    const interactionsLoginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+
+    const createInteractionResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
+      .field("title", `Lead calendario duplicado ${TEST_PREFIX}`)
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Calendario Duplicado",
+            "Contacto: Laura Repetida",
+            "Correo: laura.repetida@example.com",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_calendar_dedup_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    expect(createInteractionResponse.status).toBe(201);
+
+    const interactionId = Number(createInteractionResponse.body.id);
+
+    await query(
+      `UPDATE interactions
+       SET account_id = ?,
+           primary_opportunity_id = ?,
+           seller_user_id = NULL,
+           analysis_status = 'lead_assigned',
+           lead_substatus_code = 'value_misaligned_current_contact',
+           lead_reason_code = 'offer_not_relevant_current_area',
+           lead_required_action_code = 'explore_other_area',
+           lead_next_action_due_at = ?,
+           summary = ?
+       WHERE id = ?`,
+      [
+        fixture.accountId,
+        fixture.opportunityId,
+        "2026-06-30 00:00:00",
+        "Valor no alineado con este contacto.",
+        interactionId,
+      ],
+    );
+
+    await query(
+      `INSERT INTO interaction_lead_outcome_events
+        (public_id, interaction_id, event_type, from_status_code, to_status_code,
+         substatus_code, reason_code, required_action_code, commercial_comment,
+         effective_at, created_at, created_by)
+       VALUES (?, ?, 'activity_update', 'lead_assigned', 'lead_assigned', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `${TEST_PREFIX}_calendar_dedup_1`,
+        interactionId,
+        'value_misaligned_current_contact',
+        'offer_not_relevant_current_area',
+        'explore_other_area',
+        'Valor no alineado con este contacto',
+        '2026-06-30 10:00:00',
+        '2026-06-30 10:00:00',
+        ctx.interactionsManagerUserId,
+      ],
+    );
+
+    await query(
+      `INSERT INTO interaction_lead_outcome_events
+        (public_id, interaction_id, event_type, from_status_code, to_status_code,
+         substatus_code, reason_code, required_action_code, commercial_comment,
+         effective_at, created_at, created_by)
+       VALUES (?, ?, 'activity_update', 'lead_assigned', 'lead_assigned', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `${TEST_PREFIX}_calendar_dedup_2`,
+        interactionId,
+        'meeting_confirmed',
+        'meeting_accepted',
+        'schedule_meeting',
+        'Reunión confirmada',
+        '2026-06-30 12:00:00',
+        '2026-06-30 12:00:00',
+        ctx.interactionsManagerUserId,
+      ],
+    );
+
+    const calendarResponse = await request(app)
+      .get(
+        "/api/commercial-development/calendar?view=week&date=2026-06-30&includeCompleted=true",
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+
+    expect(calendarResponse.status).toBe(200);
+
+    const targetDay = calendarResponse.body.days.find(
+      (day) => day.date === "2026-06-30",
+    );
+
+    expect(targetDay).toBeDefined();
+    expect(targetDay.items).toHaveLength(1);
+    expect(targetDay.items[0]).toEqual(
+      expect.objectContaining({
+        calendarSource: "interaction",
+        activityType: "lead_follow_up",
+        interactionId,
+        status: "pending",
+        title: `Lead calendario duplicado ${TEST_PREFIX}`,
+        scheduledDate: "2026-06-30",
+      }),
+    );
+  });
 
     const createInteractionResponse = await request(app)
       .post("/api/interactions")

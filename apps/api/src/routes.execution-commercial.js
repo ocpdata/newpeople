@@ -5019,6 +5019,75 @@ async function listCalendarCompletedLeadOutcomeHistory({
   return rows.map((row) => mapCompletedLeadOutcomeCalendarItem(row, timeZone));
 }
 
+function getLeadFollowUpCalendarDedupKey(item) {
+  if (item.calendarSource !== "interaction") {
+    return null;
+  }
+  if (item.activityType !== "lead_follow_up") {
+    return null;
+  }
+  if (!Number.isInteger(Number(item.interactionId || 0))) {
+    return null;
+  }
+  return `${Number(item.interactionId)}::${String(item.scheduledDate || "")}`;
+}
+
+function getLeadFollowUpCalendarPriority(item) {
+  const status = String(item.status || "").trim();
+  if (status === "pending") return 2;
+  if (status === "in_progress") return 1;
+  if (status === "done") return 0;
+  return 0;
+}
+
+function shouldKeepLeadFollowUpCalendarItem(currentItem, nextItem) {
+  const currentPriority = getLeadFollowUpCalendarPriority(currentItem);
+  const nextPriority = getLeadFollowUpCalendarPriority(nextItem);
+  if (nextPriority !== currentPriority) {
+    return nextPriority > currentPriority;
+  }
+
+  const currentTime = currentItem.scheduledAt
+    ? new Date(currentItem.scheduledAt).getTime()
+    : Number.NaN;
+  const nextTime = nextItem.scheduledAt
+    ? new Date(nextItem.scheduledAt).getTime()
+    : Number.NaN;
+  if (
+    !Number.isNaN(currentTime) &&
+    !Number.isNaN(nextTime) &&
+    nextTime !== currentTime
+  ) {
+    return nextTime > currentTime;
+  }
+
+  return Number(nextItem.id || 0) > Number(currentItem.id || 0);
+}
+
+function dedupeLeadFollowUpCalendarItems(items) {
+  const bestByKey = new Map();
+
+  for (const item of items) {
+    const key = getLeadFollowUpCalendarDedupKey(item);
+    if (!key) {
+      continue;
+    }
+
+    const currentItem = bestByKey.get(key);
+    if (!currentItem || shouldKeepLeadFollowUpCalendarItem(currentItem, item)) {
+      bestByKey.set(key, item);
+    }
+  }
+
+  return items.filter((item) => {
+    const key = getLeadFollowUpCalendarDedupKey(item);
+    if (!key) {
+      return true;
+    }
+    return bestByKey.get(key) === item;
+  });
+}
+
 function buildCommercialActivitySummary(actions) {
   const timelineItems = (actions || [])
     .filter((action) => COMMERCIAL_TIMELINE_ACTION_TYPES.has(action.actionType))
@@ -7691,7 +7760,8 @@ async function listCommercialCalendarActivities({
   items.push(
     ...customRows.map((row) => mapCustomCalendarActivityRow(row, timeZone)),
   );
-  items.sort((left, right) => {
+  const dedupedItems = dedupeLeadFollowUpCalendarItems(items);
+  dedupedItems.sort((left, right) => {
     const leftTime = left.scheduledAt
       ? new Date(left.scheduledAt).getTime()
       : Number.MAX_SAFE_INTEGER;
@@ -7707,7 +7777,7 @@ async function listCommercialCalendarActivities({
     );
   });
 
-  const groupedItems = items.reduce((accumulator, item) => {
+  const groupedItems = dedupedItems.reduce((accumulator, item) => {
     const key = item.scheduledDate;
     if (!accumulator.has(key)) {
       accumulator.set(key, []);
@@ -7716,7 +7786,7 @@ async function listCommercialCalendarActivities({
     return accumulator;
   }, new Map());
 
-  const summary = items.reduce(
+  const summary = dedupedItems.reduce(
     (accumulator, item) => {
       accumulator.total += 1;
       if (isPendingCommercialActivityStatus(item.status))

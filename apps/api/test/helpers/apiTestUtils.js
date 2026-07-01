@@ -204,9 +204,10 @@ export async function createDirectContact({ accountId, actorUserId, suffix }) {
       (first_name, last_name, account_id, position_title, phone, phone_extension,
        mobile, email, department, country_id, state_region, city, address_line,
        postal_code, purchase_participation_id, relationship_type_id,
-       employment_status_id, activation_status_id, manager_contact_id,
-       influences_contact_id, created_by, created_at, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+       hierarchy_level_id, influence_level_id, employment_status_id,
+       activation_status_id, manager_contact_id, influences_contact_id,
+       created_by, created_at, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
     [
       "Contacto",
       `Fixture ${suffix}`,
@@ -222,6 +223,8 @@ export async function createDirectContact({ accountId, actorUserId, suffix }) {
       "01000",
       await getCatalogId("contact_purchase_participations", "ninguno"),
       await getCatalogId("contact_relationship_types", "ninguno"),
+      await getCatalogId("contact_hierarchy_levels", "usuario"),
+      await getCatalogId("contact_influence_levels", "media"),
       await getFirstId("contact_employment_statuses"),
       await getCatalogId("contact_activation_statuses", "activado"),
       actorUserId,
