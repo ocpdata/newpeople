@@ -126,6 +126,14 @@ export async function ensureLandingSchema() {
            AFTER lead_execution_plan_json`,
         );
       }
+
+      if (!(await columnExists("landing_pages", "confirmation_config_json"))) {
+        await query(
+          `ALTER TABLE landing_pages
+           ADD COLUMN confirmation_config_json JSON NULL
+           AFTER status`,
+        );
+      }
     })().catch((error) => {
       ensureLandingSchemaPromise = undefined;
       throw error;

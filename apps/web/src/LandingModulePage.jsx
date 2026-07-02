@@ -70,6 +70,13 @@ const DEFAULT_FORM_SCHEMA = {
   ],
 };
 
+const SOURCE_TYPE_DETAILS = {
+  manual_edit: "Edición directa del HTML y del esquema del formulario desde el editor.",
+  ai: "Genera una propuesta inicial con IA para partir de un borrador.",
+  html_upload: "Importa un archivo HTML existente para reutilizar una landing previa.",
+  url_import_once: "Captura una landing desde una URL una sola vez para editarla después.",
+};
+
 const DEFAULT_HTML = `<!doctype html>
 <html>
   <head>
@@ -91,7 +98,7 @@ const DEFAULT_HTML = `<!doctype html>
   <body>
     <div class="wrap">
       <section class="hero">
-        <h1>Webinar F5</h1>
+        <h1>Evento</h1>
         <p>Regístrate para asegurar tu lugar.</p>
         <form data-landing-form>
           <input name="first_name" placeholder="Nombre" />
@@ -100,6 +107,35 @@ const DEFAULT_HTML = `<!doctype html>
           <input name="hp_field" type="text" style="display:none" tabindex="-1" autocomplete="off" />
           <button type="submit">Registrarme</button>
         </form>
+      </section>
+    </div>
+  </body>
+</html>`;
+
+const DEFAULT_CONFIRMATION_PAGE_HTML = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Registro completado</title>
+    <style>
+      body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; background: linear-gradient(145deg,#f0f7ff,#f8fbff); color: #16345a; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 56px 20px 72px; }
+      .card { background: #fff; border: 1px solid #d6e4f7; border-radius: 16px; padding: 28px; box-shadow: 0 16px 38px rgba(20, 55, 101, 0.12); }
+      h1 { margin: 0 0 10px; color: #15437a; }
+      p { margin: 0 0 14px; color: #36587f; }
+      .hint { margin-top: 18px; font-size: 13px; color: #5a7699; }
+      .cta { display: inline-block; margin-top: 8px; padding: 10px 14px; border-radius: 10px; background: #0f4d9d; color: #fff; text-decoration: none; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="card">
+        <h1>Gracias por registrarte</h1>
+        <p>Tu registro fue recibido correctamente.</p>
+        <p>En breve compartiremos mas detalles del evento en tu correo.</p>
+        <a class="cta" href="/">Volver al inicio</a>
+        <p class="hint">Puedes personalizar esta pagina desde la configuracion de confirmacion.</p>
       </section>
     </div>
   </body>
@@ -130,6 +166,72 @@ function cleanTextLine(value, max = 220) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+}
+
+function formatSubmissionFieldValue(value) {
+  if (value === undefined || value === null) return "-";
+  if (typeof value === "boolean") return value ? "Si" : "No";
+  if (Array.isArray(value)) {
+    const text = value
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+      .join(", ");
+    return text || "-";
+  }
+  if (typeof value === "object") {
+    const text = JSON.stringify(value);
+    return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+  }
+  const text = String(value).trim();
+  return text || "-";
+}
+
+function buildSubmissionFieldEntries(submission) {
+  const serverFieldEntries = Array.isArray(submission?.submission_fields)
+    ? submission.submission_fields
+    : [];
+  if (serverFieldEntries.length) {
+    return serverFieldEntries.map((entry) => {
+      const key = String(entry?.key || "").trim();
+      const label = String(entry?.label || key).trim() || key;
+      return {
+        key,
+        label,
+        value: formatSubmissionFieldValue(entry?.value),
+      };
+    });
+  }
+
+  const payloadRaw =
+    submission?.payload_raw && typeof submission.payload_raw === "object"
+      ? submission.payload_raw
+      : {};
+  const formData =
+    payloadRaw?.form_data && typeof payloadRaw.form_data === "object"
+      ? payloadRaw.form_data
+      : {};
+  const rawFieldKeys = Array.isArray(payloadRaw?.field_keys)
+    ? payloadRaw.field_keys
+    : [];
+
+  const orderedKeys = rawFieldKeys
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
+
+  const fallbackKeys = Object.keys(formData)
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
+
+  const keys = orderedKeys.length ? orderedKeys : fallbackKeys;
+  const uniqueKeys = Array.from(new Set(keys)).filter(
+    (key) => key && key !== "hp_field",
+  );
+
+  return uniqueKeys.map((key) => ({
+    key,
+    label: key,
+    value: formatSubmissionFieldValue(formData[key]),
+  }));
 }
 
 const COMPANY_DOMAIN_OVERRIDES = {
@@ -484,6 +586,32 @@ export default function LandingModulePage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
+  const DEFAULT_CONFIRMATION_CONFIG = {
+    enabled: false,
+    response_type: "email",
+    email_subject: "",
+    email_body_html: "",
+    redirect_url: "",
+    page_html: "",
+  };
+  const [confirmationConfig, setConfirmationConfig] = useState(
+    DEFAULT_CONFIRMATION_CONFIG,
+  );
+  const [isSavingConfirmation, setIsSavingConfirmation] = useState(false);
+  const [isGeneratingEmailWithAi, setIsGeneratingEmailWithAi] = useState(false);
+  const [confirmationEmailAiPrompt, setConfirmationEmailAiPrompt] =
+    useState("");
+  const [confirmationPageAiPrompt, setConfirmationPageAiPrompt] =
+    useState("");
+  const [isGeneratingConfirmationPageWithAi, setIsGeneratingConfirmationPageWithAi] =
+    useState(false);
+  const [confirmationPageImportUrl, setConfirmationPageImportUrl] =
+    useState("");
+  const [confirmationPageUploadFile, setConfirmationPageUploadFile] =
+    useState(null);
+  const [confirmationWorkspaceTab, setConfirmationWorkspaceTab] =
+    useState("email");
+
   const selectedVersion = useMemo(() => {
     const versions = Array.isArray(landingDetail?.versions)
       ? landingDetail.versions
@@ -499,6 +627,28 @@ export default function LandingModulePage() {
     String(landingDetail?.landing_page?.status || "")
       .trim()
       .toLowerCase() === "published";
+
+  const confirmationSupportsEmail = ["email", "both"].includes(
+    String(confirmationConfig.response_type || "email").trim().toLowerCase(),
+  );
+  const confirmationSupportsPage = ["page", "both"].includes(
+    String(confirmationConfig.response_type || "email").trim().toLowerCase(),
+  );
+
+  useEffect(() => {
+    const availableTabs = [
+      ...(confirmationSupportsEmail ? ["email"] : []),
+      ...(confirmationSupportsPage ? ["page"] : []),
+    ];
+
+    if (!availableTabs.includes(confirmationWorkspaceTab)) {
+      setConfirmationWorkspaceTab(availableTabs[0] || "email");
+    }
+  }, [
+    confirmationSupportsEmail,
+    confirmationSupportsPage,
+    confirmationWorkspaceTab,
+  ]);
 
   const selectedPublicUrl = useMemo(() => {
     if (!isSelectedLandingPublished) return "";
@@ -517,6 +667,22 @@ export default function LandingModulePage() {
     if (!eventIds.length) return 1;
     return Math.max(...eventIds) + 1;
   }, [landingItems]);
+
+  const submissionFieldColumns = useMemo(() => {
+    const byKey = new Map();
+    for (const submission of submissions) {
+      const fields = buildSubmissionFieldEntries(submission);
+      for (const field of fields) {
+        const key = String(field?.key || "").trim();
+        if (!key || byKey.has(key)) continue;
+        byKey.set(key, {
+          key,
+          label: String(field?.label || key).trim() || key,
+        });
+      }
+    }
+    return Array.from(byKey.values());
+  }, [submissions]);
 
   const pushSuccess = useCallback((message) => {
     setGlobalSuccess(message);
@@ -589,6 +755,20 @@ export default function LandingModulePage() {
               : currentVersion.form_schema_json || DEFAULT_FORM_SCHEMA;
           setEditorFormSchemaText(prettyJson(schemaValue));
         }
+
+        const rawConfirmation = data?.landing_page?.confirmation_config_json;
+        const parsedConfirmation =
+          typeof rawConfirmation === "string"
+            ? JSON.parse(rawConfirmation || "{}")
+            : rawConfirmation || {};
+        setConfirmationConfig({
+          enabled: Boolean(parsedConfirmation.enabled),
+          response_type: parsedConfirmation.response_type || "email",
+          email_subject: parsedConfirmation.email_subject || "",
+          email_body_html: parsedConfirmation.email_body_html || "",
+          redirect_url: parsedConfirmation.redirect_url || "",
+          page_html: parsedConfirmation.page_html || "",
+        });
       } catch (error) {
         pushError(
           getApiErrorMessage(
@@ -936,6 +1116,334 @@ export default function LandingModulePage() {
     await handleGenerateLandingWithAiInstructions(prompt);
   }
 
+  async function handleSaveConfirmationConfig() {
+    if (!selectedLandingId) return;
+    try {
+      setIsSavingConfirmation(true);
+      await api.patch(
+        `/api/landing/v1/landing-pages/${selectedLandingId}/confirmation-config`,
+        {
+          enabled: confirmationConfig.enabled,
+          response_type: confirmationConfig.response_type || "email",
+          email_subject: confirmationConfig.email_subject || null,
+          email_body_html: confirmationConfig.email_body_html || null,
+          redirect_url: confirmationConfig.redirect_url || null,
+          page_html: confirmationConfig.page_html || null,
+        },
+      );
+      pushSuccess("Configuración de respuesta guardada");
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(error, "No fue posible guardar la configuración"),
+      );
+    } finally {
+      setIsSavingConfirmation(false);
+    }
+  }
+
+  async function handleGenerateEmailWithAi() {
+    if (!selectedLandingId) {
+      pushError("Selecciona una landing antes de usar IA");
+      return;
+    }
+
+    const landingPage = landingDetail?.landing_page || {};
+    const eventName = String(
+      landingPage.event_name || newEventName || "",
+    ).trim();
+    const prompt = String(confirmationEmailAiPrompt || "").trim();
+    if (!prompt) {
+      pushError("Escribe instrucciones para que la IA genere el correo");
+      return;
+    }
+
+    try {
+      setIsGeneratingEmailWithAi(true);
+
+      const sessionRes = await api.post("/api/chatbot/sessions", {
+        locale: "es",
+        userContext: {
+          module: "landing",
+          objective: "generate_confirmation_email",
+          eventName,
+        },
+      });
+      const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+      if (!sessionId) throw new Error("No fue posible crear sesión IA");
+
+      const aiInstruction = [
+        "Genera un correo de confirmación de registro en HTML para enviar al asistente.",
+        "Devuelve solo el HTML del cuerpo del correo (sin explicaciones, sin markdown).",
+        "Debe ser un HTML limpio, responsive, profesional y en español.",
+        "Incluye: saludo personalizado con {first_name}, confirmación de registro, nombre del evento, CTA de agregar al calendario si aplica.",
+        `Evento: ${eventName || "Evento"}`,
+        "Instrucciones adicionales del usuario:",
+        prompt,
+      ].join("\n\n");
+
+      const messageRes = await api.post("/api/chatbot/messages", {
+        sessionId,
+        message: aiInstruction,
+        useContext: false,
+        featureCode: "chatbot.assistant",
+      });
+
+      const jobId = String(messageRes?.data?.jobId || "").trim();
+      if (!jobId) throw new Error("No fue posible iniciar generación IA");
+
+      let attempts = 0;
+      while (attempts < 35) {
+        attempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const jobRes = await api.get(
+          `/api/chatbot/jobs/${encodeURIComponent(jobId)}`,
+        );
+        const status = String(jobRes?.data?.status || "queued").trim();
+        if (status === "completed") {
+          const generated = String(
+            jobRes?.data?.reply || jobRes?.data?.result || "",
+          ).trim();
+          if (generated) {
+            setConfirmationConfig((prev) => ({
+              ...prev,
+              email_body_html: generated,
+            }));
+            pushSuccess("Correo generado por IA");
+          } else {
+            pushError("La IA no devolvió contenido");
+          }
+          return;
+        }
+        if (status === "failed") {
+          throw new Error("La IA no pudo completar la generación");
+        }
+      }
+      throw new Error("Tiempo de espera agotado para IA");
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(error, "No fue posible generar el correo con IA"),
+      );
+    } finally {
+      setIsGeneratingEmailWithAi(false);
+    }
+  }
+
+  async function handleGenerateConfirmationPageWithAi() {
+    if (!selectedLandingId) {
+      pushError("Selecciona una landing antes de usar IA");
+      return;
+    }
+
+    const landingPage = landingDetail?.landing_page || {};
+    const eventName = String(
+      landingPage.event_name || newEventName || "",
+    ).trim();
+    const prompt = String(confirmationPageAiPrompt || "").trim();
+    if (!prompt) {
+      pushError("Escribe instrucciones para generar la pagina de confirmacion");
+      return;
+    }
+
+    try {
+      setIsGeneratingConfirmationPageWithAi(true);
+
+      const sessionRes = await api.post("/api/chatbot/sessions", {
+        locale: "es",
+        userContext: {
+          module: "landing",
+          objective: "generate_confirmation_page",
+          eventName,
+        },
+      });
+      const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+      if (!sessionId) throw new Error("No fue posible crear sesion IA");
+
+      const aiInstruction = [
+        "Genera una pagina HTML de confirmacion de registro para mostrar inmediatamente despues del envio del formulario.",
+        "Devuelve una pagina HTML completa (doctype, html, head, body), sin markdown y sin explicaciones.",
+        "Debe ser responsive, moderna y en espanol.",
+        "Incluye mensaje de registro confirmado y siguientes pasos.",
+        "Si aplica, agrega un CTA para regresar al sitio o ver agenda.",
+        `Evento: ${eventName || "Evento"}`,
+        "Instrucciones adicionales del usuario:",
+        prompt,
+      ].join("\n\n");
+
+      const messageRes = await api.post("/api/chatbot/messages", {
+        sessionId,
+        message: aiInstruction,
+        useContext: false,
+        featureCode: "chatbot.assistant",
+      });
+
+      const jobId = String(messageRes?.data?.jobId || "").trim();
+      if (!jobId) throw new Error("No fue posible iniciar generacion IA");
+
+      let attempts = 0;
+      while (attempts < 35) {
+        attempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const jobRes = await api.get(
+          `/api/chatbot/jobs/${encodeURIComponent(jobId)}`,
+        );
+        const status = String(jobRes?.data?.status || "queued").trim();
+        if (status === "completed") {
+          const generated = String(
+            jobRes?.data?.reply || jobRes?.data?.result || "",
+          ).trim();
+          let html = extractHtmlFromAssistantText(generated);
+
+          if (!html) {
+            const historyRes = await api.get(
+              `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+            );
+            const items = Array.isArray(historyRes?.data?.items)
+              ? historyRes.data.items
+              : [];
+            const assistantMessage = [...items]
+              .reverse()
+              .find((entry) => String(entry?.role || "") === "assistant");
+            html = extractHtmlFromAssistantText(assistantMessage?.content || "");
+          }
+
+          if (!html) {
+            pushError("La IA no devolvio HTML utilizable");
+            return;
+          }
+
+          setConfirmationConfig((prev) => ({
+            ...prev,
+            page_html: html,
+          }));
+          pushSuccess("Pagina de confirmacion generada con IA");
+          return;
+        }
+        if (status === "failed") {
+          throw new Error("La IA no pudo completar la generacion");
+        }
+      }
+
+      throw new Error("Tiempo de espera agotado para IA");
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible generar la pagina de confirmacion con IA",
+        ),
+      );
+    } finally {
+      setIsGeneratingConfirmationPageWithAi(false);
+    }
+  }
+
+  async function handleImportConfirmationPageUrl(event) {
+    event.preventDefault();
+    if (!selectedLandingId) {
+      pushError("Primero selecciona una landing");
+      return;
+    }
+
+    const sourceUrl = String(confirmationPageImportUrl || "").trim();
+    if (!sourceUrl) {
+      pushError("Debes indicar una URL para importar");
+      return;
+    }
+
+    try {
+      setIsSavingConfirmation(true);
+      const { data } = await api.post(
+        `/api/landing/v1/landing-pages/${selectedLandingId}/confirmation-page/import-url`,
+        {
+          source_url: sourceUrl,
+        },
+      );
+
+      const importedHtml = String(data?.html_content || "").trim();
+      if (!importedHtml) {
+        pushError("No se obtuvo HTML desde la URL indicada");
+        return;
+      }
+
+      setConfirmationConfig((prev) => ({
+        ...prev,
+        page_html: importedHtml,
+      }));
+      setConfirmationPageImportUrl("");
+      pushSuccess("URL importada a la pagina de confirmacion");
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible importar la URL para pagina de confirmacion",
+        ),
+      );
+    } finally {
+      setIsSavingConfirmation(false);
+    }
+  }
+
+  async function handleUploadConfirmationPageHtml(event) {
+    event.preventDefault();
+    if (!confirmationPageUploadFile) {
+      pushError("Selecciona un archivo HTML para subir");
+      return;
+    }
+
+    try {
+      setIsSavingConfirmation(true);
+      const html = await confirmationPageUploadFile.text();
+      const normalized = String(html || "").trim();
+      if (!normalized) {
+        pushError("El archivo HTML esta vacio");
+        return;
+      }
+
+      setConfirmationConfig((prev) => ({
+        ...prev,
+        page_html: normalized,
+      }));
+      setConfirmationPageUploadFile(null);
+      pushSuccess("Archivo HTML cargado para pagina de confirmacion");
+    } catch {
+      pushError("No fue posible leer el archivo HTML");
+    } finally {
+      setIsSavingConfirmation(false);
+    }
+  }
+
+  function handlePreviewConfirmationPage() {
+    const htmlToRender = String(
+      confirmationConfig.page_html || DEFAULT_CONFIRMATION_PAGE_HTML,
+    ).trim();
+
+    if (!htmlToRender) {
+      pushError("No hay contenido HTML para previsualizar");
+      return;
+    }
+
+    try {
+      const previewBlob = new Blob([htmlToRender], {
+        type: "text/html;charset=utf-8",
+      });
+      const previewUrl = URL.createObjectURL(previewBlob);
+
+      const tempLink = document.createElement("a");
+      tempLink.href = previewUrl;
+      tempLink.target = "_blank";
+      tempLink.rel = "noopener noreferrer";
+      tempLink.style.display = "none";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+
+      window.setTimeout(() => {
+        URL.revokeObjectURL(previewUrl);
+      }, 60_000);
+    } catch {
+      pushError("No fue posible abrir la vista previa de confirmacion");
+    }
+  }
+
   function handlePreviewDraftLanding() {
     const htmlToRender = String(
       selectedVersion?.html_content || editorHtml || "",
@@ -1086,16 +1594,21 @@ export default function LandingModulePage() {
     }
   }
 
-  async function handleReprocessSubmission(submissionId) {
+  async function handleSendSubmissionToLeads(submissionId) {
+    const shouldProcess = window.confirm(
+      "¿Enviar este registro a Leads ahora? Esta acción intentará crear o actualizar el lead en CRM.",
+    );
+    if (!shouldProcess) return;
+
     try {
       await api.post(`/api/landing/v1/submissions/${submissionId}/reprocess`, {
         force: true,
       });
-      pushSuccess("Registro enviado a reproceso");
+      pushSuccess("Registro enviado a Leads");
       await loadSubmissions();
     } catch (error) {
       pushError(
-        getApiErrorMessage(error, "No fue posible reprocesar el registro"),
+        getApiErrorMessage(error, "No fue posible enviar el registro a Leads"),
       );
     }
   }
@@ -1149,11 +1662,29 @@ export default function LandingModulePage() {
       </div>
 
       {globalError ? (
-        <div className="landing-alert landing-alert-error">{globalError}</div>
+        <div className="landing-alert landing-alert-error">
+          <span>{globalError}</span>
+          <button
+            type="button"
+            className="landing-alert-close"
+            onClick={() => setGlobalError("")}
+            aria-label="Cerrar"
+          >
+            ×
+          </button>
+        </div>
       ) : null}
       {globalSuccess ? (
         <div className="landing-alert landing-alert-success">
-          {globalSuccess}
+          <span>{globalSuccess}</span>
+          <button
+            type="button"
+            className="landing-alert-close"
+            onClick={() => setGlobalSuccess("")}
+            aria-label="Cerrar"
+          >
+            ×
+          </button>
         </div>
       ) : null}
 
@@ -1162,7 +1693,7 @@ export default function LandingModulePage() {
           <div className="landing-grid-two">
             <article className="landing-card landing-card-with-badge">
               <div className="landing-event-id-badge">
-                Event ID auto: {nextAutoEventId}
+                ID: {nextAutoEventId}
               </div>
               <h3>Crear o actualizar landing por evento</h3>
               <form
@@ -1175,7 +1706,7 @@ export default function LandingModulePage() {
                     type="text"
                     value={newEventName}
                     onChange={(event) => setNewEventName(event.target.value)}
-                    placeholder="Webinar F5"
+                    placeholder="Evento"
                     required
                   />
                 </label>
@@ -1187,7 +1718,7 @@ export default function LandingModulePage() {
                     onChange={(event) =>
                       setNewSlug(normalizeSlug(event.target.value))
                     }
-                    placeholder="webinarf5"
+                    placeholder="evento"
                     required
                   />
                 </label>
@@ -1197,11 +1728,31 @@ export default function LandingModulePage() {
                     value={newSourceType}
                     onChange={(event) => setNewSourceType(event.target.value)}
                   >
-                    <option value="manual_edit">Edición manual</option>
-                    <option value="ai">IA</option>
-                    <option value="html_upload">HTML</option>
-                    <option value="url_import_once">URL</option>
+                    <option
+                      value="manual_edit"
+                      title={SOURCE_TYPE_DETAILS.manual_edit}
+                    >
+                      Edición manual
+                    </option>
+                    <option value="ai" title={SOURCE_TYPE_DETAILS.ai}>
+                      IA
+                    </option>
+                    <option
+                      value="html_upload"
+                      title={SOURCE_TYPE_DETAILS.html_upload}
+                    >
+                      HTML
+                    </option>
+                    <option
+                      value="url_import_once"
+                      title={SOURCE_TYPE_DETAILS.url_import_once}
+                    >
+                      URL
+                    </option>
                   </select>
+                  <span className="landing-field-detail">
+                    {SOURCE_TYPE_DETAILS[newSourceType]}
+                  </span>
                 </label>
                 <div className="landing-form-actions">
                   <button type="submit" disabled={isSavingEditor}>
@@ -1231,10 +1782,15 @@ export default function LandingModulePage() {
                 </select>
                 <button
                   type="button"
+                  className="landing-refresh-button"
                   onClick={loadLandingList}
                   disabled={isLoadingList}
+                  aria-label={isLoadingList ? "Cargando landings" : "Refrescar landings"}
+                  title={isLoadingList ? "Cargando landings" : "Refrescar landings"}
                 >
-                  {isLoadingList ? "Cargando..." : "Refrescar"}
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M4 12a8 8 0 0 1 13.66-5.66V4h2.5v6.5H13.5V8h3.44A6.5 6.5 0 1 0 18.4 16h2.64A8 8 0 0 1 4 12z" />
+                  </svg>
                 </button>
               </div>
 
@@ -1298,189 +1854,535 @@ export default function LandingModulePage() {
 
       {activeTab === "editor" ? (
         <section className="landing-panel">
-          <div className="landing-grid-two landing-grid-editor">
-            <article className="landing-card landing-editor-card">
-              <h3>Editor y publicación</h3>
-              {!selectedLandingId ? (
-                <p className="landing-muted">
-                  Selecciona una landing desde la pestaña Eventos/Landings.
-                </p>
-              ) : (
-                <>
-                  <div className="landing-meta-grid">
-                    <div>
-                      <span className="landing-muted">Landing ID</span>
-                      <strong>{selectedLandingId}</strong>
-                    </div>
-                    <div>
-                      <span className="landing-muted">Event ID</span>
-                      <strong>
-                        {landingDetail?.landing_page?.event_id || "-"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="landing-muted">Slug</span>
-                      <strong>
-                        {landingDetail?.landing_page?.slug || "-"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="landing-muted">Estado</span>
-                      <strong>
-                        {landingDetail?.landing_page?.status || "-"}
-                      </strong>
-                    </div>
-                    <div className="landing-meta-version">
-                      <span className="landing-muted">Versión</span>
-                      <select
-                        value={selectedVersionId || ""}
-                        onChange={(event) => {
-                          const nextId = Number(event.target.value || 0);
-                          setSelectedVersionId(nextId || null);
-                          const version = (landingDetail?.versions || []).find(
-                            (entry) => Number(entry.id) === nextId,
-                          );
-                          if (version) {
-                            useVersionInEditor(version);
-                          }
-                        }}
-                      >
-                        {(landingDetail?.versions || []).map((version) => (
-                          <option key={version.id} value={version.id}>
-                            v{version.version_number} · {version.source_type}
-                            {version.is_active ? " · activa" : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+          <article className="landing-card landing-editor-card">
+            <h3>Editor y publicación</h3>
+            {!selectedLandingId ? (
+              <p className="landing-muted">
+                Selecciona una landing desde la pestaña Eventos/Landings.
+              </p>
+            ) : (
+              <>
+                <div className="landing-meta-grid">
+                  <div>
+                    <span className="landing-muted">Landing ID</span>
+                    <strong>{selectedLandingId}</strong>
                   </div>
-
-                  <div className="landing-inline-actions landing-editor-actions">
-                    <button
-                      type="button"
-                      onClick={handleSaveCurrentVersion}
-                      disabled={
-                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                      }
-                    >
-                      Guardar versión
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePublishVersion}
-                      disabled={
-                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                      }
-                    >
-                      Publicar
-                    </button>
-                    <button
-                      type="button"
-                      className="landing-ai-action"
-                      onClick={handleOpenAiPromptModal}
-                      disabled={
-                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                      }
-                    >
-                      <span className="landing-ai-glyph" aria-hidden="true">
-                        AI
-                      </span>
-                      Generar con IA
-                    </button>
-                    {selectedPublicUrl ? (
-                      <a
-                        href={selectedPublicUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Ver landing publicada
-                      </a>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handlePreviewDraftLanding}
-                        disabled={
-                          isSavingEditor ||
-                          isLoadingDetail ||
-                          isGeneratingWithAi
+                  <div>
+                    <span className="landing-muted">Event ID</span>
+                    <strong>{landingDetail?.landing_page?.event_id || "-"}</strong>
+                  </div>
+                  <div>
+                    <span className="landing-muted">Slug</span>
+                    <strong>{landingDetail?.landing_page?.slug || "-"}</strong>
+                  </div>
+                  <div>
+                    <span className="landing-muted">Estado</span>
+                    <strong>{landingDetail?.landing_page?.status || "-"}</strong>
+                  </div>
+                  <div className="landing-meta-version">
+                    <span className="landing-muted">Versión</span>
+                    <select
+                      value={selectedVersionId || ""}
+                      onChange={(event) => {
+                        const nextId = Number(event.target.value || 0);
+                        setSelectedVersionId(nextId || null);
+                        const version = (landingDetail?.versions || []).find(
+                          (entry) => Number(entry.id) === nextId,
+                        );
+                        if (version) {
+                          useVersionInEditor(version);
                         }
-                      >
-                        Previsualizar borrador
-                      </button>
-                    )}
+                      }}
+                    >
+                      {(landingDetail?.versions || []).map((version) => (
+                        <option key={version.id} value={version.id}>
+                          v{version.version_number} · {version.source_type}
+                          {version.is_active ? " · activa" : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                </div>
 
-                  <label className="landing-label-block">
-                    HTML
-                    <textarea
-                      value={editorHtml}
-                      onChange={(event) => setEditorHtml(event.target.value)}
-                      rows={14}
-                    />
-                  </label>
+                <section className="landing-editor-section">
+                  <div className="landing-editor-section-head">
+                    <h4>Landing del evento</h4>
+                    <p className="landing-editor-section-description">
+                      Edita el HTML principal, ajusta el esquema del formulario y
+                      controla publicación y versiones desde un solo flujo.
+                    </p>
+                  </div>
+                  <div className="landing-editor-section-grid">
+                    <div className="landing-editor-section-main">
+                      <div className="landing-action-group">
+                        <span className="landing-action-group-label">
+                          Acciones de versión
+                        </span>
+                        <div className="landing-inline-actions landing-editor-actions">
+                        <button
+                          type="button"
+                          onClick={handleSaveCurrentVersion}
+                          disabled={
+                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                          }
+                        >
+                          Guardar versión
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handlePublishVersion}
+                          disabled={
+                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                          }
+                        >
+                          Publicar
+                        </button>
+                        <button
+                          type="button"
+                          className="landing-ai-action landing-ai-action--icon-only"
+                          onClick={handleOpenAiPromptModal}
+                          disabled={
+                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                          }
+                          title="Generar con IA"
+                          aria-label="Generar con IA"
+                        >
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false">
+                            <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z"/>
+                          </svg>
+                        </button>
+                        {selectedPublicUrl ? (
+                          <a href={selectedPublicUrl} target="_blank" rel="noreferrer">
+                            Ver landing publicada
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handlePreviewDraftLanding}
+                            disabled={
+                              isSavingEditor ||
+                              isLoadingDetail ||
+                              isGeneratingWithAi
+                            }
+                          >
+                            Previsualizar borrador
+                          </button>
+                        )}
+                        </div>
+                      </div>
 
-                  <label className="landing-label-block">
-                    Form schema (JSON)
-                    <textarea
-                      value={editorFormSchemaText}
-                      onChange={(event) =>
-                        setEditorFormSchemaText(event.target.value)
-                      }
-                      rows={14}
-                    />
-                  </label>
+                      <label className="landing-label-block">
+                        HTML de la landing
+                        <textarea
+                          value={editorHtml}
+                          onChange={(event) => setEditorHtml(event.target.value)}
+                          rows={14}
+                        />
+                      </label>
 
-                  <form
-                    className="landing-inline-actions"
-                    onSubmit={handleImportUrl}
-                  >
-                    <input
-                      type="url"
-                      value={importUrl}
-                      onChange={(event) => setImportUrl(event.target.value)}
-                      placeholder="https://sitio.com/landing"
-                    />
-                    <button type="submit" disabled={isSavingEditor}>
-                      Importar URL
-                    </button>
-                  </form>
+                      <label className="landing-label-block">
+                        Form schema (JSON)
+                        <textarea
+                          value={editorFormSchemaText}
+                          onChange={(event) =>
+                            setEditorFormSchemaText(event.target.value)
+                          }
+                          rows={14}
+                        />
+                      </label>
 
-                  <form
-                    className="landing-inline-actions"
-                    onSubmit={handleUploadHtml}
-                  >
-                    <input
-                      type="file"
-                      accept=".html,text/html"
-                      onChange={(event) =>
-                        setUploadFile(event.target.files?.[0] || null)
-                      }
-                    />
-                    <button type="submit" disabled={isSavingEditor}>
-                      Subir HTML como nueva versión
-                    </button>
-                  </form>
-                </>
-              )}
-            </article>
+                      <div className="landing-action-group">
+                        <span className="landing-action-group-label">
+                          Importar contenido
+                        </span>
+                        <form
+                          className="landing-inline-actions landing-inline-actions-compact"
+                          onSubmit={handleImportUrl}
+                        >
+                          <input
+                            type="url"
+                            value={importUrl}
+                            onChange={(event) => setImportUrl(event.target.value)}
+                            placeholder="https://sitio.com/landing"
+                          />
+                          <button type="submit" disabled={isSavingEditor}>
+                            Importar URL
+                          </button>
+                        </form>
 
-            <article className="landing-card">
-              <h3>Vista previa</h3>
-              <div className="landing-preview-wrap">
-                <iframe
-                  title="Vista previa landing"
-                  srcDoc={editorHtml || DEFAULT_HTML}
-                  sandbox="allow-forms allow-same-origin allow-scripts"
-                />
-              </div>
-              {selectedVersion ? (
-                <p className="landing-muted">
-                  Versión seleccionada: v{selectedVersion.version_number} ·{" "}
-                  {selectedVersion.source_type}
-                </p>
-              ) : null}
-            </article>
-          </div>
+                        <form
+                          className="landing-inline-actions landing-inline-actions-compact"
+                          onSubmit={handleUploadHtml}
+                        >
+                          <input
+                            type="file"
+                            accept=".html,text/html"
+                            onChange={(event) =>
+                              setUploadFile(event.target.files?.[0] || null)
+                            }
+                          />
+                          <button type="submit" disabled={isSavingEditor}>
+                            Subir HTML como nueva versión
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+
+                    <div className="landing-editor-section-preview">
+                      <h5>Vista previa landing</h5>
+                      <div className="landing-preview-wrap">
+                        <iframe
+                          title="Vista previa landing"
+                          srcDoc={editorHtml || DEFAULT_HTML}
+                          sandbox="allow-forms allow-same-origin allow-scripts"
+                        />
+                      </div>
+                      {selectedVersion ? (
+                        <p className="landing-muted">
+                          Versión seleccionada: v{selectedVersion.version_number} · {selectedVersion.source_type}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="landing-editor-section">
+                  <div className="landing-editor-section-head">
+                    <h4>Confirmación de registro (correo/página)</h4>
+                    <p className="landing-editor-section-description">
+                      Define qué sucede después del registro: correo, página o
+                      ambos, con edición manual, IA y previsualización.
+                    </p>
+                  </div>
+                  <div className="landing-editor-section-grid">
+                    <div className="landing-editor-section-main">
+                      <fieldset className="landing-confirmation-config-section">
+                        <legend>Configuración</legend>
+                        <label className="landing-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={confirmationConfig.enabled}
+                            onChange={(event) =>
+                              setConfirmationConfig((prev) => ({
+                                ...prev,
+                                enabled: event.target.checked,
+                              }))
+                            }
+                          />
+                          Enviar respuesta a registrados
+                        </label>
+
+                        {confirmationConfig.enabled ? (
+                          <>
+                            <label className="landing-label-block">
+                              Tipo de respuesta
+                              <select
+                                value={confirmationConfig.response_type || "email"}
+                                onChange={(event) =>
+                                  setConfirmationConfig((prev) => ({
+                                    ...prev,
+                                    response_type: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="email">Correo</option>
+                                <option value="page">Página</option>
+                                <option value="both">Ambos (correo + página)</option>
+                              </select>
+                            </label>
+
+                            <div className="landing-confirmation-tabs">
+                              {confirmationSupportsEmail ? (
+                                <button
+                                  type="button"
+                                  className={
+                                    confirmationWorkspaceTab === "email"
+                                      ? "is-active"
+                                      : ""
+                                  }
+                                  onClick={() =>
+                                    setConfirmationWorkspaceTab("email")
+                                  }
+                                >
+                                  Correo
+                                </button>
+                              ) : null}
+                              {confirmationSupportsPage ? (
+                                <button
+                                  type="button"
+                                  className={
+                                    confirmationWorkspaceTab === "page"
+                                      ? "is-active"
+                                      : ""
+                                  }
+                                  onClick={() =>
+                                    setConfirmationWorkspaceTab("page")
+                                  }
+                                >
+                                  Página
+                                </button>
+                              ) : null}
+                            </div>
+
+                            {confirmationWorkspaceTab === "email" &&
+                            confirmationSupportsEmail ? (
+                              <div className="landing-confirmation-pane">
+                                <label className="landing-label-block">
+                                  Asunto del correo
+                                  <input
+                                    type="text"
+                                    value={confirmationConfig.email_subject || ""}
+                                    onChange={(event) =>
+                                      setConfirmationConfig((prev) => ({
+                                        ...prev,
+                                        email_subject: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="ej: Confirmamos tu registro en [Evento]"
+                                  />
+                                </label>
+
+                                <label className="landing-label-block">
+                                  Cuerpo del correo (HTML)
+                                  <div className="landing-editor-with-ai">
+                                    <textarea
+                                      value={
+                                        confirmationConfig.email_body_html || ""
+                                      }
+                                      onChange={(event) =>
+                                        setConfirmationConfig((prev) => ({
+                                          ...prev,
+                                          email_body_html: event.target.value,
+                                        }))
+                                      }
+                                      rows={8}
+                                      placeholder="<p>Hola {first_name},</p>..."
+                                    />
+                                    <div className="landing-ai-email-actions">
+                                      <input
+                                        type="text"
+                                        value={confirmationEmailAiPrompt || ""}
+                                        onChange={(event) =>
+                                          setConfirmationEmailAiPrompt(
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="ej: Incluir CTA para agregar al calendario"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="landing-ai-action landing-ai-action--icon-only"
+                                        onClick={handleGenerateEmailWithAi}
+                                        disabled={
+                                          isGeneratingEmailWithAi ||
+                                          isSavingConfirmation
+                                        }
+                                        title="Generar con IA"
+                                        aria-label="Generar con IA"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          width="18"
+                                          height="18"
+                                          fill="currentColor"
+                                          aria-hidden="true"
+                                          focusable="false"
+                                        >
+                                          <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </label>
+                              </div>
+                            ) : null}
+
+                            {confirmationWorkspaceTab === "page" &&
+                            confirmationSupportsPage ? (
+                              <div className="landing-confirmation-pane">
+                                <label className="landing-label-block">
+                                  URL de redireccion (opcional)
+                                  <input
+                                    type="url"
+                                    value={confirmationConfig.redirect_url || ""}
+                                    onChange={(event) =>
+                                      setConfirmationConfig((prev) => ({
+                                        ...prev,
+                                        redirect_url: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="https://tudominio.com/gracias"
+                                  />
+                                </label>
+
+                                <label className="landing-label-block">
+                                  Pagina de confirmacion (HTML)
+                                  <div className="landing-editor-with-ai">
+                                    <textarea
+                                      value={confirmationConfig.page_html || ""}
+                                      onChange={(event) =>
+                                        setConfirmationConfig((prev) => ({
+                                          ...prev,
+                                          page_html: event.target.value,
+                                        }))
+                                      }
+                                      rows={10}
+                                      placeholder={DEFAULT_CONFIRMATION_PAGE_HTML}
+                                    />
+                                    <div className="landing-ai-email-actions">
+                                      <input
+                                        type="text"
+                                        value={confirmationPageAiPrompt || ""}
+                                        onChange={(event) =>
+                                          setConfirmationPageAiPrompt(
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="ej: incluir resumen del evento y CTA"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="landing-ai-action landing-ai-action--icon-only"
+                                        onClick={handleGenerateConfirmationPageWithAi}
+                                        disabled={
+                                          isGeneratingConfirmationPageWithAi ||
+                                          isSavingConfirmation
+                                        }
+                                        title="Generar pagina con IA"
+                                        aria-label="Generar pagina con IA"
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          width="18"
+                                          height="18"
+                                          fill="currentColor"
+                                          aria-hidden="true"
+                                          focusable="false"
+                                        >
+                                          <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </label>
+
+                                <form
+                                  className="landing-inline-actions landing-inline-actions-compact"
+                                  onSubmit={handleImportConfirmationPageUrl}
+                                >
+                                  <input
+                                    type="url"
+                                    value={confirmationPageImportUrl}
+                                    onChange={(event) =>
+                                      setConfirmationPageImportUrl(
+                                        event.target.value,
+                                      )
+                                    }
+                                    placeholder="https://sitio.com/gracias"
+                                  />
+                                  <button
+                                    type="submit"
+                                    disabled={isSavingConfirmation}
+                                  >
+                                    Importar URL
+                                  </button>
+                                </form>
+
+                                <form
+                                  className="landing-inline-actions landing-inline-actions-compact"
+                                  onSubmit={handleUploadConfirmationPageHtml}
+                                >
+                                  <input
+                                    type="file"
+                                    accept=".html,text/html"
+                                    onChange={(event) =>
+                                      setConfirmationPageUploadFile(
+                                        event.target.files?.[0] || null,
+                                      )
+                                    }
+                                  />
+                                  <button
+                                    type="submit"
+                                    disabled={isSavingConfirmation}
+                                  >
+                                    Subir archivo HTML
+                                  </button>
+                                </form>
+                              </div>
+                            ) : null}
+
+                            <button
+                              type="button"
+                              onClick={handleSaveConfirmationConfig}
+                              disabled={isSavingConfirmation}
+                              className="landing-save-btn"
+                            >
+                              {isSavingConfirmation
+                                ? "Guardando..."
+                                : "Guardar configuración"}
+                            </button>
+                          </>
+                        ) : null}
+                      </fieldset>
+                    </div>
+
+                    <div className="landing-editor-section-preview">
+                      <h5>Vista previa de confirmación</h5>
+
+                      {confirmationSupportsEmail ? (
+                        <div className="landing-confirmation-preview-section">
+                          <div className="landing-inline-actions">
+                            <strong>Correo de confirmacion</strong>
+                          </div>
+                          <div className="landing-confirmation-preview-wrap">
+                            <iframe
+                              title="Vista previa correo de confirmacion"
+                              srcDoc={
+                                confirmationConfig.email_body_html ||
+                                "<p style='font-family:Segoe UI,Arial,sans-serif;padding:16px'>Aun no hay contenido de correo.</p>"
+                              }
+                              sandbox="allow-forms allow-same-origin allow-scripts"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {confirmationSupportsPage ? (
+                        <div className="landing-confirmation-preview-section">
+                          <div className="landing-inline-actions">
+                            <strong>Pagina de confirmacion</strong>
+                            <button
+                              type="button"
+                              onClick={handlePreviewConfirmationPage}
+                              disabled={isSavingConfirmation}
+                            >
+                              Abrir en nueva pestana
+                            </button>
+                          </div>
+                          <div className="landing-confirmation-preview-wrap">
+                            <iframe
+                              title="Vista previa pagina de confirmacion"
+                              srcDoc={
+                                confirmationConfig.page_html ||
+                                DEFAULT_CONFIRMATION_PAGE_HTML
+                              }
+                              sandbox="allow-forms allow-same-origin allow-scripts"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {!confirmationSupportsEmail && !confirmationSupportsPage ? (
+                        <p className="landing-muted">
+                          Selecciona un tipo de respuesta para mostrar la vista previa.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+              </>
+            )}
+          </article>
         </section>
       ) : null}
 
@@ -1531,80 +2433,58 @@ export default function LandingModulePage() {
                 <thead>
                   <tr>
                     <th>Fecha</th>
-                    <th>Contacto</th>
-                    <th>Cuenta</th>
-                    <th>Estado CRM</th>
-                    <th>IDs CRM</th>
+                    {submissionFieldColumns.map((column) => (
+                      <th key={column.key}>{column.label}</th>
+                    ))}
                     <th />
                   </tr>
                 </thead>
                 <tbody>
                   {submissions.length === 0 ? (
                     <tr>
-                      <td colSpan={6}>No hay registros para este evento</td>
+                      <td colSpan={submissionFieldColumns.length + 2}>
+                        No hay registros para este evento
+                      </td>
                     </tr>
                   ) : (
                     submissions.map((submission) => {
-                      const contact =
-                        submission.payload_normalized?.contact || {};
-                      const account =
-                        submission.payload_normalized?.account || {};
+                      const submittedFields =
+                        buildSubmissionFieldEntries(submission);
+                      const fieldByKey = new Map(
+                        submittedFields.map((entry) => [entry.key, entry.value]),
+                      );
                       return (
                         <tr key={submission.submission_id}>
                           <td>
                             {new Date(submission.submitted_at).toLocaleString()}
                           </td>
-                          <td>
-                            <strong>
-                              {contact.first_name || ""}{" "}
-                              {contact.last_name || ""}
-                            </strong>
-                            <div className="landing-muted">
-                              {contact.email || "-"}
-                            </div>
-                            <div className="landing-muted">
-                              {contact.phone || contact.mobile || ""}
-                            </div>
-                          </td>
-                          <td>
-                            <strong>{account.name || "-"}</strong>
-                            <div className="landing-muted">
-                              {account.website || ""}
-                            </div>
-                          </td>
-                          <td>
-                            <span
-                              className={`landing-status status-${submission.crm_processing_status}`}
-                            >
-                              {submission.crm_processing_status}
-                            </span>
-                            {submission.crm_error_message ? (
-                              <div className="landing-error-inline">
-                                {submission.crm_error_message}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td>
-                            <div className="landing-muted">
-                              lead: {submission.crm_links?.lead_id || "-"}
-                            </div>
-                            <div className="landing-muted">
-                              account: {submission.crm_links?.account_id || "-"}
-                            </div>
-                            <div className="landing-muted">
-                              contact: {submission.crm_links?.contact_id || "-"}
-                            </div>
-                          </td>
+                          {submissionFieldColumns.map((column) => (
+                            <td key={`${submission.submission_id}-${column.key}`}>
+                              {fieldByKey.get(column.key) || "-"}
+                            </td>
+                          ))}
                           <td>
                             <button
                               type="button"
+                              className="landing-icon-action-button"
                               onClick={() =>
-                                handleReprocessSubmission(
+                                handleSendSubmissionToLeads(
                                   submission.submission_id,
                                 )
                               }
+                              title="Enviar a Leads"
+                              aria-label="Enviar a Leads"
                             >
-                              Reprocesar
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="16"
+                                height="16"
+                                fill="currentColor"
+                                aria-hidden="true"
+                                focusable="false"
+                              >
+                                <path d="M15 11c1.93 0 3.5-1.57 3.5-3.5S16.93 4 15 4s-3.5 1.57-3.5 3.5S13.07 11 15 11zm-8 0c1.66 0 3-1.34 3-3S8.66 5 7 5 4 6.34 4 8s1.34 3 3 3zm8 2c-2.33 0-7 1.17-7 3.5V20h14v-3.5c0-2.33-4.67-3.5-7-3.5zM7 13c-.29 0-.62.02-.97.05C4.25 13.28 2 14.17 2 15.5V18h4v-1.5c0-1.11.58-2.08 1.6-2.84A8.88 8.88 0 0 0 7 13zm-1-3h2v1H6v2H5v-2H3v-1h2V8h1v2z" />
+                              </svg>
                             </button>
                           </td>
                         </tr>

@@ -2729,6 +2729,21 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 8px;
+  margin: -8px;
+  transition: background 0.2s ease;
+}
+
+.topbar-user:hover {
+  background: #f5f7fa;
+}
+
+.topbar-user.active {
+  background: #e8eef8;
 }
 
 .topbar-user-meta {

@@ -36,6 +36,7 @@ const FIELD_TYPES = new Set([
 ]);
 const CRM_ENTITY_TYPES = new Set(["lead", "account", "contact", "meta"]);
 const CRM_STATUS_PENDING = "pending";
+const CRM_STATUS_PENDING_MANUAL = "pending_manual";
 const CRM_STATUS_PROCESSED = "processed";
 const CRM_STATUS_FAILED = "failed";
 const CRM_STATUS_DUPLICATE_REVIEW = "duplicate_review";
@@ -68,6 +69,15 @@ const importUrlSchema = z.object({
 
 const publishSchema = z.object({
   version_id: z.number().int().positive(),
+});
+
+const confirmationConfigSchema = z.object({
+  enabled: z.boolean(),
+  response_type: z.enum(["email", "page", "both"]).optional().nullable(),
+  email_subject: z.string().trim().max(300).optional().nullable(),
+  email_body_html: z.string().trim().max(200_000).optional().nullable(),
+  redirect_url: z.string().trim().max(1000).optional().nullable(),
+  page_html: z.string().trim().max(2_000_000).optional().nullable(),
 });
 
 const publicSubmitSchema = z.object({
@@ -121,6 +131,103 @@ function normalizeGenericText(value, max = 255) {
   return String(value || "")
     .trim()
     .slice(0, max);
+}
+
+function parseConfirmationConfig(value) {
+  const fallback = {
+    enabled: false,
+    response_type: "email",
+    email_subject: "",
+    email_body_html: "",
+    redirect_url: "",
+    page_html: "",
+  };
+
+  const raw =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value || "{}");
+          } catch {
+            return {};
+          }
+        })()
+      : value && typeof value === "object"
+        ? value
+        : {};
+
+  const responseType = String(raw.response_type || "email").trim();
+
+  return {
+    ...fallback,
+    enabled: Boolean(raw.enabled),
+    response_type: ["email", "page", "both"].includes(responseType)
+      ? responseType
+      : "email",
+    email_subject: String(raw.email_subject || "").trim(),
+    email_body_html: String(raw.email_body_html || "").trim(),
+    redirect_url: String(raw.redirect_url || "").trim(),
+    page_html: String(raw.page_html || "").trim(),
+  };
+}
+
+function buildPublicSubmitSuccessPayload({ formSchema, confirmationConfig }) {
+  const successMessage = String(
+    formSchema?.submit?.success_message || "Gracias por registrarte",
+  );
+  const payload = {
+    status: "accepted",
+    message: successMessage,
+  };
+
+  const config = parseConfirmationConfig(confirmationConfig);
+  if (!config.enabled) {
+    return payload;
+  }
+
+  const includesPage = ["page", "both"].includes(config.response_type);
+  if (!includesPage) {
+    return payload;
+  }
+
+  if (config.redirect_url) {
+    payload.redirect_url = config.redirect_url;
+    payload.response_type = "page_redirect";
+    return payload;
+  }
+
+  if (config.page_html) {
+    payload.page_html = config.page_html;
+    payload.response_type = "page_html";
+    return payload;
+  }
+
+  payload.page_html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Registro completado</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: linear-gradient(145deg,#f0f7ff,#f8fbff); color: #16345a; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 56px 20px 72px; }
+      .card { background: #fff; border: 1px solid #d6e4f7; border-radius: 16px; padding: 28px; box-shadow: 0 16px 38px rgba(20,55,101,.12); }
+      h1 { margin: 0 0 10px; color: #15437a; }
+      p { margin: 0; color: #36587f; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="card">
+        <h1>${successMessage.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</h1>
+        <p>Tu registro fue recibido correctamente.</p>
+      </section>
+    </div>
+  </body>
+</html>`;
+  payload.response_type = "page_html";
+
+  return payload;
 }
 
 function inferFieldMap(formSchema = {}) {
@@ -263,6 +370,114 @@ function normalizeSubmissionPayload(formData = {}, formSchema = {}) {
   return normalized;
 }
 
+function buildSubmissionFieldEntries(payloadRaw = {}, formSchema = {}) {
+  const raw = payloadRaw && typeof payloadRaw === "object" ? payloadRaw : {};
+  const formData =
+    raw.form_data && typeof raw.form_data === "object" ? raw.form_data : {};
+
+  const schema =
+    typeof formSchema === "string"
+      ? (() => {
+          try {
+            return JSON.parse(formSchema || "{}");
+          } catch {
+            return {};
+          }
+        })()
+      : formSchema && typeof formSchema === "object"
+        ? formSchema
+        : {};
+
+  const schemaFields = Array.isArray(schema.fields) ? schema.fields : [];
+  const FIELD_LABEL_ES = {
+    first_name: "Nombre",
+    last_name: "Apellido",
+    full_name: "Nombre completo",
+    name: "Nombre",
+    email: "Correo",
+    phone: "Telefono",
+    mobile: "Celular",
+    company: "Empresa",
+    company_name: "Empresa",
+    organization: "Organizacion",
+    position: "Cargo",
+    position_title: "Cargo",
+    job_title: "Cargo",
+    country: "Pais",
+    city: "Ciudad",
+    state: "Estado",
+    state_region: "Region",
+    address: "Direccion",
+    address_line: "Direccion",
+    postal_code: "Codigo postal",
+    website: "Sitio web",
+    notes: "Notas",
+    comments: "Comentarios",
+    message: "Mensaje",
+  };
+  const humanizeFieldKey = (key) =>
+    (() => {
+      const normalized = String(key || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "_");
+      if (FIELD_LABEL_ES[normalized]) {
+        return FIELD_LABEL_ES[normalized];
+      }
+      return String(key || "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/^\w/, (char) => char.toUpperCase());
+    })();
+
+  if (schemaFields.length) {
+    const entries = [];
+    const included = new Set();
+
+    for (const field of schemaFields) {
+      const key = String(field?.key || "").trim();
+      if (!key || key === "hp_field") continue;
+      const label = String(field?.label || "").trim() || humanizeFieldKey(key);
+      included.add(key);
+      entries.push({
+        key,
+        label,
+        value: Object.prototype.hasOwnProperty.call(formData, key)
+          ? formData[key]
+          : null,
+      });
+    }
+
+    // Also include dynamic/extra posted inputs not defined in schema.
+    for (const rawKey of Object.keys(formData)) {
+      const key = String(rawKey || "").trim();
+      if (!key || key === "hp_field" || included.has(key)) continue;
+      entries.push({
+        key,
+        label: humanizeFieldKey(key),
+        value: formData[key],
+      });
+    }
+
+    return entries;
+  }
+
+  const fallbackKeys = Object.keys(formData)
+    .map((key) => String(key || "").trim())
+    .filter((key) => key && key !== "hp_field");
+
+  return Array.from(new Set(fallbackKeys)).map((key) => ({
+    key,
+    label: String(key)
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\w/, (char) => char.toUpperCase()),
+    value: formData[key],
+  }));
+}
+
 function buildLandingCaptureScript(slug) {
   const safeSlug = String(slug || "").trim();
   return `
@@ -272,26 +487,43 @@ function buildLandingCaptureScript(slug) {
     var form = document.querySelector('form[data-landing-form]') || document.querySelector('form');
     if (!form) return;
 
+    function collectFormData(targetForm) {
+      var result = {};
+      try {
+        var nativeData = new FormData(targetForm);
+        nativeData.forEach(function(value, key){
+          if (typeof value === 'string') {
+            result[key] = value;
+            return;
+          }
+          result[key] = '';
+        });
+      } catch (_err) {
+        var elements = Array.from(targetForm.elements || []);
+        elements.forEach(function(el){
+          if (!el || !el.name) return;
+          if (el.type === 'checkbox') {
+            result[el.name] = Boolean(el.checked);
+            return;
+          }
+          if (el.type === 'radio') {
+            if (el.checked) result[el.name] = el.value;
+            return;
+          }
+          result[el.name] = el.value;
+        });
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(result, 'hp_field')) {
+        result.hp_field = '';
+      }
+      return result;
+    }
+
     form.addEventListener('submit', async function(event){
       event.preventDefault();
-      var elements = Array.from(form.elements || []);
-      var formData = {};
-      elements.forEach(function(el){
-        if (!el || !el.name) return;
-        if (el.type === 'checkbox') {
-          formData[el.name] = Boolean(el.checked);
-          return;
-        }
-        if (el.type === 'radio') {
-          if (el.checked) formData[el.name] = el.value;
-          return;
-        }
-        formData[el.name] = el.value;
-      });
-
-      if (!Object.prototype.hasOwnProperty.call(formData, 'hp_field')) {
-        formData.hp_field = '';
-      }
+      event.stopPropagation();
+      var formData = collectFormData(form);
 
       var submitButton = form.querySelector('[type="submit"]');
       if (submitButton) submitButton.disabled = true;
@@ -313,6 +545,20 @@ function buildLandingCaptureScript(slug) {
       if (response.ok) {
         var payload = await response.json().catch(function(){ return {}; });
         var successMessage = (payload && payload.message) || 'Gracias por registrarte';
+
+        if (payload && typeof payload.redirect_url === 'string' && payload.redirect_url.trim()) {
+          window.location.assign(payload.redirect_url.trim());
+          return;
+        }
+
+        if (payload && typeof payload.page_html === 'string' && payload.page_html.trim()) {
+          document.documentElement.innerHTML = payload.page_html;
+          document.open();
+          document.write(payload.page_html);
+          document.close();
+          return;
+        }
+
         window.alert(successMessage);
         return;
       }
@@ -766,7 +1012,8 @@ async function resolveOrCreateLead({
 async function processSubmissionIntoCrm(submissionId, workerRunId) {
   const rows = await query(
     `SELECT s.id, s.event_id, s.payload_normalized_json, s.crm_processing_status,
-            lp.slug, lp.created_by
+            s.landing_page_id,
+            lp.slug, lp.created_by, lp.event_name, lp.confirmation_config_json
      FROM landing_submissions s
      INNER JOIN landing_pages lp ON lp.id = s.landing_page_id
      WHERE s.id = ?
@@ -793,59 +1040,12 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
 
   const actorUserId = Number(submission.created_by || 0) || 1;
 
-  const accountResolution = await resolveOrCreateAccount({
-    normalizedPayload,
-    actorUserId,
-  });
-  if (accountResolution?.duplicateReview) {
-    await query(
-      `UPDATE landing_submissions
-       SET crm_processing_status = ?,
-           crm_error_message = ?,
-           crm_processed_at = NOW(3)
-       WHERE id = ?`,
-      [
-        CRM_STATUS_DUPLICATE_REVIEW,
-        "Multiples cuentas candidatas",
-        Number(submissionId),
-      ],
-    );
-    return;
-  }
-  if (accountResolution?.error) {
-    throw new Error(accountResolution.error);
-  }
-
-  const contactResolution = await resolveOrCreateContact({
-    normalizedPayload,
-    accountId: accountResolution?.accountId || null,
-    actorUserId,
-  });
-  if (contactResolution?.duplicateReview) {
-    await query(
-      `UPDATE landing_submissions
-       SET crm_processing_status = ?,
-           crm_error_message = ?,
-           crm_processed_at = NOW(3)
-       WHERE id = ?`,
-      [
-        CRM_STATUS_DUPLICATE_REVIEW,
-        "Multiples contactos candidatos",
-        Number(submissionId),
-      ],
-    );
-    return;
-  }
-  if (contactResolution?.error) {
-    throw new Error(contactResolution.error);
-  }
-
   const leadResolution = await resolveOrCreateLead({
     submissionId,
     eventId: Number(submission.event_id),
     slug: submission.slug,
-    accountId: accountResolution?.accountId || null,
-    contactId: contactResolution?.contactId || null,
+    accountId: null,
+    contactId: null,
     normalizedPayload,
     actorUserId,
   });
@@ -878,26 +1078,321 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
       [
         Number(submissionId),
         JSON.stringify({
-          account: {
-            action: accountResolution?.action || "none",
-            id: accountResolution?.accountId || null,
-          },
-          contact: {
-            action: contactResolution?.action || "none",
-            id: contactResolution?.contactId || null,
-          },
           lead: {
             action: leadResolution?.action || "none",
             id: leadResolution?.leadId || null,
           },
         }),
         leadResolution?.leadId || null,
-        accountResolution?.accountId || null,
-        contactResolution?.contactId || null,
+        null,
+        null,
         workerRunId,
       ],
     );
   });
+
+  // Enviar correo de confirmación si está configurado
+  await sendLandingConfirmationEmailIfEnabled(
+    submission,
+    normalizedPayload,
+  ).catch((error) => {
+    console.error(
+      `[landing] Error enviando confirmación para submission ${submissionId}:`,
+      error?.message,
+    );
+  });
+}
+
+async function sendLandingConfirmationEmailIfEnabled(
+  submission,
+  normalizedPayload,
+) {
+  try {
+    // Obtener configuración de confirmación
+    let confirmationConfig =
+      typeof submission.confirmation_config_json === "string"
+        ? JSON.parse(submission.confirmation_config_json || "{}")
+        : submission.confirmation_config_json || {};
+
+    console.log(
+      `[landing] Verificando confirmación para submission ${submission.id}: enabled=${confirmationConfig.enabled}, type=${confirmationConfig.response_type}`,
+    );
+
+    if (!confirmationConfig.enabled) {
+      console.log(
+        `[landing] Confirmación deshabilitada para submission ${submission.id}`,
+      );
+      return;
+    }
+
+    const responseType = String(
+      confirmationConfig.response_type || "email",
+    )
+      .trim()
+      .toLowerCase();
+    if (!["email", "both"].includes(responseType)) {
+      console.log(
+        `[landing] Response type no incluye email: ${responseType} para submission ${submission.id}`,
+      );
+      return;
+    }
+
+    // Obtener email del usuario creador
+    const creatorRows = await query(
+      `SELECT email, full_name FROM users WHERE id = ? LIMIT 1`,
+      [Number(submission.created_by)],
+    );
+
+    const creatorUser = creatorRows[0];
+    if (!creatorUser?.email) {
+      console.warn(
+        `[landing] No se encontró email del usuario creador ${submission.created_by} para submission ${submission.id}`,
+      );
+      return;
+    }
+
+    // Obtener email del registrado desde payload normalizado
+    const registeredEmail =
+      normalizedPayload.contact?.email ||
+      normalizedPayload.email ||
+      normalizedPayload.correo;
+    const registeredFirstName =
+      normalizedPayload.contact?.first_name ||
+      normalizedPayload.first_name ||
+      normalizedPayload.nombre ||
+      "Registrado";
+
+    if (!registeredEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registeredEmail)) {
+      console.warn(
+        `[landing] Email de registrado inválido para submission ${submission.id}: ${registeredEmail}`,
+      );
+      return;
+    }
+
+    console.log(
+      `[landing] Enviando confirmación a ${registeredEmail} para submission ${submission.id}`,
+    );
+
+    await sendLandingConfirmationEmail({
+      userId: submission.created_by,
+      from: creatorUser.email,
+      fromName: creatorUser.full_name,
+      to: registeredEmail,
+      recipientName: registeredFirstName,
+      subject: confirmationConfig.email_subject || "Confirmamos tu registro",
+      bodyHtml:
+        confirmationConfig.email_body_html ||
+        buildDefaultConfirmationHtml(registeredFirstName, submission.event_name),
+    });
+  } catch (error) {
+    console.error(
+      "[landing] Error procesando envío de confirmación:",
+      error?.message,
+      error?.stack,
+    );
+  }
+}
+
+function buildDefaultConfirmationHtml(
+  recipientName,
+  eventName,
+) {
+  const displayName = String(recipientName || "registrado").trim();
+  const event = String(eventName || "evento").trim();
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h1 style="color: #0066cc; margin-bottom: 24px;">¡Gracias por registrarte!</h1>
+    
+    <p style="margin-bottom: 16px;">Hola <strong>${displayName}</strong>,</p>
+    
+    <p style="margin-bottom: 16px;">
+      Confirmamos que hemos recibido tu registro en <strong>${event}</strong>. 
+      Nos complace que formes parte de esta experiencia.
+    </p>
+    
+    <div style="background-color: #f5f5f5; border-left: 4px solid #0066cc; padding: 16px; margin: 24px 0; border-radius: 4px;">
+      <p style="margin: 0; font-weight: 600; color: #0066cc;">Datos confirmados:</p>
+      <p style="margin: 8px 0 0 0; font-size: 14px;">Email: ${displayName}</p>
+      <p style="margin: 4px 0 0 0; font-size: 14px;">Evento: ${event}</p>
+    </div>
+    
+    <p style="margin-bottom: 16px;">
+      En breve recibirás más información sobre ${event}. Si tienes alguna pregunta, 
+      no dudes en contactarnos respondiendo a este correo.
+    </p>
+    
+    <p style="margin-bottom: 24px; color: #666; font-size: 14px;">
+      Saludos,<br>
+      <strong>El equipo</strong>
+    </p>
+    
+    <hr style="border: none; border-top: 1px solid #ddd; margin: 32px 0;">
+    
+    <p style="margin: 0; font-size: 12px; color: #999;">
+      Este correo se envió porque te registraste en ${event}. 
+      Si consideraste este mensaje erróneamente, puedes ignorarlo.
+    </p>
+  </div>
+</body>
+</html>
+  `.trim();
+}
+
+function normalizeMojibakeText(value) {
+  const original = String(value || "");
+  if (!original) {
+    return "";
+  }
+
+  let normalized = original;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!/[ÃÂ]/.test(normalized)) {
+      break;
+    }
+
+    const decoded = Buffer.from(normalized, "latin1").toString("utf8");
+    if (!decoded || decoded === normalized) {
+      break;
+    }
+
+    normalized = decoded;
+  }
+
+  return normalized;
+}
+
+async function sendLandingConfirmationEmail({
+  userId,
+  from,
+  fromName,
+  to,
+  recipientName,
+  subject,
+  bodyHtml,
+}) {
+  const { config } = await import("./config.js");
+  const nodemailer = (await import("nodemailer")).default;
+  const {
+    exchangeGoogleRefreshToken,
+    decryptOpaqueSecret,
+    sendGoogleMailMessage,
+  } = await import("./utils.js");
+
+  const displaySubject = normalizeMojibakeText(
+    String(subject || "Confirmamos tu registro").trim(),
+  );
+  const displayHtml = String(bodyHtml || "").trim();
+  const displayFromName = String(fromName || "").trim();
+  const displayTo = String(to).trim();
+
+  // Intentar enviar con Google OAuth si el usuario lo tiene configurado
+  try {
+    const googleConnection = await query(
+      `SELECT id, google_email, refresh_token_encrypted, scope_text, revoked_at
+       FROM user_google_mail_connections
+       WHERE user_id = ? AND revoked_at IS NULL
+       LIMIT 1`,
+      [Number(userId)],
+    );
+
+    if (googleConnection.length > 0) {
+      const connection = googleConnection[0];
+
+      // Validar que tenga permisos para enviar
+      const hasMailSendScope =
+        String(connection.scope_text || "")
+          .split(" ")
+          .includes("https://www.googleapis.com/auth/gmail.send") ||
+        String(connection.scope_text || "").includes("https://mail.google.com/");
+
+      if (!hasMailSendScope) {
+        console.warn(
+          `[landing] Usuario ${userId} tiene Google conectado pero sin scope para enviar correos`,
+        );
+      } else {
+        try {
+          const refreshToken = decryptOpaqueSecret(
+            connection.refresh_token_encrypted,
+          );
+          const tokenPayload = await exchangeGoogleRefreshToken(refreshToken);
+
+          await sendGoogleMailMessage({
+            accessToken: tokenPayload.access_token,
+            from: connection.google_email,
+            to: displayTo,
+            subject: displaySubject,
+            messageBody: displayHtml,
+            attachments: [],
+          });
+
+          console.log(
+            `[landing-confirmation] ✓ Confirmación enviada a ${displayTo} desde ${connection.google_email} (Google OAuth)`,
+          );
+          return;
+        } catch (googleError) {
+          console.error(
+            `[landing-confirmation] Error enviando con Google OAuth: ${googleError?.message}. Intentando con SMTP fallback.`,
+          );
+          // Continuar con SMTP fallback
+        }
+      }
+    }
+  } catch (googleCheckError) {
+    console.log(
+      `[landing] No se encontró Google conexión para usuario ${userId}, usando SMTP`,
+    );
+  }
+
+  // Fallback a SMTP
+  if (!config.mail.host || !config.mail.user) {
+    console.error(
+      `[mail] SMTP no configurado. SMTP_HOST=${config.mail.host || "undefined"}, SMTP_USER=${config.mail.user || "undefined"}. No se puede enviar confirmación a ${displayTo}.`,
+    );
+    throw new Error(
+      "SMTP_HOST o SMTP_USER no configurados. Contacta al administrador.",
+    );
+  }
+
+  console.log(
+    `[mail] Enviando confirmación a ${displayTo} desde ${from} vía SMTP (${config.mail.host}:${config.mail.port})`,
+  );
+
+  const transporter = nodemailer.createTransport({
+    host: config.mail.host,
+    port: config.mail.port,
+    secure: config.mail.secure,
+    auth: {
+      user: config.mail.user,
+      pass: config.mail.pass,
+    },
+  });
+
+  try {
+    const info = await transporter.sendMail({
+      from: displayFromName
+        ? `${displayFromName} <${String(from).trim()}>`
+        : String(from).trim(),
+      to: displayTo,
+      subject: displaySubject,
+      html: displayHtml,
+    });
+
+    console.log(
+      `[landing-confirmation] ✓ Confirmación enviada a ${displayTo} desde ${from} (SMTP, messageId: ${info.messageId})`,
+    );
+  } catch (error) {
+    console.error(
+      `[landing-confirmation] ✗ Error enviando a ${displayTo} desde ${from}: ${error?.message}`,
+    );
+    throw error;
+  }
 }
 
 let landingWorkerStarted = false;
@@ -1260,6 +1755,39 @@ privateRouter.post(
 );
 
 privateRouter.post(
+  "/landing-pages/:landingPageId/confirmation-page/import-url",
+  requireAnyPermission(landingUpdatePermissions),
+  async (req, res) => {
+    const landingPageId = Number(req.params.landingPageId);
+    if (!Number.isInteger(landingPageId) || landingPageId <= 0) {
+      return res.status(400).json({ message: "landingPageId invalido" });
+    }
+
+    const parsed = importUrlSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "source_url invalida" });
+    }
+
+    const landingPage = await loadLandingPageById(landingPageId);
+    if (!landingPage) {
+      return res.status(404).json({ message: "Landing no encontrada" });
+    }
+
+    try {
+      const html = await fetchUrlHtml(parsed.data.source_url);
+      return res.status(200).json({
+        html_content: html,
+        source_url: parsed.data.source_url,
+      });
+    } catch (error) {
+      return res.status(Number(error?.status) || 500).json({
+        message: error?.message || "No fue posible importar URL",
+      });
+    }
+  },
+);
+
+privateRouter.post(
   "/landing-pages/:landingPageId/import-url",
   requireAnyPermission(landingUpdatePermissions),
   async (req, res) => {
@@ -1485,6 +2013,46 @@ privateRouter.patch(
       version_id: versionId,
       updated: true,
     });
+  },
+);
+
+privateRouter.patch(
+  "/landing-pages/:landingPageId/confirmation-config",
+  requireAnyPermission(landingUpdatePermissions),
+  async (req, res) => {
+    const landingPageId = Number(req.params.landingPageId);
+    if (!Number.isInteger(landingPageId) || landingPageId <= 0) {
+      return res.status(400).json({ message: "landingPageId invalido" });
+    }
+
+    const parsed = confirmationConfigSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const rows = await query(
+      `SELECT id FROM landing_pages WHERE id = ? LIMIT 1`,
+      [landingPageId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Landing no encontrada" });
+    }
+
+    await query(
+      `UPDATE landing_pages
+       SET confirmation_config_json = ?, updated_by = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        JSON.stringify(parsed.data),
+        Number(req.user.id),
+        landingPageId,
+      ],
+    );
+
+    return res.json({ updated: true });
   },
 );
 
@@ -1764,12 +2332,18 @@ privateRouter.get(
               s.submitted_at,
               s.crm_processing_status,
               s.crm_error_message,
+              s.payload_raw_json,
               s.payload_normalized_json,
+              lv.form_schema_json AS landing_form_schema_json,
               scl.lead_id,
               scl.account_id,
-              scl.contact_id
+              scl.contact_id,
+              c.first_name AS crm_contact_first_name,
+              c.last_name AS crm_contact_last_name
        FROM landing_submissions s
+       LEFT JOIN landing_page_versions lv ON lv.id = s.landing_version_id
        LEFT JOIN landing_submission_crm_links scl ON scl.submission_id = s.id
+       LEFT JOIN contacts c ON c.id = scl.contact_id
        WHERE ${where.join(" AND ")}
        ORDER BY s.submitted_at DESC, s.id DESC
        LIMIT ? OFFSET ?`,
@@ -1784,21 +2358,37 @@ privateRouter.get(
     );
 
     return res.json({
-      items: items.map((row) => ({
+      items: items.map((row) => {
+        const payloadRaw =
+          typeof row.payload_raw_json === "string"
+            ? JSON.parse(row.payload_raw_json || "{}")
+            : row.payload_raw_json || {};
+
+        return {
         submission_id: Number(row.submission_id),
         submitted_at: row.submitted_at,
         crm_processing_status: row.crm_processing_status,
         crm_error_message: row.crm_error_message,
+        payload_raw: payloadRaw,
         payload_normalized:
           typeof row.payload_normalized_json === "string"
             ? JSON.parse(row.payload_normalized_json || "{}")
             : row.payload_normalized_json || {},
+        submission_fields: buildSubmissionFieldEntries(
+          payloadRaw,
+          row.landing_form_schema_json,
+        ),
         crm_links: {
           lead_id: row.lead_id === null ? null : Number(row.lead_id),
           account_id: row.account_id === null ? null : Number(row.account_id),
           contact_id: row.contact_id === null ? null : Number(row.contact_id),
         },
-      })),
+        crm_contact: {
+          first_name: String(row.crm_contact_first_name || "").trim(),
+          last_name: String(row.crm_contact_last_name || "").trim(),
+        },
+      };
+      }),
       pagination: {
         page,
         page_size: pageSize,
@@ -1900,6 +2490,7 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
     `SELECT lp.id AS landing_page_id,
             lp.event_id,
             lp.current_version_id,
+            lp.confirmation_config_json,
             lv.form_schema_json,
             lv.id AS version_id,
             lv.is_active
@@ -1975,12 +2566,13 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       [Number(landing.landing_page_id), idempotencyKey],
     );
     if (existingRows[0]) {
+      const successPayload = buildPublicSubmitSuccessPayload({
+        formSchema,
+        confirmationConfig: landing.confirmation_config_json,
+      });
       return res.status(201).json({
         submission_id: Number(existingRows[0].id),
-        status: "accepted",
-        message: String(
-          formSchema?.submit?.success_message || "Gracias por registrarte",
-        ),
+        ...successPayload,
       });
     }
   }
@@ -2012,19 +2604,20 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
         field_keys: Array.from(fieldsMap.keys()),
       }),
       JSON.stringify(normalizedPayload),
-      CRM_STATUS_PENDING,
+      CRM_STATUS_PENDING_MANUAL,
     ],
   );
 
   const submissionId = Number(insertResult.insertId || 0);
-  await processPendingLandingSubmissions();
+
+  const successPayload = buildPublicSubmitSuccessPayload({
+    formSchema,
+    confirmationConfig: landing.confirmation_config_json,
+  });
 
   return res.status(201).json({
     submission_id: submissionId,
-    status: "accepted",
-    message: String(
-      formSchema?.submit?.success_message || "Gracias por registrarte",
-    ),
+    ...successPayload,
   });
 });
 

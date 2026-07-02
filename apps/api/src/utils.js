@@ -400,6 +400,20 @@ function normalizeEmailList(value) {
     .join(", ");
 }
 
+function encodeMimeHeaderUtf8(value) {
+  const text = String(value || "").replace(/[\r\n]+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+
+  if (/^[\x20-\x7E]+$/.test(text)) {
+    return text;
+  }
+
+  const encoded = Buffer.from(text, "utf8").toString("base64");
+  return `=?UTF-8?B?${encoded}?=`;
+}
+
 function buildRawMimeMessage({
   from,
   to,
@@ -411,6 +425,7 @@ function buildRawMimeMessage({
   const normalizedTo = normalizeEmailList(to);
   const normalizedCc = normalizeEmailList(cc);
   const normalizedSubject = String(subject || "").trim();
+  const encodedSubject = encodeMimeHeaderUtf8(normalizedSubject);
   const normalizedBody = String(messageBody || "");
 
   if (!normalizedTo) {
@@ -427,7 +442,7 @@ function buildRawMimeMessage({
       `From: ${from}`,
       `To: ${normalizedTo}`,
       ...(normalizedCc ? [`Cc: ${normalizedCc}`] : []),
-      `Subject: ${normalizedSubject}`,
+      `Subject: ${encodedSubject}`,
       "MIME-Version: 1.0",
       'Content-Type: text/plain; charset="UTF-8"',
       "Content-Transfer-Encoding: 8bit",
@@ -442,7 +457,7 @@ function buildRawMimeMessage({
     `From: ${from}`,
     `To: ${normalizedTo}`,
     ...(normalizedCc ? [`Cc: ${normalizedCc}`] : []),
-    `Subject: ${normalizedSubject}`,
+    `Subject: ${encodedSubject}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",

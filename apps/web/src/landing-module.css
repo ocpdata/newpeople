@@ -104,6 +104,13 @@
   font-weight: 600;
 }
 
+.landing-field-detail {
+  color: #5e7698;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
 .landing-form-grid input,
 .landing-form-grid select,
 .landing-inline-actions input,
@@ -159,6 +166,12 @@
   gap: 8px;
 }
 
+.landing-ai-action--icon-only {
+  padding: 0 10px;
+  min-width: 0;
+  gap: 0;
+}
+
 .landing-ai-glyph {
   display: inline-flex;
   align-items: center;
@@ -177,6 +190,32 @@
   display: grid;
   grid-template-columns: 1fr minmax(170px, 220px) auto;
   gap: 8px;
+}
+
+.landing-list-filters input,
+.landing-list-filters select {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  line-height: 1.1;
+  font-size: 14px;
+}
+
+.landing-refresh-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.landing-refresh-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 
 .landing-list-wrap {
@@ -251,7 +290,76 @@
 }
 
 .landing-editor-card {
+  gap: 14px;
+}
+
+.landing-editor-section {
+  border: 1px solid #cddff8;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.landing-editor-section h4 {
+  margin: 0;
+  color: #173d72;
+  font-size: 16px;
+}
+
+.landing-editor-section-head {
+  display: grid;
+  gap: 4px;
+}
+
+.landing-editor-section-description {
+  margin: 0;
+  color: #4a6790;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.landing-editor-section-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.1fr) minmax(300px, 0.9fr);
+  gap: 12px;
+}
+
+.landing-editor-section-main,
+.landing-editor-section-preview {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.landing-editor-section-preview h5 {
+  margin: 0;
+  color: #2a537f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.landing-action-group {
+  border: 1px dashed #cfe0f8;
+  border-radius: 10px;
+  background: #f9fcff;
+  padding: 10px;
+  display: grid;
   gap: 8px;
+}
+
+.landing-action-group-label {
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #4a6790;
+}
+
+.landing-inline-actions-compact {
+  margin: 0;
 }
 
 .landing-editor-actions {
@@ -285,6 +393,26 @@
   border-radius: 10px;
   padding: 10px 12px;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.landing-alert-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.landing-alert-close:hover {
+  opacity: 1;
 }
 
 .landing-alert-error {
@@ -336,6 +464,34 @@
 
 .landing-submission-filters {
   gap: 8px;
+}
+
+.landing-submission-fields {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.landing-submission-field-row {
+  color: #355a87;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.landing-submission-field-row strong {
+  color: #214c7d;
+}
+
+.landing-icon-action-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
 }
 
 .landing-ai-modal-backdrop {
@@ -439,6 +595,10 @@
     grid-template-columns: 1fr;
   }
 
+  .landing-editor-section-grid {
+    grid-template-columns: 1fr;
+  }
+
   .landing-meta-grid {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
   }
@@ -450,4 +610,135 @@
   .landing-card-with-badge {
     padding-top: 58px;
   }
+}
+
+.landing-confirmation-config-section {
+  border: 1px solid #d4e2f8;
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+  margin-top: 0;
+}
+
+.landing-confirmation-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.landing-confirmation-tabs button {
+  border: 1px solid #b9cfee;
+  background: #f2f7ff;
+  color: #1f4f8f;
+  border-radius: 999px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.landing-confirmation-tabs button.is-active {
+  border-color: #1f5fb0;
+  background: #1f5fb0;
+  color: #fff;
+}
+
+.landing-confirmation-pane {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #dbe8fa;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 10px;
+}
+
+.landing-confirmation-config-section legend {
+  font-weight: 700;
+  font-size: 14px;
+  padding: 0 8px;
+  color: #204f84;
+}
+
+.landing-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.landing-checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.landing-editor-with-ai {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landing-ai-email-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.landing-ai-email-actions input {
+  flex: 1;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.landing-save-btn {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.landing-save-btn:hover:not(:disabled) {
+  background: #0052a3;
+}
+
+.landing-save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.landing-confirmation-preview-section {
+  margin-top: 6px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dae7fa;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 10px;
+}
+
+.landing-confirmation-preview-wrap {
+  border: 1px solid #ccd9ef;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 360px;
+  background: #fff;
+}
+
+.landing-confirmation-preview-wrap iframe {
+  width: 100%;
+  min-height: 360px;
+  border: 0;
+  background: #fff;
 }

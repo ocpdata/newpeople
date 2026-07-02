@@ -20,6 +20,7 @@ const OpportunityQuestionAdminPage = lazy(
 );
 const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
 const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
+const AccountSettingsPage = lazy(() => import("./AccountSettingsPage"));
 const ToolsPage = lazy(() => import("./ToolsPage"));
 const PriceListDuplicatesPage = lazy(() => import("./PriceListDuplicatesPage"));
 const UsersPage = lazy(() => import("./UsersPage"));
@@ -259,6 +260,15 @@ export default function AppShell({
             ) : (
               <Navigate to="/" />
             )
+          }
+        />
+        <Route
+          path="/account-settings"
+          element={
+            <AccountSettingsPage
+              currentUser={currentUser}
+              onRefreshCurrentUser={onRefreshCurrentUser}
+            />
           }
         />
         <Route
@@ -736,7 +746,7 @@ export default function AppShell({
         </aside>
         <main className="content">
           <header className="topbar">
-            <div className="topbar-user">
+            <NavLink to="/account-settings" className="topbar-user">
               <UserAvatar
                 src={currentUser.avatar_url}
                 fullName={currentUser.full_name}
@@ -768,7 +778,7 @@ export default function AppShell({
                   </div>
                 ) : null}
               </div>
-            </div>
+            </NavLink>
           </header>
 
           {appRoutes}
