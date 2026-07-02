@@ -66,6 +66,26 @@
   gap: 12px;
 }
 
+.landing-card-with-badge {
+  position: relative;
+  padding-top: 52px;
+}
+
+.landing-event-id-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #9dc0ea;
+  background: #eaf3ff;
+  color: #1b4f92;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .landing-card h3 {
   margin: 0;
   color: #173d72;
@@ -131,6 +151,26 @@
   font-weight: 600;
   text-decoration: none;
   background: #f5f9ff;
+}
+
+.landing-ai-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.landing-ai-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
 }
 
 .landing-list-filters {
@@ -262,6 +302,72 @@
   gap: 8px;
 }
 
+.landing-ai-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 26, 53, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.landing-ai-modal {
+  width: min(460px, 100%);
+  border-radius: 16px;
+  border: 1px solid #c5d8f3;
+  background: linear-gradient(180deg, #ffffff, #f4f9ff);
+  box-shadow: 0 24px 48px rgba(13, 39, 77, 0.25);
+  padding: 22px 20px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.landing-ai-modal h4 {
+  margin: 0;
+  color: #123d73;
+  font-size: 20px;
+}
+
+.landing-ai-modal p {
+  margin: 0;
+  color: #345b88;
+  font-size: 14px;
+}
+
+.landing-ai-cancel-button {
+  border: 1px solid #9dbce4;
+  background: #eef5ff;
+  color: #1f4f8f;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.landing-ai-cancel-button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.landing-ai-modal-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid #c3d9f7;
+  border-top-color: #1f5fb0;
+  animation: landing-ai-spin 0.9s linear infinite;
+}
+
+@keyframes landing-ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 1240px) {
   .landing-grid-two,
   .landing-grid-editor {
@@ -270,5 +376,9 @@
 
   .landing-list-filters {
     grid-template-columns: 1fr;
+  }
+
+  .landing-card-with-badge {
+    padding-top: 58px;
   }
 }

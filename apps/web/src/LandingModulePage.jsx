@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import "./landing-module.css";
 
@@ -125,6 +125,349 @@ function normalizeSlug(value) {
     .slice(0, 120);
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function cleanTextLine(value, max = 220) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function buildSuggestedLandingHtml({
+  prompt,
+  eventName,
+  slug,
+  buttonText,
+  successMessage,
+}) {
+  const normalizedPrompt = String(prompt || "").trim();
+  const lines = normalizedPrompt
+    .split(/\n|[.!?]+/g)
+    .map((line) => cleanTextLine(line, 180))
+    .filter(Boolean);
+
+  const fallbackHeadline = eventName
+    ? `Inscribete a ${eventName}`
+    : "Inscribete a nuestro webinar";
+  const headline = lines[0] || fallbackHeadline;
+  const subheadline =
+    lines[1] ||
+    "Descubre estrategias practicas para acelerar tus resultados comerciales.";
+
+  const benefitSeed = lines.slice(2).flatMap((line) =>
+    line
+      .split(/,|;|\sy\s/gi)
+      .map((item) => cleanTextLine(item, 120))
+      .filter(Boolean),
+  );
+
+  const benefitItems = (
+    benefitSeed.length
+      ? benefitSeed
+      : [
+          "Aprende un marco accionable para tu equipo.",
+          "Evita errores frecuentes con ejemplos reales.",
+          "Sal con un plan claro para implementar de inmediato.",
+        ]
+  ).slice(0, 3);
+
+  const safeHeadline = escapeHtml(headline);
+  const safeSubheadline = escapeHtml(subheadline);
+  const safeEventName = escapeHtml(eventName || "Webinar");
+  const safeSlug = escapeHtml(slug || "landing");
+  const safeButtonText = escapeHtml(buttonText || "Registrarme");
+  const safeSuccessMessage = escapeHtml(
+    successMessage || "Gracias por registrarte",
+  );
+
+  const benefitsHtml = benefitItems
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("\n          ");
+
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${safeEventName}</title>
+    <style>
+      :root {
+        --ink: #102c54;
+        --ink-soft: #35577f;
+        --brand: #0f4d9d;
+        --brand-strong: #0b3f82;
+        --panel: #ffffff;
+        --line: #c6d7ee;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(900px 320px at 10% -10%, #dceaff, transparent 60%),
+          radial-gradient(800px 360px at 100% 0%, #e8f3ff, transparent 50%),
+          #eef5ff;
+      }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 54px 20px 70px; }
+      .hero {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 20px 44px rgba(17, 53, 101, 0.14);
+        overflow: hidden;
+      }
+      .hero-inner {
+        display: grid;
+        grid-template-columns: 1.1fr .9fr;
+        gap: 20px;
+        padding: 26px;
+      }
+      .tag {
+        display: inline-flex;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .3px;
+        border: 1px solid #9ebee6;
+        color: #1a4f93;
+        border-radius: 999px;
+        padding: 5px 11px;
+        background: #eaf3ff;
+      }
+      h1 { margin: 12px 0 8px; line-height: 1.15; font-size: clamp(30px, 4.4vw, 44px); }
+      p.lead { margin: 0; color: var(--ink-soft); font-size: 17px; line-height: 1.42; }
+      ul { margin: 18px 0 0; padding-left: 18px; color: var(--ink-soft); line-height: 1.4; }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+        background: #fbfdff;
+      }
+      .card h2 { margin: 0 0 10px; font-size: 19px; }
+      form { display: grid; gap: 10px; }
+      input, button {
+        border-radius: 10px;
+        border: 1px solid #b6c9e6;
+        padding: 10px 12px;
+        font-size: 14px;
+        font: inherit;
+      }
+      button {
+        background: var(--brand);
+        border-color: var(--brand);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:hover { background: var(--brand-strong); }
+      .foot-note { font-size: 12px; color: #58749b; margin: 10px 0 0; }
+      @media (max-width: 860px) {
+        .hero-inner { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <div class="hero-inner">
+          <div>
+            <span class="tag">${safeSlug}</span>
+            <h1>${safeHeadline}</h1>
+            <p class="lead">${safeSubheadline}</p>
+            <ul>
+              ${benefitsHtml}
+            </ul>
+          </div>
+          <aside class="card">
+            <h2>${safeEventName}</h2>
+            <form data-landing-form>
+              <input name="first_name" placeholder="Nombre" required />
+              <input name="email" type="email" placeholder="Correo" required />
+              <input name="company_name" placeholder="Empresa" />
+              <input name="hp_field" type="text" style="display:none" tabindex="-1" autocomplete="off" />
+              <button type="submit">${safeButtonText}</button>
+            </form>
+            <p class="foot-note">${safeSuccessMessage}</p>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>`;
+}
+
+function extractHtmlFromAssistantText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const fencedMatch = text.match(/```(?:html)?\s*([\s\S]*?)```/i);
+  const candidate = fencedMatch ? fencedMatch[1].trim() : text;
+
+  if (!candidate) return "";
+  if (!/<!doctype html>|<html[\s>]|<body[\s>]/i.test(candidate)) return "";
+  return candidate;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function generateLandingHtmlWithChatbotAi({
+  prompt,
+  eventName,
+  slug,
+  formSchema,
+  onStatus,
+  shouldCancel,
+}) {
+  const throwIfCancelled = () => {
+    if (typeof shouldCancel === "function" && shouldCancel()) {
+      const error = new Error("Generación con IA cancelada");
+      error.code = "AI_GENERATION_CANCELLED";
+      throw error;
+    }
+  };
+
+  throwIfCancelled();
+
+  if (typeof onStatus === "function") {
+    onStatus("Iniciando sesion de IA...");
+  }
+
+  const sessionRes = await api.post("/api/chatbot/sessions", {
+    locale: "es",
+    userContext: {
+      module: "landing",
+      objective: "generate_html_landing",
+      eventName: String(eventName || "").trim(),
+      slug: String(slug || "").trim(),
+    },
+  });
+
+  const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+  if (!sessionId) {
+    throw new Error("No fue posible crear sesion IA");
+  }
+
+  throwIfCancelled();
+
+  if (typeof onStatus === "function") {
+    onStatus("Enviando instrucciones al asistente...");
+  }
+
+  const fields = Array.isArray(formSchema?.fields) ? formSchema.fields : [];
+  const requiredFieldHints = fields
+    .slice(0, 10)
+    .map((field) => {
+      const key = cleanTextLine(field?.key || "", 60);
+      const type = cleanTextLine(field?.type || "text", 20);
+      if (!key) return "";
+      const suffix = field?.required ? " (required)" : "";
+      return `- ${key}: ${type}${suffix}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const aiInstruction = [
+    "Genera una landing page completa en HTML para registro de webinar.",
+    "Responde solo con HTML valido (sin explicaciones, sin markdown).",
+    "Incluye formulario con atributo data-landing-form y conserva campo hp_field oculto.",
+    "Incluye diseno moderno responsive (desktop y mobile) con CSS inline dentro de <style>.",
+    "Usa copy en espanol orientado a conversion.",
+    `Evento: ${cleanTextLine(eventName || "Webinar", 180)}`,
+    `Slug: ${cleanTextLine(slug || "landing", 120)}`,
+    "Campos sugeridos en formulario:",
+    requiredFieldHints ||
+      "- first_name: text (required)\n- email: email (required)\n- company_name: text",
+    "Instrucciones del usuario:",
+    cleanTextLine(prompt || "", 2500),
+  ].join("\n\n");
+
+  const messageRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: aiInstruction,
+    useContext: true,
+    contextSnapshot: {
+      module: "landing",
+      eventName: String(eventName || "").trim(),
+      slug: String(slug || "").trim(),
+    },
+    featureCode: "chatbot.assistant",
+  });
+
+  const jobId = String(messageRes?.data?.jobId || "").trim();
+  if (!jobId) {
+    throw new Error("No fue posible iniciar generacion IA");
+  }
+
+  throwIfCancelled();
+
+  if (typeof onStatus === "function") {
+    onStatus("La IA esta construyendo tu landing...");
+  }
+
+  let attempts = 0;
+  while (attempts < 35) {
+    throwIfCancelled();
+    attempts += 1;
+    const jobRes = await api.get(
+      `/api/chatbot/jobs/${encodeURIComponent(jobId)}`,
+    );
+    const status = String(jobRes?.data?.status || "queued").trim();
+
+    if (typeof onStatus === "function") {
+      if (status === "queued") {
+        onStatus("La solicitud esta en cola...");
+      } else if (status === "running") {
+        onStatus("Generando HTML con IA...");
+      }
+    }
+
+    if (status === "completed") break;
+
+    if (status === "failed" || status === "cancelled") {
+      const reason = String(jobRes?.data?.error?.message || "").trim();
+      throw new Error(reason || "La IA no pudo generar la landing");
+    }
+
+    await delay(1200);
+  }
+
+  throwIfCancelled();
+
+  const historyRes = await api.get(
+    `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+  );
+  const messages = Array.isArray(historyRes?.data?.items)
+    ? historyRes.data.items
+    : [];
+  const assistantMessage = [...messages]
+    .reverse()
+    .find((item) => String(item?.role || "").trim() === "assistant");
+
+  const assistantContent = String(assistantMessage?.content || "").trim();
+  const html = extractHtmlFromAssistantText(assistantContent);
+  if (!html) {
+    throw new Error("La IA no devolvio HTML utilizable");
+  }
+
+  if (typeof onStatus === "function") {
+    onStatus("Aplicando resultado de IA...");
+  }
+
+  return html;
+}
+
 export default function LandingModulePage() {
   const [activeTab, setActiveTab] = useState("events");
 
@@ -143,7 +486,6 @@ export default function LandingModulePage() {
   const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
-  const [newEventId, setNewEventId] = useState("");
   const [newEventName, setNewEventName] = useState("");
   const [newSlug, setNewSlug] = useState("");
   const [newSourceType, setNewSourceType] = useState("manual_edit");
@@ -155,6 +497,12 @@ export default function LandingModulePage() {
   const [importUrl, setImportUrl] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
   const [isSavingEditor, setIsSavingEditor] = useState(false);
+  const [isGeneratingWithAi, setIsGeneratingWithAi] = useState(false);
+  const [isAiCancelRequested, setIsAiCancelRequested] = useState(false);
+  const [aiProgressText, setAiProgressText] = useState(
+    "Generando landing con IA...",
+  );
+  const aiGenerationCancelRef = useRef(false);
 
   const [submissions, setSubmissions] = useState([]);
   const [isLoadingSubmissions, setIsLoadingSubmissions] = useState(false);
@@ -163,18 +511,38 @@ export default function LandingModulePage() {
   const [toDate, setToDate] = useState("");
 
   const selectedVersion = useMemo(() => {
-    const versions = Array.isArray(landingDetail?.versions) ? landingDetail.versions : [];
-    return versions.find((version) => Number(version.id) === Number(selectedVersionId)) || null;
+    const versions = Array.isArray(landingDetail?.versions)
+      ? landingDetail.versions
+      : [];
+    return (
+      versions.find(
+        (version) => Number(version.id) === Number(selectedVersionId),
+      ) || null
+    );
   }, [landingDetail, selectedVersionId]);
 
+  const isSelectedLandingPublished =
+    String(landingDetail?.landing_page?.status || "")
+      .trim()
+      .toLowerCase() === "published";
+
   const selectedPublicUrl = useMemo(() => {
+    if (!isSelectedLandingPublished) return "";
     const slug = String(landingDetail?.landing_page?.slug || "").trim();
     if (!slug) return "";
     const apiBaseUrl = String(api.defaults.baseURL || window.location.origin)
       .trim()
       .replace(/\/+$/, "");
     return `${apiBaseUrl}/landing/${slug}.html`;
-  }, [landingDetail]);
+  }, [isSelectedLandingPublished, landingDetail]);
+
+  const nextAutoEventId = useMemo(() => {
+    const eventIds = landingItems
+      .map((item) => Number(item?.event_id || 0))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    if (!eventIds.length) return 1;
+    return Math.max(...eventIds) + 1;
+  }, [landingItems]);
 
   const pushSuccess = useCallback((message) => {
     setGlobalSuccess(message);
@@ -205,7 +573,9 @@ export default function LandingModulePage() {
         setSelectedEventId(Number(items[0].event_id));
       }
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible cargar las landings"));
+      pushError(
+        getApiErrorMessage(error, "No fue posible cargar las landings"),
+      );
     } finally {
       setIsLoadingList(false);
     }
@@ -216,24 +586,42 @@ export default function LandingModulePage() {
       if (!landingId) return;
       try {
         setIsLoadingDetail(true);
-        const { data } = await api.get(`/api/landing/v1/landing-pages/${landingId}`);
+        const { data } = await api.get(
+          `/api/landing/v1/landing-pages/${landingId}`,
+        );
         setLandingDetail(data || null);
-        const currentVersionId = Number(data?.landing_page?.current_version_id || 0);
+        const currentVersionId = Number(
+          data?.landing_page?.current_version_id || 0,
+        );
         const versions = Array.isArray(data?.versions) ? data.versions : [];
-        const nextVersionId = currentVersionId || Number(versions[0]?.id || 0) || null;
+        const nextVersionId =
+          currentVersionId || Number(versions[0]?.id || 0) || null;
         setSelectedVersionId(nextVersionId);
 
-        const currentVersion = versions.find((version) => Number(version.id) === Number(nextVersionId)) || versions[0] || null;
+        const currentVersion =
+          versions.find(
+            (version) => Number(version.id) === Number(nextVersionId),
+          ) ||
+          versions[0] ||
+          null;
         if (currentVersion) {
           setEditorHtml(String(currentVersion.html_content || DEFAULT_HTML));
           const schemaValue =
             typeof currentVersion.form_schema_json === "string"
-              ? parseJsonOrThrow(currentVersion.form_schema_json, "Schema JSON invalido en API")
+              ? parseJsonOrThrow(
+                  currentVersion.form_schema_json,
+                  "Schema JSON invalido en API",
+                )
               : currentVersion.form_schema_json || DEFAULT_FORM_SCHEMA;
           setEditorFormSchemaText(prettyJson(schemaValue));
         }
       } catch (error) {
-        pushError(getApiErrorMessage(error, "No fue posible cargar el detalle de la landing"));
+        pushError(
+          getApiErrorMessage(
+            error,
+            "No fue posible cargar el detalle de la landing",
+          ),
+        );
       } finally {
         setIsLoadingDetail(false);
       }
@@ -249,19 +637,27 @@ export default function LandingModulePage() {
 
     try {
       setIsLoadingSubmissions(true);
-      const { data } = await api.get(`/api/landing/v1/events/${selectedEventId}/submissions`, {
-        params: {
-          page: 1,
-          page_size: 100,
-          crm_status: crmStatusFilter || undefined,
-          from: fromDate || undefined,
-          to: toDate || undefined,
+      const { data } = await api.get(
+        `/api/landing/v1/events/${selectedEventId}/submissions`,
+        {
+          params: {
+            page: 1,
+            page_size: 100,
+            crm_status: crmStatusFilter || undefined,
+            from: fromDate || undefined,
+            to: toDate || undefined,
+          },
         },
-      });
+      );
 
       setSubmissions(Array.isArray(data?.items) ? data.items : []);
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible cargar los registros del evento"));
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar los registros del evento",
+        ),
+      );
     } finally {
       setIsLoadingSubmissions(false);
     }
@@ -294,7 +690,7 @@ export default function LandingModulePage() {
     setGlobalError("");
     setGlobalSuccess("");
 
-    const eventId = Number(newEventId || 0);
+    const eventId = Number(nextAutoEventId || 0);
     if (!Number.isInteger(eventId) || eventId <= 0) {
       pushError("Debes indicar un Event ID válido");
       return;
@@ -323,15 +719,18 @@ export default function LandingModulePage() {
 
     try {
       setIsSavingEditor(true);
-      const { data } = await api.put(`/api/landing/v1/events/${eventId}/landing`, {
-        eventName: String(newEventName || "").trim(),
-        slug: normalizedSlug,
-        source_type: newSourceType,
-        initial_prompt: null,
-        html_content: String(editorHtml || "").trim() || DEFAULT_HTML,
-        source_url: null,
-        form_schema: parsedSchema,
-      });
+      const { data } = await api.put(
+        `/api/landing/v1/events/${eventId}/landing`,
+        {
+          eventName: String(newEventName || "").trim(),
+          slug: normalizedSlug,
+          source_type: newSourceType,
+          initial_prompt: null,
+          html_content: String(editorHtml || "").trim() || DEFAULT_HTML,
+          source_url: null,
+          form_schema: parsedSchema,
+        },
+      );
 
       const landingId = Number(data?.landing_page?.id || 0);
       if (landingId > 0) {
@@ -344,7 +743,9 @@ export default function LandingModulePage() {
 
       pushSuccess("Landing guardada correctamente");
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible crear/actualizar la landing"));
+      pushError(
+        getApiErrorMessage(error, "No fue posible crear/actualizar la landing"),
+      );
     } finally {
       setIsSavingEditor(false);
     }
@@ -394,16 +795,180 @@ export default function LandingModulePage() {
 
     try {
       setIsSavingEditor(true);
-      await api.post(`/api/landing/v1/landing-pages/${selectedLandingId}/publish`, {
-        version_id: Number(selectedVersionId),
-      });
+      await api.post(
+        `/api/landing/v1/landing-pages/${selectedLandingId}/publish`,
+        {
+          version_id: Number(selectedVersionId),
+        },
+      );
       await loadLandingList();
       await loadLandingDetail(selectedLandingId);
       pushSuccess("Landing publicada");
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible publicar la landing"));
+      pushError(
+        getApiErrorMessage(error, "No fue posible publicar la landing"),
+      );
     } finally {
       setIsSavingEditor(false);
+    }
+  }
+
+  async function handleGenerateLandingWithAiInstructions() {
+    if (!selectedLandingId) {
+      pushError("Selecciona una landing antes de usar IA");
+      return;
+    }
+
+    const landingPage = landingDetail?.landing_page || {};
+    const eventId = Number(landingPage.event_id || 0);
+    const slug = normalizeSlug(landingPage.slug || newSlug);
+    const eventName = String(
+      landingPage.event_name || newEventName || "",
+    ).trim();
+
+    if (!Number.isInteger(eventId) || eventId <= 0 || !slug || !eventName) {
+      pushError(
+        "No se pudo resolver Event ID, nombre del evento o slug para generar con IA",
+      );
+      return;
+    }
+
+    const initialPrompt = window.prompt(
+      "Instrucciones para IA (objetivo, audiencia, propuesta de valor y CTA):",
+      "Crea una landing para webinar con titular potente, beneficios claros, prueba social y CTA de registro.",
+    );
+    if (initialPrompt === null) return;
+    if (!String(initialPrompt).trim()) {
+      pushError("Debes escribir instrucciones para IA");
+      return;
+    }
+
+    let parsedSchema;
+    try {
+      parsedSchema = parseJsonOrThrow(
+        editorFormSchemaText,
+        "El schema del formulario no es JSON válido",
+      );
+    } catch (error) {
+      pushError(error.message);
+      return;
+    }
+
+    let suggestedHtml = "";
+    let usedFallback = false;
+    aiGenerationCancelRef.current = false;
+    setIsAiCancelRequested(false);
+
+    try {
+      setIsGeneratingWithAi(true);
+      setAiProgressText("Preparando contexto para IA...");
+      suggestedHtml = await generateLandingHtmlWithChatbotAi({
+        prompt: initialPrompt,
+        eventName,
+        slug,
+        formSchema: parsedSchema,
+        onStatus: (message) => {
+          if (String(message || "").trim()) {
+            setAiProgressText(String(message).trim());
+          }
+        },
+        shouldCancel: () => aiGenerationCancelRef.current,
+      });
+    } catch (error) {
+      const wasCancelled =
+        aiGenerationCancelRef.current ||
+        String(error?.code || "").trim() === "AI_GENERATION_CANCELLED";
+      if (wasCancelled) {
+        pushError("Generación con IA cancelada");
+        return;
+      }
+
+      usedFallback = true;
+      setAiProgressText("Generando propuesta local de respaldo...");
+      suggestedHtml = buildSuggestedLandingHtml({
+        prompt: initialPrompt,
+        eventName,
+        slug,
+        buttonText: parsedSchema?.submit?.button_text,
+        successMessage: parsedSchema?.submit?.success_message,
+      });
+    } finally {
+      setIsGeneratingWithAi(false);
+      setAiProgressText("Generando landing con IA...");
+    }
+
+    if (aiGenerationCancelRef.current) {
+      pushError("Generación con IA cancelada");
+      return;
+    }
+
+    try {
+      setIsSavingEditor(true);
+      setEditorHtml(suggestedHtml);
+      await api.put(`/api/landing/v1/events/${eventId}/landing`, {
+        eventName,
+        slug,
+        source_type: "ai",
+        initial_prompt: String(initialPrompt).trim(),
+        html_content: suggestedHtml,
+        source_url: null,
+        form_schema: parsedSchema,
+      });
+
+      await loadLandingList();
+      await loadLandingDetail(selectedLandingId);
+      if (usedFallback) {
+        pushSuccess(
+          "La IA no respondio a tiempo; se aplico una propuesta automatica local y se guardo la version",
+        );
+      } else {
+        pushSuccess("HTML generado por IA y guardado como nueva versión");
+      }
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(error, "No fue posible guardar instrucciones de IA"),
+      );
+    } finally {
+      setIsSavingEditor(false);
+    }
+  }
+
+  function handleCancelAiGeneration() {
+    aiGenerationCancelRef.current = true;
+    setIsAiCancelRequested(true);
+    setAiProgressText("Cancelando generación...");
+  }
+
+  function handlePreviewDraftLanding() {
+    const htmlToRender = String(
+      selectedVersion?.html_content || editorHtml || "",
+    ).trim();
+    if (!htmlToRender) {
+      pushError("No hay contenido HTML para previsualizar");
+      return;
+    }
+
+    try {
+      const previewBlob = new Blob([htmlToRender], {
+        type: "text/html;charset=utf-8",
+      });
+      const previewUrl = URL.createObjectURL(previewBlob);
+
+      const tempLink = document.createElement("a");
+      tempLink.href = previewUrl;
+      tempLink.target = "_blank";
+      tempLink.rel = "noopener noreferrer";
+      tempLink.style.display = "none";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+
+      // Allow the new tab to start loading before revoking the object URL.
+      window.setTimeout(() => {
+        URL.revokeObjectURL(previewUrl);
+      }, 60_000);
+    } catch {
+      pushError("No fue posible abrir la previsualización");
     }
   }
 
@@ -418,12 +983,14 @@ export default function LandingModulePage() {
       return;
     }
 
+    const sourceUrl = String(importUrl || "").trim();
+
     try {
       setIsSavingEditor(true);
       const { data } = await api.post(
         `/api/landing/v1/landing-pages/${selectedLandingId}/import-url`,
         {
-          source_url: String(importUrl || "").trim(),
+          source_url: sourceUrl,
         },
       );
       setImportUrl("");
@@ -433,7 +1000,49 @@ export default function LandingModulePage() {
       }
       pushSuccess("Importación completada");
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible importar la URL"));
+      const apiMessage = getApiErrorMessage(
+        error,
+        "No fue posible importar la URL",
+      );
+      const requiresForce =
+        String(apiMessage || "")
+          .toLowerCase()
+          .includes("solo se permite una vez por landing") ||
+        Number(error?.response?.status) === 409;
+
+      if (requiresForce) {
+        const shouldReplace = window.confirm(
+          "Esta landing ya tuvo una importación por URL. ¿Deseas reemplazarla con una nueva importación?",
+        );
+        if (shouldReplace) {
+          try {
+            const { data } = await api.post(
+              `/api/landing/v1/landing-pages/${selectedLandingId}/import-url`,
+              {
+                source_url: sourceUrl,
+                force: true,
+              },
+            );
+            setImportUrl("");
+            await loadLandingDetail(selectedLandingId);
+            if (data?.version_id) {
+              setSelectedVersionId(Number(data.version_id));
+            }
+            pushSuccess("Importación reemplazada correctamente");
+            return;
+          } catch (forceError) {
+            pushError(
+              getApiErrorMessage(
+                forceError,
+                "No fue posible reemplazar la importación",
+              ),
+            );
+            return;
+          }
+        }
+      }
+
+      pushError(apiMessage);
     } finally {
       setIsSavingEditor(false);
     }
@@ -472,7 +1081,9 @@ export default function LandingModulePage() {
       }
       pushSuccess("Archivo HTML subido como nueva versión");
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible subir el archivo HTML"));
+      pushError(
+        getApiErrorMessage(error, "No fue posible subir el archivo HTML"),
+      );
     } finally {
       setIsSavingEditor(false);
     }
@@ -486,7 +1097,9 @@ export default function LandingModulePage() {
       pushSuccess("Registro enviado a reproceso");
       await loadSubmissions();
     } catch (error) {
-      pushError(getApiErrorMessage(error, "No fue posible reprocesar el registro"));
+      pushError(
+        getApiErrorMessage(error, "No fue posible reprocesar el registro"),
+      );
     }
   }
 
@@ -507,12 +1120,17 @@ export default function LandingModulePage() {
         <div>
           <h2>Landing por evento</h2>
           <p>
-            Crea, edita y publica landings; captura registros y revisa la integración CRM.
+            Crea, edita y publica landings; captura registros y revisa la
+            integración CRM.
           </p>
         </div>
       </header>
 
-      <div className="landing-module-tabs" role="tablist" aria-label="Secciones landing">
+      <div
+        className="landing-module-tabs"
+        role="tablist"
+        aria-label="Secciones landing"
+      >
         <button
           className={activeTab === "events" ? "is-active" : ""}
           onClick={() => setActiveTab("events")}
@@ -533,26 +1151,27 @@ export default function LandingModulePage() {
         </button>
       </div>
 
-      {globalError ? <div className="landing-alert landing-alert-error">{globalError}</div> : null}
-      {globalSuccess ? <div className="landing-alert landing-alert-success">{globalSuccess}</div> : null}
+      {globalError ? (
+        <div className="landing-alert landing-alert-error">{globalError}</div>
+      ) : null}
+      {globalSuccess ? (
+        <div className="landing-alert landing-alert-success">
+          {globalSuccess}
+        </div>
+      ) : null}
 
       {activeTab === "events" ? (
         <section className="landing-panel">
           <div className="landing-grid-two">
-            <article className="landing-card">
+            <article className="landing-card landing-card-with-badge">
+              <div className="landing-event-id-badge">
+                Event ID auto: {nextAutoEventId}
+              </div>
               <h3>Crear o actualizar landing por evento</h3>
-              <form className="landing-form-grid" onSubmit={handleCreateOrUpsertLanding}>
-                <label>
-                  Event ID
-                  <input
-                    type="number"
-                    value={newEventId}
-                    onChange={(event) => setNewEventId(event.target.value)}
-                    placeholder="88"
-                    min="1"
-                    required
-                  />
-                </label>
+              <form
+                className="landing-form-grid"
+                onSubmit={handleCreateOrUpsertLanding}
+              >
                 <label>
                   Nombre del evento
                   <input
@@ -568,7 +1187,9 @@ export default function LandingModulePage() {
                   <input
                     type="text"
                     value={newSlug}
-                    onChange={(event) => setNewSlug(normalizeSlug(event.target.value))}
+                    onChange={(event) =>
+                      setNewSlug(normalizeSlug(event.target.value))
+                    }
                     placeholder="webinarf5"
                     required
                   />
@@ -611,7 +1232,11 @@ export default function LandingModulePage() {
                   <option value="published">Publicada</option>
                   <option value="archived">Archivada</option>
                 </select>
-                <button type="button" onClick={loadLandingList} disabled={isLoadingList}>
+                <button
+                  type="button"
+                  onClick={loadLandingList}
+                  disabled={isLoadingList}
+                >
                   {isLoadingList ? "Cargando..." : "Refrescar"}
                 </button>
               </div>
@@ -644,7 +1269,9 @@ export default function LandingModulePage() {
                         >
                           <td>
                             <strong>{item.event_name}</strong>
-                            <div className="landing-muted">Event ID: {item.event_id}</div>
+                            <div className="landing-muted">
+                              Event ID: {item.event_id}
+                            </div>
                           </td>
                           <td>{item.slug}</td>
                           <td>{item.status}</td>
@@ -654,7 +1281,10 @@ export default function LandingModulePage() {
                               : "-"}
                           </td>
                           <td>
-                            <button type="button" onClick={() => onSelectLanding(item)}>
+                            <button
+                              type="button"
+                              onClick={() => onSelectLanding(item)}
+                            >
                               Abrir
                             </button>
                           </td>
@@ -675,7 +1305,9 @@ export default function LandingModulePage() {
             <article className="landing-card">
               <h3>Editor y publicación</h3>
               {!selectedLandingId ? (
-                <p className="landing-muted">Selecciona una landing desde la pestaña Eventos/Landings.</p>
+                <p className="landing-muted">
+                  Selecciona una landing desde la pestaña Eventos/Landings.
+                </p>
               ) : (
                 <>
                   <div className="landing-meta-grid">
@@ -685,15 +1317,21 @@ export default function LandingModulePage() {
                     </div>
                     <div>
                       <span className="landing-muted">Event ID</span>
-                      <strong>{landingDetail?.landing_page?.event_id || "-"}</strong>
+                      <strong>
+                        {landingDetail?.landing_page?.event_id || "-"}
+                      </strong>
                     </div>
                     <div>
                       <span className="landing-muted">Slug</span>
-                      <strong>{landingDetail?.landing_page?.slug || "-"}</strong>
+                      <strong>
+                        {landingDetail?.landing_page?.slug || "-"}
+                      </strong>
                     </div>
                     <div>
                       <span className="landing-muted">Estado</span>
-                      <strong>{landingDetail?.landing_page?.status || "-"}</strong>
+                      <strong>
+                        {landingDetail?.landing_page?.status || "-"}
+                      </strong>
                     </div>
                   </div>
 
@@ -721,22 +1359,55 @@ export default function LandingModulePage() {
                     <button
                       type="button"
                       onClick={handleSaveCurrentVersion}
-                      disabled={isSavingEditor || isLoadingDetail}
+                      disabled={
+                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                      }
                     >
                       Guardar versión
                     </button>
                     <button
                       type="button"
                       onClick={handlePublishVersion}
-                      disabled={isSavingEditor || isLoadingDetail}
+                      disabled={
+                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                      }
                     >
                       Publicar
                     </button>
+                    <button
+                      type="button"
+                      className="landing-ai-action"
+                      onClick={handleGenerateLandingWithAiInstructions}
+                      disabled={
+                        isSavingEditor || isLoadingDetail || isGeneratingWithAi
+                      }
+                    >
+                      <span className="landing-ai-glyph" aria-hidden="true">
+                        AI
+                      </span>
+                      Generar con IA
+                    </button>
                     {selectedPublicUrl ? (
-                      <a href={selectedPublicUrl} target="_blank" rel="noreferrer">
-                        Ver landing
+                      <a
+                        href={selectedPublicUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Ver landing publicada
                       </a>
-                    ) : null}
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handlePreviewDraftLanding}
+                        disabled={
+                          isSavingEditor ||
+                          isLoadingDetail ||
+                          isGeneratingWithAi
+                        }
+                      >
+                        Previsualizar borrador
+                      </button>
+                    )}
                   </div>
 
                   <label className="landing-label-block">
@@ -752,12 +1423,17 @@ export default function LandingModulePage() {
                     Form schema (JSON)
                     <textarea
                       value={editorFormSchemaText}
-                      onChange={(event) => setEditorFormSchemaText(event.target.value)}
+                      onChange={(event) =>
+                        setEditorFormSchemaText(event.target.value)
+                      }
                       rows={14}
                     />
                   </label>
 
-                  <form className="landing-inline-actions" onSubmit={handleImportUrl}>
+                  <form
+                    className="landing-inline-actions"
+                    onSubmit={handleImportUrl}
+                  >
                     <input
                       type="url"
                       value={importUrl}
@@ -765,15 +1441,20 @@ export default function LandingModulePage() {
                       placeholder="https://sitio.com/landing"
                     />
                     <button type="submit" disabled={isSavingEditor}>
-                      Importar URL (una vez)
+                      Importar URL
                     </button>
                   </form>
 
-                  <form className="landing-inline-actions" onSubmit={handleUploadHtml}>
+                  <form
+                    className="landing-inline-actions"
+                    onSubmit={handleUploadHtml}
+                  >
                     <input
                       type="file"
                       accept=".html,text/html"
-                      onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+                      onChange={(event) =>
+                        setUploadFile(event.target.files?.[0] || null)
+                      }
                     />
                     <button type="submit" disabled={isSavingEditor}>
                       Subir HTML como nueva versión
@@ -794,7 +1475,8 @@ export default function LandingModulePage() {
               </div>
               {selectedVersion ? (
                 <p className="landing-muted">
-                  Versión seleccionada: v{selectedVersion.version_number} · {selectedVersion.source_type}
+                  Versión seleccionada: v{selectedVersion.version_number} ·{" "}
+                  {selectedVersion.source_type}
                 </p>
               ) : null}
             </article>
@@ -810,7 +1492,9 @@ export default function LandingModulePage() {
               <input
                 type="number"
                 value={selectedEventId || ""}
-                onChange={(event) => setSelectedEventId(Number(event.target.value || 0) || null)}
+                onChange={(event) =>
+                  setSelectedEventId(Number(event.target.value || 0) || null)
+                }
                 placeholder="Event ID"
               />
               <select
@@ -833,7 +1517,11 @@ export default function LandingModulePage() {
                 value={toDate}
                 onChange={(event) => setToDate(event.target.value)}
               />
-              <button type="button" onClick={loadSubmissions} disabled={isLoadingSubmissions}>
+              <button
+                type="button"
+                onClick={loadSubmissions}
+                disabled={isLoadingSubmissions}
+              >
                 {isLoadingSubmissions ? "Cargando..." : "Buscar"}
               </button>
             </div>
@@ -857,28 +1545,43 @@ export default function LandingModulePage() {
                     </tr>
                   ) : (
                     submissions.map((submission) => {
-                      const contact = submission.payload_normalized?.contact || {};
-                      const account = submission.payload_normalized?.account || {};
+                      const contact =
+                        submission.payload_normalized?.contact || {};
+                      const account =
+                        submission.payload_normalized?.account || {};
                       return (
                         <tr key={submission.submission_id}>
-                          <td>{new Date(submission.submitted_at).toLocaleString()}</td>
+                          <td>
+                            {new Date(submission.submitted_at).toLocaleString()}
+                          </td>
                           <td>
                             <strong>
-                              {contact.first_name || ""} {contact.last_name || ""}
+                              {contact.first_name || ""}{" "}
+                              {contact.last_name || ""}
                             </strong>
-                            <div className="landing-muted">{contact.email || "-"}</div>
-                            <div className="landing-muted">{contact.phone || contact.mobile || ""}</div>
+                            <div className="landing-muted">
+                              {contact.email || "-"}
+                            </div>
+                            <div className="landing-muted">
+                              {contact.phone || contact.mobile || ""}
+                            </div>
                           </td>
                           <td>
                             <strong>{account.name || "-"}</strong>
-                            <div className="landing-muted">{account.website || ""}</div>
+                            <div className="landing-muted">
+                              {account.website || ""}
+                            </div>
                           </td>
                           <td>
-                            <span className={`landing-status status-${submission.crm_processing_status}`}>
+                            <span
+                              className={`landing-status status-${submission.crm_processing_status}`}
+                            >
                               {submission.crm_processing_status}
                             </span>
                             {submission.crm_error_message ? (
-                              <div className="landing-error-inline">{submission.crm_error_message}</div>
+                              <div className="landing-error-inline">
+                                {submission.crm_error_message}
+                              </div>
                             ) : null}
                           </td>
                           <td>
@@ -895,7 +1598,11 @@ export default function LandingModulePage() {
                           <td>
                             <button
                               type="button"
-                              onClick={() => handleReprocessSubmission(submission.submission_id)}
+                              onClick={() =>
+                                handleReprocessSubmission(
+                                  submission.submission_id,
+                                )
+                              }
                             >
                               Reprocesar
                             </button>
@@ -909,6 +1616,31 @@ export default function LandingModulePage() {
             </div>
           </article>
         </section>
+      ) : null}
+
+      {isGeneratingWithAi ? (
+        <div
+          className="landing-ai-modal-backdrop"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            className="landing-ai-modal"
+            aria-label="Generacion IA en progreso"
+          >
+            <div className="landing-ai-modal-spinner" aria-hidden="true" />
+            <h4>La IA esta trabajando</h4>
+            <p>{aiProgressText}</p>
+            <button
+              type="button"
+              className="landing-ai-cancel-button"
+              onClick={handleCancelAiGeneration}
+              disabled={isAiCancelRequested}
+            >
+              {isAiCancelRequested ? "Cancelando..." : "Cancelar"}
+            </button>
+          </div>
+        </div>
       ) : null}
     </div>
   );

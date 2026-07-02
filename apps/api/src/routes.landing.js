@@ -4,16 +4,26 @@ import { z } from "zod";
 import { requireAnyPermission } from "./auth.js";
 import { query, withTransaction } from "./db.js";
 import { logAuditEvent } from "./audit.js";
-import { parseMultipartFiles, cleanupTempFiles } from "./opportunity-documents/service.js";
+import {
+  parseMultipartFiles,
+  cleanupTempFiles,
+} from "./opportunity-documents/service.js";
 
 const landingReadPermissions = ["landing.read"];
 const landingCreatePermissions = ["landing.create"];
 const landingUpdatePermissions = ["landing.update"];
 const landingPublishPermissions = ["landing.publish"];
 const landingSubmissionsReadPermissions = ["landing.submissions.read"];
-const landingSubmissionsReprocessPermissions = ["landing.submissions.reprocess"];
+const landingSubmissionsReprocessPermissions = [
+  "landing.submissions.reprocess",
+];
 
-const SOURCE_TYPES = new Set(["ai", "html_upload", "url_import_once", "manual_edit"]);
+const SOURCE_TYPES = new Set([
+  "ai",
+  "html_upload",
+  "url_import_once",
+  "manual_edit",
+]);
 const FIELD_TYPES = new Set([
   "text",
   "email",
@@ -53,6 +63,7 @@ const upsertLandingSchema = z.object({
 
 const importUrlSchema = z.object({
   source_url: z.string().trim().url().max(1000),
+  force: z.boolean().optional().default(false),
 });
 
 const publishSchema = z.object({
@@ -60,7 +71,7 @@ const publishSchema = z.object({
 });
 
 const publicSubmitSchema = z.object({
-  form_data: z.record(z.any()),
+  form_data: z.record(z.string(), z.any()),
   context: z
     .object({
       referrer_url: z.string().trim().max(1000).optional().nullable(),
@@ -85,7 +96,9 @@ function normalizeSlug(value) {
 }
 
 function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function normalizePhone(value) {
@@ -105,7 +118,9 @@ function normalizeCompanyName(value) {
 }
 
 function normalizeGenericText(value, max = 255) {
-  return String(value || "").trim().slice(0, max);
+  return String(value || "")
+    .trim()
+    .slice(0, max);
 }
 
 function inferFieldMap(formSchema = {}) {
@@ -120,21 +135,30 @@ function inferFieldMap(formSchema = {}) {
 }
 
 function validateFormSchema(formSchema) {
-  const schema = formSchema && typeof formSchema === "object" ? formSchema : null;
+  const schema =
+    formSchema && typeof formSchema === "object" ? formSchema : null;
   if (!schema) {
-    throw Object.assign(new Error("form_schema es obligatorio"), { status: 400 });
+    throw Object.assign(new Error("form_schema es obligatorio"), {
+      status: 400,
+    });
   }
 
   const fields = Array.isArray(schema.fields) ? schema.fields : [];
   if (!fields.length) {
-    throw Object.assign(new Error("El formulario debe tener al menos un campo"), {
-      status: 400,
-    });
+    throw Object.assign(
+      new Error("El formulario debe tener al menos un campo"),
+      {
+        status: 400,
+      },
+    );
   }
   if (fields.length > 50) {
-    throw Object.assign(new Error("El formulario no puede tener mas de 50 campos"), {
-      status: 400,
-    });
+    throw Object.assign(
+      new Error("El formulario no puede tener mas de 50 campos"),
+      {
+        status: 400,
+      },
+    );
   }
 
   const keySet = new Set();
@@ -146,9 +170,12 @@ function validateFormSchema(formSchema) {
     const crmField = String(field?.crm_map?.field || "").trim();
 
     if (!key || !/^[a-z0-9_]{2,60}$/.test(key)) {
-      throw Object.assign(new Error(`Campo invalido: key (${key || "vacio"})`), {
-        status: 400,
-      });
+      throw Object.assign(
+        new Error(`Campo invalido: key (${key || "vacio"})`),
+        {
+          status: 400,
+        },
+      );
     }
     if (keySet.has(key)) {
       throw Object.assign(new Error(`Campo duplicado en form_schema: ${key}`), {
@@ -180,14 +207,19 @@ function validateFormSchema(formSchema) {
       );
     }
 
-    if (crmEntity === "contact" && ["email", "phone", "mobile"].includes(crmField)) {
+    if (
+      crmEntity === "contact" &&
+      ["email", "phone", "mobile"].includes(crmField)
+    ) {
       hasContactEmailOrPhone = true;
     }
   }
 
   if (!hasContactEmailOrPhone) {
     throw Object.assign(
-      new Error("El formulario debe mapear al menos un campo a contact.email o contact.phone/mobile"),
+      new Error(
+        "El formulario debe mapear al menos un campo a contact.email o contact.phone/mobile",
+      ),
       { status: 400 },
     );
   }
@@ -295,8 +327,24 @@ function buildLandingCaptureScript(slug) {
 `;
 }
 
-function renderLandingHtml(html, slug) {
+function sanitizeImportedHtmlForPublish(html) {
   const sourceHtml = String(html || "");
+
+  // Imported pages often depend on framework runtimes from their original host.
+  // Remove third-party scripts so the published snapshot behaves as static HTML.
+  const withoutScripts = sourceHtml
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, "");
+
+  return withoutScripts;
+}
+
+function renderLandingHtml(html, slug, sourceType = "manual_edit") {
+  let sourceHtml = String(html || "");
+  if (String(sourceType || "").trim() === "url_import_once") {
+    sourceHtml = sanitizeImportedHtmlForPublish(sourceHtml);
+  }
+
   const script = buildLandingCaptureScript(slug);
   if (sourceHtml.toLowerCase().includes("</body>")) {
     return sourceHtml.replace(/<\/body>/i, `${script}</body>`);
@@ -333,14 +381,18 @@ async function loadLandingVersionById(landingPageId, versionId) {
 
 async function parseFormSchemaFromField(formSchemaRaw) {
   if (!formSchemaRaw) {
-    throw Object.assign(new Error("form_schema es obligatorio"), { status: 400 });
+    throw Object.assign(new Error("form_schema es obligatorio"), {
+      status: 400,
+    });
   }
   try {
     const parsed = JSON.parse(String(formSchemaRaw));
     return validateFormSchema(parsed);
   } catch (error) {
     if (error?.status) throw error;
-    throw Object.assign(new Error("form_schema no es JSON valido"), { status: 400 });
+    throw Object.assign(new Error("form_schema no es JSON valido"), {
+      status: 400,
+    });
   }
 }
 
@@ -354,15 +406,21 @@ async function fetchUrlHtml(url) {
       redirect: "follow",
     });
     if (!response.ok) {
-      throw Object.assign(new Error(`No fue posible importar URL (${response.status})`), {
-        status: 422,
-      });
+      throw Object.assign(
+        new Error(`No fue posible importar URL (${response.status})`),
+        {
+          status: 422,
+        },
+      );
     }
     const html = await response.text();
     if (!html || html.length > 2_000_000) {
-      throw Object.assign(new Error("El HTML importado es vacio o excede el limite"), {
-        status: 422,
-      });
+      throw Object.assign(
+        new Error("El HTML importado es vacio o excede el limite"),
+        {
+          status: 422,
+        },
+      );
     }
     return html;
   } finally {
@@ -379,17 +437,24 @@ async function getCatalogIdByCode(tableName, code) {
 }
 
 async function resolveCountryId() {
-  const rows = await query(`SELECT id FROM countries WHERE iso2 = 'MX' LIMIT 1`);
+  const rows = await query(
+    `SELECT id FROM countries WHERE iso2 = 'MX' LIMIT 1`,
+  );
   return rows[0] ? Number(rows[0].id) : null;
 }
 
 function buildRegistrationCode(prefix = "LND") {
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`.slice(0, 80);
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`.slice(
+    0,
+    80,
+  );
 }
 
 async function resolveOrCreateAccount({ normalizedPayload, actorUserId }) {
   const accountName = normalizeCompanyName(
-    normalizedPayload?.account?.name || normalizedPayload?.contact?.company_name || "",
+    normalizedPayload?.account?.name ||
+      normalizedPayload?.contact?.company_name ||
+      "",
   );
   if (!accountName) {
     return null;
@@ -410,14 +475,23 @@ async function resolveOrCreateAccount({ normalizedPayload, actorUserId }) {
     return { accountId: Number(existing[0].id), action: "match_update" };
   }
 
-  const [accountTypeId, economicSectorId, activationStatusId, countryId] = await Promise.all([
-    getCatalogIdByCode("account_types", "prospecto").then((value) => value || getCatalogIdByCode("account_types", "cliente_potencial")),
-    getCatalogIdByCode("economic_sectors", "otros"),
-    getCatalogIdByCode("account_activation_statuses", "activada"),
-    resolveCountryId(),
-  ]);
+  const [accountTypeId, economicSectorId, activationStatusId, countryId] =
+    await Promise.all([
+      getCatalogIdByCode("account_types", "prospecto").then(
+        (value) =>
+          value || getCatalogIdByCode("account_types", "cliente_potencial"),
+      ),
+      getCatalogIdByCode("economic_sectors", "otros"),
+      getCatalogIdByCode("account_activation_statuses", "activada"),
+      resolveCountryId(),
+    ]);
 
-  if (!accountTypeId || !economicSectorId || !activationStatusId || !countryId) {
+  if (
+    !accountTypeId ||
+    !economicSectorId ||
+    !activationStatusId ||
+    !countryId
+  ) {
     return { error: "No fue posible resolver catalogos para crear cuenta" };
   }
 
@@ -458,15 +532,29 @@ async function resolveOrCreateAccount({ normalizedPayload, actorUserId }) {
      WHERE NOT EXISTS (
        SELECT 1 FROM account_owners WHERE account_id = ? AND user_id = ?
      )`,
-    [accountId, Number(actorUserId), Number(actorUserId), accountId, Number(actorUserId)],
+    [
+      accountId,
+      Number(actorUserId),
+      Number(actorUserId),
+      accountId,
+      Number(actorUserId),
+    ],
   ).catch(() => undefined);
 
   return { accountId, action: "create" };
 }
 
-async function resolveOrCreateContact({ normalizedPayload, accountId, actorUserId }) {
+async function resolveOrCreateContact({
+  normalizedPayload,
+  accountId,
+  actorUserId,
+}) {
   const email = normalizeEmail(normalizedPayload?.contact?.email || "");
-  const mobile = normalizePhone(normalizedPayload?.contact?.mobile || normalizedPayload?.contact?.phone || "");
+  const mobile = normalizePhone(
+    normalizedPayload?.contact?.mobile ||
+      normalizedPayload?.contact?.phone ||
+      "",
+  );
 
   if (email) {
     const rows = await query(
@@ -511,19 +599,35 @@ async function resolveOrCreateContact({ normalizedPayload, accountId, actorUserI
     return { error: "No fue posible crear contacto sin cuenta asociada" };
   }
 
-  const firstName = normalizeGenericText(normalizedPayload?.contact?.first_name || "Prospecto", 120);
-  const lastName = normalizeGenericText(normalizedPayload?.contact?.last_name || "Landing", 120);
+  const firstName = normalizeGenericText(
+    normalizedPayload?.contact?.first_name || "Prospecto",
+    120,
+  );
+  const lastName = normalizeGenericText(
+    normalizedPayload?.contact?.last_name || "Landing",
+    120,
+  );
 
-  const [purchaseParticipationId, relationshipTypeId, hierarchyLevelId, influenceLevelId, employmentStatusId, activationStatusId, countryId] =
-    await Promise.all([
-      getCatalogIdByCode("contact_purchase_participations", "ninguno"),
-      getCatalogIdByCode("contact_relationship_types", "media").then((value) => value || getCatalogIdByCode("contact_relationship_types", "ninguno")),
-      getCatalogIdByCode("contact_hierarchy_levels", "usuario"),
-      getCatalogIdByCode("contact_influence_levels", "media"),
-      getCatalogIdByCode("contact_employment_statuses", "labora"),
-      getCatalogIdByCode("contact_activation_statuses", "activado"),
-      resolveCountryId(),
-    ]);
+  const [
+    purchaseParticipationId,
+    relationshipTypeId,
+    hierarchyLevelId,
+    influenceLevelId,
+    employmentStatusId,
+    activationStatusId,
+    countryId,
+  ] = await Promise.all([
+    getCatalogIdByCode("contact_purchase_participations", "ninguno"),
+    getCatalogIdByCode("contact_relationship_types", "media").then(
+      (value) =>
+        value || getCatalogIdByCode("contact_relationship_types", "ninguno"),
+    ),
+    getCatalogIdByCode("contact_hierarchy_levels", "usuario"),
+    getCatalogIdByCode("contact_influence_levels", "media"),
+    getCatalogIdByCode("contact_employment_statuses", "labora"),
+    getCatalogIdByCode("contact_activation_statuses", "activado"),
+    resolveCountryId(),
+  ]);
 
   if (
     !purchaseParticipationId ||
@@ -598,7 +702,11 @@ async function resolveOrCreateLead({
        AND i.source_notes LIKE ?
      ORDER BY i.id DESC
      LIMIT 1`,
-    [accountId || null, contactId || null, `%landing:event_id=${Number(eventId)};%`],
+    [
+      accountId || null,
+      contactId || null,
+      `%landing:event_id=${Number(eventId)};%`,
+    ],
   );
 
   if (dedupRows[0]) {
@@ -696,7 +804,11 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
            crm_error_message = ?,
            crm_processed_at = NOW(3)
        WHERE id = ?`,
-      [CRM_STATUS_DUPLICATE_REVIEW, "Multiples cuentas candidatas", Number(submissionId)],
+      [
+        CRM_STATUS_DUPLICATE_REVIEW,
+        "Multiples cuentas candidatas",
+        Number(submissionId),
+      ],
     );
     return;
   }
@@ -716,7 +828,11 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
            crm_error_message = ?,
            crm_processed_at = NOW(3)
        WHERE id = ?`,
-      [CRM_STATUS_DUPLICATE_REVIEW, "Multiples contactos candidatos", Number(submissionId)],
+      [
+        CRM_STATUS_DUPLICATE_REVIEW,
+        "Multiples contactos candidatos",
+        Number(submissionId),
+      ],
     );
     return;
   }
@@ -762,9 +878,18 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
       [
         Number(submissionId),
         JSON.stringify({
-          account: { action: accountResolution?.action || "none", id: accountResolution?.accountId || null },
-          contact: { action: contactResolution?.action || "none", id: contactResolution?.contactId || null },
-          lead: { action: leadResolution?.action || "none", id: leadResolution?.leadId || null },
+          account: {
+            action: accountResolution?.action || "none",
+            id: accountResolution?.accountId || null,
+          },
+          contact: {
+            action: contactResolution?.action || "none",
+            id: contactResolution?.contactId || null,
+          },
+          lead: {
+            action: leadResolution?.action || "none",
+            id: leadResolution?.leadId || null,
+          },
         }),
         leadResolution?.leadId || null,
         accountResolution?.accountId || null,
@@ -803,10 +928,9 @@ async function processPendingLandingSubmissionsBatch(limit = 20) {
          WHERE id = ?`,
         [
           CRM_STATUS_FAILED,
-          String(error?.message || "No fue posible procesar envio de landing").slice(
-            0,
-            1000,
-          ),
+          String(
+            error?.message || "No fue posible procesar envio de landing",
+          ).slice(0, 1000),
           submissionId,
         ],
       ).catch(() => undefined);
@@ -866,10 +990,14 @@ privateRouter.put(
     try {
       formSchema = validateFormSchema(payload.form_schema);
     } catch (error) {
-      return res.status(Number(error?.status) || 400).json({ message: error.message });
+      return res
+        .status(Number(error?.status) || 400)
+        .json({ message: error.message });
     }
 
-    const htmlContent = String(payload.html_content || "").trim() || "<html><body><h1>Landing</h1><form data-landing-form><input name=\"email\" type=\"email\" /><button type=\"submit\">Enviar</button></form></body></html>";
+    const htmlContent =
+      String(payload.html_content || "").trim() ||
+      '<html><body><h1>Landing</h1><form data-landing-form><input name="email" type="email" /><button type="submit">Enviar</button></form></body></html>';
 
     try {
       const result = await withTransaction(async (conn) => {
@@ -890,7 +1018,9 @@ privateRouter.put(
             [slug],
           );
           if (slugRows.length) {
-            throw Object.assign(new Error("El slug ya esta en uso"), { status: 409 });
+            throw Object.assign(new Error("El slug ya esta en uso"), {
+              status: 409,
+            });
           }
 
           const now = new Date();
@@ -951,7 +1081,9 @@ privateRouter.put(
             [slug, landingPageId],
           );
           if (slugRows.length) {
-            throw Object.assign(new Error("El slug ya esta en uso"), { status: 409 });
+            throw Object.assign(new Error("El slug ya esta en uso"), {
+              status: 409,
+            });
           }
         }
 
@@ -988,7 +1120,13 @@ privateRouter.put(
                updated_by = ?,
                updated_at = NOW(3)
            WHERE id = ?`,
-          [slug, payload.eventName, versionId, Number(req.user.id), landingPageId],
+          [
+            slug,
+            payload.eventName,
+            versionId,
+            Number(req.user.id),
+            landingPageId,
+          ],
         );
 
         return {
@@ -1051,11 +1189,17 @@ privateRouter.post(
       parsedFiles = files;
       const rawFiles = Array.isArray(files) ? files : [];
       if (rawFiles.length !== 1) {
-        return res.status(400).json({ message: "Debes subir exactamente un archivo HTML" });
+        return res
+          .status(400)
+          .json({ message: "Debes subir exactamente un archivo HTML" });
       }
 
       const file = rawFiles[0];
-      const htmlContent = String(await import("node:fs/promises").then((m) => m.readFile(file.filepath, "utf8")) || "");
+      const htmlContent = String(
+        (await import("node:fs/promises").then((m) =>
+          m.readFile(file.filepath, "utf8"),
+        )) || "",
+      );
       if (!htmlContent.trim()) {
         return res.status(400).json({ message: "El archivo HTML esta vacio" });
       }
@@ -1076,7 +1220,13 @@ privateRouter.post(
              (landing_page_id, version_number, source_type, source_url, html_content,
               assets_manifest_json, form_schema_json, publish_notes, is_active, created_by, created_at)
            VALUES (?, ?, 'html_upload', NULL, ?, NULL, ?, NULL, 0, ?, NOW(3))`,
-          [landingPageId, nextVersion, htmlContent, JSON.stringify(formSchema), Number(req.user.id)],
+          [
+            landingPageId,
+            nextVersion,
+            htmlContent,
+            JSON.stringify(formSchema),
+            Number(req.user.id),
+          ],
         );
 
         await conn.query(
@@ -1136,7 +1286,7 @@ privateRouter.post(
        LIMIT 1`,
       [landingPageId],
     );
-    if (alreadyImportedRows.length) {
+    if (alreadyImportedRows.length && !parsed.data.force) {
       return res.status(409).json({
         message: "La importacion por URL solo se permite una vez por landing",
       });
@@ -1170,7 +1320,8 @@ privateRouter.post(
         );
 
         const fallbackSchema =
-          baseVersionRows[0]?.form_schema_json && typeof baseVersionRows[0].form_schema_json === "string"
+          baseVersionRows[0]?.form_schema_json &&
+          typeof baseVersionRows[0].form_schema_json === "string"
             ? JSON.parse(baseVersionRows[0].form_schema_json)
             : baseVersionRows[0]?.form_schema_json || {
                 form_schema_version: 1,
@@ -1296,7 +1447,9 @@ privateRouter.patch(
       try {
         formSchema = validateFormSchema(parsed.data.form_schema);
       } catch (error) {
-        return res.status(Number(error?.status) || 400).json({ message: error.message });
+        return res
+          .status(Number(error?.status) || 400)
+          .json({ message: error.message });
       }
     }
 
@@ -1306,7 +1459,9 @@ privateRouter.patch(
         : String(version.html_content || "");
 
     if (!htmlContent) {
-      return res.status(400).json({ message: "html_content no puede quedar vacio" });
+      return res
+        .status(400)
+        .json({ message: "html_content no puede quedar vacio" });
     }
 
     await query(
@@ -1352,7 +1507,10 @@ privateRouter.post(
       return res.status(404).json({ message: "Landing no encontrada" });
     }
 
-    const version = await loadLandingVersionById(landingPageId, parsed.data.version_id);
+    const version = await loadLandingVersionById(
+      landingPageId,
+      parsed.data.version_id,
+    );
     if (!version) {
       return res.status(404).json({ message: "Version no encontrada" });
     }
@@ -1364,7 +1522,9 @@ privateRouter.post(
           : version.form_schema_json,
       );
     } catch (error) {
-      return res.status(Number(error?.status) || 400).json({ message: error.message });
+      return res
+        .status(Number(error?.status) || 400)
+        .json({ message: error.message });
     }
 
     await withTransaction(async (conn) => {
@@ -1425,7 +1585,10 @@ privateRouter.get(
   requireAnyPermission(landingReadPermissions),
   async (req, res) => {
     const page = Math.max(1, Number(req.query.page || 1));
-    const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size || 25)));
+    const pageSize = Math.min(
+      200,
+      Math.max(1, Number(req.query.page_size || 25)),
+    );
     const offset = (page - 1) * pageSize;
     const status = String(req.query.status || "").trim();
     const search = String(req.query.search || "").trim();
@@ -1437,7 +1600,9 @@ privateRouter.get(
       params.push(status);
     }
     if (search) {
-      where.push("(lp.event_name LIKE ? OR lp.slug LIKE ? OR CAST(lp.event_id AS CHAR) LIKE ?)");
+      where.push(
+        "(lp.event_name LIKE ? OR lp.slug LIKE ? OR CAST(lp.event_id AS CHAR) LIKE ?)",
+      );
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
@@ -1474,7 +1639,9 @@ privateRouter.get(
         slug: row.slug || "",
         status: row.status || "draft",
         current_version_id:
-          row.current_version_id === null ? null : Number(row.current_version_id),
+          row.current_version_id === null
+            ? null
+            : Number(row.current_version_id),
         current_version_number:
           row.current_version_number === null
             ? null
@@ -1509,7 +1676,9 @@ privateRouter.get(
     );
 
     if (!rows.length) {
-      return res.status(404).json({ message: "Landing no encontrada para el evento" });
+      return res
+        .status(404)
+        .json({ message: "Landing no encontrada para el evento" });
     }
 
     return res.json({
@@ -1565,7 +1734,10 @@ privateRouter.get(
     }
 
     const page = Math.max(1, Number(req.query.page || 1));
-    const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size || 50)));
+    const pageSize = Math.min(
+      200,
+      Math.max(1, Number(req.query.page_size || 50)),
+    );
     const offset = (page - 1) * pageSize;
     const crmStatus = String(req.query.crm_status || "").trim();
     const from = String(req.query.from || "").trim();
@@ -1686,7 +1858,7 @@ publicRouter.get("/landing/:slug.html", async (req, res) => {
   }
 
   const rows = await query(
-    `SELECT lp.slug, lv.html_content
+    `SELECT lp.slug, lv.html_content, lv.source_type
      FROM landing_pages lp
      INNER JOIN landing_page_versions lv ON lv.id = lp.current_version_id
      WHERE lp.slug = ?
@@ -1701,7 +1873,11 @@ publicRouter.get("/landing/:slug.html", async (req, res) => {
     return res.status(404).send("Landing no encontrada");
   }
 
-  const html = renderLandingHtml(landing.html_content, slug);
+  const html = renderLandingHtml(
+    landing.html_content,
+    slug,
+    String(landing.source_type || "manual_edit"),
+  );
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.status(200).send(html);
 });
@@ -1765,7 +1941,11 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
     if (!field?.required) continue;
     const key = String(field?.key || "").trim();
     if (!key) continue;
-    if (formData[key] === undefined || formData[key] === null || String(formData[key]).trim() === "") {
+    if (
+      formData[key] === undefined ||
+      formData[key] === null ||
+      String(formData[key]).trim() === ""
+    ) {
       return res.status(422).json({
         message: `Campo requerido: ${key}`,
       });
@@ -1798,7 +1978,9 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       return res.status(201).json({
         submission_id: Number(existingRows[0].id),
         status: "accepted",
-        message: String(formSchema?.submit?.success_message || "Gracias por registrarte"),
+        message: String(
+          formSchema?.submit?.success_message || "Gracias por registrarte",
+        ),
       });
     }
   }
@@ -1818,7 +2000,12 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       Number(landing.event_id),
       String(req.ip || "").slice(0, 64),
       String(req.headers["user-agent"] || "").slice(0, 500) || null,
-      normalizeGenericText(parsed.data.context?.referrer_url || parsed.data.context?.page_url || "", 1000) || null,
+      normalizeGenericText(
+        parsed.data.context?.referrer_url ||
+          parsed.data.context?.page_url ||
+          "",
+        1000,
+      ) || null,
       idempotencyKey || null,
       JSON.stringify({
         form_data: formData,
@@ -1835,7 +2022,9 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
   return res.status(201).json({
     submission_id: submissionId,
     status: "accepted",
-    message: String(formSchema?.submit?.success_message || "Gracias por registrarte"),
+    message: String(
+      formSchema?.submit?.success_message || "Gracias por registrarte",
+    ),
   });
 });
 
