@@ -125,15 +125,6 @@ function normalizeSlug(value) {
     .slice(0, 120);
 }
 
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function cleanTextLine(value, max = 220) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -141,167 +132,118 @@ function cleanTextLine(value, max = 220) {
     .slice(0, max);
 }
 
-function buildSuggestedLandingHtml({
-  prompt,
-  eventName,
-  slug,
-  buttonText,
-  successMessage,
-}) {
-  const normalizedPrompt = String(prompt || "").trim();
-  const lines = normalizedPrompt
-    .split(/\n|[.!?]+/g)
-    .map((line) => cleanTextLine(line, 180))
-    .filter(Boolean);
+const COMPANY_DOMAIN_OVERRIDES = {
+  aws: "aws.amazon.com",
+  amazon: "amazon.com",
+  microsoft: "microsoft.com",
+  azure: "azure.microsoft.com",
+  google: "google.com",
+  gcp: "cloud.google.com",
+  ibm: "ibm.com",
+  oracle: "oracle.com",
+  sap: "sap.com",
+  salesforce: "salesforce.com",
+  f5: "f5.com",
+  cisco: "cisco.com",
+  fortinet: "fortinet.com",
+  paloalto: "paloaltonetworks.com",
+  samsung: "samsung.com",
+  hp: "hp.com",
+  intel: "intel.com",
+  amd: "amd.com",
+  dell: "dell.com",
+  lenovo: "lenovo.com",
+  hpe: "hpe.com",
+  vmware: "vmware.com",
+  servicenow: "servicenow.com",
+  adobe: "adobe.com",
+  hubspot: "hubspot.com",
+  stripe: "stripe.com",
+  shopify: "shopify.com",
+  nvidia: "nvidia.com",
+};
 
-  const fallbackHeadline = eventName
-    ? `Inscribete a ${eventName}`
-    : "Inscribete a nuestro webinar";
-  const headline = lines[0] || fallbackHeadline;
-  const subheadline =
-    lines[1] ||
-    "Descubre estrategias practicas para acelerar tus resultados comerciales.";
+function normalizeCompanyKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  const benefitSeed = lines.slice(2).flatMap((line) =>
-    line
-      .split(/,|;|\sy\s/gi)
-      .map((item) => cleanTextLine(item, 120))
-      .filter(Boolean),
-  );
+function titleCaseWords(value) {
+  return String(value || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
 
-  const benefitItems = (
-    benefitSeed.length
-      ? benefitSeed
-      : [
-          "Aprende un marco accionable para tu equipo.",
-          "Evita errores frecuentes con ejemplos reales.",
-          "Sal con un plan claro para implementar de inmediato.",
-        ]
-  ).slice(0, 3);
+function extractRequestedLogoCompanies(prompt) {
+  const text = String(prompt || "");
+  if (!/logo|logotipo/i.test(text)) return [];
 
-  const safeHeadline = escapeHtml(headline);
-  const safeSubheadline = escapeHtml(subheadline);
-  const safeEventName = escapeHtml(eventName || "Webinar");
-  const safeSlug = escapeHtml(slug || "landing");
-  const safeButtonText = escapeHtml(buttonText || "Registrarme");
-  const safeSuccessMessage = escapeHtml(
-    successMessage || "Gracias por registrarte",
-  );
+  const collected = [];
+  const logoClauses = [
+    ...text.matchAll(/(?:logos?|logotipos?)\s+(?:de|del|para)\s+([^\n.;:]+)/gi),
+    ...text.matchAll(
+      /(?:incluir|agregar|anadir|mostrar)\s+([^\n.;:]+?)\s+(?:como\s+)?(?:logos?|logotipos?)/gi,
+    ),
+  ];
 
-  const benefitsHtml = benefitItems
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("\n          ");
+  for (const clauseMatch of logoClauses) {
+    const clause = String(clauseMatch[1] || "").trim();
+    if (!clause) continue;
+    const parts = clause
+      .replace(/\s+y\s+/gi, ",")
+      .split(",")
+      .map((item) => cleanTextLine(item, 80))
+      .map((item) => item.replace(/^(de|del|la|el|los|las)\s+/i, "").trim())
+      .filter(Boolean);
+    collected.push(...parts);
+  }
 
-  return `<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>${safeEventName}</title>
-    <style>
-      :root {
-        --ink: #102c54;
-        --ink-soft: #35577f;
-        --brand: #0f4d9d;
-        --brand-strong: #0b3f82;
-        --panel: #ffffff;
-        --line: #c6d7ee;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "Segoe UI", Tahoma, sans-serif;
-        color: var(--ink);
-        background:
-          radial-gradient(900px 320px at 10% -10%, #dceaff, transparent 60%),
-          radial-gradient(800px 360px at 100% 0%, #e8f3ff, transparent 50%),
-          #eef5ff;
-      }
-      .wrap { max-width: 980px; margin: 0 auto; padding: 54px 20px 70px; }
-      .hero {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        box-shadow: 0 20px 44px rgba(17, 53, 101, 0.14);
-        overflow: hidden;
-      }
-      .hero-inner {
-        display: grid;
-        grid-template-columns: 1.1fr .9fr;
-        gap: 20px;
-        padding: 26px;
-      }
-      .tag {
-        display: inline-flex;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: .3px;
-        border: 1px solid #9ebee6;
-        color: #1a4f93;
-        border-radius: 999px;
-        padding: 5px 11px;
-        background: #eaf3ff;
-      }
-      h1 { margin: 12px 0 8px; line-height: 1.15; font-size: clamp(30px, 4.4vw, 44px); }
-      p.lead { margin: 0; color: var(--ink-soft); font-size: 17px; line-height: 1.42; }
-      ul { margin: 18px 0 0; padding-left: 18px; color: var(--ink-soft); line-height: 1.4; }
-      .card {
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        padding: 16px;
-        background: #fbfdff;
-      }
-      .card h2 { margin: 0 0 10px; font-size: 19px; }
-      form { display: grid; gap: 10px; }
-      input, button {
-        border-radius: 10px;
-        border: 1px solid #b6c9e6;
-        padding: 10px 12px;
-        font-size: 14px;
-        font: inherit;
-      }
-      button {
-        background: var(--brand);
-        border-color: var(--brand);
-        color: #fff;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      button:hover { background: var(--brand-strong); }
-      .foot-note { font-size: 12px; color: #58749b; margin: 10px 0 0; }
-      @media (max-width: 860px) {
-        .hero-inner { grid-template-columns: 1fr; }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <section class="hero">
-        <div class="hero-inner">
-          <div>
-            <span class="tag">${safeSlug}</span>
-            <h1>${safeHeadline}</h1>
-            <p class="lead">${safeSubheadline}</p>
-            <ul>
-              ${benefitsHtml}
-            </ul>
-          </div>
-          <aside class="card">
-            <h2>${safeEventName}</h2>
-            <form data-landing-form>
-              <input name="first_name" placeholder="Nombre" required />
-              <input name="email" type="email" placeholder="Correo" required />
-              <input name="company_name" placeholder="Empresa" />
-              <input name="hp_field" type="text" style="display:none" tabindex="-1" autocomplete="off" />
-              <button type="submit">${safeButtonText}</button>
-            </form>
-            <p class="foot-note">${safeSuccessMessage}</p>
-          </aside>
-        </div>
-      </section>
-    </div>
-  </body>
-</html>`;
+  const normalized = new Set();
+  const output = [];
+  for (const company of collected) {
+    const key = normalizeCompanyKey(company);
+    if (!key || normalized.has(key)) continue;
+    normalized.add(key);
+    output.push(titleCaseWords(company));
+  }
+
+  return output.slice(0, 8);
+}
+
+function resolveCompanyDomain(companyName) {
+  const key = normalizeCompanyKey(companyName).replace(/\s+/g, "");
+  if (COMPANY_DOMAIN_OVERRIDES[key]) {
+    return COMPANY_DOMAIN_OVERRIDES[key];
+  }
+
+  const tokenizedKey = normalizeCompanyKey(companyName).split(" ")[0] || "";
+  if (COMPANY_DOMAIN_OVERRIDES[tokenizedKey]) {
+    return COMPANY_DOMAIN_OVERRIDES[tokenizedKey];
+  }
+
+  const slug = normalizeCompanyKey(companyName).replace(/\s+/g, "");
+  return slug ? `${slug}.com` : "example.com";
+}
+
+function buildLogoHintLines(prompt) {
+  const companies = extractRequestedLogoCompanies(prompt);
+  if (!companies.length) return "";
+
+  return companies
+    .map((company) => {
+      const domain = resolveCompanyDomain(company);
+      const logoUrl = `https://logo.clearbit.com/${domain}`;
+      const fallbackUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+      return `- ${company}: domain=${domain}; primary=${logoUrl}; fallback=${fallbackUrl}`;
+    })
+    .join("\n");
 }
 
 function extractHtmlFromAssistantText(value) {
@@ -327,6 +269,7 @@ async function generateLandingHtmlWithChatbotAi({
   eventName,
   slug,
   formSchema,
+  currentHtml,
   onStatus,
   shouldCancel,
 }) {
@@ -366,6 +309,12 @@ async function generateLandingHtmlWithChatbotAi({
   }
 
   const fields = Array.isArray(formSchema?.fields) ? formSchema.fields : [];
+  const baseHtml = String(currentHtml || "").trim();
+  const baseHtmlSnippet = baseHtml.slice(0, 1600);
+  const promptText = String(prompt || "")
+    .trim()
+    .slice(0, 2400);
+  const logoHints = buildLogoHintLines(promptText);
   const requiredFieldHints = fields
     .slice(0, 10)
     .map((field) => {
@@ -379,7 +328,13 @@ async function generateLandingHtmlWithChatbotAi({
     .join("\n");
 
   const aiInstruction = [
-    "Genera una landing page completa en HTML para registro de webinar.",
+    "Edita el HTML existente de una landing page para registro de webinar.",
+    "Devuelve una version completa actualizada del HTML (no un fragmento).",
+    "Puedes agregar, modificar o eliminar contenido del HTML existente.",
+    "Conserva la estructura base y cambia solo lo necesario segun el prompt.",
+    "Si el prompt pide logos, crea una seccion visual de logos y usa URLs absolutas https confiables.",
+    "Para imagenes de logos usa <img> con width/height, object-fit: contain, loading='lazy' y alt descriptivo.",
+    "En logos, usa fallback con onerror a una URL de icono funcional si el logo principal falla.",
     "Responde solo con HTML valido (sin explicaciones, sin markdown).",
     "Incluye formulario con atributo data-landing-form y conserva campo hp_field oculto.",
     "Incluye diseno moderno responsive (desktop y mobile) con CSS inline dentro de <style>.",
@@ -389,8 +344,13 @@ async function generateLandingHtmlWithChatbotAi({
     "Campos sugeridos en formulario:",
     requiredFieldHints ||
       "- first_name: text (required)\n- email: email (required)\n- company_name: text",
+    logoHints ? "Sugerencias de logos (usar estas URLs):" : "",
+    logoHints,
     "Instrucciones del usuario:",
-    cleanTextLine(prompt || "", 2500),
+    promptText || "Mejorar propuesta de valor y claridad del CTA.",
+    "HTML actual (extracto de referencia):",
+    baseHtmlSnippet ||
+      "<html><body><form data-landing-form></form></body></html>",
   ].join("\n\n");
 
   const messageRes = await api.post("/api/chatbot/messages", {
@@ -401,6 +361,8 @@ async function generateLandingHtmlWithChatbotAi({
       module: "landing",
       eventName: String(eventName || "").trim(),
       slug: String(slug || "").trim(),
+      currentHtml: baseHtml.slice(0, 50_000),
+      prompt: promptText,
     },
     featureCode: "chatbot.assistant",
   });
@@ -417,6 +379,7 @@ async function generateLandingHtmlWithChatbotAi({
   }
 
   let attempts = 0;
+  let jobCompleted = false;
   while (attempts < 35) {
     throwIfCancelled();
     attempts += 1;
@@ -433,7 +396,10 @@ async function generateLandingHtmlWithChatbotAi({
       }
     }
 
-    if (status === "completed") break;
+    if (status === "completed") {
+      jobCompleted = true;
+      break;
+    }
 
     if (status === "failed" || status === "cancelled") {
       const reason = String(jobRes?.data?.error?.message || "").trim();
@@ -441,6 +407,12 @@ async function generateLandingHtmlWithChatbotAi({
     }
 
     await delay(1200);
+  }
+
+  if (!jobCompleted) {
+    throw new Error(
+      "La IA no termino de generar la landing en el tiempo esperado. Intenta de nuevo.",
+    );
   }
 
   throwIfCancelled();
@@ -497,6 +469,8 @@ export default function LandingModulePage() {
   const [importUrl, setImportUrl] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
   const [isSavingEditor, setIsSavingEditor] = useState(false);
+  const [isAiPromptModalOpen, setIsAiPromptModalOpen] = useState(false);
+  const [aiPromptText, setAiPromptText] = useState("");
   const [isGeneratingWithAi, setIsGeneratingWithAi] = useState(false);
   const [isAiCancelRequested, setIsAiCancelRequested] = useState(false);
   const [aiProgressText, setAiProgressText] = useState(
@@ -813,7 +787,26 @@ export default function LandingModulePage() {
     }
   }
 
-  async function handleGenerateLandingWithAiInstructions() {
+  function handleOpenAiPromptModal() {
+    if (!selectedLandingId) {
+      pushError("Selecciona una landing antes de usar IA");
+      return;
+    }
+
+    setAiPromptText((current) => {
+      if (String(current || "").trim()) return current;
+      return [
+        "Objetivo:",
+        "Audiencia:",
+        "Propuesta de valor:",
+        "CTA:",
+        "Cambios puntuales sobre el HTML actual:",
+      ].join("\n");
+    });
+    setIsAiPromptModalOpen(true);
+  }
+
+  async function handleGenerateLandingWithAiInstructions(initialPrompt) {
     if (!selectedLandingId) {
       pushError("Selecciona una landing antes de usar IA");
       return;
@@ -833,11 +826,6 @@ export default function LandingModulePage() {
       return;
     }
 
-    const initialPrompt = window.prompt(
-      "Instrucciones para IA (objetivo, audiencia, propuesta de valor y CTA):",
-      "Crea una landing para webinar con titular potente, beneficios claros, prueba social y CTA de registro.",
-    );
-    if (initialPrompt === null) return;
     if (!String(initialPrompt).trim()) {
       pushError("Debes escribir instrucciones para IA");
       return;
@@ -855,7 +843,6 @@ export default function LandingModulePage() {
     }
 
     let suggestedHtml = "";
-    let usedFallback = false;
     aiGenerationCancelRef.current = false;
     setIsAiCancelRequested(false);
 
@@ -867,6 +854,9 @@ export default function LandingModulePage() {
         eventName,
         slug,
         formSchema: parsedSchema,
+        currentHtml: String(
+          selectedVersion?.html_content || editorHtml || "",
+        ).trim(),
         onStatus: (message) => {
           if (String(message || "").trim()) {
             setAiProgressText(String(message).trim());
@@ -883,15 +873,11 @@ export default function LandingModulePage() {
         return;
       }
 
-      usedFallback = true;
-      setAiProgressText("Generando propuesta local de respaldo...");
-      suggestedHtml = buildSuggestedLandingHtml({
-        prompt: initialPrompt,
-        eventName,
-        slug,
-        buttonText: parsedSchema?.submit?.button_text,
-        successMessage: parsedSchema?.submit?.success_message,
-      });
+      const errorMessage =
+        String(error?.message || "").trim() ||
+        "No fue posible generar HTML con IA";
+      pushError(errorMessage);
+      return;
     } finally {
       setIsGeneratingWithAi(false);
       setAiProgressText("Generando landing con IA...");
@@ -917,13 +903,7 @@ export default function LandingModulePage() {
 
       await loadLandingList();
       await loadLandingDetail(selectedLandingId);
-      if (usedFallback) {
-        pushSuccess(
-          "La IA no respondio a tiempo; se aplico una propuesta automatica local y se guardo la version",
-        );
-      } else {
-        pushSuccess("HTML generado por IA y guardado como nueva versión");
-      }
+      pushSuccess("HTML generado por IA y guardado como nueva versión");
     } catch (error) {
       pushError(
         getApiErrorMessage(error, "No fue posible guardar instrucciones de IA"),
@@ -937,6 +917,23 @@ export default function LandingModulePage() {
     aiGenerationCancelRef.current = true;
     setIsAiCancelRequested(true);
     setAiProgressText("Cancelando generación...");
+  }
+
+  function handleCloseAiPromptModal() {
+    if (isGeneratingWithAi) return;
+    setIsAiPromptModalOpen(false);
+  }
+
+  async function handleSubmitAiPrompt(event) {
+    event.preventDefault();
+    const prompt = String(aiPromptText || "").trim();
+    if (!prompt) {
+      pushError("Debes escribir instrucciones para IA");
+      return;
+    }
+
+    setIsAiPromptModalOpen(false);
+    await handleGenerateLandingWithAiInstructions(prompt);
   }
 
   function handlePreviewDraftLanding() {
@@ -1302,7 +1299,7 @@ export default function LandingModulePage() {
       {activeTab === "editor" ? (
         <section className="landing-panel">
           <div className="landing-grid-two landing-grid-editor">
-            <article className="landing-card">
+            <article className="landing-card landing-editor-card">
               <h3>Editor y publicación</h3>
               {!selectedLandingId ? (
                 <p className="landing-muted">
@@ -1333,29 +1330,32 @@ export default function LandingModulePage() {
                         {landingDetail?.landing_page?.status || "-"}
                       </strong>
                     </div>
+                    <div className="landing-meta-version">
+                      <span className="landing-muted">Versión</span>
+                      <select
+                        value={selectedVersionId || ""}
+                        onChange={(event) => {
+                          const nextId = Number(event.target.value || 0);
+                          setSelectedVersionId(nextId || null);
+                          const version = (landingDetail?.versions || []).find(
+                            (entry) => Number(entry.id) === nextId,
+                          );
+                          if (version) {
+                            useVersionInEditor(version);
+                          }
+                        }}
+                      >
+                        {(landingDetail?.versions || []).map((version) => (
+                          <option key={version.id} value={version.id}>
+                            v{version.version_number} · {version.source_type}
+                            {version.is_active ? " · activa" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="landing-inline-actions">
-                    <select
-                      value={selectedVersionId || ""}
-                      onChange={(event) => {
-                        const nextId = Number(event.target.value || 0);
-                        setSelectedVersionId(nextId || null);
-                        const version = (landingDetail?.versions || []).find(
-                          (entry) => Number(entry.id) === nextId,
-                        );
-                        if (version) {
-                          useVersionInEditor(version);
-                        }
-                      }}
-                    >
-                      {(landingDetail?.versions || []).map((version) => (
-                        <option key={version.id} value={version.id}>
-                          v{version.version_number} · {version.source_type}
-                          {version.is_active ? " · activa" : ""}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="landing-inline-actions landing-editor-actions">
                     <button
                       type="button"
                       onClick={handleSaveCurrentVersion}
@@ -1377,7 +1377,7 @@ export default function LandingModulePage() {
                     <button
                       type="button"
                       className="landing-ai-action"
-                      onClick={handleGenerateLandingWithAiInstructions}
+                      onClick={handleOpenAiPromptModal}
                       disabled={
                         isSavingEditor || isLoadingDetail || isGeneratingWithAi
                       }
@@ -1640,6 +1640,49 @@ export default function LandingModulePage() {
               {isAiCancelRequested ? "Cancelando..." : "Cancelar"}
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {isAiPromptModalOpen ? (
+        <div
+          className="landing-ai-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Instrucciones para generar landing con IA"
+        >
+          <form className="landing-ai-modal" onSubmit={handleSubmitAiPrompt}>
+            <h4>Instrucciones para IA</h4>
+            <p>
+              Describe cambios en varias líneas. La IA editará el HTML actual de
+              la landing.
+            </p>
+            <textarea
+              className="landing-ai-prompt-textarea"
+              value={aiPromptText}
+              onChange={(event) => setAiPromptText(event.target.value)}
+              rows={9}
+              placeholder={[
+                "Objetivo:",
+                "Audiencia:",
+                "Propuesta de valor:",
+                "CTA:",
+                "Cambios puntuales:",
+              ].join("\n")}
+              autoFocus
+            />
+            <div className="landing-ai-modal-actions">
+              <button
+                type="button"
+                className="landing-ai-cancel-button"
+                onClick={handleCloseAiPromptModal}
+              >
+                Cancelar
+              </button>
+              <button type="submit" className="landing-ai-submit-button">
+                Generar con IA
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>
