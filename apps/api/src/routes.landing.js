@@ -95,6 +95,10 @@ const reprocessSchema = z.object({
   force: z.boolean().optional().default(false),
 });
 
+const submissionNotesSchema = z.object({
+  user_notes: z.string().max(8000).optional().nullable(),
+});
+
 const privateRouter = express.Router();
 const publicRouter = express.Router();
 
@@ -131,6 +135,75 @@ function normalizeGenericText(value, max = 255) {
   return String(value || "")
     .trim()
     .slice(0, max);
+}
+
+function normalizeSqlDateTimeToUtcIso(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  // MySQL DATETIME has no timezone marker. We persist and expose it as UTC.
+  const parsed = new Date(`${text.replace(" ", "T")}Z`);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  const fallback = new Date(text);
+  return Number.isNaN(fallback.getTime()) ? null : fallback.toISOString();
+}
+
+function formatSubmissionValueForSynopsis(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "boolean") return value ? "Si" : "No";
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (typeof value === "object") {
+    return normalizeGenericText(JSON.stringify(value), 1000);
+  }
+  return normalizeGenericText(value, 1000);
+}
+
+function buildLeadSynopsisFromSubmission({ payloadRaw, formSchema, userNotes }) {
+  const lines = [];
+  const entries = buildSubmissionFieldEntries(payloadRaw, formSchema);
+
+  for (const entry of entries) {
+    const label = normalizeGenericText(entry?.label || entry?.key || "Campo", 120);
+    const value = formatSubmissionValueForSynopsis(entry?.value);
+    if (!label || !value) continue;
+    lines.push(`${label}: ${value}`);
+  }
+
+  const notesText = normalizeGenericText(userNotes || "", 4000);
+  if (notesText) {
+    if (lines.length) {
+      lines.push("");
+    }
+    lines.push("Notas del registro:");
+    lines.push(notesText);
+  }
+
+  return normalizeGenericText(lines.join("\n"), 8000) || null;
+}
+
+function resolveLeadTitleFromSubmission(normalizedPayload, slug) {
+  const accountName = normalizeCompanyName(
+    normalizedPayload?.account?.name ||
+      normalizedPayload?.contact?.company_name ||
+      "",
+  );
+
+  if (accountName) {
+    return normalizeGenericText(accountName, 180);
+  }
+
+  return normalizeGenericText(
+    normalizedPayload?.lead?.title || `Registro landing ${slug}`,
+    180,
+  );
 }
 
 function parseConfirmationConfig(value) {
@@ -936,6 +1009,8 @@ async function resolveOrCreateLead({
   accountId,
   contactId,
   normalizedPayload,
+  leadTitle,
+  leadSynopsis,
   actorUserId,
 }) {
   const dedupRows = await query(
@@ -956,15 +1031,27 @@ async function resolveOrCreateLead({
   );
 
   if (dedupRows[0]) {
-    return { leadId: Number(dedupRows[0].id), action: "match_update" };
+    const leadId = Number(dedupRows[0].id);
+    await query(
+      `UPDATE interactions
+       SET title = ?,
+           summary = ?,
+           updated_by = ?,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180),
+        leadSynopsis || null,
+        Number(actorUserId),
+        leadId,
+      ],
+    ).catch(() => undefined);
+    return { leadId, action: "match_update" };
   }
 
   const now = new Date();
   const publicId = `int_${randomUUID().replace(/-/g, "")}`;
-  const title = normalizeGenericText(
-    normalizedPayload?.lead?.title || `Registro landing ${slug}`,
-    180,
-  );
+  const title = normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180);
   const sourceNotes = `landing:event_id=${Number(eventId)};slug=${slug};submission_id=${Number(submissionId)};campaign=${normalizeGenericText(normalizedPayload?.meta?.utm_campaign || "", 120)}`;
 
   const insertResult = await query(
@@ -981,7 +1068,7 @@ async function resolveOrCreateLead({
       title,
       "webinar",
       sourceNotes,
-      normalizedPayload?.lead?.notes || null,
+      leadSynopsis || null,
       "created",
       "analyzed",
       accountId || null,
@@ -1011,11 +1098,21 @@ async function resolveOrCreateLead({
 
 async function processSubmissionIntoCrm(submissionId, workerRunId) {
   const rows = await query(
-    `SELECT s.id, s.event_id, s.payload_normalized_json, s.crm_processing_status,
+    `SELECT s.id,
+            s.event_id,
+            s.payload_raw_json,
+            s.payload_normalized_json,
+            s.user_notes,
+            s.crm_processing_status,
             s.landing_page_id,
-            lp.slug, lp.created_by, lp.event_name, lp.confirmation_config_json
+            lp.slug,
+            lp.created_by,
+            lp.event_name,
+            lp.confirmation_config_json,
+            lv.form_schema_json
      FROM landing_submissions s
      INNER JOIN landing_pages lp ON lp.id = s.landing_page_id
+     LEFT JOIN landing_page_versions lv ON lv.id = s.landing_version_id
      WHERE s.id = ?
      LIMIT 1`,
     [Number(submissionId)],
@@ -1038,6 +1135,23 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
       ? JSON.parse(submission.payload_normalized_json || "{}")
       : submission.payload_normalized_json || {};
 
+  const payloadRaw =
+    typeof submission.payload_raw_json === "string"
+      ? JSON.parse(submission.payload_raw_json || "{}")
+      : submission.payload_raw_json || {};
+
+  const formSchema =
+    typeof submission.form_schema_json === "string"
+      ? JSON.parse(submission.form_schema_json || "{}")
+      : submission.form_schema_json || {};
+
+  const leadTitle = resolveLeadTitleFromSubmission(normalizedPayload, submission.slug);
+  const leadSynopsis = buildLeadSynopsisFromSubmission({
+    payloadRaw,
+    formSchema,
+    userNotes: submission.user_notes,
+  });
+
   const actorUserId = Number(submission.created_by || 0) || 1;
 
   const leadResolution = await resolveOrCreateLead({
@@ -1047,6 +1161,8 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
     accountId: null,
     contactId: null,
     normalizedPayload,
+    leadTitle,
+    leadSynopsis,
     actorUserId,
   });
 
@@ -1438,6 +1554,10 @@ export async function processPendingLandingSubmissions() {
   landingWorkerBusy = true;
   try {
     await processPendingLandingSubmissionsBatch(20);
+  } catch (error) {
+    console.error(
+      `[landing-worker] Error procesando registros pendientes: ${error?.message}`,
+    );
   } finally {
     landingWorkerBusy = false;
   }
@@ -1447,10 +1567,20 @@ export async function startLandingWorker() {
   if (landingWorkerStarted) return;
   landingWorkerStarted = true;
 
-  await processPendingLandingSubmissions();
+  await processPendingLandingSubmissions().catch((error) => {
+    console.error(
+      `[landing-worker] Error en arranque inicial: ${error?.message}`,
+    );
+  });
 
   landingWorkerTimer = setInterval(async () => {
-    await processPendingLandingSubmissions();
+    try {
+      await processPendingLandingSubmissions();
+    } catch (error) {
+      console.error(
+        `[landing-worker] Error en ciclo programado: ${error?.message}`,
+      );
+    }
   }, 10000);
 
   if (typeof landingWorkerTimer?.unref === "function") {
@@ -2329,7 +2459,10 @@ privateRouter.get(
 
     const items = await query(
       `SELECT s.id AS submission_id,
-              s.submitted_at,
+              DATE_FORMAT(s.submitted_at, '%Y-%m-%d %H:%i:%s.%f') AS submitted_at,
+              DATE_FORMAT(s.sent_to_leads_at, '%Y-%m-%d %H:%i:%s.%f') AS sent_to_leads_at,
+              s.sent_to_leads_by,
+              s.user_notes,
               s.crm_processing_status,
               s.crm_error_message,
               s.payload_raw_json,
@@ -2366,7 +2499,11 @@ privateRouter.get(
 
         return {
         submission_id: Number(row.submission_id),
-        submitted_at: row.submitted_at,
+        submitted_at: normalizeSqlDateTimeToUtcIso(row.submitted_at),
+        sent_to_leads_at: normalizeSqlDateTimeToUtcIso(row.sent_to_leads_at),
+        sent_to_leads_by:
+          row.sent_to_leads_by === null ? null : Number(row.sent_to_leads_by),
+        user_notes: String(row.user_notes || "").trim(),
         crm_processing_status: row.crm_processing_status,
         crm_error_message: row.crm_error_message,
         payload_raw: payloadRaw,
@@ -2394,6 +2531,46 @@ privateRouter.get(
         page_size: pageSize,
         total: Number(totalRows[0]?.total || 0),
       },
+    });
+  },
+);
+
+privateRouter.patch(
+  "/submissions/:submissionId/notes",
+  requireAnyPermission(landingSubmissionsReprocessPermissions),
+  async (req, res) => {
+    const submissionId = Number(req.params.submissionId);
+    if (!Number.isInteger(submissionId) || submissionId <= 0) {
+      return res.status(400).json({ message: "submissionId invalido" });
+    }
+
+    const parsed = submissionNotesSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Payload invalido" });
+    }
+
+    const notesValue = normalizeGenericText(
+      parsed.data.user_notes || "",
+      8000,
+    );
+
+    const updateResult = await query(
+      `UPDATE landing_submissions
+       SET user_notes = ?,
+           notes_updated_by = ?,
+           notes_updated_at = NOW(3)
+       WHERE id = ?`,
+      [notesValue || null, Number(req.user?.id || 0) || null, submissionId],
+    );
+
+    if (!Number(updateResult?.affectedRows || 0)) {
+      return res.status(404).json({ message: "Submission no encontrado" });
+    }
+
+    return res.json({
+      submission_id: submissionId,
+      user_notes: notesValue || "",
+      updated: true,
     });
   },
 );
@@ -2427,9 +2604,11 @@ privateRouter.post(
       `UPDATE landing_submissions
        SET crm_processing_status = ?,
            crm_error_message = NULL,
-           crm_processed_at = NULL
+           crm_processed_at = NULL,
+           sent_to_leads_at = NOW(3),
+           sent_to_leads_by = ?
        WHERE id = ?`,
-      [CRM_STATUS_PENDING, submissionId],
+      [CRM_STATUS_PENDING, Number(req.user?.id || 0) || null, submissionId],
     );
 
     await processPendingLandingSubmissions();

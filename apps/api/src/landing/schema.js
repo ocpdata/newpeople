@@ -66,6 +66,11 @@ const LANDING_SCHEMA_STATEMENTS = [
     idempotency_key VARCHAR(120) NULL,
     payload_raw_json JSON NOT NULL,
     payload_normalized_json JSON NOT NULL,
+    user_notes TEXT NULL,
+    notes_updated_by BIGINT UNSIGNED NULL,
+    notes_updated_at DATETIME(3) NULL,
+    sent_to_leads_at DATETIME(3) NULL,
+    sent_to_leads_by BIGINT UNSIGNED NULL,
     validation_status VARCHAR(20) NOT NULL DEFAULT 'valid',
     crm_processing_status VARCHAR(30) NOT NULL DEFAULT 'pending',
     crm_error_message VARCHAR(1000) NULL,
@@ -75,7 +80,9 @@ const LANDING_SCHEMA_STATEMENTS = [
     INDEX idx_landing_submissions_crm_status (crm_processing_status, submitted_at),
     UNIQUE KEY uq_landing_submissions_idempotency (landing_page_id, idempotency_key),
     CONSTRAINT fk_landing_submissions_page FOREIGN KEY (landing_page_id) REFERENCES landing_pages(id) ON DELETE CASCADE,
-    CONSTRAINT fk_landing_submissions_version FOREIGN KEY (landing_version_id) REFERENCES landing_page_versions(id) ON DELETE CASCADE
+    CONSTRAINT fk_landing_submissions_version FOREIGN KEY (landing_version_id) REFERENCES landing_page_versions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_landing_submissions_notes_updated_by FOREIGN KEY (notes_updated_by) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_landing_submissions_sent_to_leads_by FOREIGN KEY (sent_to_leads_by) REFERENCES users(id) ON DELETE SET NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS landing_submission_crm_links (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -134,6 +141,60 @@ export async function ensureLandingSchema() {
            AFTER status`,
         );
       }
+
+      if (!(await columnExists("landing_submissions", "user_notes"))) {
+        await query(
+          `ALTER TABLE landing_submissions
+           ADD COLUMN user_notes TEXT NULL
+           AFTER payload_normalized_json`,
+        );
+      }
+
+      if (!(await columnExists("landing_submissions", "notes_updated_by"))) {
+        await query(
+          `ALTER TABLE landing_submissions
+           ADD COLUMN notes_updated_by BIGINT UNSIGNED NULL
+           AFTER user_notes`,
+        );
+      }
+
+      if (!(await columnExists("landing_submissions", "notes_updated_at"))) {
+        await query(
+          `ALTER TABLE landing_submissions
+           ADD COLUMN notes_updated_at DATETIME(3) NULL
+           AFTER notes_updated_by`,
+        );
+      }
+
+      if (!(await columnExists("landing_submissions", "sent_to_leads_at"))) {
+        await query(
+          `ALTER TABLE landing_submissions
+           ADD COLUMN sent_to_leads_at DATETIME(3) NULL
+           AFTER notes_updated_at`,
+        );
+      }
+
+      if (!(await columnExists("landing_submissions", "sent_to_leads_by"))) {
+        await query(
+          `ALTER TABLE landing_submissions
+           ADD COLUMN sent_to_leads_by BIGINT UNSIGNED NULL
+           AFTER sent_to_leads_at`,
+        );
+      }
+
+      await query(
+        `ALTER TABLE landing_submissions
+         ADD CONSTRAINT fk_landing_submissions_notes_updated_by
+         FOREIGN KEY (notes_updated_by) REFERENCES users(id)
+         ON DELETE SET NULL`,
+      ).catch(() => {});
+
+      await query(
+        `ALTER TABLE landing_submissions
+         ADD CONSTRAINT fk_landing_submissions_sent_to_leads_by
+         FOREIGN KEY (sent_to_leads_by) REFERENCES users(id)
+         ON DELETE SET NULL`,
+      ).catch(() => {});
     })().catch((error) => {
       ensureLandingSchemaPromise = undefined;
       throw error;

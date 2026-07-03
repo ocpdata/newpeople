@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import { formatBusinessDateTime } from "./business-timezone";
 import "./landing-module.css";
 
 const DEFAULT_FORM_SCHEMA = {
@@ -75,6 +76,12 @@ const SOURCE_TYPE_DETAILS = {
   ai: "Genera una propuesta inicial con IA para partir de un borrador.",
   html_upload: "Importa un archivo HTML existente para reutilizar una landing previa.",
   url_import_once: "Captura una landing desde una URL una sola vez para editarla después.",
+};
+
+const LANDING_STATUS_LABELS = {
+  draft: "Borrador",
+  published: "Publicada",
+  archived: "Archivada",
 };
 
 const DEFAULT_HTML = `<!doctype html>
@@ -166,6 +173,13 @@ function cleanTextLine(value, max = 220) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+}
+
+function formatLandingStatus(value) {
+  const key = String(value || "")
+    .trim()
+    .toLowerCase();
+  return LANDING_STATUS_LABELS[key] || (key ? key : "-");
 }
 
 function formatSubmissionFieldValue(value) {
@@ -582,6 +596,19 @@ export default function LandingModulePage() {
 
   const [submissions, setSubmissions] = useState([]);
   const [isLoadingSubmissions, setIsLoadingSubmissions] = useState(false);
+  const [submissionEventQuery, setSubmissionEventQuery] = useState("");
+  const [isSubmissionEventPickerOpen, setIsSubmissionEventPickerOpen] =
+    useState(false);
+  const [submissionTableFilter, setSubmissionTableFilter] = useState("");
+  const [submissionSort, setSubmissionSort] = useState({
+    key: "submitted_at",
+    direction: "desc",
+  });
+  const [submissionNotesDrafts, setSubmissionNotesDrafts] = useState({});
+  const [savingSubmissionNotesById, setSavingSubmissionNotesById] = useState(
+    {},
+  );
+  const [sendingSubmissionById, setSendingSubmissionById] = useState({});
   const [crmStatusFilter, setCrmStatusFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -683,6 +710,111 @@ export default function LandingModulePage() {
     }
     return Array.from(byKey.values());
   }, [submissions]);
+
+  const submissionEventOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+
+    for (const item of landingItems) {
+      const eventId = Number(item?.event_id || 0);
+      if (!eventId || seen.has(eventId)) continue;
+      seen.add(eventId);
+      const eventName = String(item?.event_name || "").trim();
+      options.push({
+        eventId,
+        eventName,
+        label: eventName || `Evento ${eventId}`,
+      });
+    }
+
+    return options.sort((left, right) => right.eventId - left.eventId);
+  }, [landingItems]);
+
+  const filteredSubmissionEventOptions = useMemo(() => {
+    const normalizedQuery = String(submissionEventQuery || "")
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedQuery) {
+      return submissionEventOptions.slice(0, 10);
+    }
+
+    return submissionEventOptions
+      .filter((entry) =>
+        `${entry.eventId} ${entry.eventName} ${entry.label}`
+          .toLowerCase()
+          .includes(normalizedQuery),
+      )
+      .slice(0, 10);
+  }, [submissionEventOptions, submissionEventQuery]);
+
+  const visibleSubmissions = useMemo(() => {
+    const normalizedFilter = String(submissionTableFilter || "")
+      .trim()
+      .toLowerCase();
+
+    const filtered = submissions.filter((submission) => {
+      const submittedFields = buildSubmissionFieldEntries(submission);
+      const haystack = [
+        formatBusinessDateTime(submission?.submitted_at, { fallback: "" }),
+        String(submission?.user_notes || ""),
+        ...submittedFields.flatMap((field) => [
+          String(field?.label || ""),
+          String(field?.value || ""),
+        ]),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return !normalizedFilter || haystack.includes(normalizedFilter);
+    });
+
+    const decorated = filtered.map((submission) => {
+      const submittedFields = buildSubmissionFieldEntries(submission);
+      const fieldByKey = new Map(
+        submittedFields.map((entry) => [entry.key, entry.value]),
+      );
+      return {
+        submission,
+        fieldByKey,
+      };
+    });
+
+    decorated.sort((left, right) => {
+      const { key, direction } = submissionSort;
+
+      const readValue = (entry) => {
+        if (key === "submitted_at") {
+          return new Date(entry.submission?.submitted_at || 0).getTime();
+        }
+        if (key === "user_notes") {
+          return String(entry.submission?.user_notes || "").toLowerCase();
+        }
+        return String(entry.fieldByKey.get(key) || "").toLowerCase();
+      };
+
+      const leftValue = readValue(left);
+      const rightValue = readValue(right);
+
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return direction === "asc"
+          ? leftValue - rightValue
+          : rightValue - leftValue;
+      }
+
+      return direction === "asc"
+        ? String(leftValue).localeCompare(String(rightValue), "es", {
+            numeric: true,
+            sensitivity: "base",
+          })
+        : String(rightValue).localeCompare(String(leftValue), "es", {
+            numeric: true,
+            sensitivity: "base",
+          });
+    });
+
+    return decorated;
+  }, [submissionSort, submissionTableFilter, submissions]);
 
   const pushSuccess = useCallback((message) => {
     setGlobalSuccess(message);
@@ -786,6 +918,7 @@ export default function LandingModulePage() {
   const loadSubmissions = useCallback(async () => {
     if (!selectedEventId) {
       setSubmissions([]);
+      setSubmissionNotesDrafts({});
       return;
     }
 
@@ -804,7 +937,16 @@ export default function LandingModulePage() {
         },
       );
 
-      setSubmissions(Array.isArray(data?.items) ? data.items : []);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setSubmissions(items);
+      setSubmissionNotesDrafts(
+        items.reduce((acc, item) => {
+          const submissionId = Number(item?.submission_id || 0);
+          if (!submissionId) return acc;
+          acc[submissionId] = String(item?.user_notes || "");
+          return acc;
+        }, {}),
+      );
     } catch (error) {
       pushError(
         getApiErrorMessage(
@@ -831,12 +973,39 @@ export default function LandingModulePage() {
     loadSubmissions();
   }, [activeTab, loadSubmissions]);
 
+  useEffect(() => {
+    if (!selectedEventId) {
+      setSubmissionEventQuery("");
+      return;
+    }
+
+    const option = submissionEventOptions.find(
+      (entry) => entry.eventId === Number(selectedEventId),
+    );
+    setSubmissionEventQuery(option?.label || String(selectedEventId));
+  }, [selectedEventId, submissionEventOptions]);
+
   function onSelectLanding(item) {
     setSelectedLandingId(Number(item.id));
     setSelectedEventId(Number(item.event_id));
     setActiveTab("editor");
     setGlobalError("");
     setGlobalSuccess("");
+  }
+
+  function toggleSubmissionSort(key) {
+    setSubmissionSort((current) => {
+      if (current.key === key) {
+        return {
+          key,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return {
+        key,
+        direction: key === "submitted_at" ? "desc" : "asc",
+      };
+    });
   }
 
   async function handleCreateOrUpsertLanding(event) {
@@ -1595,13 +1764,29 @@ export default function LandingModulePage() {
   }
 
   async function handleSendSubmissionToLeads(submissionId) {
+    const numericSubmissionId = Number(submissionId || 0);
+    if (!numericSubmissionId) return;
+    if (sendingSubmissionById[numericSubmissionId]) return;
+
     const shouldProcess = window.confirm(
       "¿Enviar este registro a Leads ahora? Esta acción intentará crear o actualizar el lead en CRM.",
     );
     if (!shouldProcess) return;
 
+    setSendingSubmissionById((prev) => ({
+      ...prev,
+      [numericSubmissionId]: true,
+    }));
+
     try {
-      await api.post(`/api/landing/v1/submissions/${submissionId}/reprocess`, {
+      const notesSaved = await handleSaveSubmissionNotes(numericSubmissionId, {
+        quietSuccess: true,
+      });
+      if (!notesSaved) {
+        return;
+      }
+
+      await api.post(`/api/landing/v1/submissions/${numericSubmissionId}/reprocess`, {
         force: true,
       });
       pushSuccess("Registro enviado a Leads");
@@ -1610,6 +1795,73 @@ export default function LandingModulePage() {
       pushError(
         getApiErrorMessage(error, "No fue posible enviar el registro a Leads"),
       );
+    } finally {
+      setSendingSubmissionById((prev) => ({
+        ...prev,
+        [numericSubmissionId]: false,
+      }));
+    }
+  }
+
+  async function handleSaveSubmissionNotes(
+    submissionId,
+    { quietSuccess = false } = {},
+  ) {
+    const numericSubmissionId = Number(submissionId || 0);
+    if (!numericSubmissionId) return false;
+
+    const targetSubmission = submissions.find(
+      (item) => Number(item?.submission_id) === numericSubmissionId,
+    );
+    if (!targetSubmission) return false;
+
+    const draftNotes = String(submissionNotesDrafts[numericSubmissionId] || "")
+      .trim()
+      .slice(0, 8000);
+    const currentNotes = String(targetSubmission?.user_notes || "")
+      .trim()
+      .slice(0, 8000);
+
+    if (draftNotes === currentNotes) {
+      return true;
+    }
+
+    setSavingSubmissionNotesById((prev) => ({
+      ...prev,
+      [numericSubmissionId]: true,
+    }));
+    try {
+      const { data } = await api.patch(
+        `/api/landing/v1/submissions/${numericSubmissionId}/notes`,
+        {
+          user_notes: draftNotes,
+        },
+      );
+
+      const savedNotes = String(data?.user_notes || "");
+      setSubmissions((prev) =>
+        prev.map((item) =>
+          Number(item?.submission_id) === numericSubmissionId
+            ? { ...item, user_notes: savedNotes }
+            : item,
+        ),
+      );
+      setSubmissionNotesDrafts((prev) => ({
+        ...prev,
+        [numericSubmissionId]: savedNotes,
+      }));
+      if (!quietSuccess) {
+        pushSuccess("Notas guardadas");
+      }
+      return true;
+    } catch (error) {
+      pushError(getApiErrorMessage(error, "No fue posible guardar las notas"));
+      return false;
+    } finally {
+      setSavingSubmissionNotesById((prev) => ({
+        ...prev,
+        [numericSubmissionId]: false,
+      }));
     }
   }
 
@@ -1695,9 +1947,15 @@ export default function LandingModulePage() {
               <div className="landing-event-id-badge">
                 ID: {nextAutoEventId}
               </div>
-              <h3>Crear o actualizar landing por evento</h3>
+              <div className="landing-events-form-head">
+                <h3>Crear o actualizar landing por evento</h3>
+                <p>
+                  Completa los datos base del evento para generar o actualizar
+                  su landing.
+                </p>
+              </div>
               <form
-                className="landing-form-grid"
+                className="landing-form-grid landing-form-grid-events"
                 onSubmit={handleCreateOrUpsertLanding}
               >
                 <label>
@@ -1778,7 +2036,6 @@ export default function LandingModulePage() {
                   <option value="">Todos los estados</option>
                   <option value="draft">Borrador</option>
                   <option value="published">Publicada</option>
-                  <option value="archived">Archivada</option>
                 </select>
                 <button
                   type="button"
@@ -1827,7 +2084,7 @@ export default function LandingModulePage() {
                             </div>
                           </td>
                           <td>{item.slug}</td>
-                          <td>{item.status}</td>
+                          <td>{formatLandingStatus(item.status)}</td>
                           <td>
                             {item.current_version_number
                               ? `v${item.current_version_number}`
@@ -1864,12 +2121,8 @@ export default function LandingModulePage() {
               <>
                 <div className="landing-meta-grid">
                   <div>
-                    <span className="landing-muted">Landing ID</span>
-                    <strong>{selectedLandingId}</strong>
-                  </div>
-                  <div>
-                    <span className="landing-muted">Event ID</span>
-                    <strong>{landingDetail?.landing_page?.event_id || "-"}</strong>
+                    <span className="landing-muted">Evento / Landing</span>
+                    <strong>{landingDetail?.landing_page?.event_name || "-"}</strong>
                   </div>
                   <div>
                     <span className="landing-muted">Slug</span>
@@ -1877,7 +2130,9 @@ export default function LandingModulePage() {
                   </div>
                   <div>
                     <span className="landing-muted">Estado</span>
-                    <strong>{landingDetail?.landing_page?.status || "-"}</strong>
+                    <strong>
+                      {formatLandingStatus(landingDetail?.landing_page?.status)}
+                    </strong>
                   </div>
                   <div className="landing-meta-version">
                     <span className="landing-muted">Versión</span>
@@ -1952,9 +2207,14 @@ export default function LandingModulePage() {
                           </svg>
                         </button>
                         {selectedPublicUrl ? (
-                          <a href={selectedPublicUrl} target="_blank" rel="noreferrer">
-                            Ver landing publicada
-                          </a>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              window.open(selectedPublicUrl, "_blank", "noopener,noreferrer")
+                            }
+                          >
+                            Ver landig publicada
+                          </button>
                         ) : (
                           <button
                             type="button"
@@ -2390,73 +2650,192 @@ export default function LandingModulePage() {
         <section className="landing-panel">
           <article className="landing-card">
             <h3>Registros por evento</h3>
-            <div className="landing-inline-actions landing-submission-filters">
-              <input
-                type="number"
-                value={selectedEventId || ""}
-                onChange={(event) =>
-                  setSelectedEventId(Number(event.target.value || 0) || null)
-                }
-                placeholder="Event ID"
-              />
-              <select
-                value={crmStatusFilter}
-                onChange={(event) => setCrmStatusFilter(event.target.value)}
-              >
-                <option value="">Todos los estados</option>
-                <option value="pending">pending</option>
-                <option value="processed">processed</option>
-                <option value="failed">failed</option>
-                <option value="duplicate_review">duplicate_review</option>
-              </select>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(event) => setFromDate(event.target.value)}
-              />
-              <input
-                type="date"
-                value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-              />
-              <button
-                type="button"
-                onClick={loadSubmissions}
-                disabled={isLoadingSubmissions}
-              >
-                {isLoadingSubmissions ? "Cargando..." : "Buscar"}
-              </button>
+            <div className="landing-submission-filters">
+              <label className="landing-submission-filter-field">
+                <span>Evento</span>
+                <div className="landing-submission-event-combobox">
+                  <input
+                    type="text"
+                    value={submissionEventQuery}
+                    onFocus={() => setIsSubmissionEventPickerOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => {
+                        setIsSubmissionEventPickerOpen(false);
+                      }, 120);
+                    }}
+                    onChange={(event) => {
+                      const nextValue = String(event.target.value || "");
+                      setSubmissionEventQuery(nextValue);
+                      setIsSubmissionEventPickerOpen(true);
+
+                      const trimmed = nextValue.trim();
+                      if (!trimmed) {
+                        setSelectedEventId(null);
+                        return;
+                      }
+
+                      const exact = submissionEventOptions.find(
+                        (entry) =>
+                          entry.label.toLowerCase() === trimmed.toLowerCase() ||
+                          String(entry.eventId) === trimmed,
+                      );
+                      if (exact) {
+                        setSelectedEventId(exact.eventId);
+                        return;
+                      }
+
+                      const numericPrefix = /^\d+/.exec(trimmed);
+                      if (numericPrefix) {
+                        setSelectedEventId(Number(numericPrefix[0]));
+                      }
+                    }}
+                    placeholder="Buscar por ID o nombre de evento"
+                    autoComplete="off"
+                  />
+                  {isSubmissionEventPickerOpen &&
+                  filteredSubmissionEventOptions.length ? (
+                    <div className="landing-submission-event-combobox-menu">
+                      {filteredSubmissionEventOptions.map((entry) => (
+                        <button
+                          key={entry.eventId}
+                          type="button"
+                          className="landing-submission-event-option"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            setSubmissionEventQuery(entry.label);
+                            setSelectedEventId(entry.eventId);
+                            setIsSubmissionEventPickerOpen(false);
+                          }}
+                        >
+                          <strong>{entry.eventName || "Evento"}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+              <label className="landing-submission-filter-field">
+                <span>Desde</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(event) => setFromDate(event.target.value)}
+                />
+              </label>
+              <label className="landing-submission-filter-field">
+                <span>Hasta</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(event) => setToDate(event.target.value)}
+                />
+              </label>
+              <label className="landing-submission-filter-field landing-submission-filter-field-wide">
+                <span>Filtrar registros</span>
+                <input
+                  type="text"
+                  value={submissionTableFilter}
+                  onChange={(event) =>
+                    setSubmissionTableFilter(event.target.value)
+                  }
+                  placeholder="Buscar por fecha, nombre, correo, empresa o notas"
+                />
+              </label>
             </div>
 
             <div className="landing-list-wrap">
               <table className="landing-table">
                 <thead>
                   <tr>
-                    <th>Fecha</th>
+                    <th>
+                      <button
+                        type="button"
+                        className="landing-sort-button"
+                        onClick={() => toggleSubmissionSort("submitted_at")}
+                      >
+                        Fecha
+                        <span>
+                          {submissionSort.key === "submitted_at"
+                            ? submissionSort.direction === "asc"
+                              ? "↑"
+                              : "↓"
+                            : "↕"}
+                        </span>
+                      </button>
+                    </th>
                     {submissionFieldColumns.map((column) => (
-                      <th key={column.key}>{column.label}</th>
+                      <th key={column.key}>
+                        <button
+                          type="button"
+                          className="landing-sort-button"
+                          onClick={() => toggleSubmissionSort(column.key)}
+                        >
+                          {column.label}
+                          <span>
+                            {submissionSort.key === column.key
+                              ? submissionSort.direction === "asc"
+                                ? "↑"
+                                : "↓"
+                              : "↕"}
+                          </span>
+                        </button>
+                      </th>
                     ))}
-                    <th />
+                    <th>
+                      <button
+                        type="button"
+                        className="landing-sort-button"
+                        onClick={() => toggleSubmissionSort("user_notes")}
+                      >
+                        Notas
+                        <span>
+                          {submissionSort.key === "user_notes"
+                            ? submissionSort.direction === "asc"
+                              ? "↑"
+                              : "↓"
+                            : "↕"}
+                        </span>
+                      </button>
+                    </th>
+                    <th>Enviar a Leads</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {submissions.length === 0 ? (
+                  {visibleSubmissions.length === 0 ? (
                     <tr>
-                      <td colSpan={submissionFieldColumns.length + 2}>
-                        No hay registros para este evento
+                      <td colSpan={submissionFieldColumns.length + 3}>
+                        No hay registros para este filtro
                       </td>
                     </tr>
                   ) : (
-                    submissions.map((submission) => {
-                      const submittedFields =
-                        buildSubmissionFieldEntries(submission);
-                      const fieldByKey = new Map(
-                        submittedFields.map((entry) => [entry.key, entry.value]),
+                    visibleSubmissions.map(({ submission, fieldByKey }) => {
+                      const submissionId = Number(submission.submission_id || 0);
+                      const isSentToLeads = Boolean(
+                        String(submission?.sent_to_leads_at || "").trim(),
                       );
+                      const isSendingSubmission = Boolean(
+                        sendingSubmissionById[submissionId],
+                      );
+                      const currentNotes = String(submission.user_notes || "");
+                      const notesDraft = String(
+                        submissionNotesDrafts[submissionId] ?? currentNotes,
+                      );
+                      const isSavingNotes = Boolean(
+                        savingSubmissionNotesById[submissionId],
+                      );
+                      const isNotesDirty =
+                        notesDraft.trim().slice(0, 8000) !==
+                        currentNotes.trim().slice(0, 8000);
+
                       return (
-                        <tr key={submission.submission_id}>
+                        <tr
+                          key={submissionId}
+                          className={isSentToLeads ? "is-processed" : ""}
+                        >
                           <td>
-                            {new Date(submission.submitted_at).toLocaleString()}
+                            {formatBusinessDateTime(submission.submitted_at, {
+                              fallback: "-",
+                            })}
                           </td>
                           {submissionFieldColumns.map((column) => (
                             <td key={`${submission.submission_id}-${column.key}`}>
@@ -2464,28 +2843,83 @@ export default function LandingModulePage() {
                             </td>
                           ))}
                           <td>
-                            <button
-                              type="button"
-                              className="landing-icon-action-button"
-                              onClick={() =>
-                                handleSendSubmissionToLeads(
-                                  submission.submission_id,
-                                )
-                              }
-                              title="Enviar a Leads"
-                              aria-label="Enviar a Leads"
-                            >
-                              <svg
-                                viewBox="0 0 24 24"
-                                width="16"
-                                height="16"
-                                fill="currentColor"
-                                aria-hidden="true"
-                                focusable="false"
+                            <div className="landing-submission-notes-cell">
+                              <textarea
+                                value={notesDraft}
+                                onChange={(event) =>
+                                  setSubmissionNotesDrafts((prev) => ({
+                                    ...prev,
+                                    [submissionId]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Agregar notas para este registro..."
+                                rows={3}
+                              />
+                              <button
+                                type="button"
+                                className="landing-submission-notes-save"
+                                onClick={() => handleSaveSubmissionNotes(submissionId)}
+                                disabled={isSavingNotes || !isNotesDirty}
                               >
-                                <path d="M15 11c1.93 0 3.5-1.57 3.5-3.5S16.93 4 15 4s-3.5 1.57-3.5 3.5S13.07 11 15 11zm-8 0c1.66 0 3-1.34 3-3S8.66 5 7 5 4 6.34 4 8s1.34 3 3 3zm8 2c-2.33 0-7 1.17-7 3.5V20h14v-3.5c0-2.33-4.67-3.5-7-3.5zM7 13c-.29 0-.62.02-.97.05C4.25 13.28 2 14.17 2 15.5V18h4v-1.5c0-1.11.58-2.08 1.6-2.84A8.88 8.88 0 0 0 7 13zm-1-3h2v1H6v2H5v-2H3v-1h2V8h1v2z" />
-                              </svg>
-                            </button>
+                                {isSavingNotes ? "Guardando..." : "Guardar notas"}
+                              </button>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="landing-submission-action-cell">
+                              <button
+                                type="button"
+                                className="landing-icon-action-button"
+                                onClick={() =>
+                                  handleSendSubmissionToLeads(submissionId)
+                                }
+                                title={
+                                  isSendingSubmission
+                                    ? "Enviando registro a Leads..."
+                                    : isSentToLeads
+                                    ? "Registro ya enviado a Leads"
+                                    : "Enviar a Leads"
+                                }
+                                aria-label={
+                                  isSendingSubmission
+                                    ? "Enviando registro a Leads"
+                                    : isSentToLeads
+                                    ? "Registro ya enviado a Leads"
+                                    : "Enviar a Leads"
+                                }
+                                disabled={isSentToLeads || isSendingSubmission}
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  aria-hidden="true"
+                                  focusable="false"
+                                  className={
+                                    isSendingSubmission
+                                      ? "landing-send-spinner"
+                                      : ""
+                                  }
+                                >
+                                  {isSendingSubmission ? (
+                                    <path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z" />
+                                  ) : (
+                                    <path d="M2.1 10.9a1 1 0 0 1 .07-1.85L20.5 1.7a1 1 0 0 1 1.28 1.28l-7.36 18.34a1 1 0 0 1-1.85.07l-2.56-6.08-6.08-2.56a1 1 0 0 1-.83-.85zm8.55 2.52 2 4.76 5.79-14.43-14.43 5.79 4.76 2 .44.18 5.71-5.71a1 1 0 1 1 1.41 1.41l-5.71 5.71z" />
+                                  )}
+                                </svg>
+                              </button>
+                              {isSendingSubmission ? (
+                                <span className="landing-submission-sending-tag">
+                                  Enviando...
+                                </span>
+                              ) : null}
+                              {isSentToLeads ? (
+                                <span className="landing-submission-sent-tag">
+                                  Enviado
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       );
