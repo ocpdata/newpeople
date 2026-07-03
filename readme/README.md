@@ -11,6 +11,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
+- [Landing](./landing.md)
 - [Tableros de leads v1](./tableros-leads-v1.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
@@ -61,6 +62,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Cotizaciones IA: politicas actualizadas para validacion en linea por documentos adjuntos con costo directo por codigo (sin referencia historica), exclusion de items Access Quality y bloqueo de descuadre solo con evidencia de alta confianza.
 - IA/Configuracion: documentada la administracion de tarifas por modelo desde
   Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- Landing: documento nuevo con flujo por evento, versionado/publicacion, submissions, permisos y endpoints clave.
 - Comisiones: documento nuevo para reglas trimestrales de configuracion y seguimiento en Planeacion Comercial, con umbral de cuota, margen minimo por cotizacion y calculo por item.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,
