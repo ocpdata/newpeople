@@ -72,10 +72,13 @@ const DEFAULT_FORM_SCHEMA = {
 };
 
 const SOURCE_TYPE_DETAILS = {
-  manual_edit: "Edición directa del HTML y del esquema del formulario desde el editor.",
+  manual_edit:
+    "Edición directa del HTML y del esquema del formulario desde el editor.",
   ai: "Genera una propuesta inicial con IA para partir de un borrador.",
-  html_upload: "Importa un archivo HTML existente para reutilizar una landing previa.",
-  url_import_once: "Captura una landing desde una URL una sola vez para editarla después.",
+  html_upload:
+    "Importa un archivo HTML existente para reutilizar una landing previa.",
+  url_import_once:
+    "Captura una landing desde una URL una sola vez para editarla después.",
 };
 
 const LANDING_STATUS_LABELS = {
@@ -628,10 +631,11 @@ export default function LandingModulePage() {
   const [isGeneratingEmailWithAi, setIsGeneratingEmailWithAi] = useState(false);
   const [confirmationEmailAiPrompt, setConfirmationEmailAiPrompt] =
     useState("");
-  const [confirmationPageAiPrompt, setConfirmationPageAiPrompt] =
-    useState("");
-  const [isGeneratingConfirmationPageWithAi, setIsGeneratingConfirmationPageWithAi] =
-    useState(false);
+  const [confirmationPageAiPrompt, setConfirmationPageAiPrompt] = useState("");
+  const [
+    isGeneratingConfirmationPageWithAi,
+    setIsGeneratingConfirmationPageWithAi,
+  ] = useState(false);
   const [confirmationPageImportUrl, setConfirmationPageImportUrl] =
     useState("");
   const [confirmationPageUploadFile, setConfirmationPageUploadFile] =
@@ -656,10 +660,14 @@ export default function LandingModulePage() {
       .toLowerCase() === "published";
 
   const confirmationSupportsEmail = ["email", "both"].includes(
-    String(confirmationConfig.response_type || "email").trim().toLowerCase(),
+    String(confirmationConfig.response_type || "email")
+      .trim()
+      .toLowerCase(),
   );
   const confirmationSupportsPage = ["page", "both"].includes(
-    String(confirmationConfig.response_type || "email").trim().toLowerCase(),
+    String(confirmationConfig.response_type || "email")
+      .trim()
+      .toLowerCase(),
   );
 
   useEffect(() => {
@@ -684,7 +692,7 @@ export default function LandingModulePage() {
     const apiBaseUrl = String(api.defaults.baseURL || window.location.origin)
       .trim()
       .replace(/\/+$/, "");
-    return `${apiBaseUrl}/landing/${slug}.html`;
+    return `${apiBaseUrl}/api/public/landing/v1/${encodeURIComponent(slug)}/html`;
   }, [isSelectedLandingPublished, landingDetail]);
 
   const nextAutoEventId = useMemo(() => {
@@ -1472,7 +1480,9 @@ export default function LandingModulePage() {
             const assistantMessage = [...items]
               .reverse()
               .find((entry) => String(entry?.role || "") === "assistant");
-            html = extractHtmlFromAssistantText(assistantMessage?.content || "");
+            html = extractHtmlFromAssistantText(
+              assistantMessage?.content || "",
+            );
           }
 
           if (!html) {
@@ -1786,9 +1796,12 @@ export default function LandingModulePage() {
         return;
       }
 
-      await api.post(`/api/landing/v1/submissions/${numericSubmissionId}/reprocess`, {
-        force: true,
-      });
+      await api.post(
+        `/api/landing/v1/submissions/${numericSubmissionId}/reprocess`,
+        {
+          force: true,
+        },
+      );
       pushSuccess("Registro enviado a Leads");
       await loadSubmissions();
     } catch (error) {
@@ -2042,8 +2055,12 @@ export default function LandingModulePage() {
                   className="landing-refresh-button"
                   onClick={loadLandingList}
                   disabled={isLoadingList}
-                  aria-label={isLoadingList ? "Cargando landings" : "Refrescar landings"}
-                  title={isLoadingList ? "Cargando landings" : "Refrescar landings"}
+                  aria-label={
+                    isLoadingList ? "Cargando landings" : "Refrescar landings"
+                  }
+                  title={
+                    isLoadingList ? "Cargando landings" : "Refrescar landings"
+                  }
                 >
                   <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
                     <path d="M4 12a8 8 0 0 1 13.66-5.66V4h2.5v6.5H13.5V8h3.44A6.5 6.5 0 1 0 18.4 16h2.64A8 8 0 0 1 4 12z" />
@@ -2122,7 +2139,9 @@ export default function LandingModulePage() {
                 <div className="landing-meta-grid">
                   <div>
                     <span className="landing-muted">Evento / Landing</span>
-                    <strong>{landingDetail?.landing_page?.event_name || "-"}</strong>
+                    <strong>
+                      {landingDetail?.landing_page?.event_name || "-"}
+                    </strong>
                   </div>
                   <div>
                     <span className="landing-muted">Slug</span>
@@ -2163,8 +2182,8 @@ export default function LandingModulePage() {
                   <div className="landing-editor-section-head">
                     <h4>Landing del evento</h4>
                     <p className="landing-editor-section-description">
-                      Edita el HTML principal, ajusta el esquema del formulario y
-                      controla publicación y versiones desde un solo flujo.
+                      Edita el HTML principal, ajusta el esquema del formulario
+                      y controla publicación y versiones desde un solo flujo.
                     </p>
                   </div>
                   <div className="landing-editor-section-grid">
@@ -2174,60 +2193,77 @@ export default function LandingModulePage() {
                           Acciones de versión
                         </span>
                         <div className="landing-inline-actions landing-editor-actions">
-                        <button
-                          type="button"
-                          onClick={handleSaveCurrentVersion}
-                          disabled={
-                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                          }
-                        >
-                          Guardar versión
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handlePublishVersion}
-                          disabled={
-                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                          }
-                        >
-                          Publicar
-                        </button>
-                        <button
-                          type="button"
-                          className="landing-ai-action landing-ai-action--icon-only"
-                          onClick={handleOpenAiPromptModal}
-                          disabled={
-                            isSavingEditor || isLoadingDetail || isGeneratingWithAi
-                          }
-                          title="Generar con IA"
-                          aria-label="Generar con IA"
-                        >
-                          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" focusable="false">
-                            <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z"/>
-                          </svg>
-                        </button>
-                        {selectedPublicUrl ? (
                           <button
                             type="button"
-                            onClick={() =>
-                              window.open(selectedPublicUrl, "_blank", "noopener,noreferrer")
-                            }
-                          >
-                            Ver landig publicada
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={handlePreviewDraftLanding}
+                            onClick={handleSaveCurrentVersion}
                             disabled={
                               isSavingEditor ||
                               isLoadingDetail ||
                               isGeneratingWithAi
                             }
                           >
-                            Previsualizar borrador
+                            Guardar versión
                           </button>
-                        )}
+                          <button
+                            type="button"
+                            onClick={handlePublishVersion}
+                            disabled={
+                              isSavingEditor ||
+                              isLoadingDetail ||
+                              isGeneratingWithAi
+                            }
+                          >
+                            Publicar
+                          </button>
+                          <button
+                            type="button"
+                            className="landing-ai-action landing-ai-action--icon-only"
+                            onClick={handleOpenAiPromptModal}
+                            disabled={
+                              isSavingEditor ||
+                              isLoadingDetail ||
+                              isGeneratingWithAi
+                            }
+                            title="Generar con IA"
+                            aria-label="Generar con IA"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="18"
+                              height="18"
+                              fill="currentColor"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z" />
+                            </svg>
+                          </button>
+                          {selectedPublicUrl ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                window.open(
+                                  selectedPublicUrl,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                )
+                              }
+                            >
+                              Ver landig publicada
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handlePreviewDraftLanding}
+                              disabled={
+                                isSavingEditor ||
+                                isLoadingDetail ||
+                                isGeneratingWithAi
+                              }
+                            >
+                              Previsualizar borrador
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -2235,7 +2271,9 @@ export default function LandingModulePage() {
                         HTML de la landing
                         <textarea
                           value={editorHtml}
-                          onChange={(event) => setEditorHtml(event.target.value)}
+                          onChange={(event) =>
+                            setEditorHtml(event.target.value)
+                          }
                           rows={14}
                         />
                       </label>
@@ -2262,7 +2300,9 @@ export default function LandingModulePage() {
                           <input
                             type="url"
                             value={importUrl}
-                            onChange={(event) => setImportUrl(event.target.value)}
+                            onChange={(event) =>
+                              setImportUrl(event.target.value)
+                            }
                             placeholder="https://sitio.com/landing"
                           />
                           <button type="submit" disabled={isSavingEditor}>
@@ -2299,7 +2339,9 @@ export default function LandingModulePage() {
                       </div>
                       {selectedVersion ? (
                         <p className="landing-muted">
-                          Versión seleccionada: v{selectedVersion.version_number} · {selectedVersion.source_type}
+                          Versión seleccionada: v
+                          {selectedVersion.version_number} ·{" "}
+                          {selectedVersion.source_type}
                         </p>
                       ) : null}
                     </div>
@@ -2337,7 +2379,9 @@ export default function LandingModulePage() {
                             <label className="landing-label-block">
                               Tipo de respuesta
                               <select
-                                value={confirmationConfig.response_type || "email"}
+                                value={
+                                  confirmationConfig.response_type || "email"
+                                }
                                 onChange={(event) =>
                                   setConfirmationConfig((prev) => ({
                                     ...prev,
@@ -2347,7 +2391,9 @@ export default function LandingModulePage() {
                               >
                                 <option value="email">Correo</option>
                                 <option value="page">Página</option>
-                                <option value="both">Ambos (correo + página)</option>
+                                <option value="both">
+                                  Ambos (correo + página)
+                                </option>
                               </select>
                             </label>
 
@@ -2391,7 +2437,9 @@ export default function LandingModulePage() {
                                   Asunto del correo
                                   <input
                                     type="text"
-                                    value={confirmationConfig.email_subject || ""}
+                                    value={
+                                      confirmationConfig.email_subject || ""
+                                    }
                                     onChange={(event) =>
                                       setConfirmationConfig((prev) => ({
                                         ...prev,
@@ -2464,7 +2512,9 @@ export default function LandingModulePage() {
                                   URL de redireccion (opcional)
                                   <input
                                     type="url"
-                                    value={confirmationConfig.redirect_url || ""}
+                                    value={
+                                      confirmationConfig.redirect_url || ""
+                                    }
                                     onChange={(event) =>
                                       setConfirmationConfig((prev) => ({
                                         ...prev,
@@ -2487,7 +2537,9 @@ export default function LandingModulePage() {
                                         }))
                                       }
                                       rows={10}
-                                      placeholder={DEFAULT_CONFIRMATION_PAGE_HTML}
+                                      placeholder={
+                                        DEFAULT_CONFIRMATION_PAGE_HTML
+                                      }
                                     />
                                     <div className="landing-ai-email-actions">
                                       <input
@@ -2503,7 +2555,9 @@ export default function LandingModulePage() {
                                       <button
                                         type="button"
                                         className="landing-ai-action landing-ai-action--icon-only"
-                                        onClick={handleGenerateConfirmationPageWithAi}
+                                        onClick={
+                                          handleGenerateConfirmationPageWithAi
+                                        }
                                         disabled={
                                           isGeneratingConfirmationPageWithAi ||
                                           isSavingConfirmation
@@ -2632,9 +2686,11 @@ export default function LandingModulePage() {
                         </div>
                       ) : null}
 
-                      {!confirmationSupportsEmail && !confirmationSupportsPage ? (
+                      {!confirmationSupportsEmail &&
+                      !confirmationSupportsPage ? (
                         <p className="landing-muted">
-                          Selecciona un tipo de respuesta para mostrar la vista previa.
+                          Selecciona un tipo de respuesta para mostrar la vista
+                          previa.
                         </p>
                       ) : null}
                     </div>
@@ -2809,7 +2865,9 @@ export default function LandingModulePage() {
                     </tr>
                   ) : (
                     visibleSubmissions.map(({ submission, fieldByKey }) => {
-                      const submissionId = Number(submission.submission_id || 0);
+                      const submissionId = Number(
+                        submission.submission_id || 0,
+                      );
                       const isSentToLeads = Boolean(
                         String(submission?.sent_to_leads_at || "").trim(),
                       );
@@ -2838,7 +2896,9 @@ export default function LandingModulePage() {
                             })}
                           </td>
                           {submissionFieldColumns.map((column) => (
-                            <td key={`${submission.submission_id}-${column.key}`}>
+                            <td
+                              key={`${submission.submission_id}-${column.key}`}
+                            >
                               {fieldByKey.get(column.key) || "-"}
                             </td>
                           ))}
@@ -2858,10 +2918,14 @@ export default function LandingModulePage() {
                               <button
                                 type="button"
                                 className="landing-submission-notes-save"
-                                onClick={() => handleSaveSubmissionNotes(submissionId)}
+                                onClick={() =>
+                                  handleSaveSubmissionNotes(submissionId)
+                                }
                                 disabled={isSavingNotes || !isNotesDirty}
                               >
-                                {isSavingNotes ? "Guardando..." : "Guardar notas"}
+                                {isSavingNotes
+                                  ? "Guardando..."
+                                  : "Guardar notas"}
                               </button>
                             </div>
                           </td>
@@ -2877,15 +2941,15 @@ export default function LandingModulePage() {
                                   isSendingSubmission
                                     ? "Enviando registro a Leads..."
                                     : isSentToLeads
-                                    ? "Registro ya enviado a Leads"
-                                    : "Enviar a Leads"
+                                      ? "Registro ya enviado a Leads"
+                                      : "Enviar a Leads"
                                 }
                                 aria-label={
                                   isSendingSubmission
                                     ? "Enviando registro a Leads"
                                     : isSentToLeads
-                                    ? "Registro ya enviado a Leads"
-                                    : "Enviar a Leads"
+                                      ? "Registro ya enviado a Leads"
+                                      : "Enviar a Leads"
                                 }
                                 disabled={isSentToLeads || isSendingSubmission}
                               >

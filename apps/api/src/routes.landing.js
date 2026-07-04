@@ -166,12 +166,19 @@ function formatSubmissionValueForSynopsis(value) {
   return normalizeGenericText(value, 1000);
 }
 
-function buildLeadSynopsisFromSubmission({ payloadRaw, formSchema, userNotes }) {
+function buildLeadSynopsisFromSubmission({
+  payloadRaw,
+  formSchema,
+  userNotes,
+}) {
   const lines = [];
   const entries = buildSubmissionFieldEntries(payloadRaw, formSchema);
 
   for (const entry of entries) {
-    const label = normalizeGenericText(entry?.label || entry?.key || "Campo", 120);
+    const label = normalizeGenericText(
+      entry?.label || entry?.key || "Campo",
+      120,
+    );
     const value = formatSubmissionValueForSynopsis(entry?.value);
     if (!label || !value) continue;
     lines.push(`${label}: ${value}`);
@@ -1051,7 +1058,10 @@ async function resolveOrCreateLead({
 
   const now = new Date();
   const publicId = `int_${randomUUID().replace(/-/g, "")}`;
-  const title = normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180);
+  const title = normalizeGenericText(
+    leadTitle || `Registro landing ${slug}`,
+    180,
+  );
   const sourceNotes = `landing:event_id=${Number(eventId)};slug=${slug};submission_id=${Number(submissionId)};campaign=${normalizeGenericText(normalizedPayload?.meta?.utm_campaign || "", 120)}`;
 
   const insertResult = await query(
@@ -1145,7 +1155,10 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
       ? JSON.parse(submission.form_schema_json || "{}")
       : submission.form_schema_json || {};
 
-  const leadTitle = resolveLeadTitleFromSubmission(normalizedPayload, submission.slug);
+  const leadTitle = resolveLeadTitleFromSubmission(
+    normalizedPayload,
+    submission.slug,
+  );
   const leadSynopsis = buildLeadSynopsisFromSubmission({
     payloadRaw,
     formSchema,
@@ -1241,9 +1254,7 @@ async function sendLandingConfirmationEmailIfEnabled(
       return;
     }
 
-    const responseType = String(
-      confirmationConfig.response_type || "email",
-    )
+    const responseType = String(confirmationConfig.response_type || "email")
       .trim()
       .toLowerCase();
     if (!["email", "both"].includes(responseType)) {
@@ -1278,7 +1289,10 @@ async function sendLandingConfirmationEmailIfEnabled(
       normalizedPayload.nombre ||
       "Registrado";
 
-    if (!registeredEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registeredEmail)) {
+    if (
+      !registeredEmail ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registeredEmail)
+    ) {
       console.warn(
         `[landing] Email de registrado inválido para submission ${submission.id}: ${registeredEmail}`,
       );
@@ -1298,7 +1312,10 @@ async function sendLandingConfirmationEmailIfEnabled(
       subject: confirmationConfig.email_subject || "Confirmamos tu registro",
       bodyHtml:
         confirmationConfig.email_body_html ||
-        buildDefaultConfirmationHtml(registeredFirstName, submission.event_name),
+        buildDefaultConfirmationHtml(
+          registeredFirstName,
+          submission.event_name,
+        ),
     });
   } catch (error) {
     console.error(
@@ -1309,10 +1326,7 @@ async function sendLandingConfirmationEmailIfEnabled(
   }
 }
 
-function buildDefaultConfirmationHtml(
-  recipientName,
-  eventName,
-) {
+function buildDefaultConfirmationHtml(recipientName, eventName) {
   const displayName = String(recipientName || "registrado").trim();
   const event = String(eventName || "evento").trim();
   return `
@@ -1426,7 +1440,9 @@ async function sendLandingConfirmationEmail({
         String(connection.scope_text || "")
           .split(" ")
           .includes("https://www.googleapis.com/auth/gmail.send") ||
-        String(connection.scope_text || "").includes("https://mail.google.com/");
+        String(connection.scope_text || "").includes(
+          "https://mail.google.com/",
+        );
 
       if (!hasMailSendScope) {
         console.warn(
@@ -2175,11 +2191,7 @@ privateRouter.patch(
       `UPDATE landing_pages
        SET confirmation_config_json = ?, updated_by = ?, updated_at = NOW(3)
        WHERE id = ?`,
-      [
-        JSON.stringify(parsed.data),
-        Number(req.user.id),
-        landingPageId,
-      ],
+      [JSON.stringify(parsed.data), Number(req.user.id), landingPageId],
     );
 
     return res.json({ updated: true });
@@ -2498,33 +2510,33 @@ privateRouter.get(
             : row.payload_raw_json || {};
 
         return {
-        submission_id: Number(row.submission_id),
-        submitted_at: normalizeSqlDateTimeToUtcIso(row.submitted_at),
-        sent_to_leads_at: normalizeSqlDateTimeToUtcIso(row.sent_to_leads_at),
-        sent_to_leads_by:
-          row.sent_to_leads_by === null ? null : Number(row.sent_to_leads_by),
-        user_notes: String(row.user_notes || "").trim(),
-        crm_processing_status: row.crm_processing_status,
-        crm_error_message: row.crm_error_message,
-        payload_raw: payloadRaw,
-        payload_normalized:
-          typeof row.payload_normalized_json === "string"
-            ? JSON.parse(row.payload_normalized_json || "{}")
-            : row.payload_normalized_json || {},
-        submission_fields: buildSubmissionFieldEntries(
-          payloadRaw,
-          row.landing_form_schema_json,
-        ),
-        crm_links: {
-          lead_id: row.lead_id === null ? null : Number(row.lead_id),
-          account_id: row.account_id === null ? null : Number(row.account_id),
-          contact_id: row.contact_id === null ? null : Number(row.contact_id),
-        },
-        crm_contact: {
-          first_name: String(row.crm_contact_first_name || "").trim(),
-          last_name: String(row.crm_contact_last_name || "").trim(),
-        },
-      };
+          submission_id: Number(row.submission_id),
+          submitted_at: normalizeSqlDateTimeToUtcIso(row.submitted_at),
+          sent_to_leads_at: normalizeSqlDateTimeToUtcIso(row.sent_to_leads_at),
+          sent_to_leads_by:
+            row.sent_to_leads_by === null ? null : Number(row.sent_to_leads_by),
+          user_notes: String(row.user_notes || "").trim(),
+          crm_processing_status: row.crm_processing_status,
+          crm_error_message: row.crm_error_message,
+          payload_raw: payloadRaw,
+          payload_normalized:
+            typeof row.payload_normalized_json === "string"
+              ? JSON.parse(row.payload_normalized_json || "{}")
+              : row.payload_normalized_json || {},
+          submission_fields: buildSubmissionFieldEntries(
+            payloadRaw,
+            row.landing_form_schema_json,
+          ),
+          crm_links: {
+            lead_id: row.lead_id === null ? null : Number(row.lead_id),
+            account_id: row.account_id === null ? null : Number(row.account_id),
+            contact_id: row.contact_id === null ? null : Number(row.contact_id),
+          },
+          crm_contact: {
+            first_name: String(row.crm_contact_first_name || "").trim(),
+            last_name: String(row.crm_contact_last_name || "").trim(),
+          },
+        };
       }),
       pagination: {
         page,
@@ -2549,10 +2561,7 @@ privateRouter.patch(
       return res.status(400).json({ message: "Payload invalido" });
     }
 
-    const notesValue = normalizeGenericText(
-      parsed.data.user_notes || "",
-      8000,
-    );
+    const notesValue = normalizeGenericText(parsed.data.user_notes || "", 8000);
 
     const updateResult = await query(
       `UPDATE landing_submissions
@@ -2621,6 +2630,37 @@ privateRouter.post(
 );
 
 publicRouter.get("/landing/:slug.html", async (req, res) => {
+  const slug = normalizeSlug(req.params.slug);
+  if (!slug) {
+    return res.status(404).send("Landing no encontrada");
+  }
+
+  const rows = await query(
+    `SELECT lp.slug, lv.html_content, lv.source_type
+     FROM landing_pages lp
+     INNER JOIN landing_page_versions lv ON lv.id = lp.current_version_id
+     WHERE lp.slug = ?
+       AND lp.status = 'published'
+       AND lv.is_active = 1
+     LIMIT 1`,
+    [slug],
+  );
+
+  const landing = rows[0] || null;
+  if (!landing) {
+    return res.status(404).send("Landing no encontrada");
+  }
+
+  const html = renderLandingHtml(
+    landing.html_content,
+    slug,
+    String(landing.source_type || "manual_edit"),
+  );
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.status(200).send(html);
+});
+
+publicRouter.get("/api/public/landing/v1/:slug/html", async (req, res) => {
   const slug = normalizeSlug(req.params.slug);
   if (!slug) {
     return res.status(404).send("Landing no encontrada");
