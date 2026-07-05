@@ -689,6 +689,10 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
     accountExpression: "c.account_id",
     params,
   });
+  const activeOnly =
+    String(req.query.activeOnly || "")
+      .trim()
+      .toLowerCase() === "true";
 
   const accountIdFilter = req.query.accountId
     ? Number(req.query.accountId)
@@ -698,6 +702,14 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
       return res.status(400).json({ message: "accountId invalido" });
     }
     params.push(accountIdFilter);
+  }
+
+  const whereClauses = [];
+  if (accountIdFilter !== null) {
+    whereClauses.push("c.account_id = ?");
+  }
+  if (activeOnly) {
+    whereClauses.push("cas.code = 'activado'");
   }
 
   const rows = await query(
@@ -737,7 +749,7 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
      LEFT JOIN contacts ci ON ci.id = c.influences_contact_id
      INNER JOIN users u1 ON u1.id = c.created_by
      INNER JOIN users u2 ON u2.id = c.updated_by
-     ${accountIdFilter !== null ? "WHERE c.account_id = ?" : ""}
+     ${whereClauses.length ? `WHERE ${whereClauses.join(" AND ")}` : ""}
      ORDER BY c.id DESC`,
     params,
   );

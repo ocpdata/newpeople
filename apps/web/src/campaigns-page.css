@@ -258,6 +258,58 @@
   grid-column: 1 / -1;
 }
 
+.campaigns-subsection-block {
+  border: 1px solid #dbe7f5;
+  border-radius: 0.7rem;
+  background: #f8fbff;
+  padding: 0.65rem;
+}
+
+.campaigns-subsection-title {
+  margin-bottom: 0.45rem;
+  color: #1e3a8a;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.campaigns-sector-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.campaigns-sector-filter-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 0.16rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.campaigns-sector-filter-item.is-selected {
+  border-color: #1d4ed8;
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.campaigns-sector-filter-item input {
+  display: none;
+}
+
+.campaigns-sector-filter-item span {
+  white-space: nowrap;
+}
+
 .campaigns-execution-tabs {
   display: inline-flex;
   align-items: center;

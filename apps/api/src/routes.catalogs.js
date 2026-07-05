@@ -24,6 +24,85 @@ let ensureQuotationValidityCatalogPromise;
 let ensureQuotationWarrantyCatalogPromise;
 let ensureQuotationPaymentTermsCatalogPromise;
 let ensureQuotationStatusesCatalogPromise;
+let ensureEconomicSectorsDefaultsPromise;
+let ensureCatalogDescriptionsSchemaPromise;
+
+async function ensureEconomicSectorsDefaults() {
+  if (!ensureEconomicSectorsDefaultsPromise) {
+    ensureEconomicSectorsDefaultsPromise = (async () => {
+      await query(
+        `INSERT INTO economic_sectors (code, name, is_active)
+         VALUES
+           ('proveedor', 'Proveedor', 1),
+           ('integrador', 'Integrador', 1)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           is_active = VALUES(is_active)`,
+      );
+    })().catch((error) => {
+      ensureEconomicSectorsDefaultsPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureEconomicSectorsDefaultsPromise;
+}
+
+async function ensureCatalogDescriptionsSchema() {
+  if (!ensureCatalogDescriptionsSchemaPromise) {
+    ensureCatalogDescriptionsSchemaPromise = (async () => {
+      const accountTypeDescriptionRows = await query(
+        `SELECT 1
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'account_types'
+           AND COLUMN_NAME = 'description'
+         LIMIT 1`,
+      );
+
+      if (!accountTypeDescriptionRows.length) {
+        await query(
+          `ALTER TABLE account_types
+           ADD COLUMN description VARCHAR(255) NULL
+           AFTER name`,
+        );
+      }
+
+      const economicSectorDescriptionRows = await query(
+        `SELECT 1
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'economic_sectors'
+           AND COLUMN_NAME = 'description'
+         LIMIT 1`,
+      );
+
+      if (!economicSectorDescriptionRows.length) {
+        await query(
+          `ALTER TABLE economic_sectors
+           ADD COLUMN description VARCHAR(255) NULL
+           AFTER name`,
+        );
+      }
+    })().catch((error) => {
+      ensureCatalogDescriptionsSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureCatalogDescriptionsSchemaPromise;
+}
+
+function normalizeCatalogCode(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
 
 async function ensureContactCatalogsSchema() {
   await ensureContactSchema();
@@ -656,13 +735,429 @@ router.get(
 );
 
 router.get(
+  "/account-types-management",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    const rows = await query(
+      `SELECT id, code, name, description, is_active
+       FROM account_types
+       ORDER BY name ASC, id ASC`,
+    );
+    res.json({
+      items: rows.map((row) => ({
+        id: Number(row.id),
+        code: String(row.code || ""),
+        name: String(row.name || ""),
+        description: String(row.description || ""),
+        isActive: Boolean(Number(row.is_active || 0)),
+      })),
+    });
+  },
+);
+
+router.post(
+  "/account-types-management",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    const name = String(req.body?.name || "").trim();
+    const codeInput = String(req.body?.code || "").trim();
+    const description = String(req.body?.description || "")
+      .trim()
+      .slice(0, 255);
+    const code = normalizeCatalogCode(codeInput || name);
+
+    if (name.length < 2) {
+      return res.status(400).json({
+        message:
+          "El nombre del tipo de cuenta debe tener al menos 2 caracteres",
+      });
+    }
+
+    if (!code) {
+      return res
+        .status(400)
+        .json({ message: "El codigo del tipo de cuenta es invalido" });
+    }
+
+    try {
+      const result = await query(
+        `INSERT INTO account_types (code, name, description, is_active)
+         VALUES (?, ?, ?, 1)`,
+        [code, name, description || null],
+      );
+      const createdId = Number(result.insertId || 0);
+      const rows = await query(
+        `SELECT id, code, name, description, is_active
+         FROM account_types
+         WHERE id = ?
+         LIMIT 1`,
+        [createdId],
+      );
+      const item = rows[0] || null;
+      return res.status(201).json({
+        item: item
+          ? {
+              id: Number(item.id),
+              code: String(item.code || ""),
+              name: String(item.name || ""),
+              description: String(item.description || ""),
+              isActive: Boolean(Number(item.is_active || 0)),
+            }
+          : null,
+      });
+    } catch (error) {
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message:
+            "Ya existe un tipo de cuenta con ese nombre o codigo. Usa otro valor",
+        });
+      }
+      throw error;
+    }
+  },
+);
+
+router.patch(
+  "/account-types-management/:id",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    const accountTypeId = Number(req.params.id);
+    if (!Number.isInteger(accountTypeId) || accountTypeId <= 0) {
+      return res.status(400).json({ message: "Id de tipo de cuenta invalido" });
+    }
+
+    const hasName = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "name",
+    );
+    const hasCode = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "code",
+    );
+    const hasIsActive = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "isActive",
+    );
+    const hasDescription = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "description",
+    );
+
+    if (!hasName && !hasCode && !hasIsActive && !hasDescription) {
+      return res.status(400).json({
+        message: "No se recibieron campos para actualizar",
+      });
+    }
+
+    const rows = await query(
+      `SELECT id, code, name, description, is_active
+       FROM account_types
+       WHERE id = ?
+       LIMIT 1`,
+      [accountTypeId],
+    );
+    const current = rows[0] || null;
+    if (!current) {
+      return res.status(404).json({ message: "Tipo de cuenta no encontrado" });
+    }
+
+    const nextName = hasName
+      ? String(req.body?.name || "").trim()
+      : String(current.name || "").trim();
+    const nextCode = hasCode
+      ? normalizeCatalogCode(req.body?.code)
+      : String(current.code || "").trim();
+    const nextIsActive = hasIsActive
+      ? Boolean(req.body?.isActive)
+        ? 1
+        : 0
+      : Number(current.is_active || 0);
+    const nextDescription = hasDescription
+      ? String(req.body?.description || "")
+          .trim()
+          .slice(0, 255)
+      : String(current.description || "")
+          .trim()
+          .slice(0, 255);
+
+    if (!nextName || nextName.length < 2) {
+      return res.status(400).json({
+        message:
+          "El nombre del tipo de cuenta debe tener al menos 2 caracteres",
+      });
+    }
+
+    if (!nextCode) {
+      return res
+        .status(400)
+        .json({ message: "El codigo del tipo de cuenta es invalido" });
+    }
+
+    try {
+      await query(
+        `UPDATE account_types
+         SET code = ?,
+             name = ?,
+             description = ?,
+             is_active = ?
+         WHERE id = ?`,
+        [
+          nextCode,
+          nextName,
+          nextDescription || null,
+          nextIsActive,
+          accountTypeId,
+        ],
+      );
+
+      const updatedRows = await query(
+        `SELECT id, code, name, description, is_active
+         FROM account_types
+         WHERE id = ?
+         LIMIT 1`,
+        [accountTypeId],
+      );
+      const item = updatedRows[0] || null;
+      return res.json({
+        item: item
+          ? {
+              id: Number(item.id),
+              code: String(item.code || ""),
+              name: String(item.name || ""),
+              description: String(item.description || ""),
+              isActive: Boolean(Number(item.is_active || 0)),
+            }
+          : null,
+      });
+    } catch (error) {
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message:
+            "Ya existe un tipo de cuenta con ese nombre o codigo. Usa otro valor",
+        });
+      }
+      throw error;
+    }
+  },
+);
+
+router.get(
   "/economic-sectors",
   requirePermission("cuentas.read"),
   async (_req, res) => {
+    await ensureEconomicSectorsDefaults();
     const rows = await query(
       "SELECT id, code, name FROM economic_sectors WHERE is_active = 1 ORDER BY name",
     );
     res.json(rows);
+  },
+);
+
+router.get(
+  "/economic-sectors-management",
+  requirePermission("configuracion.read"),
+  async (_req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    await ensureEconomicSectorsDefaults();
+    const rows = await query(
+      `SELECT id, code, name, description, is_active
+       FROM economic_sectors
+       ORDER BY name ASC, id ASC`,
+    );
+    res.json({
+      items: rows.map((row) => ({
+        id: Number(row.id),
+        code: String(row.code || ""),
+        name: String(row.name || ""),
+        description: String(row.description || ""),
+        isActive: Boolean(Number(row.is_active || 0)),
+      })),
+    });
+  },
+);
+
+router.post(
+  "/economic-sectors-management",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    await ensureEconomicSectorsDefaults();
+    const name = String(req.body?.name || "").trim();
+    const codeInput = String(req.body?.code || "").trim();
+    const description = String(req.body?.description || "")
+      .trim()
+      .slice(0, 255);
+    const code = normalizeCatalogCode(codeInput || name);
+
+    if (name.length < 2) {
+      return res.status(400).json({
+        message: "El nombre del sector debe tener al menos 2 caracteres",
+      });
+    }
+
+    if (!code) {
+      return res
+        .status(400)
+        .json({ message: "El codigo del sector es invalido" });
+    }
+
+    try {
+      const result = await query(
+        `INSERT INTO economic_sectors (code, name, description, is_active)
+         VALUES (?, ?, ?, 1)`,
+        [code, name, description || null],
+      );
+      const createdId = Number(result.insertId || 0);
+      const rows = await query(
+        `SELECT id, code, name, description, is_active
+         FROM economic_sectors
+         WHERE id = ?
+         LIMIT 1`,
+        [createdId],
+      );
+      const item = rows[0] || null;
+      return res.status(201).json({
+        item: item
+          ? {
+              id: Number(item.id),
+              code: String(item.code || ""),
+              name: String(item.name || ""),
+              description: String(item.description || ""),
+              isActive: Boolean(Number(item.is_active || 0)),
+            }
+          : null,
+      });
+    } catch (error) {
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message:
+            "Ya existe un sector con ese nombre o codigo. Usa otro valor",
+        });
+      }
+      throw error;
+    }
+  },
+);
+
+router.patch(
+  "/economic-sectors-management/:id",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    await ensureCatalogDescriptionsSchema();
+    await ensureEconomicSectorsDefaults();
+    const sectorId = Number(req.params.id);
+    if (!Number.isInteger(sectorId) || sectorId <= 0) {
+      return res.status(400).json({ message: "Id de sector invalido" });
+    }
+
+    const hasName = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "name",
+    );
+    const hasCode = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "code",
+    );
+    const hasIsActive = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "isActive",
+    );
+    const hasDescription = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "description",
+    );
+
+    if (!hasName && !hasCode && !hasIsActive && !hasDescription) {
+      return res.status(400).json({
+        message: "No se recibieron campos para actualizar",
+      });
+    }
+
+    const rows = await query(
+      `SELECT id, code, name, description, is_active
+       FROM economic_sectors
+       WHERE id = ?
+       LIMIT 1`,
+      [sectorId],
+    );
+    const current = rows[0] || null;
+    if (!current) {
+      return res.status(404).json({ message: "Sector no encontrado" });
+    }
+
+    const nextName = hasName
+      ? String(req.body?.name || "").trim()
+      : String(current.name || "").trim();
+    const nextCode = hasCode
+      ? normalizeCatalogCode(req.body?.code)
+      : String(current.code || "").trim();
+    const nextIsActive = hasIsActive
+      ? Boolean(req.body?.isActive)
+        ? 1
+        : 0
+      : Number(current.is_active || 0);
+    const nextDescription = hasDescription
+      ? String(req.body?.description || "")
+          .trim()
+          .slice(0, 255)
+      : String(current.description || "")
+          .trim()
+          .slice(0, 255);
+
+    if (!nextName || nextName.length < 2) {
+      return res.status(400).json({
+        message: "El nombre del sector debe tener al menos 2 caracteres",
+      });
+    }
+
+    if (!nextCode) {
+      return res
+        .status(400)
+        .json({ message: "El codigo del sector es invalido" });
+    }
+
+    try {
+      await query(
+        `UPDATE economic_sectors
+         SET code = ?,
+             name = ?,
+             description = ?,
+             is_active = ?
+         WHERE id = ?`,
+        [nextCode, nextName, nextDescription || null, nextIsActive, sectorId],
+      );
+
+      const updatedRows = await query(
+        `SELECT id, code, name, description, is_active
+         FROM economic_sectors
+         WHERE id = ?
+         LIMIT 1`,
+        [sectorId],
+      );
+      const item = updatedRows[0] || null;
+      return res.json({
+        item: item
+          ? {
+              id: Number(item.id),
+              code: String(item.code || ""),
+              name: String(item.name || ""),
+              description: String(item.description || ""),
+              isActive: Boolean(Number(item.is_active || 0)),
+            }
+          : null,
+      });
+    } catch (error) {
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message:
+            "Ya existe un sector con ese nombre o codigo. Usa otro valor",
+        });
+      }
+      throw error;
+    }
   },
 );
 

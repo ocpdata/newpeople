@@ -421,9 +421,14 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
     accountAlias: "a",
     params,
   });
+  const activeOnly =
+    String(req.query.activeOnly || "")
+      .trim()
+      .toLowerCase() === "true";
   const rows = await query(
     `SELECT a.id, a.name, atp.name AS account_type, a.registration_code, a.phone, es.name AS economic_sector,
-            a.website, a.city, a.state_region, c.name AS country, aas.name AS activation_status,
+            a.website, a.city, a.state_region, c.name AS country,
+            aas.name AS activation_status, aas.code AS activation_status_code,
             COALESCE(owners.owner_names, '') AS owners_display,
             a.created_at, u1.full_name AS created_by_name, a.updated_at, u2.full_name AS updated_by_name
      FROM accounts a
@@ -444,6 +449,7 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
        INNER JOIN users u ON u.id = ao.user_id
        GROUP BY ao.account_id
      ) owners ON owners.account_id = a.id
+     ${activeOnly ? "WHERE aas.code = 'activada'" : ""}
      ORDER BY a.id DESC`,
     params,
   );

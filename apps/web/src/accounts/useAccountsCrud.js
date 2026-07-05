@@ -780,6 +780,8 @@ export function useAccountsCrud({
       if (accountSortField === "nombre") return String(account.name || "");
       if (accountSortField === "tipo")
         return String(account.account_type || "");
+      if (accountSortField === "sector")
+        return String(account.economic_sector || "");
       if (accountSortField === "pais") return String(account.country || "");
       if (accountSortField === "registro") {
         return String(account.registration_code || "");
@@ -827,6 +829,7 @@ export function useAccountsCrud({
         account.id,
         account.name,
         account.account_type,
+        account.economic_sector,
         account.owners_display,
         account.country,
         account.registration_code,

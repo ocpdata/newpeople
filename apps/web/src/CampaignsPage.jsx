@@ -93,6 +93,20 @@ const CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS = {
     "Cliente sin actividad comercial reciente ni compras en curso.",
 };
 
+function isActiveAccount(account) {
+  const statusCode = String(account?.activation_status_code || "")
+    .trim()
+    .toLowerCase();
+  if (statusCode) {
+    return statusCode === "activada";
+  }
+
+  const statusName = String(account?.activation_status || "")
+    .trim()
+    .toLowerCase();
+  return statusName === "activada";
+}
+
 function formatCampaignTypeLabel(value) {
   return String(value || "")
     .replaceAll("_", " ")
@@ -134,6 +148,14 @@ function toDateInputValue(value) {
     ? normalized.split("T")[0]
     : normalized.slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : "";
+}
+
+function normalizeSectorValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 function normalizeAudienceContact(rawContact) {
@@ -282,6 +304,11 @@ export default function CampaignsPage() {
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   const [executionTab, setExecutionTab] = useState("landing");
+  const [selectedSectorFilters, setSelectedSectorFilters] = useState([]);
+  const [sectorFiltersInitialized, setSectorFiltersInitialized] =
+    useState(false);
+  const [preferSavedAudienceSelection, setPreferSavedAudienceSelection] =
+    useState(true);
 
   const selectedCampaign = useMemo(() => {
     return (
@@ -325,7 +352,58 @@ export default function CampaignsPage() {
   const selectedAudienceLifecycleDescription = campaignForm.etapa_ciclo_vida
     ? CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[campaignForm.etapa_ciclo_vida] ||
       "Filtra cuentas segun la regla de etapa seleccionada."
-    : "Sin definir muestra todas las cuentas y todos sus contactos.";
+    : "Sin definir muestra todas las cuentas activas y sus contactos activos.";
+  const selectedAudienceLifecycleLabel = campaignForm.etapa_ciclo_vida
+    ? formatCampaignTypeLabel(campaignForm.etapa_ciclo_vida)
+    : "Sin definir";
+  const sectorOptions = useMemo(() => {
+    const unique = Array.from(
+      new Set(
+        accounts
+          .map((account) => String(account?.economic_sector || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    return unique.sort((first, second) =>
+      first.localeCompare(second, "es", {
+        sensitivity: "base",
+      }),
+    );
+  }, [accounts]);
+  const selectedSectorFilterSet = useMemo(() => {
+    return new Set(
+      selectedSectorFilters
+        .map((sector) => String(sector || "").trim())
+        .filter(Boolean),
+    );
+  }, [selectedSectorFilters]);
+  useEffect(() => {
+    if (sectorFiltersInitialized) return;
+    if (!sectorOptions.length) return;
+
+    const excludedSectors = new Set([
+      "proveedor",
+      "proveedores",
+      "integrador",
+      "integradores",
+    ]);
+
+    const defaultSelection = sectorOptions.filter(
+      (sector) => !excludedSectors.has(normalizeSectorValue(sector)),
+    );
+
+    setSelectedSectorFilters(defaultSelection);
+    setSectorFiltersInitialized(true);
+  }, [sectorFiltersInitialized, sectorOptions]);
+  const accountSectorById = useMemo(() => {
+    const map = new Map();
+    accounts.forEach((account) => {
+      const accountId = Number(account?.id || 0);
+      if (!Number.isInteger(accountId) || accountId <= 0) return;
+      map.set(accountId, String(account?.economic_sector || "").trim());
+    });
+    return map;
+  }, [accounts]);
   const filteredAudienceAccounts = useMemo(() => {
     if (!campaignForm.etapa_ciclo_vida) {
       if (suggestedAccounts.length > 0) {
@@ -344,8 +422,21 @@ export default function CampaignsPage() {
 
     return suggestedAccounts;
   }, [campaignForm.etapa_ciclo_vida, accounts, suggestedAccounts]);
+  const filteredAudienceAccountsBySector = useMemo(() => {
+    if (!selectedSectorFilterSet.size) {
+      return filteredAudienceAccounts;
+    }
+
+    return filteredAudienceAccounts.filter((item) => {
+      const accountId = Number(item?.account_id || 0);
+      const sector = String(
+        item?.economic_sector || accountSectorById.get(accountId) || "",
+      ).trim();
+      return selectedSectorFilterSet.has(sector);
+    });
+  }, [accountSectorById, filteredAudienceAccounts, selectedSectorFilterSet]);
   const suggestedContactsCount = useMemo(() => {
-    return filteredAudienceAccounts.reduce((total, item) => {
+    return filteredAudienceAccountsBySector.reduce((total, item) => {
       const accountId = Number(item.account_id || 0);
       const removedContactIds =
         removedAudienceContactsByAccount[accountId] || [];
@@ -358,17 +449,17 @@ export default function CampaignsPage() {
 
       return total + visibleContacts.length;
     }, 0);
-  }, [filteredAudienceAccounts, removedAudienceContactsByAccount]);
+  }, [filteredAudienceAccountsBySector, removedAudienceContactsByAccount]);
   const filteredAudienceAccountsById = useMemo(() => {
     const map = new Map();
-    filteredAudienceAccounts.forEach((item) => {
+    filteredAudienceAccountsBySector.forEach((item) => {
       const accountId = Number(item.account_id || 0);
       if (Number.isInteger(accountId) && accountId > 0) {
         map.set(accountId, item);
       }
     });
     return map;
-  }, [filteredAudienceAccounts]);
+  }, [filteredAudienceAccountsBySector]);
   const accountsById = useMemo(() => {
     const map = new Map();
     accounts.forEach((account) => {
@@ -454,45 +545,6 @@ export default function CampaignsPage() {
     filteredAudienceAccountsById,
     accountsById,
   ]);
-  const sortedVisibleAudienceAccounts = useMemo(() => {
-    const items = [...visibleAudienceAccounts];
-
-    items.sort((first, second) => {
-      if (audienceSortMode === "name_desc") {
-        return String(second.account_name || "").localeCompare(
-          String(first.account_name || ""),
-          "es",
-          { sensitivity: "base" },
-        );
-      }
-
-      if (audienceSortMode === "sector_asc") {
-        const sectorCompare = String(first.economic_sector || "").localeCompare(
-          String(second.economic_sector || ""),
-          "es",
-          { sensitivity: "base" },
-        );
-        if (sectorCompare !== 0) return sectorCompare;
-      }
-
-      if (audienceSortMode === "sector_desc") {
-        const sectorCompare = String(
-          second.economic_sector || "",
-        ).localeCompare(String(first.economic_sector || ""), "es", {
-          sensitivity: "base",
-        });
-        if (sectorCompare !== 0) return sectorCompare;
-      }
-
-      return String(first.account_name || "").localeCompare(
-        String(second.account_name || ""),
-        "es",
-        { sensitivity: "base" },
-      );
-    });
-
-    return items;
-  }, [audienceSortMode, visibleAudienceAccounts]);
   const availableAccountsBase = useMemo(() => {
     const selectedSet = new Set(
       selectedAudienceAccountIds
@@ -501,6 +553,7 @@ export default function CampaignsPage() {
     );
 
     return accounts
+      .filter((account) => isActiveAccount(account))
       .map((account) => ({
         account_id: Number(account.id || 0),
         account_name: String(account.name || "").trim(),
@@ -571,6 +624,52 @@ export default function CampaignsPage() {
     removedAudienceContactsByAccount,
     visibleAudienceAccounts,
   ]);
+  const visibleAudienceAccountsWithContacts = useMemo(() => {
+    return visibleAudienceAccounts.filter((item) => {
+      const accountId = Number(item.account_id || 0);
+      if (!Number.isInteger(accountId) || accountId <= 0) return false;
+      return (visibleContactsByAccountId.get(accountId) || []).length > 0;
+    });
+  }, [visibleAudienceAccounts, visibleContactsByAccountId]);
+  const sortedVisibleAudienceAccounts = useMemo(() => {
+    const items = [...visibleAudienceAccountsWithContacts];
+
+    items.sort((first, second) => {
+      if (audienceSortMode === "name_desc") {
+        return String(second.account_name || "").localeCompare(
+          String(first.account_name || ""),
+          "es",
+          { sensitivity: "base" },
+        );
+      }
+
+      if (audienceSortMode === "sector_asc") {
+        const sectorCompare = String(first.economic_sector || "").localeCompare(
+          String(second.economic_sector || ""),
+          "es",
+          { sensitivity: "base" },
+        );
+        if (sectorCompare !== 0) return sectorCompare;
+      }
+
+      if (audienceSortMode === "sector_desc") {
+        const sectorCompare = String(
+          second.economic_sector || "",
+        ).localeCompare(String(first.economic_sector || ""), "es", {
+          sensitivity: "base",
+        });
+        if (sectorCompare !== 0) return sectorCompare;
+      }
+
+      return String(first.account_name || "").localeCompare(
+        String(second.account_name || ""),
+        "es",
+        { sensitivity: "base" },
+      );
+    });
+
+    return items;
+  }, [audienceSortMode, visibleAudienceAccountsWithContacts]);
   const addContactsAccount = useMemo(() => {
     const targetId = Number(addContactsAccountId || 0);
     if (!targetId) return null;
@@ -654,7 +753,9 @@ export default function CampaignsPage() {
           await Promise.all([
             api.get("/api/campaigns/catalogs"),
             api.get("/api/campaigns"),
-            api.get("/api/accounts"),
+            api.get("/api/accounts", {
+              params: { activeOnly: true },
+            }),
           ]);
 
         if (!mounted) return;
@@ -669,7 +770,7 @@ export default function CampaignsPage() {
 
         setCatalogs(catalogsData);
         setCampaigns(campaignsData);
-        setAccounts(accountsData);
+        setAccounts(accountsData.filter((account) => isActiveAccount(account)));
 
         if (campaignsData.length > 0) {
           const visibleStates = catalogsData.estado_campana || [];
@@ -751,17 +852,21 @@ export default function CampaignsPage() {
   }, [selectedCampaignId]);
 
   useEffect(() => {
-    if (savedCampaignAccountIds.length > 0) {
+    if (preferSavedAudienceSelection && savedCampaignAccountIds.length > 0) {
       setSelectedAudienceAccountIds(savedCampaignAccountIds);
       return;
     }
 
     setSelectedAudienceAccountIds(
-      suggestedAccounts
+      filteredAudienceAccountsBySector
         .map((item) => Number(item.account_id || 0))
         .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
     );
-  }, [savedCampaignAccountIds, suggestedAccounts]);
+  }, [
+    filteredAudienceAccountsBySector,
+    preferSavedAudienceSelection,
+    savedCampaignAccountIds,
+  ]);
 
   useEffect(() => {
     setRemovedAudienceContactsByAccount({});
@@ -802,7 +907,7 @@ export default function CampaignsPage() {
 
       try {
         const { data } = await api.get("/api/contacts", {
-          params: { accountId },
+          params: { accountId, activeOnly: true },
         });
         if (!mounted) return;
 
@@ -901,6 +1006,7 @@ export default function CampaignsPage() {
 
   function startNewCampaign() {
     setSelectedCampaignId(null);
+    setPreferSavedAudienceSelection(true);
     setCampaignForm({
       ...EMPTY_FORM,
       tipo_campana: catalogs?.tipo_campana?.[0] || EMPTY_FORM.tipo_campana,
@@ -916,6 +1022,7 @@ export default function CampaignsPage() {
   }
 
   function selectCampaign(campaign) {
+    setPreferSavedAudienceSelection(true);
     setSelectedCampaignId(campaign.id);
     setCampaignForm({
       name: campaign.name || "",
@@ -932,6 +1039,39 @@ export default function CampaignsPage() {
     });
     setFeedback("");
     setError("");
+  }
+
+  function handleLifecycleStageChange(nextValue) {
+    const nextStage = String(nextValue || "").trim();
+    const currentStage = String(campaignForm.etapa_ciclo_vida || "").trim();
+    if (nextStage === currentStage) return;
+
+    const hasSavedAudience =
+      preferSavedAudienceSelection && savedCampaignAccountIds.length > 0;
+
+    if (hasSavedAudience) {
+      const confirmed = window.confirm(
+        "Esta campana ya tiene una audiencia guardada. Si cambias la etapa de ciclo de vida objetivo, la lista de cuentas cambiara segun la nueva seleccion sugerida. ¿Deseas continuar?",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setPreferSavedAudienceSelection(false);
+      setCampaignAccounts([]);
+      setSelectedAudienceAccountIds([]);
+      setRemovedAudienceContactsByAccount({});
+      setManuallyAddedContactsByAccount({});
+      setFeedback(
+        "Se cambio la etapa de ciclo de vida. Revisa y guarda la nueva audiencia sugerida.",
+      );
+      setError("");
+    }
+
+    setCampaignForm((previous) => ({
+      ...previous,
+      etapa_ciclo_vida: nextStage,
+    }));
   }
 
   async function handleSaveCampaign(event) {
@@ -1007,9 +1147,14 @@ export default function CampaignsPage() {
     try {
       const selectedIds = selectedAudienceAccountIds
         .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value > 0);
+        .filter((value) => Number.isInteger(value) && value > 0)
+        .filter((accountId) => {
+          return (visibleContactsByAccountId.get(accountId) || []).length > 0;
+        });
       if (!selectedIds.length) {
-        throw new Error("Selecciona al menos una cuenta en el listado");
+        throw new Error(
+          "Selecciona al menos una cuenta que tenga por lo menos un contacto",
+        );
       }
 
       const payload = normalizeCampaignAccountForm(
@@ -1261,10 +1406,7 @@ export default function CampaignsPage() {
                     <select
                       value={campaignForm.etapa_ciclo_vida}
                       onChange={(event) =>
-                        setCampaignForm((previous) => ({
-                          ...previous,
-                          etapa_ciclo_vida: event.target.value,
-                        }))
+                        handleLifecycleStageChange(event.target.value)
                       }
                     >
                       <option value="">Sin definir</option>
@@ -1278,6 +1420,58 @@ export default function CampaignsPage() {
                       {selectedLifecycleDescription}
                     </small>
                   </label>
+                  <div className="campaigns-grid-wide campaigns-subsection-block">
+                    <div className="campaigns-subsection-title">
+                      Filtro por sector de cuenta
+                    </div>
+                    <div className="campaigns-sector-filter">
+                      {sectorOptions.length === 0 ? (
+                        <small className="campaigns-field-help">
+                          Sin sectores disponibles.
+                        </small>
+                      ) : (
+                        sectorOptions.map((sector) => {
+                          const isSelected = selectedSectorFilterSet.has(
+                            String(sector || "").trim(),
+                          );
+                          return (
+                            <label
+                              key={sector}
+                              className={`campaigns-sector-filter-item ${
+                                isSelected ? "is-selected" : ""
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  setSelectedSectorFilters((previous) => {
+                                    const normalized = String(
+                                      sector || "",
+                                    ).trim();
+                                    if (isSelected) {
+                                      return previous.filter(
+                                        (value) =>
+                                          String(value || "").trim() !==
+                                          normalized,
+                                      );
+                                    }
+                                    return [...previous, normalized];
+                                  });
+                                }}
+                              />
+                              <span>{sector}</span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <small className="campaigns-field-help">
+                      Puedes elegir una o varias opciones de sector para filtrar
+                      las cuentas en Audiencia. Por defecto se seleccionan todos
+                      excepto Proveedor e Integrador.
+                    </small>
+                  </div>
                 </div>
               </div>
 
@@ -1354,14 +1548,18 @@ export default function CampaignsPage() {
             >
               <div className="campaigns-grid-wide">
                 <small className="campaigns-field-help">
+                  Etapa seleccionada: {selectedAudienceLifecycleLabel}
+                </small>
+                <small className="campaigns-field-help">
                   {selectedAudienceLifecycleDescription}
                 </small>
                 <div className="campaigns-audience-list-wrap">
                   <div className="campaigns-audience-list-head">
                     <div className="campaigns-audience-title-row">
                       <strong>
-                        Cuentas sugeridas: {filteredAudienceAccounts.length} ·
-                        Contactos sugeridos: {suggestedContactsCount}
+                        Cuentas sugeridas:{" "}
+                        {filteredAudienceAccountsBySector.length} · Contactos
+                        sugeridos: {suggestedContactsCount}
                       </strong>
                       <button
                         type="button"
@@ -1405,7 +1603,8 @@ export default function CampaignsPage() {
                         </select>
                       </label>
                       <small>
-                        Seleccionadas: {selectedAudienceAccountIds.length}
+                        Seleccionadas con contacto:{" "}
+                        {sortedVisibleAudienceAccounts.length}
                       </small>
                     </div>
                   </div>
@@ -1429,16 +1628,16 @@ export default function CampaignsPage() {
 
                   {!isLoadingSuggestedAccounts &&
                   !suggestedAccountsError &&
-                  visibleAudienceAccounts.length === 0 ? (
+                  visibleAudienceAccountsWithContacts.length === 0 ? (
                     <p className="campaigns-empty">
-                      No hay cuentas en la lista actual. Usa el icono de anadir
-                      para recuperarlas.
+                      No hay cuentas seleccionadas con contactos. Usa el icono
+                      de anadir para recuperar cuentas y contactos.
                     </p>
                   ) : null}
 
                   {!isLoadingSuggestedAccounts &&
                   !suggestedAccountsError &&
-                  visibleAudienceAccounts.length > 0 ? (
+                  visibleAudienceAccountsWithContacts.length > 0 ? (
                     <div className="campaigns-account-checklist">
                       {sortedVisibleAudienceAccounts.map((item) => {
                         const accountId = Number(item.account_id);
@@ -1665,7 +1864,7 @@ export default function CampaignsPage() {
 
               <div className="campaigns-sidebar-meta">
                 <small className="campaigns-chip">
-                  Cuentas objetivo: {selectedAudienceAccountIds.length}
+                  Cuentas objetivo: {sortedVisibleAudienceAccounts.length}
                 </small>
                 <small className="campaigns-chip">
                   Estado: {formatCampaignTypeLabel(campaignForm.estado_campana)}

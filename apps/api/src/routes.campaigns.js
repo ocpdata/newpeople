@@ -364,7 +364,9 @@ async function listCampaignAudienceAccounts(campaignId) {
                   c.position_title
            FROM campaign_account_interaction_contacts caic
            INNER JOIN contacts c ON c.id = caic.contact_id
+           INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
            WHERE caic.campaign_id = ?
+             AND cas.code = 'activado'
              AND caic.account_id IN (${accountIds.map(() => "?").join(", ")})
            ORDER BY caic.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
           [campaignId, ...accountIds],
@@ -389,9 +391,11 @@ async function validateCampaignAudienceContactIds({ accountId, contactIds }) {
   if (!normalizedIds.length) return [];
 
   const rows = await query(
-    `SELECT id, account_id
-     FROM contacts
-     WHERE id IN (${normalizedIds.map(() => "?").join(", ")})`,
+    `SELECT c.id, c.account_id
+     FROM contacts c
+     INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+     WHERE c.id IN (${normalizedIds.map(() => "?").join(", ")})
+       AND cas.code = 'activado'`,
     normalizedIds,
   );
 
@@ -404,6 +408,32 @@ async function validateCampaignAudienceContactIds({ accountId, contactIds }) {
   );
   if (mismatched) {
     throw new Error("Uno o mas contactos no pertenecen a la cuenta");
+  }
+
+  return normalizedIds;
+}
+
+async function validateCampaignAudienceAccountIds(accountIds) {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(accountIds) ? accountIds : [])
+        .map((accountId) => Number(accountId || 0))
+        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+    ),
+  );
+  if (!normalizedIds.length) return [];
+
+  const rows = await query(
+    `SELECT a.id
+     FROM accounts a
+     INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+     WHERE a.id IN (${normalizedIds.map(() => "?").join(", ")})
+       AND aas.code = 'activada'`,
+    normalizedIds,
+  );
+
+  if (rows.length !== normalizedIds.length) {
+    throw new Error("Una o mas cuentas no existen o no estan activas");
   }
 
   return normalizedIds;
@@ -439,7 +469,7 @@ function getLifecycleAccountFilterSql(stage) {
 
 function getLifecycleRuleSummary(stage) {
   if (!stage) {
-    return "Todas las cuentas activas y todos sus contactos";
+    return "Todas las cuentas activas y todos sus contactos activos";
   }
   if (stage === "visitante") {
     return "Cuentas sin oportunidades registradas";
@@ -514,7 +544,9 @@ async function listSuggestedContactsByStage(stage, accountIds) {
               c.email,
               c.position_title
        FROM contacts c
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        WHERE c.account_id IN (${placeholders})
+         AND cas.code = 'activado'
        ORDER BY c.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
       accountIds,
     );
@@ -532,7 +564,9 @@ async function listSuggestedContactsByStage(stage, accountIds) {
        FROM interactions i
        INNER JOIN interaction_contact_links icl ON icl.interaction_id = i.id
        INNER JOIN contacts c ON c.id = icl.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        WHERE i.account_id IN (${placeholders})
+         AND cas.code = 'activado'
          AND i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned')
          AND COALESCE(i.lead_substatus_code, '') NOT IN ('disqualified_temporary', 'disqualified_definitive')
        ORDER BY i.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
@@ -552,7 +586,9 @@ async function listSuggestedContactsByStage(stage, accountIds) {
        FROM interactions i
        INNER JOIN interaction_contact_links icl ON icl.interaction_id = i.id
        INNER JOIN contacts c ON c.id = icl.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        WHERE i.account_id IN (${placeholders})
+         AND cas.code = 'activado'
          AND i.analysis_status = 'lead_qualified'
        ORDER BY i.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
       accountIds,
@@ -570,9 +606,11 @@ async function listSuggestedContactsByStage(stage, accountIds) {
               c.position_title
        FROM opportunities o
        INNER JOIN contacts c ON c.id = o.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
        INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
        WHERE o.account_id IN (${placeholders})
+         AND cas.code = 'activado'
          AND ocs.code = 'en_proceso'
          AND COALESCE(oss.stage_order, 0) >= 3
        ORDER BY o.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
@@ -591,8 +629,10 @@ async function listSuggestedContactsByStage(stage, accountIds) {
               c.position_title
        FROM opportunities o
        INNER JOIN contacts c ON c.id = o.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
        INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
        WHERE o.account_id IN (${placeholders})
+         AND cas.code = 'activado'
          AND ocs.code = 'ganada'
          AND COALESCE(o.commercial_closed_at, o.updated_at, o.created_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 90 DAY)
        ORDER BY o.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
@@ -622,6 +662,8 @@ async function listSuggestedContactsByStage(stage, accountIds) {
            AND COALESCE(o.updated_at, o.created_at, o.commercial_closed_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 120 DAY)
        ) contact_source
        INNER JOIN contacts c ON c.id = contact_source.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+        AND cas.code = 'activado'
        ORDER BY contact_source.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
       [...accountIds, ...accountIds],
     );
@@ -657,6 +699,8 @@ async function listSuggestedContactsByStage(stage, accountIds) {
            AND COALESCE(o.updated_at, o.created_at, o.commercial_closed_at) = la.last_activity_at
        ) contact_source
        INNER JOIN contacts c ON c.id = contact_source.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+        AND cas.code = 'activado'
        ORDER BY contact_source.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
       [...accountIds, ...accountIds],
     );
@@ -1065,6 +1109,16 @@ router.put(
 
     const items = parsed.data.items;
 
+    try {
+      await validateCampaignAudienceAccountIds(
+        items.map((item) => Number(item.account_id || 0)),
+      );
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ message: error.message || "Cuentas invalidas" });
+    }
+
     await withTransaction(async (conn) => {
       await conn.query(
         `DELETE FROM campaign_account_interactions WHERE campaign_id = ?`,
@@ -1143,6 +1197,7 @@ router.patch(
 
     let validContactIds = [];
     try {
+      await validateCampaignAudienceAccountIds([accountId]);
       validContactIds = await validateCampaignAudienceContactIds({
         accountId,
         contactIds: payload.contact_ids || [],

@@ -194,7 +194,7 @@ function AccountsListSection({
         <input
           className="accounts-search-inline"
           type="text"
-          placeholder="Buscar por ID, nombre, tipo, país, registro o estado"
+          placeholder="Buscar por ID, nombre, tipo, sector, país, registro o estado"
           value={accountQuery}
           onChange={(event) => setAccountQuery(event.target.value)}
         />
@@ -228,6 +228,15 @@ function AccountsListSection({
                 onClick={() => toggleAccountSort("tipo")}
               >
                 Tipo <span>{getAccountSortArrow("tipo")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleAccountSort("sector")}
+              >
+                Sector <span>{getAccountSortArrow("sector")}</span>
               </button>
             </th>
             <th>
@@ -280,6 +289,7 @@ function AccountsListSection({
                 <td>{account.id}</td>
                 <td>{account.name}</td>
                 <td>{account.account_type}</td>
+                <td>{account.economic_sector || "-"}</td>
                 <td>{account.country}</td>
                 <td>{account.registration_code}</td>
                 <td>{account.owners_display || "-"}</td>
@@ -421,7 +431,7 @@ function AccountsListSection({
             ))
           ) : (
             <tr>
-              <td colSpan={8} className="empty-state">
+              <td colSpan={9} className="empty-state">
                 No hay cuentas que coincidan con los filtros
               </td>
             </tr>

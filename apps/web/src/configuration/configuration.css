@@ -217,6 +217,29 @@
   gap: 0.85rem;
 }
 
+.configuration-sector-list {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.configuration-sector-item {
+  border: 1px solid #d5dfe6;
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  background: #f9fbfd;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.configuration-sector-item p {
+  margin: 0.22rem 0 0;
+  color: #607585;
+  font-size: 0.84rem;
+}
+
 .configuration-playbook-item {
   border: 1px solid #d5dfe6;
   border-radius: 16px;

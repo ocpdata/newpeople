@@ -4216,6 +4216,12 @@ export default function ConfigurationPage() {
     success,
     activeSection,
     countries,
+    accountTypes,
+    accountTypeDraft,
+    accountTypeActionKey,
+    economicSectors,
+    economicSectorDraft,
+    economicSectorActionKey,
     companyProfile,
     temporaryFeatureSettings,
     chatbotSettings,
@@ -4280,6 +4286,8 @@ export default function ConfigurationPage() {
     formatDateTime,
     summarizeChangedFields,
     updateField,
+    updateAccountTypeDraft,
+    updateEconomicSectorDraft,
     changeSection,
     discardChanges,
     handleLogoChange,
@@ -4293,6 +4301,12 @@ export default function ConfigurationPage() {
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     saveCommercialSettings,
+    createAccountType,
+    renameAccountType,
+    setAccountTypeStatus,
+    createEconomicSector,
+    renameEconomicSector,
+    setEconomicSectorStatus,
     activateWorkspacePlaybook,
     updateWorkspacePlaybookStage,
     updateWorkspacePlaybookCriterion,
@@ -4448,6 +4462,33 @@ export default function ConfigurationPage() {
   );
 
   const latestAuditEntry = auditEntries[0] || null;
+  const sortedAccountTypes = useMemo(() => {
+    return [...accountTypes].sort((left, right) => {
+      const activeCompare = Number(right?.isActive) - Number(left?.isActive);
+      if (activeCompare !== 0) return activeCompare;
+      return String(left?.name || "").localeCompare(
+        String(right?.name || ""),
+        "es",
+        {
+          sensitivity: "base",
+        },
+      );
+    });
+  }, [accountTypes]);
+
+  const sortedEconomicSectors = useMemo(() => {
+    return [...economicSectors].sort((left, right) => {
+      const activeCompare = Number(right?.isActive) - Number(left?.isActive);
+      if (activeCompare !== 0) return activeCompare;
+      return String(left?.name || "").localeCompare(
+        String(right?.name || ""),
+        "es",
+        {
+          sensitivity: "base",
+        },
+      );
+    });
+  }, [economicSectors]);
 
   const moduleItems = useMemo(
     () => [
@@ -5096,6 +5137,277 @@ export default function ConfigurationPage() {
                 items={moduleItems}
                 onOpenAudit={() => changeSection("audit")}
               />
+            </div>
+          ) : null}
+
+          {activeSection === "catalogs" ? (
+            <div className="configuration-section-stack">
+              <section className="configuration-card">
+                <div className="configuration-card-heading">
+                  <div>
+                    <h4>Tipos de cuenta</h4>
+                    <p>
+                      Administra catalogo para clasificar cuentas segun los
+                      tipos ya definidos. Puedes crear, editar y
+                      activar/desactivar tipos desde esta vista.
+                    </p>
+                  </div>
+                  <span className="configuration-inline-pill">
+                    {sortedAccountTypes.length} tipos
+                  </span>
+                </div>
+
+                <div className="configuration-form-grid configuration-new-section-form">
+                  <div className="field-group">
+                    <label>Nombre del tipo</label>
+                    <input
+                      type="text"
+                      value={accountTypeDraft.name}
+                      onChange={(event) =>
+                        updateAccountTypeDraft("name", event.target.value)
+                      }
+                      placeholder="Ej. Principal"
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Codigo (opcional)</label>
+                    <input
+                      type="text"
+                      value={accountTypeDraft.code}
+                      onChange={(event) =>
+                        updateAccountTypeDraft("code", event.target.value)
+                      }
+                      placeholder="Ej. principal"
+                    />
+                  </div>
+                  <div className="field-group configuration-grid-span-full">
+                    <label>Descripcion (opcional)</label>
+                    <textarea
+                      rows="2"
+                      value={accountTypeDraft.description || ""}
+                      onChange={(event) =>
+                        updateAccountTypeDraft(
+                          "description",
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Ej. Tipo de cuenta para clientes estratégicos"
+                    />
+                  </div>
+                  <div className="configuration-inline-actions">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={accountTypeActionKey === "create"}
+                      onClick={() => {
+                        void createAccountType();
+                      }}
+                    >
+                      {accountTypeActionKey === "create"
+                        ? "Creando..."
+                        : "Agregar tipo"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="configuration-sector-list">
+                  {sortedAccountTypes.map((accountType) => {
+                    const accountTypeId = Number(accountType?.id || 0);
+                    const rowAction =
+                      accountTypeActionKey === `rename:${accountTypeId}` ||
+                      accountTypeActionKey === `status:${accountTypeId}`;
+                    return (
+                      <article
+                        key={accountTypeId}
+                        className="configuration-sector-item"
+                      >
+                        <div>
+                          <strong>{accountType.name}</strong>
+                          <p>
+                            Codigo: {accountType.code || "-"} · Estado:{" "}
+                            {accountType.isActive ? "Activo" : "Inactivo"}
+                          </p>
+                          {accountType.description ? (
+                            <p>Descripcion: {accountType.description}</p>
+                          ) : null}
+                        </div>
+                        <div className="configuration-inline-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={rowAction}
+                            onClick={() => {
+                              const nextName = window.prompt(
+                                "Nuevo nombre del tipo de cuenta",
+                                String(accountType.name || ""),
+                              );
+                              if (nextName === null) return;
+                              const nextDescription = window.prompt(
+                                "Descripcion del tipo de cuenta (opcional)",
+                                String(accountType.description || ""),
+                              );
+                              if (nextDescription === null) return;
+                              void renameAccountType(
+                                accountTypeId,
+                                nextName,
+                                nextDescription,
+                              );
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={rowAction}
+                            onClick={() => {
+                              void setAccountTypeStatus(
+                                accountTypeId,
+                                !accountType.isActive,
+                              );
+                            }}
+                          >
+                            {accountType.isActive ? "Desactivar" : "Activar"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="configuration-card">
+                <div className="configuration-card-heading">
+                  <div>
+                    <h4>Sectores economicos</h4>
+                    <p>
+                      Administra catalogo para cuentas. Puedes crear, editar y
+                      activar/desactivar sectores desde esta vista.
+                    </p>
+                  </div>
+                  <span className="configuration-inline-pill">
+                    {sortedEconomicSectors.length} sectores
+                  </span>
+                </div>
+
+                <div className="configuration-form-grid configuration-new-section-form">
+                  <div className="field-group">
+                    <label>Nombre del sector</label>
+                    <input
+                      type="text"
+                      value={economicSectorDraft.name}
+                      onChange={(event) =>
+                        updateEconomicSectorDraft("name", event.target.value)
+                      }
+                      placeholder="Ej. Proveedor"
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label>Codigo (opcional)</label>
+                    <input
+                      type="text"
+                      value={economicSectorDraft.code}
+                      onChange={(event) =>
+                        updateEconomicSectorDraft("code", event.target.value)
+                      }
+                      placeholder="Ej. proveedor"
+                    />
+                  </div>
+                  <div className="field-group configuration-grid-span-full">
+                    <label>Descripcion (opcional)</label>
+                    <textarea
+                      rows="2"
+                      value={economicSectorDraft.description || ""}
+                      onChange={(event) =>
+                        updateEconomicSectorDraft(
+                          "description",
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Ej. Sector enfocado en servicios de integración"
+                    />
+                  </div>
+                  <div className="configuration-inline-actions">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={economicSectorActionKey === "create"}
+                      onClick={() => {
+                        void createEconomicSector();
+                      }}
+                    >
+                      {economicSectorActionKey === "create"
+                        ? "Creando..."
+                        : "Agregar sector"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="configuration-sector-list">
+                  {sortedEconomicSectors.map((sector) => {
+                    const sectorId = Number(sector?.id || 0);
+                    const rowAction =
+                      economicSectorActionKey === `rename:${sectorId}` ||
+                      economicSectorActionKey === `status:${sectorId}`;
+                    return (
+                      <article
+                        key={sectorId}
+                        className="configuration-sector-item"
+                      >
+                        <div>
+                          <strong>{sector.name}</strong>
+                          <p>
+                            Codigo: {sector.code || "-"} · Estado:{" "}
+                            {sector.isActive ? "Activo" : "Inactivo"}
+                          </p>
+                          {sector.description ? (
+                            <p>Descripcion: {sector.description}</p>
+                          ) : null}
+                        </div>
+                        <div className="configuration-inline-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={rowAction}
+                            onClick={() => {
+                              const nextName = window.prompt(
+                                "Nuevo nombre del sector",
+                                String(sector.name || ""),
+                              );
+                              if (nextName === null) return;
+                              const nextDescription = window.prompt(
+                                "Descripcion del sector (opcional)",
+                                String(sector.description || ""),
+                              );
+                              if (nextDescription === null) return;
+                              void renameEconomicSector(
+                                sectorId,
+                                nextName,
+                                nextDescription,
+                              );
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={rowAction}
+                            onClick={() => {
+                              void setEconomicSectorStatus(
+                                sectorId,
+                                !sector.isActive,
+                              );
+                            }}
+                          >
+                            {sector.isActive ? "Desactivar" : "Activar"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
             </div>
           ) : null}
 

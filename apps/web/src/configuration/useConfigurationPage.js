@@ -750,6 +750,20 @@ export function useConfigurationPage() {
   const [success, setSuccess] = useState("");
   const [activeSection, setActiveSection] = useState("company");
   const [countries, setCountries] = useState([]);
+  const [accountTypes, setAccountTypes] = useState([]);
+  const [accountTypeDraft, setAccountTypeDraft] = useState({
+    name: "",
+    code: "",
+    description: "",
+  });
+  const [accountTypeActionKey, setAccountTypeActionKey] = useState("");
+  const [economicSectors, setEconomicSectors] = useState([]);
+  const [economicSectorDraft, setEconomicSectorDraft] = useState({
+    name: "",
+    code: "",
+    description: "",
+  });
+  const [economicSectorActionKey, setEconomicSectorActionKey] = useState("");
   const [companyProfile, setCompanyProfile] = useState(null);
   const [temporaryFeatureSettings, setTemporaryFeatureSettings] = useState(
     EMPTY_TEMPORARY_FEATURE_SETTINGS,
@@ -846,6 +860,8 @@ export function useConfigurationPage() {
           chatbotSettingsResponse,
           commercialSettingsResponse,
           countriesResponse,
+          accountTypesResponse,
+          economicSectorsResponse,
           auditResponse,
           playbooksResponse,
           proposalContentResponse,
@@ -865,6 +881,12 @@ export function useConfigurationPage() {
             .get("/api/settings/commercial")
             .catch(() => ({ data: { settings: null } })),
           api.get("/api/catalogs/countries"),
+          api
+            .get("/api/catalogs/account-types-management")
+            .catch(() => ({ data: { items: [] } })),
+          api
+            .get("/api/catalogs/economic-sectors-management")
+            .catch(() => ({ data: { items: [] } })),
           api.get("/api/settings/audit?limit=25"),
           api
             .get("/api/opportunities/workspace-playbooks")
@@ -920,6 +942,16 @@ export function useConfigurationPage() {
         );
         setCountries(
           Array.isArray(countriesResponse.data) ? countriesResponse.data : [],
+        );
+        setAccountTypes(
+          Array.isArray(accountTypesResponse.data?.items)
+            ? accountTypesResponse.data.items
+            : [],
+        );
+        setEconomicSectors(
+          Array.isArray(economicSectorsResponse.data?.items)
+            ? economicSectorsResponse.data.items
+            : [],
         );
         setAuditEntries(
           Array.isArray(auditResponse.data) ? auditResponse.data : [],
@@ -1615,6 +1647,242 @@ export function useConfigurationPage() {
       ? formatDateTime(latestRate.updatedAtUtc)
       : "Sin cambios registrados";
   }, [aiPricingRates, formatDateTime]);
+
+  function updateAccountTypeDraft(field, value) {
+    setAccountTypeDraft((current) => ({
+      ...current,
+      [field]: String(value || ""),
+    }));
+  }
+
+  async function reloadAccountTypes() {
+    const response = await api.get("/api/catalogs/account-types-management");
+    const items = Array.isArray(response.data?.items)
+      ? response.data.items
+      : [];
+    setAccountTypes(items);
+    return items;
+  }
+
+  async function createAccountType() {
+    const name = String(accountTypeDraft.name || "").trim();
+    const code = String(accountTypeDraft.code || "").trim();
+    const description = String(accountTypeDraft.description || "").trim();
+    if (name.length < 2) {
+      setError("El nombre del tipo de cuenta debe tener al menos 2 caracteres");
+      setSuccess("");
+      return null;
+    }
+
+    setAccountTypeActionKey("create");
+    setError("");
+    setSuccess("");
+    try {
+      await api.post("/api/catalogs/account-types-management", {
+        name,
+        code: code || undefined,
+        description: description || undefined,
+      });
+      await reloadAccountTypes();
+      setAccountTypeDraft({ name: "", code: "", description: "" });
+      setSuccess("Tipo de cuenta creado correctamente");
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible crear el tipo de cuenta"),
+      );
+      throw err;
+    } finally {
+      setAccountTypeActionKey("");
+    }
+  }
+
+  async function renameAccountType(accountTypeId, nextName, nextDescription) {
+    const normalizedId = Number(accountTypeId || 0);
+    const normalizedName = String(nextName || "").trim();
+    const normalizedDescription = String(nextDescription || "").trim();
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return null;
+    }
+    if (normalizedName.length < 2) {
+      setError("El nombre del tipo de cuenta debe tener al menos 2 caracteres");
+      setSuccess("");
+      return null;
+    }
+
+    setAccountTypeActionKey(`rename:${normalizedId}`);
+    setError("");
+    setSuccess("");
+    try {
+      await api.patch(
+        `/api/catalogs/account-types-management/${normalizedId}`,
+        {
+          name: normalizedName,
+          description: normalizedDescription,
+        },
+      );
+      await reloadAccountTypes();
+      setSuccess("Tipo de cuenta actualizado correctamente");
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible actualizar el tipo de cuenta"),
+      );
+      throw err;
+    } finally {
+      setAccountTypeActionKey("");
+    }
+  }
+
+  async function setAccountTypeStatus(accountTypeId, isActive) {
+    const normalizedId = Number(accountTypeId || 0);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return null;
+    }
+
+    setAccountTypeActionKey(`status:${normalizedId}`);
+    setError("");
+    setSuccess("");
+    try {
+      await api.patch(
+        `/api/catalogs/account-types-management/${normalizedId}`,
+        {
+          isActive: Boolean(isActive),
+        },
+      );
+      await reloadAccountTypes();
+      setSuccess(
+        isActive ? "Tipo de cuenta activado" : "Tipo de cuenta desactivado",
+      );
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del tipo de cuenta",
+        ),
+      );
+      throw err;
+    } finally {
+      setAccountTypeActionKey("");
+    }
+  }
+
+  function updateEconomicSectorDraft(field, value) {
+    setEconomicSectorDraft((current) => ({
+      ...current,
+      [field]: String(value || ""),
+    }));
+  }
+
+  async function reloadEconomicSectors() {
+    const response = await api.get("/api/catalogs/economic-sectors-management");
+    const items = Array.isArray(response.data?.items)
+      ? response.data.items
+      : [];
+    setEconomicSectors(items);
+    return items;
+  }
+
+  async function createEconomicSector() {
+    const name = String(economicSectorDraft.name || "").trim();
+    const code = String(economicSectorDraft.code || "").trim();
+    const description = String(economicSectorDraft.description || "").trim();
+    if (name.length < 2) {
+      setError("El nombre del sector debe tener al menos 2 caracteres");
+      setSuccess("");
+      return null;
+    }
+
+    setEconomicSectorActionKey("create");
+    setError("");
+    setSuccess("");
+    try {
+      await api.post("/api/catalogs/economic-sectors-management", {
+        name,
+        code: code || undefined,
+        description: description || undefined,
+      });
+      await reloadEconomicSectors();
+      setEconomicSectorDraft({ name: "", code: "", description: "" });
+      setSuccess("Sector economico creado correctamente");
+      return true;
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible crear el sector"));
+      throw err;
+    } finally {
+      setEconomicSectorActionKey("");
+    }
+  }
+
+  async function renameEconomicSector(sectorId, nextName, nextDescription) {
+    const normalizedId = Number(sectorId || 0);
+    const normalizedName = String(nextName || "").trim();
+    const normalizedDescription = String(nextDescription || "").trim();
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return null;
+    }
+    if (normalizedName.length < 2) {
+      setError("El nombre del sector debe tener al menos 2 caracteres");
+      setSuccess("");
+      return null;
+    }
+
+    setEconomicSectorActionKey(`rename:${normalizedId}`);
+    setError("");
+    setSuccess("");
+    try {
+      await api.patch(
+        `/api/catalogs/economic-sectors-management/${normalizedId}`,
+        {
+          name: normalizedName,
+          description: normalizedDescription,
+        },
+      );
+      await reloadEconomicSectors();
+      setSuccess("Sector economico actualizado correctamente");
+      return true;
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible actualizar el sector"));
+      throw err;
+    } finally {
+      setEconomicSectorActionKey("");
+    }
+  }
+
+  async function setEconomicSectorStatus(sectorId, isActive) {
+    const normalizedId = Number(sectorId || 0);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return null;
+    }
+
+    setEconomicSectorActionKey(`status:${normalizedId}`);
+    setError("");
+    setSuccess("");
+    try {
+      await api.patch(
+        `/api/catalogs/economic-sectors-management/${normalizedId}`,
+        {
+          isActive: Boolean(isActive),
+        },
+      );
+      await reloadEconomicSectors();
+      setSuccess(
+        isActive ? "Sector economico activado" : "Sector economico desactivado",
+      );
+      return true;
+    } catch (err) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el estado del sector",
+        ),
+      );
+      throw err;
+    } finally {
+      setEconomicSectorActionKey("");
+    }
+  }
 
   async function reloadAiParametersConfig(
     nextCapabilityKey = selectedAiCapabilityKey,
@@ -2314,6 +2582,12 @@ export function useConfigurationPage() {
           commercialSettingsDirty,
       },
       {
+        id: "catalogs",
+        title: "Catalogos",
+        description: "Gestion de catalogos maestros para cuentas y contacto",
+        dirty: false,
+      },
+      {
         id: "ai_parameters",
         title: "Parámetros IA",
         description: "Prompts, timeouts y politicas publicadas por capacidad",
@@ -2360,6 +2634,12 @@ export function useConfigurationPage() {
     success,
     activeSection,
     countries,
+    accountTypes,
+    accountTypeDraft,
+    accountTypeActionKey,
+    economicSectors,
+    economicSectorDraft,
+    economicSectorActionKey,
     companyProfile,
     temporaryFeatureSettings,
     chatbotSettings,
@@ -2424,6 +2704,8 @@ export function useConfigurationPage() {
     formatDateTime,
     summarizeChangedFields,
     updateField,
+    updateAccountTypeDraft,
+    updateEconomicSectorDraft,
     changeSection,
     discardChanges,
     handleLogoChange,
@@ -2437,6 +2719,14 @@ export function useConfigurationPage() {
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     saveCommercialSettings,
+    reloadAccountTypes,
+    createAccountType,
+    renameAccountType,
+    setAccountTypeStatus,
+    reloadEconomicSectors,
+    createEconomicSector,
+    renameEconomicSector,
+    setEconomicSectorStatus,
     reloadAiWalletSummaries,
     reloadAiPricingRates,
     loadAiWalletDetail,

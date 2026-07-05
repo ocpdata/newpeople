@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS account_types (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(40) NOT NULL,
   name VARCHAR(80) NOT NULL,
+  description VARCHAR(255) NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT uq_account_types_code UNIQUE (code),
   CONSTRAINT uq_account_types_name UNIQUE (name)
@@ -348,6 +349,7 @@ CREATE TABLE IF NOT EXISTS economic_sectors (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(40) NOT NULL,
   name VARCHAR(100) NOT NULL,
+  description VARCHAR(255) NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT uq_economic_sectors_code UNIQUE (code),
   CONSTRAINT uq_economic_sectors_name UNIQUE (name)
@@ -2738,6 +2740,8 @@ INSERT INTO economic_sectors (code, name, is_active) VALUES
   ('hoteleria', 'Hoteleria', 1),
   ('gobierno', 'Gobierno', 1),
   ('telecomunicaciones', 'Telecomunicaciones', 1),
+  ('proveedor', 'Proveedor', 1),
+  ('integrador', 'Integrador', 1),
   ('otros', 'Otros', 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active);
 
