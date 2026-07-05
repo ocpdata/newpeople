@@ -1,0 +1,338 @@
+.campaign-management-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.campaign-management-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(12, 95, 126, 0.08),
+      transparent 55%
+    ),
+    var(--panel-background);
+}
+
+.campaign-management-header h2 {
+  margin: 0;
+}
+
+.campaign-management-header p {
+  margin: 0.4rem 0 0;
+  max-width: 70ch;
+  color: var(--text-muted);
+}
+
+.campaign-management-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.campaign-management-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.campaign-management-sidebar,
+.campaign-management-main,
+.campaign-management-main .card {
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--panel-background);
+}
+
+.campaign-management-sidebar {
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.campaign-management-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.campaign-management-sidebar-head h3 {
+  margin: 0;
+}
+
+.campaign-management-sidebar-head small {
+  color: var(--text-muted);
+}
+
+.campaign-management-sidebar ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.campaign-management-sidebar li button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--panel-muted, #f7f9fc);
+  padding: 0.65rem 0.7rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.campaign-management-sidebar li button strong {
+  font-size: 0.95rem;
+}
+
+.campaign-management-sidebar li button span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.campaign-management-sidebar li button.is-selected {
+  border-color: #0f6f91;
+  box-shadow: 0 0 0 2px rgba(15, 111, 145, 0.15);
+  background: rgba(15, 111, 145, 0.06);
+}
+
+.campaign-management-main {
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.campaign-management-main .card {
+  padding: 0.9rem;
+}
+
+.campaign-management-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.campaign-management-summary-head h3 {
+  margin: 0;
+}
+
+.campaign-management-summary-head p {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+}
+
+.campaign-management-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  gap: 0.5rem;
+  min-width: 300px;
+}
+
+.campaign-management-kpis article,
+.campaign-management-kpi-grid article {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 0.6rem;
+  background: var(--panel-muted, #f7f9fc);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.campaign-management-kpis strong,
+.campaign-management-kpi-grid strong {
+  font-size: 1.2rem;
+}
+
+.campaign-management-kpis span,
+.campaign-management-kpi-grid span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.campaign-management-checklist {
+  margin-top: 0.85rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 0.5rem;
+}
+
+.campaign-management-checklist > div {
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.campaign-management-checklist > div span {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.campaign-management-checklist > div.is-done {
+  border-color: #238a53;
+  background: rgba(35, 138, 83, 0.08);
+}
+
+.campaign-management-checklist > div.is-done span {
+  color: #1c6f42;
+}
+
+.campaign-management-checklist > div.is-pending {
+  border-color: #b48727;
+  background: rgba(180, 135, 39, 0.08);
+}
+
+.campaign-management-checklist > div.is-pending span {
+  color: #8a6617;
+}
+
+.campaign-management-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.campaign-management-tabs button {
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1f3a57;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.campaign-management-tabs button:hover {
+  background: #f3f7fc;
+}
+
+.campaign-management-tabs button.is-active {
+  border-color: #0f6f91;
+  background: rgba(15, 111, 145, 0.12);
+  color: #0f4d64;
+}
+
+.campaign-management-tab-body {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.campaign-management-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.campaign-management-grid-two article,
+.campaign-management-audience-list article {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: var(--panel-muted, #f7f9fc);
+}
+
+.campaign-management-grid-two article h4 {
+  margin: 0 0 0.45rem;
+}
+
+.campaign-management-grid-two article p {
+  margin: 0.35rem 0;
+}
+
+.campaign-management-audience-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.campaign-management-audience-list article header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.campaign-management-audience-list article header span {
+  border: 1px solid #87a1c5;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  color: #234f8f;
+  background: rgba(35, 79, 143, 0.08);
+}
+
+.campaign-management-audience-list article p {
+  margin: 0.2rem 0;
+  color: var(--text-muted);
+}
+
+.campaign-management-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 0.6rem;
+}
+
+.campaign-management-note {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.campaign-management-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.campaign-management-empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.campaign-management-alert {
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+}
+
+.campaign-management-alert-error {
+  border: 1px solid rgba(176, 37, 37, 0.35);
+  background: rgba(176, 37, 37, 0.08);
+  color: #7a1313;
+}
+
+@media (max-width: 1100px) {
+  .campaign-management-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .campaign-management-kpis,
+  .campaign-management-checklist,
+  .campaign-management-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .campaign-management-header {
+    flex-direction: column;
+  }
+
+  .campaign-management-grid-two,
+  .campaign-management-kpis,
+  .campaign-management-checklist,
+  .campaign-management-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -401,7 +401,9 @@ function normalizeEmailList(value) {
 }
 
 function encodeMimeHeaderUtf8(value) {
-  const text = String(value || "").replace(/[\r\n]+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
   if (!text) {
     return "";
   }
@@ -420,6 +422,7 @@ function buildRawMimeMessage({
   cc,
   subject,
   messageBody,
+  htmlBody,
   attachments,
 }) {
   const normalizedTo = normalizeEmailList(to);
@@ -427,6 +430,7 @@ function buildRawMimeMessage({
   const normalizedSubject = String(subject || "").trim();
   const encodedSubject = encodeMimeHeaderUtf8(normalizedSubject);
   const normalizedBody = String(messageBody || "");
+  const normalizedHtmlBody = String(htmlBody || "").trim();
 
   if (!normalizedTo) {
     throw new Error("Debes incluir al menos un destinatario");
@@ -438,6 +442,34 @@ function buildRawMimeMessage({
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
   if (!hasAttachments) {
+    if (normalizedHtmlBody) {
+      const alternativeBoundary = `np_alt_${crypto
+        .randomBytes(12)
+        .toString("hex")}`;
+      const lines = [
+        `From: ${from}`,
+        `To: ${normalizedTo}`,
+        ...(normalizedCc ? [`Cc: ${normalizedCc}`] : []),
+        `Subject: ${encodedSubject}`,
+        "MIME-Version: 1.0",
+        `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
+        "",
+        `--${alternativeBoundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        "Content-Transfer-Encoding: 8bit",
+        "",
+        normalizedBody,
+        `--${alternativeBoundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        "Content-Transfer-Encoding: 8bit",
+        "",
+        normalizedHtmlBody,
+        `--${alternativeBoundary}--`,
+        "",
+      ];
+      return toBase64Url(lines.join("\r\n"));
+    }
+
     const lines = [
       `From: ${from}`,
       `To: ${normalizedTo}`,
@@ -501,6 +533,7 @@ export async function sendGoogleMailMessage({
   cc,
   subject,
   messageBody,
+  htmlBody,
   attachments = [],
 }) {
   const raw = buildRawMimeMessage({
@@ -509,6 +542,7 @@ export async function sendGoogleMailMessage({
     cc,
     subject,
     messageBody,
+    htmlBody,
     attachments,
   });
   const response = await fetch(

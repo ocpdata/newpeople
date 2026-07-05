@@ -45,6 +45,10 @@ import { startChatbotWorker } from "./routes.chatbot.js";
 import { ensureLandingPermissions } from "./landing/permissions.js";
 import { ensureLandingSchema } from "./landing/schema.js";
 import { startLandingWorker } from "./routes.landing.js";
+import { ensureCampaignPermissions } from "./campaigns/permissions.js";
+import { ensureCampaignsSchema } from "./campaigns/schema.js";
+import { startCampaignEmailDispatchWorker } from "./routes.campaign-emails.js";
+import { ensureCampaignEmailDispatchSchema } from "./campaign-emails/schema.js";
 
 export async function startServer() {
   validateConfig();
@@ -60,6 +64,7 @@ export async function startServer() {
   await ensureManufacturerRegistrationPermissions();
   await ensureProcessCommercialConfigPermissions();
   await ensureLandingPermissions();
+  await ensureCampaignPermissions();
   await ensureAccountDraftAnalysisJobSchema();
   await ensureAccountInteractionsSchema();
   await ensureCommercialNarrativeJobSchema();
@@ -78,6 +83,8 @@ export async function startServer() {
   await ensureCommercialPlanningSchema();
   await ensureManufacturerRegistrationsSchema();
   await ensureLandingSchema();
+  await ensureCampaignsSchema();
+  await ensureCampaignEmailDispatchSchema();
   await startAuditRetentionJob();
   await startAccountDraftAnalysisWorker();
   await startCommercialNarrativeWorker();
@@ -89,6 +96,7 @@ export async function startServer() {
   await startOpportunityStageValidationWorker();
   await startChatbotWorker();
   await startLandingWorker();
+  await startCampaignEmailDispatchWorker();
   return app.listen(config.port, () => {
     console.log(`API running on http://localhost:${config.port}`);
   });

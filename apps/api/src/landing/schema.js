@@ -142,6 +142,14 @@ export async function ensureLandingSchema() {
         );
       }
 
+      if (!(await columnExists("landing_pages", "security_config_json"))) {
+        await query(
+          `ALTER TABLE landing_pages
+           ADD COLUMN security_config_json JSON NULL
+           AFTER confirmation_config_json`,
+        );
+      }
+
       if (!(await columnExists("landing_submissions", "user_notes"))) {
         await query(
           `ALTER TABLE landing_submissions

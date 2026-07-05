@@ -641,6 +641,16 @@
   background: #9bc9ad;
 }
 
+.landing-icon-action-button-danger {
+  border-color: #9f2835;
+  background: linear-gradient(180deg, #d24358, #9f2835);
+  box-shadow: 0 6px 14px rgba(116, 28, 41, 0.28);
+}
+
+.landing-icon-action-button-danger:hover {
+  box-shadow: 0 8px 16px rgba(116, 28, 41, 0.34);
+}
+
 .landing-submission-action-cell {
   display: inline-flex;
   align-items: center;

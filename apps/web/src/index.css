@@ -18639,7 +18639,9 @@ td {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 1px 0 rgba(17, 50, 74, 0.05);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease,
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
     transform 0.2s ease;
 }
 
@@ -18998,8 +19000,12 @@ td {
   gap: 2px;
 }
 
-.enablement-library-editable-result-row .enablement-library-use-result-main strong,
-.enablement-library-editable-result-row .enablement-library-use-result-main span {
+.enablement-library-editable-result-row
+  .enablement-library-use-result-main
+  strong,
+.enablement-library-editable-result-row
+  .enablement-library-use-result-main
+  span {
   font-size: 12px;
   font-weight: 400;
   color: #35556f;
@@ -19074,7 +19080,9 @@ td {
   border: 1px solid #dbe6ef;
   border-radius: 14px;
   background: #fcfeff;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .enablement-library-editor-meta-grid-base label:focus-within {
@@ -19100,7 +19108,9 @@ td {
   height: 20px;
 }
 
-.enablement-library-chip-dropdown-field .enablement-library-chip-dropdown-icon svg {
+.enablement-library-chip-dropdown-field
+  .enablement-library-chip-dropdown-icon
+  svg {
   width: 10px;
   height: 10px;
 }
@@ -19214,7 +19224,8 @@ td {
   background: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
 }
 
-.enablement-library-picker.is-collapsible.is-expanded .enablement-library-picker-caret {
+.enablement-library-picker.is-collapsible.is-expanded
+  .enablement-library-picker-caret {
   transform: rotate(180deg);
 }
 
@@ -21828,7 +21839,7 @@ td {
 
 .chatbot-fab {
   position: fixed;
-  left: 18px;
+  right: 18px;
   bottom: 18px;
   width: 56px;
   height: 56px;
@@ -21866,7 +21877,7 @@ td {
 
 .chatbot-drawer {
   position: fixed;
-  left: 18px;
+  right: 18px;
   bottom: 84px;
   width: min(480px, calc(100vw - 36px));
   max-height: calc(100vh - 120px);
@@ -22289,14 +22300,14 @@ td {
 
 @media (max-width: 720px) {
   .chatbot-fab {
-    left: 12px;
+    right: 12px;
     bottom: 12px;
     width: 52px;
     height: 52px;
   }
 
   .chatbot-drawer {
-    left: 12px;
+    right: 12px;
     bottom: 74px;
     width: calc(100vw - 24px);
     max-height: calc(100vh - 96px);
@@ -22801,8 +22812,12 @@ td {
 }
 
 @keyframes calendarToolbarSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .calendar-module-badge {
@@ -23301,7 +23316,11 @@ td {
   display: grid;
   gap: 10px;
   background:
-    radial-gradient(circle at top right, rgba(14, 165, 233, 0.08), transparent 28%),
+    radial-gradient(
+      circle at top right,
+      rgba(14, 165, 233, 0.08),
+      transparent 28%
+    ),
     linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
   box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
 }

@@ -10,6 +10,7 @@ Este documento describe el modulo de Landing Pages del CRM, incluyendo:
 - publicacion de la landing;
 - recepcion de envios publicos;
 - gestion de registros enviados (submissions), notas operativas y envio a CRM;
+- configuracion de pagina de confirmacion y seguridad publica;
 - permisos requeridos por accion.
 
 No cubre en detalle la logica interna de Leads, Cuentas, Contactos y Oportunidades fuera de lo necesario para entender la conversion desde submissions.
@@ -22,13 +23,14 @@ No cubre en detalle la logica interna de Leads, Cuentas, Contactos y Oportunidad
 - La landing maneja versionado: se pueden crear multiples versiones antes de publicar.
 - Solo una version activa/publicada atiende la ruta publica del slug.
 - Los envios publicos quedan registrados como submissions y se pueden reprocesar hacia CRM desde el modulo.
+- El modulo de Correos de campana consume landings publicadas para sugerir URLs de CTA.
 
 ### Ciclo de vida de una landing
 
 1. Crear/actualizar landing para un evento (`draft`).
 2. Editar contenido y esquema del formulario en versiones.
 3. Publicar una version (`published`).
-4. Consumir landing publica por slug.
+4. Consumir landing publica por slug (ruta legacy o endpoint publico HTML).
 5. Capturar submissions y, cuando aplique, enviarlas a CRM.
 
 ### Submissions y CRM
@@ -69,15 +71,19 @@ Privada (requiere autenticacion + permisos):
 - `PATCH /api/landing/v1/landing-pages/:landingPageId/versions/:versionId` (editar version)
 - `POST /api/landing/v1/landing-pages/:landingPageId/import-url` (importar URL)
 - `POST /api/landing/v1/landing-pages/:landingPageId/versions/html-upload` (subir HTML)
+- `POST /api/landing/v1/landing-pages/:landingPageId/confirmation-page/import-url` (importar pagina de confirmacion por URL)
 - `PATCH /api/landing/v1/landing-pages/:landingPageId/confirmation-config` (config de confirmacion)
+- `PATCH /api/landing/v1/landing-pages/:landingPageId/security-config` (config de seguridad publica)
 - `POST /api/landing/v1/landing-pages/:landingPageId/publish` (publicar)
 - `GET /api/landing/v1/events/:eventId/submissions` (listar submissions)
 - `PATCH /api/landing/v1/submissions/:submissionId/notes` (guardar notas)
 - `POST /api/landing/v1/submissions/:submissionId/reprocess` (reprocesar/envio a CRM)
+- `DELETE /api/landing/v1/submissions/:submissionId` (eliminar submission)
 
 Publica (sin auth, para captacion):
 
 - `GET /landing/:slug.html` (render landing publicada)
+- `GET /api/public/landing/v1/:slug/html` (render HTML publico por slug)
 - `POST /api/public/landing/v1/:slug/submit` (registrar envio del formulario)
 
 ## Consideraciones operativas
@@ -85,6 +91,7 @@ Publica (sin auth, para captacion):
 - El endpoint publico de submit solo acepta landings `published` con version activa.
 - El schema del formulario se valida antes de publicar y al recibir submissions.
 - Se recomienda definir slugs estables por evento para no romper enlaces de campana.
+- Para correos de campana conviene usar la URL publica `GET /api/public/landing/v1/:slug/html` como destino de CTA.
 - Si se requiere separar gobierno de "editar notas" vs "reprocesar a CRM", hoy ambos comparten `landing.submissions.reprocess` y podria evaluarse un permiso adicional en el futuro.
 
 ## Estado actual de la aplicacion (2026-07)
@@ -92,3 +99,4 @@ Publica (sin auth, para captacion):
 - Submissions: soportan notas operativas por registro y marcador explicito de envio a leads (`sent_to_leads_at`).
 - UX de registros por evento: incluye filtro local, orden por columnas y estado visual de envio.
 - Publicacion: mantiene flujo de versionado con estado publicado y URL publica por slug.
+- Navegacion: Landing se encuentra en el grupo `Marketing` del sidebar (junto con Campanas y Correos).

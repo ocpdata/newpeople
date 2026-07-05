@@ -24,7 +24,11 @@ import settingsRoutes from "./routes.settings.js";
 import toolsRoutes from "./routes.tools.js";
 import aiRoutes from "./routes.ai.js";
 import chatbotRoutes from "./routes.chatbot.js";
-import landingRoutes, { publicRouter as publicLandingRoutes } from "./routes.landing.js";
+import landingRoutes, {
+  publicRouter as publicLandingRoutes,
+} from "./routes.landing.js";
+import campaignRoutes from "./routes.campaigns.js";
+import campaignEmailRoutes from "./routes.campaign-emails.js";
 
 export function createApp() {
   const app = express();
@@ -110,6 +114,8 @@ export function createApp() {
   app.use("/api", authRequired, loadUser, aiRoutes);
   app.use("/api/chatbot", authRequired, loadUser, chatbotRoutes);
   app.use("/api/landing/v1", authRequired, loadUser, landingRoutes);
+  app.use("/api/campaigns", authRequired, loadUser, campaignRoutes);
+  app.use("/api/campaign-emails", authRequired, loadUser, campaignEmailRoutes);
 
   app.use((err, req, res, _next) => {
     const status = Number(err?.status) || 500;

@@ -35,7 +35,7 @@ Documento relacionado:
 - Crear el lead solo guarda evidencia y fuente; no completa por si mismo la
   cuenta, contactos u oportunidad.
 - El usuario debe abrir el lead y ejecutar `Analizar documentos para llenar
-  informacion` para refrescar sinopsis, sugerencias y relaciones detectadas.
+informacion` para refrescar sinopsis, sugerencias y relaciones detectadas.
 - Si se agregan nuevos archivos despues, deben subirse primero y luego volver a
   ejecutar el analisis para que las sugerencias se actualicen.
 
@@ -690,21 +690,51 @@ Formatos soportados:
 
 ## API relacionada (resumen)
 
+Listado y tableros:
+
 - `GET /api/interactions`
-- `GET /api/interactions/:interactionId`
-- `POST /api/interactions`
-- `PUT /api/interactions/:interactionId`
-- `POST /api/interactions/:interactionId/resolve`
-- `POST /api/interactions/:interactionId/disqualify`
-- `GET /api/interactions/call-outcome-catalogs`
-- `POST /api/interactions/:interactionId/call-outcome`
+- `GET /api/interactions/dashboard`
+
+Catalogos y opciones de resolucion:
+
 - `GET /api/interactions/resolution-options`
+- `GET /api/interactions/call-outcome-catalogs`
+- `GET /api/interactions/lead-execution-guides`
+
+Carga documental desacoplada:
+
 - `POST /api/interactions/document-upload-sessions`
 - `POST /api/interactions/document-upload-sessions/:sessionPublicId/files`
+
+Ciclo de vida del lead:
+
+- `POST /api/interactions`
+- `GET /api/interactions/:interactionId`
+- `PUT /api/interactions/:interactionId`
+- `DELETE /api/interactions/:interactionId`
+- `POST /api/interactions/:interactionId/resolve`
+- `POST /api/interactions/:interactionId/disqualify`
+- `POST /api/interactions/:interactionId/call-outcome`
+- `PUT /api/interactions/:interactionId/lead-execution-plan`
+
+Documentos sobre un lead:
+
 - `POST /api/interactions/:interactionId/documents`
 - `DELETE /api/interactions/:interactionId/documents/:documentPublicId`
+- `GET /api/interactions/:interactionId/documents/:documentPublicId/download`
+
+Analisis de documentos:
+
 - `POST /api/interactions/:interactionId/analyze/jobs`
 - `GET /api/interactions/:interactionId/analyze/jobs/:jobId`
+- `POST /api/interactions/:interactionId/analyze`
+
+Correo comercial desde lead:
+
+- `GET /api/interactions/:interactionId/email-attachments/options`
+- `POST /api/interactions/:interactionId/email-suggestion`
+- `POST /api/interactions/:interactionId/email-attachment-suggestions`
+- `POST /api/interactions/:interactionId/send-email`
 
 ## Consideraciones operativas
 
@@ -721,7 +751,7 @@ Formatos soportados:
 - La logica de ayuda del seguimiento comercial esta modularizada en componentes
   reutilizables del frontend para evitar divergencias entre modal, detalle y documentacion.
 
-## Estado actual de la aplicacion (2026-06)
+## Estado actual de la aplicacion (2026-07)
 
 - La subida de documentos esta desacoplada del analisis.
 - El detalle del lead ya permite agregar mas archivos y reanalizar en pasos separados.
@@ -730,3 +760,9 @@ Formatos soportados:
   de la ultima gestion registrada.
 - El resultado de llamada ya usa tarjetas guiadas para situacion, motivo y accion.
 - El detalle del lead ya expone ayuda inline reutilizando la misma guia del modal.
+- El modulo incluye tablero de seguimiento (`/dashboard`) con colas operativas
+  (vencidos, sin contacto, estancados y asignados sin oportunidad).
+- El plan de ejecucion del lead se persiste por registro y puede editarse desde
+  endpoint dedicado.
+- El lead soporta sugerencia IA de correo y envio de correo comercial con Google
+  desde el propio detalle del lead.

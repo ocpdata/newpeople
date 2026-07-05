@@ -183,4 +183,64 @@ export const config = {
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },
+  landingSecurity: {
+    defaultEnabled:
+      String(process.env.LANDING_SECURITY_DEFAULT_ENABLED || "false") ===
+      "true",
+    defaultHoneypotEnabled:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_HONEYPOT_ENABLED || "true",
+      ) === "true",
+    defaultRequireUserAgent:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_REQUIRE_USER_AGENT || "false",
+      ) === "true",
+    defaultRateLimitEnabled:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_RATE_LIMIT_ENABLED || "false",
+      ) === "true",
+    defaultIpRequestsPerMinute: Number(
+      process.env.LANDING_SECURITY_DEFAULT_IP_REQUESTS_PER_MINUTE || 30,
+    ),
+    defaultSlugRequestsPerHour: Number(
+      process.env.LANDING_SECURITY_DEFAULT_SLUG_REQUESTS_PER_HOUR || 600,
+    ),
+    defaultBlockDurationSeconds: Number(
+      process.env.LANDING_SECURITY_DEFAULT_BLOCK_DURATION_SECONDS || 300,
+    ),
+    defaultRequireIdempotencyKey:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_REQUIRE_IDEMPOTENCY_KEY || "false",
+      ) === "true",
+    defaultMatchPayloadHash:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_MATCH_PAYLOAD_HASH || "false",
+      ) === "true",
+    defaultRejectUnknownFields:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_REJECT_UNKNOWN_FIELDS || "false",
+      ) === "true",
+    defaultMaxFieldLength: Number(
+      process.env.LANDING_SECURITY_DEFAULT_MAX_FIELD_LENGTH || 500,
+    ),
+    defaultMaxTotalFields: Number(
+      process.env.LANDING_SECURITY_DEFAULT_MAX_TOTAL_FIELDS || 120,
+    ),
+    defaultEnforceOriginAllowlist:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_ENFORCE_ORIGIN_ALLOWLIST ||
+          "false",
+      ) === "true",
+    defaultAllowedOrigins: String(
+      process.env.LANDING_SECURITY_DEFAULT_ALLOWED_ORIGINS || "",
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    defaultGenericValidationErrors:
+      String(
+        process.env.LANDING_SECURITY_DEFAULT_GENERIC_VALIDATION_ERRORS ||
+          "false",
+      ) === "true",
+  },
 };

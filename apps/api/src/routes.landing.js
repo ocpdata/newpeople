@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import { z } from "zod";
 import { requireAnyPermission } from "./auth.js";
+import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { logAuditEvent } from "./audit.js";
 import {
@@ -80,6 +81,44 @@ const confirmationConfigSchema = z.object({
   page_html: z.string().trim().max(2_000_000).optional().nullable(),
 });
 
+const securityConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  honeypot_enabled: z.boolean().optional(),
+  require_user_agent: z.boolean().optional(),
+  rate_limit: z
+    .object({
+      enabled: z.boolean().optional(),
+      ip_requests_per_minute: z.number().int().min(1).max(10_000).optional(),
+      slug_requests_per_hour: z.number().int().min(1).max(100_000).optional(),
+      block_duration_seconds: z.number().int().min(1).max(86_400).optional(),
+    })
+    .optional(),
+  idempotency: z
+    .object({
+      require_key: z.boolean().optional(),
+      match_payload_hash: z.boolean().optional(),
+    })
+    .optional(),
+  payload_rules: z
+    .object({
+      reject_unknown_fields: z.boolean().optional(),
+      max_field_length_default: z.number().int().min(10).max(20_000).optional(),
+      max_total_fields: z.number().int().min(1).max(1_000).optional(),
+    })
+    .optional(),
+  origin_rules: z
+    .object({
+      enforce_allowlist: z.boolean().optional(),
+      allowed_origins: z.array(z.string().trim().max(300)).max(200).optional(),
+    })
+    .optional(),
+  response_privacy: z
+    .object({
+      generic_validation_errors: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 const publicSubmitSchema = z.object({
   form_data: z.record(z.string(), z.any()),
   context: z
@@ -101,6 +140,66 @@ const submissionNotesSchema = z.object({
 
 const privateRouter = express.Router();
 const publicRouter = express.Router();
+
+const LANDING_SECURITY_DEFAULTS = Object.freeze({
+  enabled: Boolean(config.landingSecurity?.defaultEnabled),
+  honeypot_enabled: Boolean(config.landingSecurity?.defaultHoneypotEnabled),
+  require_user_agent: Boolean(config.landingSecurity?.defaultRequireUserAgent),
+  rate_limit: {
+    enabled: Boolean(config.landingSecurity?.defaultRateLimitEnabled),
+    ip_requests_per_minute: Math.max(
+      1,
+      Number(config.landingSecurity?.defaultIpRequestsPerMinute || 30),
+    ),
+    slug_requests_per_hour: Math.max(
+      1,
+      Number(config.landingSecurity?.defaultSlugRequestsPerHour || 600),
+    ),
+    block_duration_seconds: Math.max(
+      1,
+      Number(config.landingSecurity?.defaultBlockDurationSeconds || 300),
+    ),
+  },
+  idempotency: {
+    require_key: Boolean(config.landingSecurity?.defaultRequireIdempotencyKey),
+    match_payload_hash: Boolean(
+      config.landingSecurity?.defaultMatchPayloadHash,
+    ),
+  },
+  payload_rules: {
+    reject_unknown_fields: Boolean(
+      config.landingSecurity?.defaultRejectUnknownFields,
+    ),
+    max_field_length_default: Math.max(
+      10,
+      Number(config.landingSecurity?.defaultMaxFieldLength || 500),
+    ),
+    max_total_fields: Math.max(
+      1,
+      Number(config.landingSecurity?.defaultMaxTotalFields || 120),
+    ),
+  },
+  origin_rules: {
+    enforce_allowlist: Boolean(
+      config.landingSecurity?.defaultEnforceOriginAllowlist,
+    ),
+    allowed_origins: Array.isArray(
+      config.landingSecurity?.defaultAllowedOrigins,
+    )
+      ? config.landingSecurity.defaultAllowedOrigins
+      : [],
+  },
+  response_privacy: {
+    generic_validation_errors: Boolean(
+      config.landingSecurity?.defaultGenericValidationErrors,
+    ),
+  },
+});
+
+const landingSubmissionRateLimitBuckets = {
+  ipMinute: new Map(),
+  slugHour: new Map(),
+};
 
 function normalizeSlug(value) {
   return String(value || "")
@@ -249,6 +348,191 @@ function parseConfirmationConfig(value) {
     redirect_url: String(raw.redirect_url || "").trim(),
     page_html: String(raw.page_html || "").trim(),
   };
+}
+
+function normalizeOrigin(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function parseLandingSecurityConfig(value) {
+  const raw =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value || "{}");
+          } catch {
+            return {};
+          }
+        })()
+      : value && typeof value === "object"
+        ? value
+        : {};
+
+  const parsed = securityConfigSchema.safeParse(raw);
+  const clean = parsed.success ? parsed.data : {};
+
+  const allowedOrigins = [
+    ...(LANDING_SECURITY_DEFAULTS.origin_rules.allowed_origins || []),
+    ...((clean.origin_rules?.allowed_origins || []).map((value) =>
+      normalizeOrigin(value),
+    ) || []),
+  ].filter(Boolean);
+
+  return {
+    enabled:
+      clean.enabled !== undefined
+        ? Boolean(clean.enabled)
+        : LANDING_SECURITY_DEFAULTS.enabled,
+    honeypot_enabled:
+      clean.honeypot_enabled !== undefined
+        ? Boolean(clean.honeypot_enabled)
+        : LANDING_SECURITY_DEFAULTS.honeypot_enabled,
+    require_user_agent:
+      clean.require_user_agent !== undefined
+        ? Boolean(clean.require_user_agent)
+        : LANDING_SECURITY_DEFAULTS.require_user_agent,
+    rate_limit: {
+      enabled:
+        clean.rate_limit?.enabled !== undefined
+          ? Boolean(clean.rate_limit.enabled)
+          : LANDING_SECURITY_DEFAULTS.rate_limit.enabled,
+      ip_requests_per_minute: Math.max(
+        1,
+        Number(
+          clean.rate_limit?.ip_requests_per_minute ||
+            LANDING_SECURITY_DEFAULTS.rate_limit.ip_requests_per_minute,
+        ),
+      ),
+      slug_requests_per_hour: Math.max(
+        1,
+        Number(
+          clean.rate_limit?.slug_requests_per_hour ||
+            LANDING_SECURITY_DEFAULTS.rate_limit.slug_requests_per_hour,
+        ),
+      ),
+      block_duration_seconds: Math.max(
+        1,
+        Number(
+          clean.rate_limit?.block_duration_seconds ||
+            LANDING_SECURITY_DEFAULTS.rate_limit.block_duration_seconds,
+        ),
+      ),
+    },
+    idempotency: {
+      require_key:
+        clean.idempotency?.require_key !== undefined
+          ? Boolean(clean.idempotency.require_key)
+          : LANDING_SECURITY_DEFAULTS.idempotency.require_key,
+      match_payload_hash:
+        clean.idempotency?.match_payload_hash !== undefined
+          ? Boolean(clean.idempotency.match_payload_hash)
+          : LANDING_SECURITY_DEFAULTS.idempotency.match_payload_hash,
+    },
+    payload_rules: {
+      reject_unknown_fields:
+        clean.payload_rules?.reject_unknown_fields !== undefined
+          ? Boolean(clean.payload_rules.reject_unknown_fields)
+          : LANDING_SECURITY_DEFAULTS.payload_rules.reject_unknown_fields,
+      max_field_length_default: Math.max(
+        10,
+        Number(
+          clean.payload_rules?.max_field_length_default ||
+            LANDING_SECURITY_DEFAULTS.payload_rules.max_field_length_default,
+        ),
+      ),
+      max_total_fields: Math.max(
+        1,
+        Number(
+          clean.payload_rules?.max_total_fields ||
+            LANDING_SECURITY_DEFAULTS.payload_rules.max_total_fields,
+        ),
+      ),
+    },
+    origin_rules: {
+      enforce_allowlist:
+        clean.origin_rules?.enforce_allowlist !== undefined
+          ? Boolean(clean.origin_rules.enforce_allowlist)
+          : LANDING_SECURITY_DEFAULTS.origin_rules.enforce_allowlist,
+      allowed_origins: Array.from(new Set(allowedOrigins)),
+    },
+    response_privacy: {
+      generic_validation_errors:
+        clean.response_privacy?.generic_validation_errors !== undefined
+          ? Boolean(clean.response_privacy.generic_validation_errors)
+          : LANDING_SECURITY_DEFAULTS.response_privacy
+              .generic_validation_errors,
+    },
+  };
+}
+
+function buildPublicSecurityMessage(securityConfig, defaultMessage) {
+  if (securityConfig?.response_privacy?.generic_validation_errors) {
+    return "No fue posible procesar el registro";
+  }
+  return defaultMessage;
+}
+
+function checkSlidingRateLimit(bucket, key, limit, windowMs, blockDurationMs) {
+  const now = Date.now();
+  const current = bucket.get(key);
+  if (!current) {
+    bucket.set(key, {
+      windowStart: now,
+      count: 1,
+      blockedUntil: 0,
+    });
+    return { blocked: false };
+  }
+
+  if (Number(current.blockedUntil || 0) > now) {
+    return {
+      blocked: true,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((Number(current.blockedUntil) - now) / 1000),
+      ),
+    };
+  }
+
+  if (now - Number(current.windowStart || 0) >= windowMs) {
+    current.windowStart = now;
+    current.count = 1;
+    current.blockedUntil = 0;
+    bucket.set(key, current);
+    return { blocked: false };
+  }
+
+  current.count = Number(current.count || 0) + 1;
+  if (current.count > limit) {
+    current.blockedUntil = now + blockDurationMs;
+    bucket.set(key, current);
+    return {
+      blocked: true,
+      retryAfterSeconds: Math.max(1, Math.ceil(blockDurationMs / 1000)),
+    };
+  }
+
+  bucket.set(key, current);
+  return { blocked: false };
+}
+
+function stableJsonStringify(value) {
+  if (value === null || value === undefined) return "null";
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
+    .join(",")}}`;
 }
 
 function buildPublicSubmitSuccessPayload({ formSchema, confirmationConfig }) {
@@ -604,13 +888,26 @@ function buildLandingCaptureScript(slug) {
       event.preventDefault();
       event.stopPropagation();
       var formData = collectFormData(form);
+      var idempotencyKey = '';
+      try {
+        idempotencyKey =
+          (window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : '') ||
+          ('landing-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+      } catch (_err) {
+        idempotencyKey = 'landing-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      }
 
       var submitButton = form.querySelector('[type="submit"]');
       if (submitButton) submitButton.disabled = true;
 
       var response = await fetch('/api/public/landing/v1/${safeSlug}/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
         body: JSON.stringify({
           form_data: formData,
           context: {
@@ -685,6 +982,7 @@ function hasPermission(user, permission) {
 async function loadLandingPageById(landingPageId) {
   const rows = await query(
     `SELECT lp.id, lp.event_id, lp.event_name, lp.slug, lp.status, lp.current_version_id,
+            lp.confirmation_config_json, lp.security_config_json,
             lp.created_by, lp.updated_by, lp.created_at, lp.updated_at
      FROM landing_pages lp
      WHERE lp.id = ?
@@ -2198,6 +2496,47 @@ privateRouter.patch(
   },
 );
 
+privateRouter.patch(
+  "/landing-pages/:landingPageId/security-config",
+  requireAnyPermission(landingUpdatePermissions),
+  async (req, res) => {
+    const landingPageId = Number(req.params.landingPageId);
+    if (!Number.isInteger(landingPageId) || landingPageId <= 0) {
+      return res.status(400).json({ message: "landingPageId invalido" });
+    }
+
+    const parsed = securityConfigSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const rows = await query(
+      `SELECT id FROM landing_pages WHERE id = ? LIMIT 1`,
+      [landingPageId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Landing no encontrada" });
+    }
+
+    const normalizedConfig = parseLandingSecurityConfig(parsed.data);
+
+    await query(
+      `UPDATE landing_pages
+       SET security_config_json = ?, updated_by = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [JSON.stringify(normalizedConfig), Number(req.user.id), landingPageId],
+    );
+
+    return res.json({
+      updated: true,
+      security_config: normalizedConfig,
+    });
+  },
+);
+
 privateRouter.post(
   "/landing-pages/:landingPageId/publish",
   requireAnyPermission(landingPublishPermissions),
@@ -2629,6 +2968,52 @@ privateRouter.post(
   },
 );
 
+privateRouter.delete(
+  "/submissions/:submissionId",
+  requireAnyPermission(landingSubmissionsReprocessPermissions),
+  async (req, res) => {
+    const submissionId = Number(req.params.submissionId);
+    if (!Number.isInteger(submissionId) || submissionId <= 0) {
+      return res.status(400).json({ message: "submissionId invalido" });
+    }
+
+    const rows = await query(
+      `SELECT id, event_id, landing_page_id
+       FROM landing_submissions
+       WHERE id = ?
+       LIMIT 1`,
+      [submissionId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Submission no encontrado" });
+    }
+
+    await query(
+      `DELETE FROM landing_submissions
+       WHERE id = ?`,
+      [submissionId],
+    );
+
+    await logAuditEvent({
+      req,
+      module: "landing",
+      action: "submission_deleted",
+      entityType: "landing_submission",
+      entityId: submissionId,
+      detail: `Registro eliminado ${submissionId}`,
+      before: {
+        event_id: Number(rows[0].event_id || 0) || null,
+        landing_page_id: Number(rows[0].landing_page_id || 0) || null,
+      },
+    });
+
+    return res.json({
+      submission_id: submissionId,
+      deleted: true,
+    });
+  },
+);
+
 publicRouter.get("/landing/:slug.html", async (req, res) => {
   const slug = normalizeSlug(req.params.slug);
   if (!slug) {
@@ -2710,6 +3095,7 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
             lp.event_id,
             lp.current_version_id,
             lp.confirmation_config_json,
+            lp.security_config_json,
             lv.form_schema_json,
             lv.id AS version_id,
             lv.is_active
@@ -2727,8 +3113,84 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
     return res.status(404).json({ message: "Landing no encontrada" });
   }
 
+  const securityConfig = parseLandingSecurityConfig(
+    landing.security_config_json,
+  );
+
+  if (securityConfig.enabled) {
+    if (securityConfig.origin_rules.enforce_allowlist) {
+      const requestOrigin = normalizeOrigin(req.headers.origin || "");
+      if (
+        requestOrigin &&
+        securityConfig.origin_rules.allowed_origins.length > 0 &&
+        !securityConfig.origin_rules.allowed_origins.includes(requestOrigin)
+      ) {
+        return res.status(403).json({
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            "Origen no permitido para esta landing",
+          ),
+        });
+      }
+    }
+
+    if (
+      securityConfig.require_user_agent &&
+      !String(req.headers["user-agent"] || "").trim()
+    ) {
+      return res.status(403).json({
+        message: buildPublicSecurityMessage(
+          securityConfig,
+          "Solicitud sin user agent valido",
+        ),
+      });
+    }
+
+    if (securityConfig.rate_limit.enabled) {
+      const blockDurationMs =
+        Number(securityConfig.rate_limit.block_duration_seconds || 1) * 1000;
+
+      const ipRate = checkSlidingRateLimit(
+        landingSubmissionRateLimitBuckets.ipMinute,
+        String(req.ip || "unknown").slice(0, 80),
+        Number(securityConfig.rate_limit.ip_requests_per_minute || 1),
+        60 * 1000,
+        blockDurationMs,
+      );
+      if (ipRate.blocked) {
+        return res.status(429).json({
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            "Demasiadas solicitudes. Intenta nuevamente mas tarde.",
+          ),
+          retry_after_seconds: Number(ipRate.retryAfterSeconds || 60),
+        });
+      }
+
+      const slugRate = checkSlidingRateLimit(
+        landingSubmissionRateLimitBuckets.slugHour,
+        String(slug || "").slice(0, 120),
+        Number(securityConfig.rate_limit.slug_requests_per_hour || 1),
+        60 * 60 * 1000,
+        blockDurationMs,
+      );
+      if (slugRate.blocked) {
+        return res.status(429).json({
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            "Demasiadas solicitudes para este evento. Intenta mas tarde.",
+          ),
+          retry_after_seconds: Number(slugRate.retryAfterSeconds || 60),
+        });
+      }
+    }
+  }
+
   const formData = parsed.data.form_data || {};
-  if (String(formData.hp_field || "").trim()) {
+  if (
+    securityConfig.honeypot_enabled &&
+    String(formData.hp_field || "").trim()
+  ) {
     return res.status(202).json({
       status: "accepted",
       message: "Gracias por registrarte",
@@ -2743,10 +3205,65 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
   try {
     validateFormSchema(formSchema);
   } catch (error) {
-    return res.status(422).json({ message: error.message });
+    return res.status(422).json({
+      message: buildPublicSecurityMessage(securityConfig, error.message),
+    });
   }
 
   const fieldsMap = inferFieldMap(formSchema);
+  if (securityConfig.enabled) {
+    const fieldEntries = Object.entries(formData || {}).filter(
+      ([key]) => String(key || "").trim() !== "hp_field",
+    );
+
+    if (
+      fieldEntries.length >
+      Number(securityConfig.payload_rules.max_total_fields || 1)
+    ) {
+      return res.status(422).json({
+        message: buildPublicSecurityMessage(
+          securityConfig,
+          "El formulario excede el numero maximo de campos permitidos",
+        ),
+      });
+    }
+
+    for (const [rawKey, rawValue] of fieldEntries) {
+      const key = String(rawKey || "").trim();
+      if (!key) continue;
+
+      if (
+        securityConfig.payload_rules.reject_unknown_fields &&
+        !fieldsMap.has(key)
+      ) {
+        return res.status(422).json({
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            `Campo no permitido: ${key}`,
+          ),
+        });
+      }
+
+      const serializedValue =
+        typeof rawValue === "string"
+          ? rawValue
+          : typeof rawValue === "number" || typeof rawValue === "boolean"
+            ? String(rawValue)
+            : JSON.stringify(rawValue || "");
+      if (
+        String(serializedValue || "").length >
+        Number(securityConfig.payload_rules.max_field_length_default || 10)
+      ) {
+        return res.status(422).json({
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            `Valor excede el tamano maximo permitido en campo: ${key}`,
+          ),
+        });
+      }
+    }
+  }
+
   for (const field of formSchema.fields || []) {
     if (!field?.required) continue;
     const key = String(field?.key || "").trim();
@@ -2757,7 +3274,10 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       String(formData[key]).trim() === ""
     ) {
       return res.status(422).json({
-        message: `Campo requerido: ${key}`,
+        message: buildPublicSecurityMessage(
+          securityConfig,
+          `Campo requerido: ${key}`,
+        ),
       });
     }
 
@@ -2766,7 +3286,10 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       const email = normalizeEmail(formData[key]);
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res.status(422).json({
-          message: `Correo invalido en campo: ${key}`,
+          message: buildPublicSecurityMessage(
+            securityConfig,
+            `Correo invalido en campo: ${key}`,
+          ),
         });
       }
     }
@@ -2775,9 +3298,23 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
   const idempotencyKey = String(req.headers["idempotency-key"] || "")
     .trim()
     .slice(0, 120);
+
+  if (
+    securityConfig.enabled &&
+    securityConfig.idempotency.require_key &&
+    !idempotencyKey
+  ) {
+    return res.status(400).json({
+      message: buildPublicSecurityMessage(
+        securityConfig,
+        "Idempotency-Key es obligatorio para esta landing",
+      ),
+    });
+  }
+
   if (idempotencyKey) {
     const existingRows = await query(
-      `SELECT id
+      `SELECT id, payload_raw_json
        FROM landing_submissions
        WHERE landing_page_id = ?
          AND idempotency_key = ?
@@ -2785,6 +3322,38 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
       [Number(landing.landing_page_id), idempotencyKey],
     );
     if (existingRows[0]) {
+      if (
+        securityConfig.enabled &&
+        securityConfig.idempotency.match_payload_hash
+      ) {
+        const existingPayloadRaw =
+          typeof existingRows[0].payload_raw_json === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(existingRows[0].payload_raw_json || "{}");
+                } catch {
+                  return {};
+                }
+              })()
+            : existingRows[0].payload_raw_json || {};
+
+        const existingHash = createHash("sha256")
+          .update(stableJsonStringify(existingPayloadRaw?.form_data || {}))
+          .digest("hex");
+        const incomingHash = createHash("sha256")
+          .update(stableJsonStringify(formData || {}))
+          .digest("hex");
+
+        if (existingHash !== incomingHash) {
+          return res.status(409).json({
+            message: buildPublicSecurityMessage(
+              securityConfig,
+              "Idempotency-Key reutilizado con payload diferente",
+            ),
+          });
+        }
+      }
+
       const successPayload = buildPublicSubmitSuccessPayload({
         formSchema,
         confirmationConfig: landing.confirmation_config_json,

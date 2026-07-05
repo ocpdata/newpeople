@@ -11,7 +11,9 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
+- [Campanas](./campanas.md)
 - [Landing](./landing.md)
+- [Correos de campana](./correos-campana.md)
 - [Tableros de leads v1](./tableros-leads-v1.md)
 - [Oportunidades](./oportunidades.md)
 - [Contactos](./contactos.md)
@@ -63,6 +65,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - IA/Configuracion: documentada la administracion de tarifas por modelo desde
   Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
 - Landing: documento nuevo con flujo por evento, versionado/publicacion, submissions, permisos y endpoints clave.
+- Campanas: documento nuevo con catalogos, reglas de compatibilidad tipo/subtipo, audiencia por cuenta/contacto, permisos y endpoints del modulo.
+- Correos de campana: documento actualizado a V1 operativa, con envio de prueba, corridas backend con worker automatico (50/h y 300/d), controles de pausa/reanudar/cancelar y tablero basico de estado.
 - Comisiones: documento nuevo para reglas trimestrales de configuracion y seguimiento en Planeacion Comercial, con umbral de cuota, margen minimo por cotizacion y calculo por item.
 - Auditoria: pantalla global con filtros, paginacion y entidad por nombre.
 - UI global: encabezado unificado en todos los modulos (titulo con icono SVG,

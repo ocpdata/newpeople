@@ -151,6 +151,125 @@ const DEFAULT_CONFIRMATION_PAGE_HTML = `<!doctype html>
   </body>
 </html>`;
 
+const DEFAULT_SECURITY_CONFIG = {
+  enabled: false,
+  honeypot_enabled: true,
+  require_user_agent: false,
+  rate_limit: {
+    enabled: false,
+    ip_requests_per_minute: 30,
+    slug_requests_per_hour: 600,
+    block_duration_seconds: 300,
+  },
+  idempotency: {
+    require_key: false,
+    match_payload_hash: false,
+  },
+  payload_rules: {
+    reject_unknown_fields: false,
+    max_field_length_default: 500,
+    max_total_fields: 120,
+  },
+  origin_rules: {
+    enforce_allowlist: false,
+    allowed_origins: [],
+  },
+  response_privacy: {
+    generic_validation_errors: false,
+  },
+};
+
+function parseSecurityConfigFromApi(value) {
+  const raw =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value || "{}");
+          } catch {
+            return {};
+          }
+        })()
+      : value && typeof value === "object"
+        ? value
+        : {};
+
+  const allowedOrigins = Array.isArray(raw?.origin_rules?.allowed_origins)
+    ? raw.origin_rules.allowed_origins
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    : [];
+
+  return {
+    enabled:
+      raw.enabled !== undefined
+        ? Boolean(raw.enabled)
+        : DEFAULT_SECURITY_CONFIG.enabled,
+    honeypot_enabled:
+      raw.honeypot_enabled !== undefined
+        ? Boolean(raw.honeypot_enabled)
+        : DEFAULT_SECURITY_CONFIG.honeypot_enabled,
+    require_user_agent:
+      raw.require_user_agent !== undefined
+        ? Boolean(raw.require_user_agent)
+        : DEFAULT_SECURITY_CONFIG.require_user_agent,
+    rate_limit: {
+      enabled:
+        raw?.rate_limit?.enabled !== undefined
+          ? Boolean(raw.rate_limit.enabled)
+          : DEFAULT_SECURITY_CONFIG.rate_limit.enabled,
+      ip_requests_per_minute: Number(
+        raw?.rate_limit?.ip_requests_per_minute ||
+          DEFAULT_SECURITY_CONFIG.rate_limit.ip_requests_per_minute,
+      ),
+      slug_requests_per_hour: Number(
+        raw?.rate_limit?.slug_requests_per_hour ||
+          DEFAULT_SECURITY_CONFIG.rate_limit.slug_requests_per_hour,
+      ),
+      block_duration_seconds: Number(
+        raw?.rate_limit?.block_duration_seconds ||
+          DEFAULT_SECURITY_CONFIG.rate_limit.block_duration_seconds,
+      ),
+    },
+    idempotency: {
+      require_key:
+        raw?.idempotency?.require_key !== undefined
+          ? Boolean(raw.idempotency.require_key)
+          : DEFAULT_SECURITY_CONFIG.idempotency.require_key,
+      match_payload_hash:
+        raw?.idempotency?.match_payload_hash !== undefined
+          ? Boolean(raw.idempotency.match_payload_hash)
+          : DEFAULT_SECURITY_CONFIG.idempotency.match_payload_hash,
+    },
+    payload_rules: {
+      reject_unknown_fields:
+        raw?.payload_rules?.reject_unknown_fields !== undefined
+          ? Boolean(raw.payload_rules.reject_unknown_fields)
+          : DEFAULT_SECURITY_CONFIG.payload_rules.reject_unknown_fields,
+      max_field_length_default: Number(
+        raw?.payload_rules?.max_field_length_default ||
+          DEFAULT_SECURITY_CONFIG.payload_rules.max_field_length_default,
+      ),
+      max_total_fields: Number(
+        raw?.payload_rules?.max_total_fields ||
+          DEFAULT_SECURITY_CONFIG.payload_rules.max_total_fields,
+      ),
+    },
+    origin_rules: {
+      enforce_allowlist:
+        raw?.origin_rules?.enforce_allowlist !== undefined
+          ? Boolean(raw.origin_rules.enforce_allowlist)
+          : DEFAULT_SECURITY_CONFIG.origin_rules.enforce_allowlist,
+      allowed_origins: allowedOrigins,
+    },
+    response_privacy: {
+      generic_validation_errors:
+        raw?.response_privacy?.generic_validation_errors !== undefined
+          ? Boolean(raw.response_privacy.generic_validation_errors)
+          : DEFAULT_SECURITY_CONFIG.response_privacy.generic_validation_errors,
+    },
+  };
+}
+
 function prettyJson(value) {
   return JSON.stringify(value, null, 2);
 }
@@ -580,6 +699,7 @@ export default function LandingModulePage() {
   const [newEventName, setNewEventName] = useState("");
   const [newSlug, setNewSlug] = useState("");
   const [newSourceType, setNewSourceType] = useState("manual_edit");
+  const [campaignNameOptions, setCampaignNameOptions] = useState([]);
 
   const [editorHtml, setEditorHtml] = useState(DEFAULT_HTML);
   const [editorFormSchemaText, setEditorFormSchemaText] = useState(
@@ -612,6 +732,7 @@ export default function LandingModulePage() {
     {},
   );
   const [sendingSubmissionById, setSendingSubmissionById] = useState({});
+  const [deletingSubmissionById, setDeletingSubmissionById] = useState({});
   const [crmStatusFilter, setCrmStatusFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -627,6 +748,10 @@ export default function LandingModulePage() {
   const [confirmationConfig, setConfirmationConfig] = useState(
     DEFAULT_CONFIRMATION_CONFIG,
   );
+  const [securityConfig, setSecurityConfig] = useState(DEFAULT_SECURITY_CONFIG);
+  const [securityAllowedOriginsText, setSecurityAllowedOriginsText] =
+    useState("");
+  const [isSavingSecurityConfig, setIsSavingSecurityConfig] = useState(false);
   const [isSavingConfirmation, setIsSavingConfirmation] = useState(false);
   const [isGeneratingEmailWithAi, setIsGeneratingEmailWithAi] = useState(false);
   const [confirmationEmailAiPrompt, setConfirmationEmailAiPrompt] =
@@ -834,6 +959,29 @@ export default function LandingModulePage() {
     setGlobalSuccess("");
   }, []);
 
+  const loadCampaignNameOptions = useCallback(async () => {
+    try {
+      const { data } = await api.get("/api/campaigns");
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const names = Array.from(
+        new Set(
+          items.map((item) => String(item?.name || "").trim()).filter(Boolean),
+        ),
+      ).sort((left, right) =>
+        left.localeCompare(right, "es", { sensitivity: "base" }),
+      );
+      setCampaignNameOptions(names);
+    } catch (error) {
+      setCampaignNameOptions([]);
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar campañas para el selector de evento",
+        ),
+      );
+    }
+  }, [pushError]);
+
   const loadLandingList = useCallback(async () => {
     try {
       setIsLoadingList(true);
@@ -909,6 +1057,14 @@ export default function LandingModulePage() {
           redirect_url: parsedConfirmation.redirect_url || "",
           page_html: parsedConfirmation.page_html || "",
         });
+
+        const parsedSecurity = parseSecurityConfigFromApi(
+          data?.landing_page?.security_config_json,
+        );
+        setSecurityConfig(parsedSecurity);
+        setSecurityAllowedOriginsText(
+          (parsedSecurity.origin_rules.allowed_origins || []).join("\n"),
+        );
       } catch (error) {
         pushError(
           getApiErrorMessage(
@@ -970,6 +1126,10 @@ export default function LandingModulePage() {
   useEffect(() => {
     loadLandingList();
   }, [loadLandingList]);
+
+  useEffect(() => {
+    loadCampaignNameOptions();
+  }, [loadCampaignNameOptions]);
 
   useEffect(() => {
     if (!selectedLandingId) return;
@@ -1315,6 +1475,79 @@ export default function LandingModulePage() {
       );
     } finally {
       setIsSavingConfirmation(false);
+    }
+  }
+
+  async function handleSaveSecurityConfig() {
+    if (!selectedLandingId) return;
+
+    const allowedOrigins = String(securityAllowedOriginsText || "")
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    try {
+      setIsSavingSecurityConfig(true);
+      await api.patch(
+        `/api/landing/v1/landing-pages/${selectedLandingId}/security-config`,
+        {
+          enabled: Boolean(securityConfig.enabled),
+          honeypot_enabled: Boolean(securityConfig.honeypot_enabled),
+          require_user_agent: Boolean(securityConfig.require_user_agent),
+          rate_limit: {
+            enabled: Boolean(securityConfig.rate_limit?.enabled),
+            ip_requests_per_minute: Number(
+              securityConfig.rate_limit?.ip_requests_per_minute || 30,
+            ),
+            slug_requests_per_hour: Number(
+              securityConfig.rate_limit?.slug_requests_per_hour || 600,
+            ),
+            block_duration_seconds: Number(
+              securityConfig.rate_limit?.block_duration_seconds || 300,
+            ),
+          },
+          idempotency: {
+            require_key: Boolean(securityConfig.idempotency?.require_key),
+            match_payload_hash: Boolean(
+              securityConfig.idempotency?.match_payload_hash,
+            ),
+          },
+          payload_rules: {
+            reject_unknown_fields: Boolean(
+              securityConfig.payload_rules?.reject_unknown_fields,
+            ),
+            max_field_length_default: Number(
+              securityConfig.payload_rules?.max_field_length_default || 500,
+            ),
+            max_total_fields: Number(
+              securityConfig.payload_rules?.max_total_fields || 120,
+            ),
+          },
+          origin_rules: {
+            enforce_allowlist: Boolean(
+              securityConfig.origin_rules?.enforce_allowlist,
+            ),
+            allowed_origins: allowedOrigins,
+          },
+          response_privacy: {
+            generic_validation_errors: Boolean(
+              securityConfig.response_privacy?.generic_validation_errors,
+            ),
+          },
+        },
+      );
+
+      await loadLandingDetail(selectedLandingId);
+      pushSuccess("Configuración de seguridad guardada");
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible guardar la configuración de seguridad",
+        ),
+      );
+    } finally {
+      setIsSavingSecurityConfig(false);
     }
   }
 
@@ -1878,6 +2111,37 @@ export default function LandingModulePage() {
     }
   }
 
+  async function handleDeleteSubmission(submissionId) {
+    const numericSubmissionId = Number(submissionId || 0);
+    if (!numericSubmissionId) return;
+    if (deletingSubmissionById[numericSubmissionId]) return;
+
+    const shouldDelete = window.confirm(
+      "¿Eliminar este registro? Esta acción no se puede deshacer.",
+    );
+    if (!shouldDelete) return;
+
+    setDeletingSubmissionById((prev) => ({
+      ...prev,
+      [numericSubmissionId]: true,
+    }));
+
+    try {
+      await api.delete(`/api/landing/v1/submissions/${numericSubmissionId}`);
+      pushSuccess("Registro eliminado");
+      await loadSubmissions();
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(error, "No fue posible eliminar el registro"),
+      );
+    } finally {
+      setDeletingSubmissionById((prev) => ({
+        ...prev,
+        [numericSubmissionId]: false,
+      }));
+    }
+  }
+
   function useVersionInEditor(version) {
     if (!version) return;
     setSelectedVersionId(Number(version.id));
@@ -1917,6 +2181,12 @@ export default function LandingModulePage() {
           onClick={() => setActiveTab("editor")}
         >
           Editor / Publicación
+        </button>
+        <button
+          className={activeTab === "security" ? "is-active" : ""}
+          onClick={() => setActiveTab("security")}
+        >
+          Seguridad
         </button>
         <button
           className={activeTab === "submissions" ? "is-active" : ""}
@@ -1973,13 +2243,20 @@ export default function LandingModulePage() {
               >
                 <label>
                   Nombre del evento
-                  <input
-                    type="text"
+                  <select
                     value={newEventName}
                     onChange={(event) => setNewEventName(event.target.value)}
-                    placeholder="Evento"
                     required
-                  />
+                  >
+                    <option value="" disabled>
+                      Selecciona una campaña
+                    </option>
+                    {campaignNameOptions.map((campaignName) => (
+                      <option key={campaignName} value={campaignName}>
+                        {campaignName}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Slug
@@ -2702,6 +2979,432 @@ export default function LandingModulePage() {
         </section>
       ) : null}
 
+      {activeTab === "security" ? (
+        <section className="landing-panel">
+          <article className="landing-card landing-editor-card">
+            <h3>Seguridad de registro por evento</h3>
+            {!selectedLandingId ? (
+              <p className="landing-muted">
+                Selecciona una landing desde la pestaña Eventos/Landings.
+              </p>
+            ) : (
+              <section className="landing-editor-section">
+                <div className="landing-editor-section-head">
+                  <h4>Controles de seguridad</h4>
+                  <p className="landing-editor-section-description">
+                    Ajusta reglas de protección para la API pública de registro
+                    de este evento.
+                  </p>
+                </div>
+
+                <div className="landing-editor-section-grid">
+                  <div className="landing-editor-section-main">
+                    <fieldset className="landing-confirmation-config-section">
+                      <legend>Política general</legend>
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(securityConfig.enabled)}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              enabled: event.target.checked,
+                            }))
+                          }
+                        />
+                        Activar política de seguridad para este evento
+                      </label>
+                      <p className="landing-muted">
+                        Aplica reglas de protección al endpoint público de
+                        registro de esta landing.
+                      </p>
+
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(securityConfig.honeypot_enabled)}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              honeypot_enabled: event.target.checked,
+                            }))
+                          }
+                        />
+                        Activar honeypot (campo trampa)
+                      </label>
+                      <p className="landing-muted">
+                        Descarta envíos automatizados que llenan el campo
+                        oculto.
+                      </p>
+
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(securityConfig.require_user_agent)}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              require_user_agent: event.target.checked,
+                            }))
+                          }
+                        />
+                        Requerir User-Agent en el submit
+                      </label>
+                      <p className="landing-muted">
+                        Rechaza solicitudes que no incluyan encabezado
+                        User-Agent.
+                      </p>
+                    </fieldset>
+
+                    <fieldset className="landing-confirmation-config-section">
+                      <legend>Rate limiting</legend>
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(securityConfig.rate_limit?.enabled)}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              rate_limit: {
+                                ...prev.rate_limit,
+                                enabled: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Activar límites de tráfico
+                      </label>
+                      <p className="landing-muted">
+                        Limita la frecuencia de envíos para reducir abuso.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Solicitudes por minuto por IP
+                        <input
+                          type="number"
+                          min={1}
+                          value={
+                            securityConfig.rate_limit?.ip_requests_per_minute ||
+                            30
+                          }
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              rate_limit: {
+                                ...prev.rate_limit,
+                                ip_requests_per_minute: Math.max(
+                                  1,
+                                  Number(event.target.value || 1),
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Máximo de submits permitidos por IP en 60 segundos.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Solicitudes por hora para este slug
+                        <input
+                          type="number"
+                          min={1}
+                          value={
+                            securityConfig.rate_limit?.slug_requests_per_hour ||
+                            600
+                          }
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              rate_limit: {
+                                ...prev.rate_limit,
+                                slug_requests_per_hour: Math.max(
+                                  1,
+                                  Number(event.target.value || 1),
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Máximo total de envíos para este evento por hora.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Tiempo de bloqueo (segundos)
+                        <input
+                          type="number"
+                          min={1}
+                          value={
+                            securityConfig.rate_limit?.block_duration_seconds ||
+                            300
+                          }
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              rate_limit: {
+                                ...prev.rate_limit,
+                                block_duration_seconds: Math.max(
+                                  1,
+                                  Number(event.target.value || 1),
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Tiempo de bloqueo aplicado al exceder los límites.
+                      </p>
+                    </fieldset>
+
+                    <fieldset className="landing-confirmation-config-section">
+                      <legend>Idempotencia y payload</legend>
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            securityConfig.idempotency?.require_key,
+                          )}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              idempotency: {
+                                ...prev.idempotency,
+                                require_key: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Requerir Idempotency-Key
+                      </label>
+                      <p className="landing-muted">
+                        Exige una llave única para deduplicar reintentos.
+                      </p>
+
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            securityConfig.idempotency?.match_payload_hash,
+                          )}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              idempotency: {
+                                ...prev.idempotency,
+                                match_payload_hash: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Validar hash de payload para Idempotency-Key repetida
+                      </label>
+                      <p className="landing-muted">
+                        Bloquea reuso de la misma llave con contenido distinto.
+                      </p>
+
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            securityConfig.payload_rules?.reject_unknown_fields,
+                          )}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              payload_rules: {
+                                ...prev.payload_rules,
+                                reject_unknown_fields: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Rechazar campos no definidos en el schema
+                      </label>
+                      <p className="landing-muted">
+                        Acepta solo campos declarados en el formulario.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Longitud máxima por campo
+                        <input
+                          type="number"
+                          min={10}
+                          value={
+                            securityConfig.payload_rules
+                              ?.max_field_length_default || 500
+                          }
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              payload_rules: {
+                                ...prev.payload_rules,
+                                max_field_length_default: Math.max(
+                                  10,
+                                  Number(event.target.value || 10),
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Límite de caracteres permitido por cada campo.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Número máximo de campos por submit
+                        <input
+                          type="number"
+                          min={1}
+                          value={
+                            securityConfig.payload_rules?.max_total_fields ||
+                            120
+                          }
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              payload_rules: {
+                                ...prev.payload_rules,
+                                max_total_fields: Math.max(
+                                  1,
+                                  Number(event.target.value || 1),
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Tope de campos permitidos en un solo envío.
+                      </p>
+                    </fieldset>
+
+                    <fieldset className="landing-confirmation-config-section">
+                      <legend>Origen y privacidad de respuesta</legend>
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            securityConfig.origin_rules?.enforce_allowlist,
+                          )}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              origin_rules: {
+                                ...prev.origin_rules,
+                                enforce_allowlist: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Exigir allowlist de origin
+                      </label>
+                      <p className="landing-muted">
+                        Permite registros solo desde dominios autorizados.
+                      </p>
+
+                      <label className="landing-label-block">
+                        Origins permitidos (uno por línea)
+                        <textarea
+                          value={securityAllowedOriginsText}
+                          onChange={(event) =>
+                            setSecurityAllowedOriginsText(event.target.value)
+                          }
+                          rows={6}
+                          placeholder={[
+                            "https://newpip.digitalvs.com",
+                            "https://landing.tudominio.com",
+                          ].join("\n")}
+                        />
+                      </label>
+                      <p className="landing-muted">
+                        Define los origins válidos cuando la allowlist está
+                        activa.
+                      </p>
+
+                      <label className="landing-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(
+                            securityConfig.response_privacy
+                              ?.generic_validation_errors,
+                          )}
+                          onChange={(event) =>
+                            setSecurityConfig((prev) => ({
+                              ...prev,
+                              response_privacy: {
+                                ...prev.response_privacy,
+                                generic_validation_errors: event.target.checked,
+                              },
+                            }))
+                          }
+                        />
+                        Usar mensaje genérico en errores de validación
+                      </label>
+                      <p className="landing-muted">
+                        Evita exponer detalles técnicos de validación al
+                        cliente.
+                      </p>
+                    </fieldset>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveSecurityConfig}
+                      disabled={isSavingSecurityConfig}
+                      className="landing-save-btn"
+                    >
+                      {isSavingSecurityConfig
+                        ? "Guardando..."
+                        : "Guardar seguridad"}
+                    </button>
+                  </div>
+
+                  <div className="landing-editor-section-preview">
+                    <h5>Resumen de política activa</h5>
+                    <div className="landing-confirmation-preview-section">
+                      <p className="landing-muted">
+                        Estado: {securityConfig.enabled ? "Activa" : "Inactiva"}
+                      </p>
+                      <p className="landing-muted">
+                        Honeypot:{" "}
+                        {securityConfig.honeypot_enabled ? "Si" : "No"}
+                      </p>
+                      <p className="landing-muted">
+                        Rate limit:{" "}
+                        {securityConfig.rate_limit?.enabled ? "Si" : "No"}
+                      </p>
+                      <p className="landing-muted">
+                        Idempotency-Key obligatoria:{" "}
+                        {securityConfig.idempotency?.require_key ? "Si" : "No"}
+                      </p>
+                      <p className="landing-muted">
+                        Allowlist origin:{" "}
+                        {securityConfig.origin_rules?.enforce_allowlist
+                          ? "Si"
+                          : "No"}
+                      </p>
+                      <p className="landing-muted">
+                        Origins configurados:{" "}
+                        {
+                          String(securityAllowedOriginsText || "")
+                            .split("\n")
+                            .map((entry) => entry.trim())
+                            .filter(Boolean).length
+                        }
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+          </article>
+        </section>
+      ) : null}
+
       {activeTab === "submissions" ? (
         <section className="landing-panel">
           <article className="landing-card">
@@ -2874,6 +3577,9 @@ export default function LandingModulePage() {
                       const isSendingSubmission = Boolean(
                         sendingSubmissionById[submissionId],
                       );
+                      const isDeletingSubmission = Boolean(
+                        deletingSubmissionById[submissionId],
+                      );
                       const currentNotes = String(submission.user_notes || "");
                       const notesDraft = String(
                         submissionNotesDrafts[submissionId] ?? currentNotes,
@@ -2983,6 +3689,57 @@ export default function LandingModulePage() {
                                   Enviado
                                 </span>
                               ) : null}
+                              <button
+                                type="button"
+                                className="landing-icon-action-button landing-icon-action-button-danger"
+                                onClick={() =>
+                                  handleDeleteSubmission(submissionId)
+                                }
+                                title={
+                                  isDeletingSubmission
+                                    ? "Eliminando registro..."
+                                    : isSentToLeads
+                                      ? "No se puede eliminar: registro ya enviado a Leads"
+                                      : "Eliminar registro"
+                                }
+                                aria-label={
+                                  isDeletingSubmission
+                                    ? "Eliminando registro"
+                                    : isSentToLeads
+                                      ? "No se puede eliminar: registro ya enviado a Leads"
+                                      : "Eliminar registro"
+                                }
+                                disabled={
+                                  isSentToLeads ||
+                                  isDeletingSubmission ||
+                                  isSendingSubmission
+                                }
+                              >
+                                {isDeletingSubmission ? (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    width="16"
+                                    height="16"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                    focusable="false"
+                                    className="landing-send-spinner"
+                                  >
+                                    <path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z" />
+                                  </svg>
+                                ) : (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    width="16"
+                                    height="16"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                    focusable="false"
+                                  >
+                                    <path d="M9 3h6a1 1 0 0 1 1 1v1h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7H4V5h4V4a1 1 0 0 1 1-1zm1 2v0h4V5h-4zm-3 2v12h10V7H7zm3 2h2v8h-2V9zm4 0h2v8h-2V9z" />
+                                  </svg>
+                                )}
+                              </button>
                             </div>
                           </td>
                         </tr>

@@ -11,7 +11,7 @@ import DashboardHomePage from "./DashboardHomePage";
 import DashboardsPage from "./DashboardsPage";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
 import { api } from "./api";
-import { HelpDrawer, HelpFabButton, HelpTourCoach } from "./help/HelpWidgets";
+import { HelpDrawer, HelpTourCoach } from "./help/HelpWidgets";
 import { ChatbotContextProvider } from "./chatbot/context.jsx";
 import ChatbotWidget from "./chatbot/ChatbotWidget";
 
@@ -49,6 +49,8 @@ const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
 const ProposalsPage = lazy(() => import("./ProposalsPage"));
 const ProposalPrintPage = lazy(() => import("./ProposalPrintPage"));
 const LandingModulePage = lazy(() => import("./LandingModulePage"));
+const CampaignsPage = lazy(() => import("./CampaignsPage"));
+const CampaignEmailModulePage = lazy(() => import("./CampaignEmailModulePage"));
 
 function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
   return (
@@ -207,6 +209,9 @@ export default function AppShell({
     can("landing.publish") ||
     can("landing.submissions.read") ||
     can("landing.submissions.reprocess");
+  const canAccessCampaigns =
+    can("campanas.read") || can("campanas.create") || can("campanas.update");
+  const canAccessCampaignEmails = canAccessCampaigns;
   const canAccessAnyDashboard =
     canAccessCommercialTracking ||
     canAccessCommercialPlanning ||
@@ -246,7 +251,9 @@ export default function AppShell({
           path="/dashboards/cuota-mensual"
           element={
             canAccessCommercialTracking ? (
-              <Dashboard canAccessCommercialTracking={canAccessCommercialTracking} />
+              <Dashboard
+                canAccessCommercialTracking={canAccessCommercialTracking}
+              />
             ) : (
               <Navigate to="/dashboards" />
             )
@@ -469,6 +476,24 @@ export default function AppShell({
           }
         />
         <Route
+          path="/campaigns"
+          element={canAccessCampaigns ? <CampaignsPage /> : <Navigate to="/" />}
+        />
+        <Route
+          path="/campaign-management"
+          element={<Navigate to="/campaigns" replace />}
+        />
+        <Route
+          path="/campaign-emails"
+          element={
+            canAccessCampaignEmails ? (
+              <CampaignEmailModulePage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/contacts"
           element={
             canReadContacts ? (
@@ -514,7 +539,10 @@ export default function AppShell({
                 Inicio
               </GuardedNavLink>
               {canAccessAnyDashboard ? (
-                <GuardedNavLink to="/dashboards" onBeforeNavigate={confirmRouteChange}>
+                <GuardedNavLink
+                  to="/dashboards"
+                  onBeforeNavigate={confirmRouteChange}
+                >
                   Dashboards
                 </GuardedNavLink>
               ) : null}
@@ -637,9 +665,39 @@ export default function AppShell({
               </SidebarNavGroup>
             )}
 
-            {(can("proveedores.read") ||
-              (canAccessManufacturerRegistrations && canReadOpportunities) ||
+            {(canAccessCampaigns ||
+              canAccessCampaignEmails ||
               canAccessLandingModule) && (
+              <SidebarNavGroup title="Marketing">
+                {canAccessCampaigns ? (
+                  <GuardedNavLink
+                    to="/campaigns"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Campañas
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessCampaignEmails ? (
+                  <GuardedNavLink
+                    to="/campaign-emails"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Correos
+                  </GuardedNavLink>
+                ) : null}
+                {canAccessLandingModule ? (
+                  <GuardedNavLink
+                    to="/landing"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Landing
+                  </GuardedNavLink>
+                ) : null}
+              </SidebarNavGroup>
+            )}
+
+            {(can("proveedores.read") ||
+              (canAccessManufacturerRegistrations && canReadOpportunities)) && (
               <SidebarNavGroup title="Operacion comercial">
                 {can("proveedores.read") && (
                   <GuardedNavLink
@@ -655,14 +713,6 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Registros de fabricantes
-                  </GuardedNavLink>
-                ) : null}
-                {canAccessLandingModule ? (
-                  <GuardedNavLink
-                    to="/landing"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Landing por evento
                   </GuardedNavLink>
                 ) : null}
               </SidebarNavGroup>
@@ -785,7 +835,6 @@ export default function AppShell({
         </main>
         <HelpDrawer />
         <HelpTourCoach />
-        <HelpFabButton />
         <ChatbotWidget currentUser={currentUser} />
       </div>
     </ChatbotContextProvider>
