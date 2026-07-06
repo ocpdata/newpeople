@@ -722,13 +722,23 @@ router.use(async (_req, _res, next) => {
 router.get(
   "/catalogs",
   requireAnyPermission(CAMPAIGN_READ_PERMISSIONS),
-  (_req, res) => {
+  async (_req, res) => {
+    const accountTypeRows = await query(
+      `SELECT name
+       FROM account_types
+       WHERE is_active = 1
+       ORDER BY name ASC`,
+    );
+
     return res.json({
       tipo_campana: TIPO_CAMPANA_VALUES,
       subtipo_campana: SUBTIPO_CAMPANA_VALUES,
       estado_campana: ESTADO_CAMPANA_VALUES,
       etapa_ciclo_vida: ETAPA_CICLO_VIDA_VALUES,
       estado_interaccion: ESTADO_INTERACCION_VALUES,
+      account_types: accountTypeRows
+        .map((row) => String(row.name || "").trim())
+        .filter(Boolean),
       compatibilidad_tipo_subtipo: {
         niveles: COMPATIBILIDAD_NIVEL_VALUES,
         por_tipo: CAMPAIGN_TYPE_SUBTYPE_POLICY,

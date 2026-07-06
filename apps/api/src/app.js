@@ -28,7 +28,9 @@ import landingRoutes, {
   publicRouter as publicLandingRoutes,
 } from "./routes.landing.js";
 import campaignRoutes from "./routes.campaigns.js";
-import campaignEmailRoutes from "./routes.campaign-emails.js";
+import campaignEmailRoutes, {
+  publicRouter as publicCampaignEmailRoutes,
+} from "./routes.campaign-emails.js";
 
 export function createApp() {
   const app = express();
@@ -56,6 +58,17 @@ export function createApp() {
     return code ? `${code}: ${message}` : message;
   }
 
+  function isSqlConcurrencyConflict(err) {
+    const code = String(err?.code || "").trim();
+    const errno = Number(err?.errno || 0);
+    return (
+      code === "ER_LOCK_DEADLOCK" ||
+      code === "ER_LOCK_WAIT_TIMEOUT" ||
+      errno === 1213 ||
+      errno === 1205
+    );
+  }
+
   app.use(cors());
   app.use(express.json({ limit: requestBodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: requestBodyLimit }));
@@ -66,6 +79,7 @@ export function createApp() {
   });
 
   app.use("/api/public", quotationPublicRoutes);
+  app.use("/api/public", publicCampaignEmailRoutes);
   app.use("/", publicLandingRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/users", authRequired, loadUser, userRoutes);
@@ -128,6 +142,15 @@ export function createApp() {
 
     if (status >= 500) {
       console.error(err);
+
+      if (isSqlConcurrencyConflict(err)) {
+        return res.status(409).json({
+          message:
+            "Se detecto un conflicto de concurrencia al guardar. Intenta nuevamente.",
+          code: "CONCURRENCY_CONFLICT",
+        });
+      }
+
       const sqlDetail = getSqlErrorDetail(err);
       const requestPath = String(req?.originalUrl || req?.path || "");
       if (isProposalModulePath(requestPath) && sqlDetail) {

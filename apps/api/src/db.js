@@ -3,6 +3,23 @@ import { config } from "./config.js";
 
 export const pool = mysql.createPool(config.db);
 
+function isRetriableTransactionError(error) {
+  const code = String(error?.code || "").trim();
+  const errno = Number(error?.errno || 0);
+  return (
+    code === "ER_LOCK_DEADLOCK" ||
+    code === "ER_LOCK_WAIT_TIMEOUT" ||
+    errno === 1213 ||
+    errno === 1205
+  );
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function countSqlPlaceholders(sql) {
   const text = String(sql || "");
   let count = 0;
@@ -100,22 +117,42 @@ export async function query(sql, params = []) {
   return rows;
 }
 
-export async function withTransaction(work) {
-  const conn = await pool.getConnection();
-  const originalQuery = conn.query.bind(conn);
-  conn.query = async (sql, params = []) => {
-    validateSqlPlaceholders(sql, params);
-    return originalQuery(sql, params);
-  };
-  try {
-    await conn.beginTransaction();
-    const result = await work(conn);
-    await conn.commit();
-    return result;
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
+export async function withTransaction(work, options = {}) {
+  const requestedRetries = Number(options?.maxRetries);
+  const maxRetries = Number.isFinite(requestedRetries)
+    ? Math.max(1, Math.trunc(requestedRetries))
+    : 3;
+  const baseDelayMs = Math.max(1, Number(options?.retryDelayMs || 120));
+
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    const conn = await pool.getConnection();
+    const originalQuery = conn.query.bind(conn);
+    conn.query = async (sql, params = []) => {
+      validateSqlPlaceholders(sql, params);
+      return originalQuery(sql, params);
+    };
+
+    try {
+      await conn.beginTransaction();
+      const result = await work(conn);
+      await conn.commit();
+      return result;
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch {
+        // Ignore rollback failures; original transaction error is more relevant.
+      }
+
+      const canRetry =
+        attempt < maxRetries && isRetriableTransactionError(error);
+      if (!canRetry) {
+        throw error;
+      }
+
+      await wait(baseDelayMs * attempt);
+    } finally {
+      conn.release();
+    }
   }
 }

@@ -161,6 +161,166 @@
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
 }
 
+.campaign-email-guide-panel {
+  border-top: 1px solid #dce8f8;
+  padding-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.campaign-email-guide-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.campaign-email-guide-head-title {
+  display: grid;
+  gap: 4px;
+}
+
+.campaign-email-guide-head-title small {
+  color: #5c7594;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.campaign-email-guide-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.campaign-email-guide-ai-button {
+  border: 1px solid #b7cae8;
+  background: linear-gradient(180deg, #f6fbff, #e8f2ff);
+  color: #1f4f8f;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.campaign-email-guide-ai-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.campaign-email-guide-head strong {
+  color: #173d72;
+}
+
+.campaign-email-guide-priority {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.campaign-email-guide-priority-prioritaria {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.campaign-email-guide-priority-secundaria {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.campaign-email-guide-priority-informativa {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.campaign-email-guide-block {
+  border: 1px solid #d7e4f7;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.campaign-email-guide-ai-summary {
+  background: linear-gradient(180deg, #f8fbff, #eef5ff);
+}
+
+.campaign-email-guide-block h4 {
+  margin: 0;
+  color: #173d72;
+  font-size: 13px;
+}
+
+.campaign-email-guide-block p,
+.campaign-email-guide-block small {
+  margin: 0;
+  color: #456389;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.campaign-email-guide-block p strong {
+  color: #224d82;
+}
+
+.campaign-email-guide-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: #456389;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.campaign-email-guide-example {
+  background: linear-gradient(180deg, #f8fbff, #ffffff);
+}
+
+.campaign-email-guide-resource-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.campaign-email-guide-resource-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: #345b88;
+  font-size: 12px;
+}
+
+.campaign-email-guide-resource-status {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.campaign-email-guide-resource-status-disponible {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.campaign-email-guide-resource-status-pendiente {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.campaign-email-guide-resource-examples {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+
 .campaign-email-summary-head {
   display: flex;
   justify-content: space-between;
@@ -292,6 +452,78 @@
 .campaign-email-test-send-summary span {
   color: #4d6d94;
   font-size: 13px;
+}
+
+.campaign-email-shared-doc-card {
+  border: 1px solid #d7e4f7;
+  border-radius: 14px;
+  background: #f8fbff;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.campaign-email-shared-doc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.campaign-email-shared-doc-head strong,
+.campaign-email-shared-doc-selected strong {
+  color: #173d72;
+}
+
+.campaign-email-shared-doc-head span,
+.campaign-email-shared-doc-selected span,
+.campaign-email-library-item p,
+.campaign-email-library-item small {
+  color: #4d6d94;
+}
+
+.campaign-email-library-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.campaign-email-library-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.campaign-email-library-search-row label {
+  margin: 0;
+}
+
+.campaign-email-library-results {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.campaign-email-library-item,
+.campaign-email-shared-doc-selected {
+  border: 1px solid #d7e4f7;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.campaign-email-library-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.campaign-email-library-item p,
+.campaign-email-library-item small {
+  margin: 0;
 }
 
 .campaign-email-test-send-table-wrap {

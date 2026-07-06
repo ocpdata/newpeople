@@ -68,6 +68,476 @@ const CAMPAIGN_SUBTYPE_DESCRIPTIONS = {
     "Mecanica de referidos con incentivos para atraer nuevos prospectos.",
 };
 
+const CAMPAIGN_TYPE_USAGE_GUIDE = {
+  reconocimiento: {
+    useWhen:
+      "la cuenta apenas muestra interes inicial y aun no pide propuesta formal",
+    desiredAction: "obtener una primera senal medible de interes",
+    simpleExamples: [
+      "hubo interaccion ligera con contenido, pero sin solicitud comercial",
+      "la audiencia conoce el tema, pero no deja datos completos",
+    ],
+  },
+  captacion_de_leads: {
+    useWhen:
+      "ya hay interes y falta convertirlo en contacto identificado dentro del CRM",
+    desiredAction: "cerrar registro o formulario con datos utiles para venta",
+    simpleExamples: [
+      "el prospecto llego a la pagina, pero no termino el registro",
+      "inicio un formulario y abandono antes de enviar",
+    ],
+  },
+  nutricion: {
+    useWhen:
+      "el lead ya esta captado y necesita contenido para avanzar sin presion de cierre inmediato",
+    desiredAction:
+      "subir madurez y preparar una conversacion comercial de mejor calidad",
+    simpleExamples: [
+      "respondio al primer correo y pide mas contexto",
+      "muestra interes, pero aun no esta listo para demo o cotizacion",
+    ],
+  },
+  conversion: {
+    useWhen:
+      "la cuenta esta comparando opciones y puede tomar decision en el corto plazo",
+    desiredAction: "lograr accion de cierre: demo, propuesta o aprobacion",
+    simpleExamples: [
+      "pidio precios o condiciones comerciales",
+      "ya reviso opciones y solicita siguiente paso concreto",
+    ],
+  },
+  fidelizacion: {
+    useWhen:
+      "el contacto ya es cliente y quieres sostener uso, valor y relacion",
+    desiredAction: "aumentar permanencia y evitar desercion",
+    simpleExamples: [
+      "cliente activo con baja frecuencia de uso",
+      "cliente que necesita apoyo para adoptar mejor la solucion",
+    ],
+  },
+  reactivacion: {
+    useWhen:
+      "la relacion lleva tiempo sin actividad y aun existe potencial comercial",
+    desiredAction: "recuperar respuesta con una propuesta simple y concreta",
+    simpleExamples: [
+      "no abre ni responde desde hace varios ciclos",
+      "cliente inactivo que antes mostraba buena afinidad",
+    ],
+  },
+  promocion: {
+    useWhen: "hay una oferta puntual con vigencia y necesitas respuesta rapida",
+    desiredAction: "generar accion inmediata antes del cierre de la oferta",
+    simpleExamples: [
+      "descuento activo por tiempo limitado",
+      "campana estacional con fecha final definida",
+    ],
+  },
+  lanzamiento_de_producto: {
+    useWhen:
+      "estas introduciendo una solucion nueva y el mercado aun no entiende su valor",
+    desiredAction: "activar interes temprano y primeras pruebas",
+    simpleExamples: [
+      "presentacion inicial de una nueva linea",
+      "mensaje de novedad para audiencias con alta afinidad",
+    ],
+  },
+  upsell: {
+    useWhen:
+      "el cliente ya usa la solucion y puede crecer a mayor alcance o plan",
+    desiredAction: "ampliar ticket y valor de cuenta",
+    simpleExamples: [
+      "cliente cerca del limite de su plan actual",
+      "cuenta estable lista para version superior",
+    ],
+  },
+  cross_sell: {
+    useWhen:
+      "el cliente ya compra una solucion y hay una necesidad complementaria detectada",
+    desiredAction: "sumar una solucion adicional relevante",
+    simpleExamples: [
+      "cliente con necesidad adyacente al servicio actual",
+      "cuenta con problema que otra linea del portafolio resuelve",
+    ],
+  },
+  evento: {
+    useWhen:
+      "la prioridad es registrar, confirmar y lograr asistencia en una fecha puntual",
+    desiredAction: "maximizar asistencia efectiva",
+    simpleExamples: [
+      "convocatoria a sesion con cupo limitado",
+      "recordatorios de acceso antes de iniciar evento",
+    ],
+  },
+  referidos: {
+    useWhen:
+      "tienes clientes o aliados satisfechos que pueden recomendar nuevos prospectos",
+    desiredAction: "activar referidos con proceso claro",
+    simpleExamples: [
+      "clientes promotores dispuestos a recomendar",
+      "aliados con red de contactos compatibles",
+    ],
+  },
+  educacion: {
+    useWhen:
+      "la audiencia necesita aprender antes de tomar una decision con seguridad",
+    desiredAction: "reducir dudas y aumentar confianza tecnica/comercial",
+    simpleExamples: [
+      "prospectos con preguntas funcionales repetidas",
+      "audiencia que requiere guia paso a paso",
+    ],
+  },
+};
+
+const CAMPAIGN_SUBTYPE_USAGE_GUIDE = {
+  correo_masivo: {
+    channelRole: "difusion amplia con mensaje unico",
+    chooseWhen:
+      "quieres comunicar rapidamente a una base segmentada con un solo CTA",
+    simpleExamples: [
+      "anuncio general para toda la base objetivo",
+      "comunicado con accion unica y directa",
+    ],
+  },
+  correo_automatizado: {
+    channelRole: "secuencia por etapas",
+    chooseWhen:
+      "necesitas acompanar al contacto con varios toques segun comportamiento",
+    simpleExamples: [
+      "serie de bienvenida en 3 pasos",
+      "flujo automatico segun apertura o clic",
+    ],
+  },
+  redes_sociales_organicas: {
+    channelRole: "seguimiento de interes organico",
+    chooseWhen: "el origen del interes viene de publicaciones sin pauta",
+    simpleExamples: [
+      "interaccion organica con post o historia",
+      "clic organico desde red social hacia conversion",
+    ],
+  },
+  redes_sociales_pagadas: {
+    channelRole: "continuidad de leads de pauta",
+    chooseWhen:
+      "el lead proviene de anuncios pagados y necesita siguiente paso rapido",
+    simpleExamples: [
+      "lead de anuncio con formulario enviado",
+      "trafico de pauta con interes inicial confirmado",
+    ],
+  },
+  anuncios_busqueda: {
+    channelRole: "respuesta a intencion activa",
+    chooseWhen: "el prospecto busca solucion activamente en buscadores",
+    simpleExamples: [
+      "busquedas con palabras de compra o cotizacion",
+      "clic en anuncio por problema especifico",
+    ],
+  },
+  anuncios_display: {
+    channelRole: "awareness y recordacion visual",
+    chooseWhen:
+      "quieres mantener presencia y reimpactar antes de pedir conversion",
+    simpleExamples: [
+      "campana visual para posicionamiento",
+      "reimpacto a visitantes sin registro",
+    ],
+  },
+  webinar: {
+    channelRole: "registro y asistencia a sesion",
+    chooseWhen:
+      "la accion principal es que el contacto se registre o asista al webinar",
+    simpleExamples: [
+      "invitacion con agenda y fecha",
+      "recordatorio de acceso una hora antes",
+    ],
+  },
+  landing_page: {
+    channelRole: "conversion en pagina dedicada",
+    chooseWhen:
+      "la accion depende de completar formulario, registro o agenda en landing",
+    simpleExamples: [
+      "visita sin envio de formulario",
+      "registro incompleto que requiere rescate",
+    ],
+  },
+  sms: {
+    channelRole: "recordatorio de urgencia",
+    chooseWhen:
+      "hay poco tiempo y necesitas elevar la probabilidad de lectura inmediata",
+    simpleExamples: [
+      "aviso de ultimo dia de registro",
+      "recordatorio corto antes de iniciar evento",
+    ],
+  },
+  whatsapp: {
+    channelRole: "conversacion directa 1:1",
+    chooseWhen:
+      "quieres resolver dudas rapido y confirmar interes en tiempo real",
+    simpleExamples: [
+      "seguimiento a prospecto que ya contesto antes",
+      "confirmacion rapida de disponibilidad para reunion",
+    ],
+  },
+  evento_presencial: {
+    channelRole: "confirmacion logistica fisica",
+    chooseWhen: "necesitas confirmar cupo, lugar y asistencia presencial",
+    simpleExamples: [
+      "confirmacion de sede y horario",
+      "recordatorio de ingreso y agenda del dia",
+    ],
+  },
+  evento_virtual: {
+    channelRole: "confirmacion de acceso remoto",
+    chooseWhen:
+      "el contacto debe entrar a evento online con enlace y hora definida",
+    simpleExamples: [
+      "envio de link de acceso personal",
+      "recordatorio con instrucciones de conexion",
+    ],
+  },
+  encuesta: {
+    channelRole: "captura de feedback",
+    chooseWhen:
+      "necesitas aprender rapido para ajustar propuesta o prioridad comercial",
+    simpleExamples: [
+      "encuesta breve despues de demo",
+      "preguntas de prioridad antes de enviar propuesta",
+    ],
+  },
+  programa_de_referidos: {
+    channelRole: "activacion de recomendaciones",
+    chooseWhen: "ya existe una mecanica clara de beneficio por referido",
+    simpleExamples: [
+      "invitacion a clientes promotores a recomendar",
+      "activacion de aliados con incentivo vigente",
+    ],
+  },
+};
+
+const SUBTYPE_FAMILY_MAP = {
+  correo_masivo: "difusion_directa",
+  correo_automatizado: "maduracion_por_etapas",
+  redes_sociales_organicas: "captura_organica",
+  redes_sociales_pagadas: "captura_pagada",
+  anuncios_busqueda: "intencion_activa",
+  anuncios_display: "recordacion_visual",
+  webinar: "convocatoria_contenido",
+  landing_page: "conversion_en_pagina",
+  sms: "urgencia_corta",
+  whatsapp: "conversacion_1a1",
+  evento_presencial: "asistencia_fisica",
+  evento_virtual: "asistencia_remota",
+  encuesta: "aprendizaje_feedback",
+  programa_de_referidos: "activacion_referidos",
+};
+
+const TYPE_DIFFERENTIATION_LENSES = {
+  reconocimiento: {
+    objectiveLens:
+      "ampliar interes inicial sin forzar cierres tempranos ni pedir demasiada friccion",
+    successSignal:
+      "aumento de interacciones iniciales de calidad (clics, respuestas, visitas con permanencia)",
+    avoidPattern:
+      "pedir demo o cotizacion demasiado pronto en audiencias frias",
+    byFamily: {
+      difusion_directa:
+        "prioriza alcance claro del mensaje principal para descubrir quien reacciona",
+      maduracion_por_etapas:
+        "educa en micro-pasos para transformar curiosidad en interes sostenido",
+      default:
+        "mantiene una entrada suave para detectar interes sin generar rechazo",
+    },
+  },
+  captacion_de_leads: {
+    objectiveLens:
+      "convertir interes en datos accionables para que ventas pueda contactar y calificar",
+    successSignal:
+      "formularios completos, registros validos y leads utilizables por el equipo comercial",
+    avoidPattern: "acciones de awareness sin mecanismo real de captura",
+    byFamily: {
+      conversion_en_pagina:
+        "recupera abandonos y cierra registros incompletos en landing",
+      intencion_activa:
+        "captura demanda con alta probabilidad de conversion inmediata",
+      conversacion_1a1:
+        "resuelve friccion final para completar registro o agenda",
+      default:
+        "convierte senales de interes en contacto identificado dentro del CRM",
+    },
+  },
+  nutricion: {
+    objectiveLens:
+      "subir madurez de decision con contenido util, secuenciado y sin presion de cierre inmediato",
+    successSignal:
+      "avance de etapa, mayor calidad de respuesta y mejor contexto para oportunidad",
+    avoidPattern: "repetir mensajes comerciales sin aportar evidencia nueva",
+    byFamily: {
+      maduracion_por_etapas:
+        "acompana por tramos con contenidos distintos segun comportamiento",
+      convocatoria_contenido:
+        "usa sesiones educativas para destrabar dudas complejas",
+      aprendizaje_feedback:
+        "recoge objeciones reales para ajustar siguiente mensaje",
+      default:
+        "entrega contexto progresivo para mover al lead al siguiente nivel de confianza",
+    },
+  },
+  conversion: {
+    objectiveLens:
+      "quitar fricciones finales y provocar una accion concreta de cierre",
+    successSignal:
+      "solicitudes de demo/propuesta, reuniones de cierre y avance a etapa final",
+    avoidPattern: "mensajes largos sin llamado claro a una accion unica",
+    byFamily: {
+      intencion_activa:
+        "responde rapido a senales de compra para no perder momentum",
+      conversacion_1a1: "cierra objeciones puntuales en intercambio directo",
+      urgencia_corta: "refuerza decision cuando existe ventana corta de accion",
+      default:
+        "conecta beneficio concreto con un siguiente paso comercial inmediato",
+    },
+  },
+  fidelizacion: {
+    objectiveLens:
+      "sostener adopcion y permanencia con valor continuo post-venta",
+    successSignal:
+      "mayor uso, continuidad de relacion y menor riesgo de abandono",
+    avoidPattern: "tratar al cliente activo como lead nuevo",
+    byFamily: {
+      aprendizaje_feedback:
+        "usa feedback para prevenir desgaste y ajustar acompanamiento",
+      conversacion_1a1: "atiende dudas de uso con seguimiento cercano",
+      maduracion_por_etapas: "activa recorridos de adopcion por niveles de uso",
+      default: "refuerza valor percibido para consolidar la relacion vigente",
+    },
+  },
+  reactivacion: {
+    objectiveLens:
+      "recuperar contacto dormido con baja friccion y propuesta concreta",
+    successSignal:
+      "respuesta de retorno, reapertura de conversacion o nueva cita",
+    avoidPattern: "retomar con mensajes complejos o demasiados pasos",
+    byFamily: {
+      difusion_directa: "reactiva volumen con mensaje simple de retorno",
+      conversacion_1a1:
+        "usa toque personal para recuperar cuentas de alto potencial",
+      conversion_en_pagina:
+        "dirige a una accion corta para medir reenganche real",
+      default: "busca una primera respuesta antes de empujar cierre comercial",
+    },
+  },
+  promocion: {
+    objectiveLens:
+      "mover respuesta inmediata en una ventana comercial limitada",
+    successSignal:
+      "acciones dentro de vigencia (registro, compra, solicitud o canje)",
+    avoidPattern: "llamados ambiguos sin urgencia ni fecha limite",
+    byFamily: {
+      urgencia_corta:
+        "refuerza el cierre de ventana con recordatorios puntuales",
+      difusion_directa: "maximiza alcance rapido de la oferta",
+      captura_pagada: "escala respuesta con segmentacion de pauta",
+      default: "enfatiza beneficio + fecha limite + CTA unico",
+    },
+  },
+  lanzamiento_de_producto: {
+    objectiveLens:
+      "explicar novedad y activar primeras pruebas en segmentos de afinidad",
+    successSignal:
+      "solicitudes de informacion, demos iniciales y primeras adopciones",
+    avoidPattern: "hablar de caracteristicas sin aterrizar casos de uso",
+    byFamily: {
+      difusion_directa: "anuncia lanzamiento con propuesta de valor clara",
+      convocatoria_contenido: "demuestra el producto en formato guiado",
+      maduracion_por_etapas: "acomoda el mensaje segun nivel de entendimiento",
+      default: "vincula novedad con problema real del segmento objetivo",
+    },
+  },
+  upsell: {
+    objectiveLens:
+      "expandir valor en cliente actual aumentando plan, alcance o volumen",
+    successSignal:
+      "aceptacion de upgrade, ampliacion de paquete o incremento de ticket",
+    avoidPattern: "proponer crecimiento sin evidencia de necesidad o uso",
+    byFamily: {
+      conversacion_1a1: "negocia expansion sobre contexto puntual de la cuenta",
+      aprendizaje_feedback: "identifica brechas de uso que justifican upgrade",
+      maduracion_por_etapas: "muestra ruta clara de crecimiento por fases",
+      default: "conecta resultado actual con siguiente nivel de valor",
+    },
+  },
+  cross_sell: {
+    objectiveLens:
+      "introducir una solucion complementaria que amplie impacto en cuenta activa",
+    successSignal:
+      "interes en linea complementaria y apertura de nueva oportunidad",
+    avoidPattern:
+      "ofrecer complemento sin relacion con dolor actual del cliente",
+    byFamily: {
+      conversacion_1a1: "detecta necesidad adyacente en dialogo directo",
+      aprendizaje_feedback: "usa hallazgos para proponer complemento preciso",
+      difusion_directa:
+        "presenta opciones complementarias por segmento de cliente",
+      default: "explica como la solucion adicional mejora lo ya implementado",
+    },
+  },
+  evento: {
+    objectiveLens:
+      "asegurar registro, confirmacion y asistencia efectiva en fecha definida",
+    successSignal:
+      "confirmaciones firmes, asistencia real y participacion durante el evento",
+    avoidPattern: "invitar sin agenda, acceso o instrucciones claras",
+    byFamily: {
+      convocatoria_contenido: "mueve registro con valor claro del contenido",
+      asistencia_fisica:
+        "cierra detalles logisticos para reducir no-show presencial",
+      asistencia_remota: "asegura acceso y puntualidad en entorno virtual",
+      urgencia_corta:
+        "refuerza asistencia en ventana inmediata previa al inicio",
+      default: "prioriza confirmacion operativa antes del dia del evento",
+    },
+  },
+  referidos: {
+    objectiveLens:
+      "activar recomendaciones confiables con proceso simple y beneficio claro",
+    successSignal: "referidos registrados, contactables y con perfil objetivo",
+    avoidPattern: "pedir referidos sin reglas claras ni incentivo comprensible",
+    byFamily: {
+      activacion_referidos: "ordena el flujo de recomendacion de punta a punta",
+      conversacion_1a1: "activa promotores clave con trato directo",
+      conversion_en_pagina: "facilita captura estructurada del referido",
+      default: "reduce friccion para que recomendar sea rapido y entendible",
+    },
+  },
+  educacion: {
+    objectiveLens:
+      "aumentar entendimiento para reducir objeciones y preparar mejor decision",
+    successSignal:
+      "consumo de contenido, preguntas de mayor calidad y avance de comprension",
+    avoidPattern: "sobrecargar con teoria sin aterrizar accion siguiente",
+    byFamily: {
+      convocatoria_contenido:
+        "usa sesiones guiadas para explicar temas complejos",
+      maduracion_por_etapas: "estructura aprendizaje en secuencia gradual",
+      captura_organica:
+        "aprovecha interes espontaneo para profundizar conocimiento",
+      default: "traduce complejidad en pasos claros y aplicables",
+    },
+  },
+};
+
+const COMBINATION_USAGE_GUIDE_OVERRIDES = {
+  "captacion_de_leads::landing_page": {
+    context:
+      "Guia rapida para esta combinacion: 1) Que esta pasando: el contacto ya llego a la landing y mostro interes, pero no completo el registro. 2) Cuando elegirla: cuando la prioridad es rescatar conversiones incompletas y convertirlas en lead identificado. 3) Como ejecutarla: usa un mensaje corto, CTA unico y enlace directo al formulario para terminar el paso pendiente. 4) Resultado esperado: lead creado con datos utiles para seguimiento comercial. Si el contacto ya asistio al evento, deja de ser captacion y debe pasar a nutricion o conversion post-evento.",
+    examples: [
+      "Ejemplo 1: entro a la landing, lleno nombre y correo, pero no dio enviar. Accion: enviar seguimiento para retomar formulario exactamente donde lo dejo.",
+      "Ejemplo 2: se preregistro a un evento, pero no confirmo datos finales. Accion: correo con enlace unico para completar confirmacion.",
+      "Ejemplo 3: hizo clic desde pauta, reviso la pagina y salio sin registro. Accion: seguimiento con beneficio concreto y CTA de registro inmediato.",
+      "Ejemplo 4: ya asistio al evento. Accion correcta: no usar captacion+landing; mover a nutricion o conversion con siguiente propuesta.",
+    ],
+  },
+};
+
 const CAMPAIGN_STATE_DESCRIPTIONS = {
   borrador: "Campana en preparacion interna; aun no se ejecuta.",
   en_ejecucion: "Campana activa y corriendo en sus canales definidos.",
@@ -111,6 +581,69 @@ function formatCampaignTypeLabel(value) {
   return String(value || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildClassificationUsageGuide(tipoCampana, subtipoCampana) {
+  const tipo = String(tipoCampana || "").trim();
+  const subtipo = String(subtipoCampana || "").trim();
+  const tipoLabel = formatCampaignTypeLabel(tipo);
+  const subtipoLabel = formatCampaignTypeLabel(subtipo);
+  const override = COMBINATION_USAGE_GUIDE_OVERRIDES[`${tipo}::${subtipo}`];
+  if (override) {
+    return {
+      context: override.context,
+      examples: Array.isArray(override.examples) ? override.examples : [],
+    };
+  }
+
+  const typeEntry =
+    CAMPAIGN_TYPE_USAGE_GUIDE[tipo] || CAMPAIGN_TYPE_USAGE_GUIDE.reconocimiento;
+  const subtypeEntry =
+    CAMPAIGN_SUBTYPE_USAGE_GUIDE[subtipo] ||
+    CAMPAIGN_SUBTYPE_USAGE_GUIDE.correo_masivo;
+  const typeLens =
+    TYPE_DIFFERENTIATION_LENSES[tipo] ||
+    TYPE_DIFFERENTIATION_LENSES.reconocimiento;
+  const subtypeFamily =
+    SUBTYPE_FAMILY_MAP[subtipo] || SUBTYPE_FAMILY_MAP.correo_masivo;
+  const familyFocus =
+    typeLens.byFamily?.[subtypeFamily] ||
+    typeLens.byFamily?.default ||
+    "alinea canal y objetivo comercial con una accion medible";
+
+  const typeExampleA = String(
+    typeEntry.simpleExamples?.[0] || "hay una senal inicial valida",
+  )
+    .trim()
+    .replace(/[.\s]+$/, "");
+  const typeExampleB = String(
+    typeEntry.simpleExamples?.[1] ||
+      "la cuenta aun no completa el siguiente paso",
+  )
+    .trim()
+    .replace(/[.\s]+$/, "");
+  const subtypeExampleA = String(
+    subtypeEntry.simpleExamples?.[0] ||
+      "se requiere ejecutar el canal seleccionado",
+  )
+    .trim()
+    .replace(/[.\s]+$/, "");
+  const subtypeExampleB = String(
+    subtypeEntry.simpleExamples?.[1] ||
+      "se necesita un contacto adicional para cerrar la accion",
+  )
+    .trim()
+    .replace(/[.\s]+$/, "");
+
+  return {
+    context: `Guia didactica para ${tipoLabel} + ${subtipoLabel}: 1) Momento comercial: ${typeEntry.useWhen}. 2) Diferenciador dentro de ${tipoLabel}: en este subtipo se ${familyFocus}. 3) Forma de ejecucion recomendada: ${subtypeEntry.channelRole}; por eso conviene usar un CTA unico, corto y directo. 4) Resultado buscado: ${typeEntry.desiredAction}. 5) Senal de exito para esta combinacion: ${typeLens.successSignal}. 6) Error comun a evitar: ${typeLens.avoidPattern}.`,
+    examples: [
+      `Ejemplo 1 (${tipoLabel}): si ${typeExampleA}, usa ${subtipoLabel} para ${familyFocus}.`,
+      `Ejemplo 2 (${subtipoLabel}): si ${subtypeExampleA}, manten el foco en ${typeEntry.desiredAction} y evita abrir multiples CTAs.`,
+      `Ejemplo 3 (decision operativa): si ${typeExampleB}, ejecuta ${subtipoLabel} y mide si logras ${typeLens.successSignal}.`,
+      `Ejemplo 4 (control de calidad): si ${subtypeExampleB}, simplifica mensaje y corrige el error comun de ${typeLens.avoidPattern}.`,
+    ],
+  };
 }
 
 function formatDateTimeLabel(value) {
@@ -158,6 +691,14 @@ function normalizeSectorValue(value) {
     .trim();
 }
 
+function normalizeClassificationValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 function normalizeAudienceContact(rawContact) {
   const contactId = Number(rawContact?.contact_id ?? rawContact?.id ?? 0);
   if (!Number.isInteger(contactId) || contactId <= 0) return null;
@@ -188,6 +729,190 @@ function normalizeCampaignForm(form) {
     etapa_ciclo_vida: String(form.etapa_ciclo_vida || "").trim() || null,
     starts_at: toPayloadDate(form.starts_at),
     ends_at: toPayloadDate(form.ends_at),
+  };
+}
+
+function getCampaignGoalStorageKey(campaignId) {
+  const key = String(campaignId || "__draft__").trim() || "__draft__";
+  return `campaigns-page-goal-text:${key}`;
+}
+
+function readCampaignGoalTextFromStorage(campaignId) {
+  if (typeof window === "undefined") return "";
+
+  try {
+    return String(
+      window.localStorage.getItem(getCampaignGoalStorageKey(campaignId)) || "",
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeCampaignGoalTextToStorage(campaignId, value) {
+  if (typeof window === "undefined") return;
+  if (!campaignId) return;
+
+  try {
+    window.localStorage.setItem(
+      getCampaignGoalStorageKey(campaignId),
+      String(value || "").trim(),
+    );
+  } catch {
+    // Ignore persistence failures.
+  }
+}
+
+function getClassificationGuideStorageKey(
+  campaignId,
+  tipoCampana,
+  subtipoCampana,
+) {
+  const campaignKey = String(campaignId || "__draft__").trim() || "__draft__";
+  const tipoKey = String(tipoCampana || "__tipo__").trim() || "__tipo__";
+  const subtipoKey =
+    String(subtipoCampana || "__subtipo__").trim() || "__subtipo__";
+  return `campaigns-page-classification-guide:${campaignKey}:${tipoKey}:${subtipoKey}`;
+}
+
+function readStoredClassificationGuide(
+  campaignId,
+  tipoCampana,
+  subtipoCampana,
+) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(
+      getClassificationGuideStorageKey(campaignId, tipoCampana, subtipoCampana),
+    );
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return isCampaignGuideConsistent(
+      parsed.guide || parsed,
+      tipoCampana,
+      subtipoCampana,
+    )
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredClassificationGuide(
+  campaignId,
+  tipoCampana,
+  subtipoCampana,
+  payload,
+) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      getClassificationGuideStorageKey(campaignId, tipoCampana, subtipoCampana),
+      JSON.stringify(payload),
+    );
+  } catch {
+    // Ignore persistence failures.
+  }
+}
+
+function clearStoredClassificationGuide(
+  campaignId,
+  tipoCampana,
+  subtipoCampana,
+) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.removeItem(
+      getClassificationGuideStorageKey(campaignId, tipoCampana, subtipoCampana),
+    );
+  } catch {
+    // Ignore persistence failures.
+  }
+}
+
+function isCampaignGuideConsistent(guide, tipoCampana, subtipoCampana) {
+  const tipo = String(tipoCampana || "").trim();
+  const subtipo = String(subtipoCampana || "").trim();
+  if (!guide || !tipo || !subtipo) return false;
+
+  const guideTipo = String(
+    guide.tipoCampana || guide.tipo_campana || "",
+  ).trim();
+  const guideSubtipo = String(
+    guide.subtipoCampana || guide.subtipo_campana || "",
+  ).trim();
+  if (guideTipo || guideSubtipo) {
+    return guideTipo === tipo && guideSubtipo === subtipo;
+  }
+
+  return false;
+}
+
+function normalizeClassificationGuideAi({
+  enriched,
+  tipoCampana,
+  subtipoCampana,
+  campaignGoalText,
+}) {
+  const tipo = String(tipoCampana || "").trim();
+  const subtipo = String(subtipoCampana || "").trim();
+  const context = String(enriched?.context || enriched?.contexto || "").trim();
+  const examples = Array.isArray(enriched?.examples)
+    ? enriched.examples
+    : Array.isArray(enriched?.ejemplos)
+      ? enriched.ejemplos
+      : [];
+
+  return {
+    source: "ai",
+    tipoCampana: tipo,
+    tipo_campana: tipo,
+    subtipoCampana: subtipo,
+    subtipo_campana: subtipo,
+    summary: String(enriched?.summary || "").trim(),
+    reason: String(enriched?.reason || "").trim(),
+    objectiveDetail: {
+      context: String(
+        enriched?.objectiveDetail?.context || campaignGoalText || "",
+      ).trim(),
+      expectedResult: String(
+        enriched?.objectiveDetail?.expectedResult || "",
+      ).trim(),
+      successSignal: String(
+        enriched?.objectiveDetail?.successSignal || "",
+      ).trim(),
+      nextStep: String(enriched?.objectiveDetail?.nextStep || "").trim(),
+    },
+    typeSubtypeContext: {
+      interpretation: String(
+        enriched?.typeSubtypeContext?.interpretation || "",
+      ).trim(),
+      useWhen: String(enriched?.typeSubtypeContext?.useWhen || "").trim(),
+      avoidWhen: String(enriched?.typeSubtypeContext?.avoidWhen || "").trim(),
+    },
+    campaignContextDescription: String(
+      enriched?.campaignContextDescription || "",
+    ).trim(),
+    subtypeContextDescription: String(
+      enriched?.subtypeContextDescription || "",
+    ).trim(),
+    deliveryContextDescription: String(
+      enriched?.deliveryContextDescription || "",
+    ).trim(),
+    emailTypeContextDescription: String(
+      enriched?.emailTypeContextDescription || "",
+    ).trim(),
+    context,
+    examples: examples
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 5),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -260,6 +985,964 @@ function resolveCampaignStateValue(value, allowedStates) {
   return allowedStates[0] || EMPTY_FORM.estado_campana;
 }
 
+function extractJsonObjectFromText(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return null;
+
+  const extractBalancedObject = (value) => {
+    const source = String(value || "");
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let quoteChar = "";
+    let escaped = false;
+
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (inString) {
+        if (char === "\\") {
+          escaped = true;
+        } else if (char === quoteChar) {
+          inString = false;
+          quoteChar = "";
+        }
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        inString = true;
+        quoteChar = char;
+        continue;
+      }
+
+      if (char === "{") {
+        if (depth === 0) start = index;
+        depth += 1;
+        continue;
+      }
+
+      if (char === "}") {
+        if (depth > 0) {
+          depth -= 1;
+          if (depth === 0 && start >= 0) {
+            return source.slice(start, index + 1);
+          }
+        }
+      }
+    }
+
+    return "";
+  };
+
+  const tryParseCandidate = (candidate) => {
+    const base = String(candidate || "").trim();
+    if (!base) return null;
+
+    const parseStrict = (value) => {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const strictParsed = parseStrict(base);
+    if (strictParsed) return strictParsed;
+
+    const normalized = base
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/\bNone\b/g, "null")
+      .replace(/\bTrue\b/g, "true")
+      .replace(/\bFalse\b/g, "false")
+      .replace(/([{,]\s*)'([^'\\]+)'\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_m, value) => {
+        const escaped = String(value || "")
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"');
+        return `: "${escaped}"`;
+      });
+
+    return parseStrict(normalized);
+  };
+
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fencedCandidate = fencedMatch ? fencedMatch[1].trim() : "";
+  const directBalanced = extractBalancedObject(text);
+  const fencedBalanced = extractBalancedObject(fencedCandidate);
+
+  const candidates = [
+    fencedCandidate,
+    fencedBalanced,
+    directBalanced,
+    text,
+  ].filter((value, index, list) => {
+    if (!String(value || "").trim()) return false;
+    return list.findIndex((item) => item === value) === index;
+  });
+
+  for (const candidate of candidates) {
+    const parsed = tryParseCandidate(candidate);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function trimForPrompt(value, maxLength) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (!Number.isInteger(maxLength) || maxLength <= 0) return text;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function toChatbotSafeMessage(value) {
+  const text = String(value || "").trim();
+  const MAX_SAFE = 3950;
+  if (text.length <= MAX_SAFE) return text;
+  return `${text.slice(0, MAX_SAFE - 1).trim()}…`;
+}
+
+function buildAiRawResponseNotification(title, rawText) {
+  const text = trimForPrompt(String(rawText || "").trim(), 1200);
+  if (!text) return "";
+  return `${title}: ${text}`;
+}
+
+function buildCompatibilityPromptSnippet(policyByType) {
+  if (!policyByType || typeof policyByType !== "object") {
+    return "compatibilidad no disponible";
+  }
+
+  return Object.entries(policyByType)
+    .map(([tipo, policy]) => {
+      const permitido = Array.isArray(policy?.permitido)
+        ? policy.permitido.slice(0, 6)
+        : [];
+      const aprobacion = Array.isArray(policy?.permitido_con_aprobacion)
+        ? policy.permitido_con_aprobacion.slice(0, 4)
+        : [];
+      return `${tipo}: permitido=[${permitido.join("|")}] aprobacion=[${aprobacion.join("|")}]`;
+    })
+    .join(" ; ");
+}
+
+function buildTypeDescriptionsPrompt(types) {
+  const values = Array.isArray(types) ? types : [];
+  return values
+    .map((value) => {
+      const key = String(value || "").trim();
+      return `${key}: ${trimForPrompt(CAMPAIGN_TYPE_DESCRIPTIONS[key] || "sin descripcion", 120)}`;
+    })
+    .join(" ; ");
+}
+
+function buildSubtypeDescriptionsPrompt(subtypes) {
+  const values = Array.isArray(subtypes) ? subtypes : [];
+  return values
+    .map((value) => {
+      const key = String(value || "").trim();
+      return `${key}: ${trimForPrompt(CAMPAIGN_SUBTYPE_DESCRIPTIONS[key] || "sin descripcion", 120)}`;
+    })
+    .join(" ; ");
+}
+
+async function waitForChatbotJobCompletion({
+  jobId,
+  failedMessage,
+  timeoutMessage,
+}) {
+  let completed = false;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    const jobRes = await api.get(
+      `/api/chatbot/jobs/${encodeURIComponent(jobId)}`,
+    );
+    const status = String(jobRes?.data?.status || "queued").trim();
+    if (status === "completed") {
+      completed = true;
+      break;
+    }
+    if (status === "failed") {
+      throw new Error(String(jobRes?.data?.error?.message || failedMessage));
+    }
+  }
+
+  if (!completed) {
+    throw new Error(timeoutMessage);
+  }
+}
+
+function normalizeCatalogToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replaceAll("_", " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function matchCatalogValueFromText(rawText, catalogValues) {
+  const text = normalizeCatalogToken(rawText);
+  if (!text) return "";
+
+  const values = Array.isArray(catalogValues) ? catalogValues : [];
+  let bestMatch = "";
+  let bestScore = -1;
+
+  values.forEach((value) => {
+    const normalizedValue = normalizeCatalogToken(value);
+    if (!normalizedValue) return;
+    if (!text.includes(normalizedValue)) return;
+
+    const score = normalizedValue.length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = String(value || "").trim();
+    }
+  });
+
+  return bestMatch;
+}
+
+function extractSuggestionFromPlainText({
+  rawText,
+  availableTypes,
+  availableSubtypes,
+  policyByType,
+}) {
+  const content = String(rawText || "").trim();
+  if (!content) return null;
+
+  const typeFromText = matchCatalogValueFromText(content, availableTypes);
+  if (!typeFromText) return null;
+
+  const compatibleSubtypeEntries = getCompatibleSubtypeOptions(
+    policyByType,
+    availableSubtypes,
+    typeFromText,
+  );
+  const compatibleSubtypeValues = compatibleSubtypeEntries.map(
+    (entry) => entry.value,
+  );
+  const subtypeFromText = matchCatalogValueFromText(
+    content,
+    compatibleSubtypeValues,
+  );
+  if (!subtypeFromText) return null;
+
+  const reasonMatch = content.match(/raz[oó]n\s*[:\-]\s*([\s\S]+)/i);
+  const reason = String(reasonMatch?.[1] || content)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
+
+  return {
+    tipo_campana: typeFromText,
+    subtipo_campana: subtypeFromText,
+    razon: reason,
+  };
+}
+
+function extractGuideFromPlainText({ rawText, tipoCampana, subtipoCampana }) {
+  const content = String(rawText || "").trim();
+  if (!content) return null;
+
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+
+  const examples = lines
+    .filter((line) => /^[-*•]|^\d+[.)]/.test(line))
+    .map((line) => line.replace(/^[-*•]\s*|^\d+[.)]\s*/g, "").trim())
+    .filter((line) => line.length >= 12)
+    .slice(0, 5);
+
+  let context = "";
+  const contextMatch = content.match(
+    /contexto\s*[:\-]\s*([\s\S]*?)(?:\n\s*(?:ejemplos?|\d+[.)]|[-*•])|$)/i,
+  );
+  if (contextMatch?.[1]) {
+    context = String(contextMatch[1]).replace(/\s+/g, " ").trim();
+  }
+
+  if (!context) {
+    context = lines
+      .filter((line) => line.length >= 40 && !/^[-*•]|^\d+[.)]/.test(line))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  if (!context || context.length < 80 || examples.length < 3) {
+    return null;
+  }
+
+  return {
+    tipo_campana: String(tipoCampana || "").trim(),
+    subtipo_campana: String(subtipoCampana || "").trim(),
+    contexto: context,
+    ejemplos: examples,
+  };
+}
+
+async function fetchLatestAssistantMessageFromSession(sessionId) {
+  const historyRes = await api.get(
+    `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+  );
+  const messages = Array.isArray(historyRes?.data?.items)
+    ? historyRes.data.items
+    : [];
+  const reversed = [...messages].reverse();
+  const assistantMessage = reversed.find(
+    (item) => String(item?.role || "").trim() === "assistant",
+  );
+  const fallbackMessage = reversed.find((item) =>
+    String(item?.content || "").trim(),
+  );
+  const content = String(
+    assistantMessage?.content || fallbackMessage?.content || "",
+  );
+
+  return {
+    content,
+    parsed: extractJsonObjectFromText(content),
+  };
+}
+
+async function fetchLatestAssistantParsedJson(sessionId) {
+  const latest = await fetchLatestAssistantMessageFromSession(sessionId);
+  return latest.parsed;
+}
+
+async function requestStrictJsonRecovery({
+  sessionId,
+  schemaExample,
+  failedMessage,
+  timeoutMessage,
+  extraInstruction = "",
+}) {
+  const recoveryPrompt = [
+    "Tu respuesta anterior no fue JSON interpretable.",
+    "Repite la respuesta únicamente como JSON válido, sin markdown ni texto adicional.",
+    String(extraInstruction || "").trim(),
+    `Usa exactamente esta estructura: ${schemaExample}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const recoveryRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: toChatbotSafeMessage(recoveryPrompt),
+    useContext: false,
+    featureCode: "chatbot.assistant",
+  });
+
+  const recoveryJobId = String(recoveryRes?.data?.jobId || "").trim();
+  if (!recoveryJobId) {
+    throw new Error(failedMessage);
+  }
+
+  await waitForChatbotJobCompletion({
+    jobId: recoveryJobId,
+    failedMessage,
+    timeoutMessage,
+  });
+
+  return fetchLatestAssistantParsedJson(sessionId);
+}
+
+async function ensureParsedJsonFromSession({
+  sessionId,
+  schemaExample,
+  failedMessage,
+  timeoutMessage,
+  recoveryContext = "",
+  plainTextFallbackExtractor = null,
+}) {
+  let latestAssistant = await fetchLatestAssistantMessageFromSession(sessionId);
+  let parsed = latestAssistant.parsed;
+  if (parsed && typeof parsed === "object") {
+    return parsed;
+  }
+
+  const recoveryAttempts = [
+    String(recoveryContext || "").trim(),
+    [
+      String(recoveryContext || "").trim(),
+      "IMPORTANTE: devuelve un solo objeto JSON válido en una línea, sin markdown y sin texto extra.",
+      `Ejemplo exacto de formato: ${schemaExample}`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ];
+
+  for (const extraInstruction of recoveryAttempts) {
+    parsed = await requestStrictJsonRecovery({
+      sessionId,
+      schemaExample,
+      failedMessage,
+      timeoutMessage,
+      extraInstruction,
+    });
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+    latestAssistant = await fetchLatestAssistantMessageFromSession(sessionId);
+  }
+
+  if (typeof plainTextFallbackExtractor === "function") {
+    const fromText = plainTextFallbackExtractor(latestAssistant?.content || "");
+    if (fromText && typeof fromText === "object") {
+      return fromText;
+    }
+  }
+
+  throw new Error(
+    `${failedMessage}. La IA respondió en formato no válido tras varios intentos automáticos.`,
+  );
+}
+
+async function requestLabeledTextRecovery({
+  sessionId,
+  instruction,
+  failedMessage,
+  timeoutMessage,
+}) {
+  const recoveryRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: toChatbotSafeMessage(instruction),
+    useContext: false,
+    featureCode: "chatbot.assistant",
+  });
+
+  const recoveryJobId = String(recoveryRes?.data?.jobId || "").trim();
+  if (!recoveryJobId) {
+    throw new Error(failedMessage);
+  }
+
+  await waitForChatbotJobCompletion({
+    jobId: recoveryJobId,
+    failedMessage,
+    timeoutMessage,
+  });
+
+  const latest = await fetchLatestAssistantMessageFromSession(sessionId);
+  return String(latest?.content || "").trim();
+}
+
+async function requestMinimalSuggestionFallback({
+  intentText,
+  availableTypes,
+  availableSubtypes,
+  policyByType,
+}) {
+  const types = Array.isArray(availableTypes) ? availableTypes : [];
+  const subtypes = Array.isArray(availableSubtypes) ? availableSubtypes : [];
+  if (!types.length || !subtypes.length) {
+    return null;
+  }
+
+  const sessionRes = await api.post("/api/chatbot/sessions", {
+    locale: "es",
+    userContext: {
+      module: "campaigns",
+      objective: "suggest_campaign_type_subtype_minimal_fallback",
+    },
+  });
+  const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+  if (!sessionId) return null;
+
+  const minimalInstruction = [
+    "Responde SOLO una línea en este formato exacto:",
+    "TIPO=<valor>;SUBTIPO=<valor>;RAZON=<texto breve>",
+    "No uses JSON, markdown, ni texto adicional.",
+    `Tipos permitidos: ${types.join(", ")}`,
+    `Subtipos permitidos: ${subtypes.join(", ")}`,
+    `Compatibilidad por tipo: ${buildCompatibilityPromptSnippet(policyByType)}`,
+    `Objetivo: ${trimForPrompt(intentText, 700)}`,
+  ].join("\n\n");
+
+  const messageRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: toChatbotSafeMessage(minimalInstruction),
+    useContext: false,
+    featureCode: "chatbot.assistant",
+  });
+  const jobId = String(messageRes?.data?.jobId || "").trim();
+  if (!jobId) return null;
+
+  await waitForChatbotJobCompletion({
+    jobId,
+    failedMessage: "No fue posible obtener fallback IA de sugerencia",
+    timeoutMessage: "El fallback IA de sugerencia tardó demasiado",
+  });
+
+  const latest = await fetchLatestAssistantMessageFromSession(sessionId);
+  return extractSuggestionFromPlainText({
+    rawText: latest?.content || "",
+    availableTypes: types,
+    availableSubtypes: subtypes,
+    policyByType,
+  });
+}
+
+async function requestCampaignCombinationSuggestionWithAi({
+  intentText,
+  availableTypes,
+  availableSubtypes,
+  policyByType,
+}) {
+  const types = Array.isArray(availableTypes) ? availableTypes : [];
+  const subtypes = Array.isArray(availableSubtypes) ? availableSubtypes : [];
+
+  if (!types.length || !subtypes.length) {
+    throw new Error("No hay catálogos de tipo/subtipo disponibles");
+  }
+
+  const sessionRes = await api.post("/api/chatbot/sessions", {
+    locale: "es",
+    userContext: {
+      module: "campaigns",
+      objective: "suggest_campaign_type_subtype",
+    },
+  });
+
+  const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+  if (!sessionId) {
+    throw new Error("No fue posible crear sesión IA");
+  }
+
+  const aiInstruction = [
+    "Eres un asistente experto en clasificación de campañas comerciales.",
+    "Tu tarea es sugerir exactamente una combinación de tipo_campana y subtipo_campana y además generar contexto y ejemplos didácticos coherentes con esa combinación.",
+    "Responde exclusivamente JSON válido con esta estructura:",
+    '{"tipo_campana":"...","subtipo_campana":"...","sub_etapa":"...","razon":"...","contexto":"...","ejemplos":["...","...","..."]}',
+    "No agregues markdown ni texto fuera del JSON.",
+    "Reglas para contexto y ejemplos:",
+    "- contexto entre 300 y 900 caracteres",
+    "- ejemplos entre 3 y 5 items",
+    "- cada ejemplo debe ser simple, accionable y coherente con tipo/subtipo",
+    "Aplica obligatoriamente esta matriz operativa de sub-etapa x mensaje esperado antes de elegir combinación:",
+    "1) lanzamiento_inicial: no hay envíos ni tráfico previo suficiente. Mensaje esperado: valor del activo y primer registro.",
+    "2) activacion_trafico: ya hubo primera ola, pero falta volumen de visitas calificadas. Mensaje esperado: problema + beneficio + evidencia breve.",
+    "3) conversion_en_landing: hay visitas, pero baja conversión a formulario. Mensaje esperado: reducir fricción de registro y clarificar promesa.",
+    "4) recuperacion_abandono: hubo inicio de registro sin completar. Mensaje esperado: retomar paso pendiente con CTA único.",
+    "5) entrega_confirmacion: registro ya completado. Mensaje esperado: acceso/entrega del recurso y próximos pasos.",
+    "6) seguimiento_valor: ya consumió parcialmente el activo. Mensaje esperado: contenido complementario y siguiente interacción.",
+    "7) nutricion_temprana: hay interés, pero sin intención de compra clara. Mensaje esperado: educación aplicada y maduración.",
+    "8) conversion_comercial: intención explícita o señal de cierre. Mensaje esperado: propuesta concreta y acción de cierre.",
+    "Reglas de gating para evitar errores de etapa:",
+    "- Si el objetivo no menciona evidencia de envíos/visitas previas, asume lanzamiento_inicial por defecto.",
+    "- Solo usar recuperacion_abandono si el texto indica explícitamente abandono, visita sin registro o formulario incompleto.",
+    "- Si el objetivo describe captación nueva (ej. ebook/webinar por lanzar), NO asumir abandono ni seguimiento post-evento.",
+    "- Si el objetivo describe post-registro, prioriza nutrición o conversión según intención declarada.",
+    "Regla de coherencia tipo vs sub_etapa:",
+    "- lanzamiento_inicial y activacion_trafico NO deben devolver tipo_campana='conversion' cuando el objetivo principal es captar registros.",
+    "- conversion_en_landing significa optimizacion de registro/formulario y normalmente corresponde a captacion_de_leads, no a cierre comercial.",
+    "- conversion_comercial si requiere tipo_campana='conversion' porque implica cierre (demo/cotizacion/compra).",
+    "Regla semántica: la razón debe explicar por qué la sub_etapa elegida coincide con el objetivo del usuario y por qué el subtipo es el canal correcto en esa sub-etapa.",
+    "Regla de seguridad: no inventes estados ni señales no descritas por el usuario.",
+    `Tipos permitidos: ${types.join(", ")}`,
+    `Subtipos permitidos: ${subtypes.join(", ")}`,
+    `Contexto de tipo disponible: ${trimForPrompt(buildTypeDescriptionsPrompt(types), 1200)}`,
+    `Contexto de subtipo disponible: ${trimForPrompt(buildSubtypeDescriptionsPrompt(subtypes), 1200)}`,
+    `Compatibilidad por tipo (resumen): ${buildCompatibilityPromptSnippet(policyByType)}`,
+    "Regla: si propones un subtipo no compatible con el tipo, corrige y elige uno compatible.",
+    `Objetivo de campaña (usuario): ${trimForPrompt(intentText, 700)}`,
+  ].join("\n\n");
+
+  const messageRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: toChatbotSafeMessage(aiInstruction),
+    useContext: false,
+    featureCode: "chatbot.assistant",
+  });
+
+  const jobId = String(messageRes?.data?.jobId || "").trim();
+  if (!jobId) {
+    throw new Error("No fue posible iniciar la sugerencia IA");
+  }
+
+  await waitForChatbotJobCompletion({
+    jobId,
+    failedMessage: "No fue posible obtener sugerencia IA",
+    timeoutMessage: "La sugerencia IA tardó demasiado en responder",
+  });
+
+  let parsed = null;
+  try {
+    parsed = await ensureParsedJsonFromSession({
+      sessionId,
+      schemaExample:
+        '{"tipo_campana":"...","subtipo_campana":"...","sub_etapa":"...","razon":"...","contexto":"...","ejemplos":["...","...","..."]}',
+      failedMessage: "No fue posible procesar la salida de sugerencia IA",
+      timeoutMessage: "La recuperación de formato IA tardó demasiado",
+      recoveryContext:
+        "Corrige formato y respeta coherencia entre sub_etapa, tipo_campana y subtipo_campana. También devuelve contexto y ejemplos.",
+      plainTextFallbackExtractor: (rawText) =>
+        extractSuggestionFromPlainText({
+          rawText,
+          availableTypes: types,
+          availableSubtypes: subtypes,
+          policyByType,
+        }),
+    });
+  } catch {
+    const labeledText = await requestLabeledTextRecovery({
+      sessionId,
+      instruction: [
+        "Último intento de formato.",
+        "Responde SOLO con estas líneas y nada más:",
+        "TIPO: <valor exacto del catálogo>",
+        "SUBTIPO: <valor exacto del catálogo>",
+        "SUB_ETAPA: <valor>",
+        "RAZON: <texto breve>",
+      ].join("\n"),
+      failedMessage:
+        "No fue posible recuperar sugerencia IA en formato etiquetado",
+      timeoutMessage: "La recuperación etiquetada IA tardó demasiado",
+    });
+
+    parsed = extractSuggestionFromPlainText({
+      rawText: labeledText,
+      availableTypes: types,
+      availableSubtypes: subtypes,
+      policyByType,
+    });
+
+    if (!parsed || typeof parsed !== "object") {
+      parsed = await requestMinimalSuggestionFallback({
+        intentText,
+        availableTypes: types,
+        availableSubtypes: subtypes,
+        policyByType,
+      });
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("No fue posible recuperar sugerencia IA válida");
+    }
+  }
+
+  const suggestedType = String(
+    parsed?.tipo_campana || parsed?.tipo || parsed?.campaignType || "",
+  ).trim();
+  const suggestedSubtype = String(
+    parsed?.subtipo_campana || parsed?.subtipo || parsed?.campaignSubtype || "",
+  ).trim();
+  const suggestedSubStage = String(
+    parsed?.sub_etapa || parsed?.subEtapa || parsed?.stage || "",
+  )
+    .trim()
+    .toLowerCase();
+  const suggestionReason = String(
+    parsed?.razon || parsed?.reason || parsed?.justificacion || "",
+  ).trim();
+  const suggestionContext = String(
+    parsed?.contexto || parsed?.context || "",
+  ).trim();
+  const suggestionExamplesRaw = Array.isArray(parsed?.ejemplos)
+    ? parsed.ejemplos
+    : Array.isArray(parsed?.examples)
+      ? parsed.examples
+      : [];
+  const suggestionExamples = suggestionExamplesRaw
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  if (!types.includes(suggestedType)) {
+    throw new Error("IA devolvió un tipo de campaña inválido");
+  }
+
+  const compatibleSubtypeEntries = getCompatibleSubtypeOptions(
+    policyByType,
+    subtypes,
+    suggestedType,
+  );
+  const allowedSubtypes = compatibleSubtypeEntries.map((entry) => entry.value);
+  if (!allowedSubtypes.includes(suggestedSubtype)) {
+    throw new Error("IA devolvió un subtipo incompatible con el tipo sugerido");
+  }
+
+  const stageTypeConstraints = {
+    lanzamiento_inicial: ["reconocimiento", "captacion_de_leads"],
+    activacion_trafico: ["reconocimiento", "captacion_de_leads"],
+    conversion_en_landing: ["captacion_de_leads"],
+    recuperacion_abandono: ["captacion_de_leads", "nutricion"],
+    entrega_confirmacion: ["nutricion", "fidelizacion"],
+    seguimiento_valor: ["nutricion", "fidelizacion"],
+    nutricion_temprana: ["nutricion"],
+    conversion_comercial: ["conversion"],
+  };
+
+  const allowedTypesByStage = stageTypeConstraints[suggestedSubStage] || null;
+  if (allowedTypesByStage && !allowedTypesByStage.includes(suggestedType)) {
+    const coherenceRecovery = await requestStrictJsonRecovery({
+      sessionId,
+      schemaExample:
+        '{"tipo_campana":"...","subtipo_campana":"...","sub_etapa":"...","razon":"...","contexto":"...","ejemplos":["...","...","..."]}',
+      failedMessage: "No fue posible corregir coherencia en sugerencia IA",
+      timeoutMessage: "La corrección de coherencia IA tardó demasiado",
+      extraInstruction: `Corrige la coherencia: para sub_etapa='${suggestedSubStage}', tipo_campana='${suggestedType}' no es válido. Devuelve una combinación coherente entre sub_etapa, tipo_campana y subtipo_campana con justificación breve. También regenera contexto y ejemplos coherentes con la combinación corregida.`,
+    });
+
+    const coherentType = String(
+      coherenceRecovery?.tipo_campana ||
+        coherenceRecovery?.tipo ||
+        coherenceRecovery?.campaignType ||
+        "",
+    ).trim();
+    const coherentSubtype = String(
+      coherenceRecovery?.subtipo_campana ||
+        coherenceRecovery?.subtipo ||
+        coherenceRecovery?.campaignSubtype ||
+        "",
+    ).trim();
+    const coherentSubStage = String(
+      coherenceRecovery?.sub_etapa ||
+        coherenceRecovery?.subEtapa ||
+        coherenceRecovery?.stage ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+    const coherentReason = String(
+      coherenceRecovery?.razon ||
+        coherenceRecovery?.reason ||
+        coherenceRecovery?.justificacion ||
+        "",
+    ).trim();
+    const coherentContext = String(
+      coherenceRecovery?.contexto || coherenceRecovery?.context || "",
+    ).trim();
+    const coherentExamplesRaw = Array.isArray(coherenceRecovery?.ejemplos)
+      ? coherenceRecovery.ejemplos
+      : Array.isArray(coherenceRecovery?.examples)
+        ? coherenceRecovery.examples
+        : [];
+    const coherentExamples = coherentExamplesRaw
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+
+    if (!types.includes(coherentType)) {
+      throw new Error(
+        "IA devolvió un tipo de campaña inválido tras corrección",
+      );
+    }
+
+    const coherentSubtypeEntries = getCompatibleSubtypeOptions(
+      policyByType,
+      subtypes,
+      coherentType,
+    );
+    const allowedCoherentSubtypes = coherentSubtypeEntries.map(
+      (entry) => entry.value,
+    );
+    if (!allowedCoherentSubtypes.includes(coherentSubtype)) {
+      throw new Error(
+        "IA devolvió un subtipo incompatible tras corrección de coherencia",
+      );
+    }
+
+    const coherentAllowedTypes = stageTypeConstraints[coherentSubStage] || null;
+    if (coherentAllowedTypes && !coherentAllowedTypes.includes(coherentType)) {
+      throw new Error(
+        "La sugerencia IA sigue incoherente entre sub-etapa y tipo de campaña",
+      );
+    }
+
+    return {
+      tipo_campana: coherentType,
+      subtipo_campana: coherentSubtype,
+      razon: coherentReason || suggestionReason,
+      context: coherentContext,
+      examples: coherentExamples,
+      raw_response: String(
+        (await fetchLatestAssistantMessageFromSession(sessionId))?.content ||
+          "",
+      ).trim(),
+    };
+  }
+
+  return {
+    tipo_campana: suggestedType,
+    subtipo_campana: suggestedSubtype,
+    razon: suggestionReason,
+    context: suggestionContext,
+    examples: suggestionExamples,
+    raw_response: String(
+      (await fetchLatestAssistantMessageFromSession(sessionId))?.content || "",
+    ).trim(),
+  };
+}
+
+async function requestClassificationGuideEnrichmentWithAi({
+  tipoCampana,
+  subtipoCampana,
+  campaignGoalText,
+}) {
+  const tipo = String(tipoCampana || "").trim();
+  const subtipo = String(subtipoCampana || "").trim();
+
+  if (!tipo || !subtipo) {
+    throw new Error("No hay combinación tipo/subtipo para analizar con IA");
+  }
+
+  const sessionRes = await api.post("/api/chatbot/sessions", {
+    locale: "es",
+    userContext: {
+      module: "campaigns",
+      objective: "enrich_campaign_context_examples",
+      tipoCampana: tipo,
+      subtipoCampana: subtipo,
+    },
+  });
+
+  const sessionId = String(sessionRes?.data?.sessionId || "").trim();
+  if (!sessionId) {
+    throw new Error("No fue posible crear sesión IA para enriquecer guía");
+  }
+
+  const aiInstruction = [
+    "Eres experto en campañas comerciales B2B y redacción didáctica.",
+    "Tu tarea es construir desde cero una guía de contexto y ejemplos SIN contradecir la combinación seleccionada.",
+    "Mantén tono claro, específico y accionable; evita generalidades.",
+    "Responde exclusivamente JSON válido con esta estructura:",
+    '{"tipo_campana":"...","subtipo_campana":"...","contexto":"...","ejemplos":["...","...","..."]}',
+    "Reglas obligatorias:",
+    "- contexto entre 300 y 900 caracteres",
+    "- ejemplos entre 3 y 5 items",
+    "- cada ejemplo debe ser simple y fácil de entender",
+    "- no inventar códigos ni cambiar tipo/subtipo",
+    `Tipo seleccionado: ${tipo}`,
+    `Subtipo seleccionado: ${subtipo}`,
+    `Objetivo libre del usuario: ${trimForPrompt(campaignGoalText, 700) || "(sin texto adicional)"}`,
+    "Construye contexto y ejemplos nuevos, concretos y coherentes con el objetivo.",
+  ].join("\n\n");
+
+  const messageRes = await api.post("/api/chatbot/messages", {
+    sessionId,
+    message: toChatbotSafeMessage(aiInstruction),
+    useContext: false,
+    featureCode: "chatbot.assistant",
+  });
+
+  const jobId = String(messageRes?.data?.jobId || "").trim();
+  if (!jobId) {
+    throw new Error("No fue posible iniciar enriquecimiento IA");
+  }
+
+  await waitForChatbotJobCompletion({
+    jobId,
+    failedMessage: "No fue posible enriquecer contexto y ejemplos con IA",
+    timeoutMessage: "El enriquecimiento IA tardó demasiado en responder",
+  });
+
+  let parsed = null;
+  try {
+    parsed = await ensureParsedJsonFromSession({
+      sessionId,
+      schemaExample:
+        '{"tipo_campana":"...","subtipo_campana":"...","contexto":"...","ejemplos":["...","...","..."]}',
+      failedMessage: "No fue posible procesar la salida de enriquecimiento IA",
+      timeoutMessage: "La recuperación de formato IA tardó demasiado",
+      recoveryContext:
+        "Corrige formato y devuelve contexto + ejemplos totalmente útiles y coherentes con la combinación indicada.",
+      plainTextFallbackExtractor: (rawText) =>
+        extractGuideFromPlainText({
+          rawText,
+          tipoCampana: tipo,
+          subtipoCampana: subtipo,
+        }),
+    });
+  } catch {
+    const labeledText = await requestLabeledTextRecovery({
+      sessionId,
+      instruction: [
+        "Último intento de formato.",
+        "Responde SOLO con estas líneas y nada más:",
+        "TIPO: <valor exacto>",
+        "SUBTIPO: <valor exacto>",
+        "CONTEXTO: <texto entre 300 y 900 caracteres>",
+        "EJEMPLO_1: <texto>",
+        "EJEMPLO_2: <texto>",
+        "EJEMPLO_3: <texto>",
+      ].join("\n"),
+      failedMessage:
+        "No fue posible recuperar enriquecimiento IA en formato etiquetado",
+      timeoutMessage: "La recuperación etiquetada IA tardó demasiado",
+    });
+
+    parsed = extractGuideFromPlainText({
+      rawText: labeledText,
+      tipoCampana: tipo,
+      subtipoCampana: subtipo,
+    });
+
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error(
+        "No fue posible recuperar una guía IA válida tras todos los intentos",
+      );
+    }
+  }
+
+  const enrichedContext = String(
+    parsed?.contexto || parsed?.context || "",
+  ).trim();
+  const parsedTipo = String(
+    parsed?.tipo_campana || parsed?.tipoCampana || "",
+  ).trim();
+  const parsedSubtipo = String(
+    parsed?.subtipo_campana || parsed?.subtipoCampana || "",
+  ).trim();
+  const enrichedExamplesRaw = Array.isArray(parsed?.ejemplos)
+    ? parsed.ejemplos
+    : Array.isArray(parsed?.examples)
+      ? parsed.examples
+      : [];
+  const enrichedExamples = enrichedExamplesRaw
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  if (!enrichedContext || enrichedContext.length < 80) {
+    throw new Error("La IA devolvió un contexto demasiado corto");
+  }
+  if (enrichedExamples.length < 3) {
+    throw new Error("La IA devolvió pocos ejemplos útiles");
+  }
+  if (parsedTipo && parsedTipo !== tipo) {
+    throw new Error("La IA devolvió una guía para otro tipo de campaña");
+  }
+  if (parsedSubtipo && parsedSubtipo !== subtipo) {
+    throw new Error("La IA devolvió una guía para otro subtipo de campaña");
+  }
+
+  return {
+    tipo_campana: tipo,
+    subtipo_campana: subtipo,
+    context: enrichedContext,
+    examples: enrichedExamples,
+    raw_response: String(
+      (await fetchLatestAssistantMessageFromSession(sessionId))?.content || "",
+    ).trim(),
+  };
+}
+
 export default function CampaignsPage() {
   const [audienceSortMode, setAudienceSortMode] = useState("name_asc");
   const [catalogs, setCatalogs] = useState(null);
@@ -303,7 +1986,23 @@ export default function CampaignsPage() {
     useState({});
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
+  const [aiResponseNotification, setAiResponseNotification] = useState("");
+  const [campaignGoalText, setCampaignGoalText] = useState("");
+  const [aiSuggestionReason, setAiSuggestionReason] = useState("");
+  const [isSuggestingCombination, setIsSuggestingCombination] = useState(false);
+  const [classificationGuideAi, setClassificationGuideAi] = useState(null);
+  const [classificationGuideAiSource, setClassificationGuideAiSource] =
+    useState(null);
+  const [isEnrichingClassificationGuide, setIsEnrichingClassificationGuide] =
+    useState(false);
+  const [classificationGuideFallbackNote, setClassificationGuideFallbackNote] =
+    useState("");
   const [executionTab, setExecutionTab] = useState("landing");
+  const [selectedAccountTypeFilters, setSelectedAccountTypeFilters] = useState(
+    [],
+  );
+  const [accountTypeFiltersInitialized, setAccountTypeFiltersInitialized] =
+    useState(false);
   const [selectedSectorFilters, setSelectedSectorFilters] = useState([]);
   const [sectorFiltersInitialized, setSectorFiltersInitialized] =
     useState(false);
@@ -315,12 +2014,69 @@ export default function CampaignsPage() {
       campaigns.find((campaign) => campaign.id === selectedCampaignId) || null
     );
   }, [campaigns, selectedCampaignId]);
+
+  useEffect(() => {
+    if (selectedCampaignId) {
+      const storedText = readCampaignGoalTextFromStorage(selectedCampaignId);
+      if (storedText) {
+        setCampaignGoalText(storedText);
+        return;
+      }
+
+      setCampaignGoalText(String(selectedCampaign?.description || "").trim());
+      return;
+    }
+
+    setCampaignGoalText("");
+  }, [selectedCampaignId, selectedCampaign?.description]);
+
+  useEffect(() => {
+    if (!selectedCampaignId) {
+      // For new unsaved campaigns, keep the in-memory IA guide generated in this session.
+      return;
+    }
+
+    const currentType = String(campaignForm.tipo_campana || "").trim();
+    const currentSubtype = String(campaignForm.subtipo_campana || "").trim();
+    const storedGuide = readStoredClassificationGuide(
+      selectedCampaignId,
+      currentType,
+      currentSubtype,
+    );
+
+    if (storedGuide) {
+      setClassificationGuideAi(storedGuide.guide || null);
+      setClassificationGuideAiSource(storedGuide);
+      setClassificationGuideFallbackNote("");
+      return;
+    }
+
+    setClassificationGuideAi(null);
+    setClassificationGuideAiSource(null);
+    setClassificationGuideFallbackNote("");
+  }, [
+    campaignForm.subtipo_campana,
+    campaignForm.tipo_campana,
+    selectedCampaignId,
+  ]);
+
   const selectedTypeDescription =
     CAMPAIGN_TYPE_DESCRIPTIONS[campaignForm.tipo_campana] ||
     "Selecciona el objetivo principal de la campana.";
   const selectedSubtypeDescription =
     CAMPAIGN_SUBTYPE_DESCRIPTIONS[campaignForm.subtipo_campana] ||
     "Selecciona el canal o formato principal de ejecucion de la campana.";
+  const selectedClassificationUsageGuide = useMemo(
+    () => ({
+      context: String(classificationGuideAi?.context || "").trim(),
+      examples: Array.isArray(classificationGuideAi?.examples)
+        ? classificationGuideAi.examples
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+        : [],
+    }),
+    [classificationGuideAi],
+  );
   const compatibilityPolicyByType =
     catalogs?.compatibilidad_tipo_subtipo?.por_tipo || {};
   const compatibleSubtypeOptions = useMemo(
@@ -356,6 +2112,50 @@ export default function CampaignsPage() {
   const selectedAudienceLifecycleLabel = campaignForm.etapa_ciclo_vida
     ? formatCampaignTypeLabel(campaignForm.etapa_ciclo_vida)
     : "Sin definir";
+  const accountTypeOptions = useMemo(() => {
+    const catalogTypes = Array.isArray(catalogs?.account_types)
+      ? catalogs.account_types
+      : [];
+    const accountTypesInAccounts = accounts
+      .map((account) => String(account?.account_type || "").trim())
+      .filter(Boolean);
+    const unique = Array.from(
+      new Set([...catalogTypes, ...accountTypesInAccounts]),
+    );
+    return unique.sort((first, second) =>
+      first.localeCompare(second, "es", {
+        sensitivity: "base",
+      }),
+    );
+  }, [accounts, catalogs?.account_types]);
+  const selectedAccountTypeFilterSet = useMemo(() => {
+    return new Set(
+      selectedAccountTypeFilters
+        .map((accountType) => String(accountType || "").trim())
+        .filter(Boolean),
+    );
+  }, [selectedAccountTypeFilters]);
+  useEffect(() => {
+    if (accountTypeFiltersInitialized) return;
+    if (!accountTypeOptions.length) return;
+
+    const preferredTypes = new Set([
+      "potencial",
+      "principal",
+      "prospecto",
+      "puntual",
+      "otro",
+    ]);
+
+    const defaultSelection = accountTypeOptions.filter((accountType) =>
+      preferredTypes.has(normalizeClassificationValue(accountType)),
+    );
+
+    setSelectedAccountTypeFilters(
+      defaultSelection.length ? defaultSelection : accountTypeOptions,
+    );
+    setAccountTypeFiltersInitialized(true);
+  }, [accountTypeFiltersInitialized, accountTypeOptions]);
   const sectorOptions = useMemo(() => {
     const unique = Array.from(
       new Set(
@@ -381,18 +2181,7 @@ export default function CampaignsPage() {
     if (sectorFiltersInitialized) return;
     if (!sectorOptions.length) return;
 
-    const excludedSectors = new Set([
-      "proveedor",
-      "proveedores",
-      "integrador",
-      "integradores",
-    ]);
-
-    const defaultSelection = sectorOptions.filter(
-      (sector) => !excludedSectors.has(normalizeSectorValue(sector)),
-    );
-
-    setSelectedSectorFilters(defaultSelection);
+    setSelectedSectorFilters(sectorOptions);
     setSectorFiltersInitialized(true);
   }, [sectorFiltersInitialized, sectorOptions]);
   const accountSectorById = useMemo(() => {
@@ -401,6 +2190,15 @@ export default function CampaignsPage() {
       const accountId = Number(account?.id || 0);
       if (!Number.isInteger(accountId) || accountId <= 0) return;
       map.set(accountId, String(account?.economic_sector || "").trim());
+    });
+    return map;
+  }, [accounts]);
+  const accountTypeById = useMemo(() => {
+    const map = new Map();
+    accounts.forEach((account) => {
+      const accountId = Number(account?.id || 0);
+      if (!Number.isInteger(accountId) || accountId <= 0) return;
+      map.set(accountId, String(account?.account_type || "").trim());
     });
     return map;
   }, [accounts]);
@@ -435,8 +2233,25 @@ export default function CampaignsPage() {
       return selectedSectorFilterSet.has(sector);
     });
   }, [accountSectorById, filteredAudienceAccounts, selectedSectorFilterSet]);
+  const filteredAudienceAccountsByClassification = useMemo(() => {
+    if (!selectedAccountTypeFilterSet.size) {
+      return filteredAudienceAccountsBySector;
+    }
+
+    return filteredAudienceAccountsBySector.filter((item) => {
+      const accountId = Number(item?.account_id || 0);
+      const accountType = String(
+        item?.account_type || accountTypeById.get(accountId) || "",
+      ).trim();
+      return selectedAccountTypeFilterSet.has(accountType);
+    });
+  }, [
+    accountTypeById,
+    filteredAudienceAccountsBySector,
+    selectedAccountTypeFilterSet,
+  ]);
   const suggestedContactsCount = useMemo(() => {
-    return filteredAudienceAccountsBySector.reduce((total, item) => {
+    return filteredAudienceAccountsByClassification.reduce((total, item) => {
       const accountId = Number(item.account_id || 0);
       const removedContactIds =
         removedAudienceContactsByAccount[accountId] || [];
@@ -449,17 +2264,20 @@ export default function CampaignsPage() {
 
       return total + visibleContacts.length;
     }, 0);
-  }, [filteredAudienceAccountsBySector, removedAudienceContactsByAccount]);
+  }, [
+    filteredAudienceAccountsByClassification,
+    removedAudienceContactsByAccount,
+  ]);
   const filteredAudienceAccountsById = useMemo(() => {
     const map = new Map();
-    filteredAudienceAccountsBySector.forEach((item) => {
+    filteredAudienceAccountsByClassification.forEach((item) => {
       const accountId = Number(item.account_id || 0);
       if (Number.isInteger(accountId) && accountId > 0) {
         map.set(accountId, item);
       }
     });
     return map;
-  }, [filteredAudienceAccountsBySector]);
+  }, [filteredAudienceAccountsByClassification]);
   const accountsById = useMemo(() => {
     const map = new Map();
     accounts.forEach((account) => {
@@ -1019,6 +2837,12 @@ export default function CampaignsPage() {
     });
     setFeedback("");
     setError("");
+    setAiResponseNotification("");
+    setCampaignGoalText("");
+    setAiSuggestionReason("");
+    setClassificationGuideAi(null);
+    setClassificationGuideAiSource(null);
+    setClassificationGuideFallbackNote("");
   }
 
   function selectCampaign(campaign) {
@@ -1039,6 +2863,206 @@ export default function CampaignsPage() {
     });
     setFeedback("");
     setError("");
+    setAiResponseNotification("");
+    setCampaignGoalText(
+      readCampaignGoalTextFromStorage(campaign.id) ||
+        String(campaign?.description || "").trim(),
+    );
+    setAiSuggestionReason("");
+    setClassificationGuideAi(null);
+    setClassificationGuideAiSource(null);
+    setClassificationGuideFallbackNote("");
+  }
+
+  async function handleSuggestCombinationWithAi() {
+    const intent = String(campaignGoalText || "").trim();
+    if (!intent) {
+      setError(
+        "Escribe primero qué quieres lograr con la campaña para sugerir combinación",
+      );
+      setFeedback("");
+      return;
+    }
+
+    if (
+      !Array.isArray(catalogs?.tipo_campana) ||
+      !catalogs.tipo_campana.length
+    ) {
+      setError("No hay catálogo de tipos disponible para sugerir combinación");
+      setFeedback("");
+      return;
+    }
+
+    if (
+      !Array.isArray(catalogs?.subtipo_campana) ||
+      !catalogs.subtipo_campana.length
+    ) {
+      setError(
+        "No hay catálogo de subtipos disponible para sugerir combinación",
+      );
+      setFeedback("");
+      return;
+    }
+
+    setIsSuggestingCombination(true);
+    let suggestion = null;
+    try {
+      suggestion = await requestCampaignCombinationSuggestionWithAi({
+        intentText: intent,
+        availableTypes: catalogs?.tipo_campana,
+        availableSubtypes: catalogs?.subtipo_campana,
+        policyByType: compatibilityPolicyByType,
+      });
+
+      setCampaignForm((previous) => ({
+        ...previous,
+        tipo_campana: suggestion.tipo_campana,
+        subtipo_campana: suggestion.subtipo_campana,
+      }));
+
+      setFeedback(
+        `IA sugiere: ${formatCampaignTypeLabel(suggestion.tipo_campana)} + ${formatCampaignTypeLabel(suggestion.subtipo_campana)}.`,
+      );
+      setAiSuggestionReason(String(suggestion?.razon || "").trim());
+      setAiResponseNotification(
+        buildAiRawResponseNotification(
+          "Respuesta IA (sugerencia)",
+          suggestion?.raw_response,
+        ),
+      );
+
+      const suggestionContext = String(suggestion?.context || "").trim();
+      const suggestionExamples = Array.isArray(suggestion?.examples)
+        ? suggestion.examples
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .slice(0, 5)
+        : [];
+      if (suggestionContext && suggestionExamples.length >= 3) {
+        const normalizedGuide = normalizeClassificationGuideAi({
+          enriched: {
+            tipo_campana: suggestion.tipo_campana,
+            subtipo_campana: suggestion.subtipo_campana,
+            context: suggestionContext,
+            examples: suggestionExamples,
+            reason: String(suggestion?.razon || "").trim(),
+          },
+          tipoCampana: suggestion.tipo_campana,
+          subtipoCampana: suggestion.subtipo_campana,
+          campaignGoalText,
+        });
+
+        if (
+          isCampaignGuideConsistent(
+            normalizedGuide,
+            suggestion.tipo_campana,
+            suggestion.subtipo_campana,
+          )
+        ) {
+          setClassificationGuideAi(normalizedGuide);
+          setClassificationGuideAiSource(normalizedGuide);
+          setClassificationGuideFallbackNote("");
+          if (selectedCampaignId) {
+            writeStoredClassificationGuide(
+              selectedCampaignId,
+              suggestion.tipo_campana,
+              suggestion.subtipo_campana,
+              {
+                tipoCampana: suggestion.tipo_campana,
+                subtipoCampana: suggestion.subtipo_campana,
+                guide: normalizedGuide,
+              },
+            );
+          }
+        }
+      }
+      setError("");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible obtener una sugerencia de combinación con IA",
+        ),
+      );
+      setFeedback("");
+      setAiSuggestionReason("");
+      setAiResponseNotification("");
+      return null;
+    } finally {
+      setIsSuggestingCombination(false);
+    }
+
+    return suggestion;
+  }
+
+  async function handleEnrichClassificationGuideWithAi(
+    tipoCampana = campaignForm.tipo_campana,
+    subtipoCampana = campaignForm.subtipo_campana,
+  ) {
+    const tipo = String(tipoCampana || "").trim();
+    const subtipo = String(subtipoCampana || "").trim();
+    if (!tipo || !subtipo) {
+      setClassificationGuideFallbackNote("");
+      return;
+    }
+
+    if (!selectedCampaignId) {
+      setClassificationGuideFallbackNote(
+        "Selecciona o guarda la campaña antes de enriquecer la guía con IA.",
+      );
+      return;
+    }
+
+    setIsEnrichingClassificationGuide(true);
+    setClassificationGuideFallbackNote("");
+
+    try {
+      const enriched = await requestClassificationGuideEnrichmentWithAi({
+        tipoCampana: tipo,
+        subtipoCampana: subtipo,
+        campaignGoalText,
+      });
+      setAiResponseNotification(
+        buildAiRawResponseNotification(
+          "Respuesta IA (contexto y ejemplos)",
+          enriched?.raw_response,
+        ),
+      );
+
+      const normalizedGuide = normalizeClassificationGuideAi({
+        enriched,
+        tipoCampana: tipo,
+        subtipoCampana: subtipo,
+        campaignGoalText,
+      });
+
+      if (!isCampaignGuideConsistent(normalizedGuide, tipo, subtipo)) {
+        throw new Error(
+          "La guía IA no coincide con la combinación seleccionada",
+        );
+      }
+
+      setClassificationGuideAi(normalizedGuide);
+      setClassificationGuideAiSource(normalizedGuide);
+      writeStoredClassificationGuide(selectedCampaignId, tipo, subtipo, {
+        tipoCampana: tipo,
+        subtipoCampana: subtipo,
+        guide: normalizedGuide,
+      });
+    } catch (requestError) {
+      setClassificationGuideAi(null);
+      setClassificationGuideAiSource(null);
+      clearStoredClassificationGuide(selectedCampaignId, tipo, subtipo);
+      setClassificationGuideFallbackNote(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible generar la guía con IA. Reintenta con un objetivo más específico.",
+        ),
+      );
+      setAiResponseNotification("");
+    } finally {
+      setIsEnrichingClassificationGuide(false);
+    }
   }
 
   function handleLifecycleStageChange(nextValue) {
@@ -1099,6 +3123,9 @@ export default function CampaignsPage() {
       if (!savedCampaign) {
         throw new Error("No se recibio la campana guardada");
       }
+
+      const goalTextToPersist = String(campaignGoalText || "").trim();
+      writeCampaignGoalTextToStorage(savedCampaign.id, goalTextToPersist);
 
       setCampaigns((previous) => {
         const withoutCurrent = previous.filter(
@@ -1247,6 +3274,11 @@ export default function CampaignsPage() {
       {feedback ? (
         <p className="campaigns-alert campaigns-alert-success">{feedback}</p>
       ) : null}
+      {aiResponseNotification ? (
+        <p className="campaigns-alert campaigns-alert-success">
+          {aiResponseNotification}
+        </p>
+      ) : null}
 
       <div className="campaigns-layout">
         <aside className="campaigns-sidebar">
@@ -1310,6 +3342,62 @@ export default function CampaignsPage() {
               <div className="campaigns-form-section">
                 <div className="campaigns-section-title">Clasificación</div>
                 <div className="campaigns-grid">
+                  <div className="campaigns-grid-wide campaigns-ai-goal-helper">
+                    <div className="campaigns-subsection-title">
+                      Qué Quieres Lograr Con La Campaña
+                    </div>
+                    <div className="campaigns-ai-goal-row">
+                      <textarea
+                        rows={2}
+                        value={campaignGoalText}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          setCampaignGoalText(nextValue);
+                          writeCampaignGoalTextToStorage(
+                            selectedCampaignId,
+                            nextValue,
+                          );
+                        }}
+                        placeholder="Ej. Quiero avisar de un webinar y lograr que se registren esta semana"
+                      />
+                      <button
+                        type="button"
+                        className="campaigns-ai-goal-button"
+                        onClick={async () => {
+                          const suggestion =
+                            await handleSuggestCombinationWithAi();
+                          const hasGuideFromSuggestion =
+                            suggestion &&
+                            String(suggestion?.context || "").trim().length >=
+                              80 &&
+                            Array.isArray(suggestion?.examples) &&
+                            suggestion.examples.filter((item) =>
+                              String(item || "").trim(),
+                            ).length >= 3;
+                          if (suggestion && !hasGuideFromSuggestion) {
+                            await handleEnrichClassificationGuideWithAi(
+                              suggestion.tipo_campana,
+                              suggestion.subtipo_campana,
+                            );
+                          }
+                        }}
+                        disabled={isSuggestingCombination}
+                      >
+                        {isSuggestingCombination
+                          ? "Analizando..."
+                          : "Sugerir Con IA"}
+                      </button>
+                    </div>
+                    <small className="campaigns-field-help">
+                      Describe el resultado esperado y la IA seleccionará la
+                      mejor combinación de tipo y subtipo.
+                    </small>
+                    {aiSuggestionReason ? (
+                      <small className="campaigns-ai-goal-reason">
+                        Razón de la sugerencia IA: {aiSuggestionReason}
+                      </small>
+                    ) : null}
+                  </div>
                   <label>
                     Tipo
                     <select
@@ -1380,6 +3468,42 @@ export default function CampaignsPage() {
                       {selectedSubtypeDescription}
                     </small>
                   </label>
+                  <div className="campaigns-grid-wide campaigns-classification-usage-guide">
+                    <div className="campaigns-subsection-title">
+                      Contexto y ejemplos
+                    </div>
+                    {isEnrichingClassificationGuide ? (
+                      <small className="campaigns-guide-ai-status">
+                        Enriqueciendo contexto y ejemplos con IA...
+                      </small>
+                    ) : (
+                      <>
+                        {classificationGuideFallbackNote ? (
+                          <small className="campaigns-guide-fallback-note">
+                            {classificationGuideFallbackNote}
+                          </small>
+                        ) : null}
+                        {selectedClassificationUsageGuide.context ? (
+                          <p>{selectedClassificationUsageGuide.context}</p>
+                        ) : (
+                          <small className="campaigns-field-help">
+                            La guía de contexto y ejemplos se genera solo con
+                            IA. Usa "Sugerir Con IA" para obtenerla.
+                          </small>
+                        )}
+                        {selectedClassificationUsageGuide.examples.length >
+                        0 ? (
+                          <ul>
+                            {selectedClassificationUsageGuide.examples.map(
+                              (example) => (
+                                <li key={example}>{example}</li>
+                              ),
+                            )}
+                          </ul>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
                   <label>
                     Estado
                     <select
@@ -1420,6 +3544,58 @@ export default function CampaignsPage() {
                       {selectedLifecycleDescription}
                     </small>
                   </label>
+                  <div className="campaigns-grid-wide campaigns-subsection-block">
+                    <div className="campaigns-subsection-title">
+                      Filtro por tipo de cuenta
+                    </div>
+                    <div className="campaigns-sector-filter">
+                      {accountTypeOptions.length === 0 ? (
+                        <small className="campaigns-field-help">
+                          Sin tipos de cuenta disponibles.
+                        </small>
+                      ) : (
+                        accountTypeOptions.map((accountType) => {
+                          const isSelected = selectedAccountTypeFilterSet.has(
+                            String(accountType || "").trim(),
+                          );
+                          return (
+                            <label
+                              key={accountType}
+                              className={`campaigns-sector-filter-item ${
+                                isSelected ? "is-selected" : ""
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  setSelectedAccountTypeFilters((previous) => {
+                                    const normalized = String(
+                                      accountType || "",
+                                    ).trim();
+                                    if (isSelected) {
+                                      return previous.filter(
+                                        (value) =>
+                                          String(value || "").trim() !==
+                                          normalized,
+                                      );
+                                    }
+                                    return [...previous, normalized];
+                                  });
+                                }}
+                              />
+                              <span>{accountType}</span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <small className="campaigns-field-help">
+                      Puedes elegir uno o varios tipos de cuenta para filtrar
+                      las cuentas en Audiencia. Por defecto se seleccionan
+                      todos.
+                    </small>
+                  </div>
                   <div className="campaigns-grid-wide campaigns-subsection-block">
                     <div className="campaigns-subsection-title">
                       Filtro por sector de cuenta
@@ -1558,15 +3734,14 @@ export default function CampaignsPage() {
                     <div className="campaigns-audience-title-row">
                       <strong>
                         Cuentas sugeridas:{" "}
-                        {filteredAudienceAccountsBySector.length} · Contactos
-                        sugeridos: {suggestedContactsCount}
+                        {filteredAudienceAccountsByClassification.length} ·
+                        Contactos sugeridos: {suggestedContactsCount}
                       </strong>
                       <button
                         type="button"
                         className="campaigns-audience-add-icon"
                         title="Abrir modal para anadir cuentas"
                         aria-label="Abrir modal para anadir cuentas"
-                        disabled={availableAccountsBase.length === 0}
                         onClick={() => {
                           setIsAddAccountsModalOpen(true);
                         }}
