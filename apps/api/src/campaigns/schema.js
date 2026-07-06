@@ -20,6 +20,11 @@ const CAMPAIGNS_SCHEMA_STATEMENTS = [
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(180) NOT NULL,
     description TEXT NULL,
+    campaign_goal_text TEXT NULL,
+    classification_guide_context TEXT NULL,
+    classification_guide_examples_json JSON NULL,
+    campaign_email_guide_json JSON NULL,
+    campaign_email_draft_json JSON NULL,
     tipo_campana VARCHAR(60) NOT NULL,
     subtipo_campana VARCHAR(60) NOT NULL,
     compatibilidad_nivel VARCHAR(40) NOT NULL DEFAULT 'permitido',
@@ -84,6 +89,48 @@ export async function ensureCampaignsSchema() {
           `ALTER TABLE campaigns
            ADD COLUMN compatibilidad_nivel VARCHAR(40) NOT NULL DEFAULT 'permitido'
            AFTER subtipo_campana`,
+        );
+      }
+
+      if (!(await hasColumn("campaigns", "campaign_goal_text"))) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN campaign_goal_text TEXT NULL
+           AFTER description`,
+        );
+      }
+
+      if (!(await hasColumn("campaigns", "classification_guide_context"))) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN classification_guide_context TEXT NULL
+           AFTER campaign_goal_text`,
+        );
+      }
+
+      if (
+        !(await hasColumn("campaigns", "classification_guide_examples_json"))
+      ) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN classification_guide_examples_json JSON NULL
+           AFTER classification_guide_context`,
+        );
+      }
+
+      if (!(await hasColumn("campaigns", "campaign_email_guide_json"))) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN campaign_email_guide_json JSON NULL
+           AFTER classification_guide_examples_json`,
+        );
+      }
+
+      if (!(await hasColumn("campaigns", "campaign_email_draft_json"))) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN campaign_email_draft_json JSON NULL
+           AFTER campaign_email_guide_json`,
         );
       }
 

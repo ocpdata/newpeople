@@ -170,9 +170,9 @@ async function findUserGoogleMailConnection(userId) {
 function buildHtmlWithPreheader({ preheader, htmlContent }) {
   const normalizedPreheader = String(preheader || "").trim();
   const normalizedHtml = String(htmlContent || "").trim();
-  if (!normalizedPreheader) return normalizedHtml;
-
-  return `${`<div style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">${normalizedPreheader}</div>`}${normalizedHtml}`;
+  // Legacy compatibility: ignore preheader even if old clients still send it.
+  void normalizedPreheader;
+  return normalizedHtml;
 }
 
 function buildSharedDocumentPublicId() {
@@ -756,7 +756,7 @@ async function sendToRecipients({
         to: String(recipient?.email || "").trim(),
         cc: "",
         subject,
-        messageBody: String(preheader || "Mensaje enviado").trim(),
+        messageBody: "Mensaje enviado",
         htmlBody,
         attachments: [],
       });
@@ -833,7 +833,7 @@ async function createDispatch({
       campaignId || null,
       Number(requestedByUserId),
       subject,
-      preheader || null,
+      null,
       String(ctaLabel || "").trim() || null,
       String(ctaUrl || "").trim() || null,
       String(sharedDocument?.publicId || "").trim() || null,
@@ -1418,9 +1418,9 @@ async function processSingleDispatch(dispatchRow) {
         to: String(recipient.email || ""),
         cc: "",
         subject: String(dispatchRow.subject || "").trim(),
-        messageBody: String(dispatchRow.preheader || "Mensaje enviado").trim(),
+        messageBody: "Mensaje enviado",
         htmlBody: buildHtmlWithPreheader({
-          preheader: String(dispatchRow.preheader || ""),
+          preheader: "",
           htmlContent: buildHtmlWithPrimaryCta({
             htmlContent: String(dispatchRow.html_content || ""),
             ctaUrl: resolvedCtaUrl,
@@ -1662,7 +1662,6 @@ router.post(
     }
 
     const subject = String(parsed.data.subject || "").trim();
-    const preheader = String(parsed.data.preheader || "").trim();
     const htmlContent = String(parsed.data.htmlContent || "").trim();
 
     const results = await sendToRecipients({
@@ -1670,7 +1669,7 @@ router.post(
       from: fromEmail,
       recipients: validRecipients,
       subject,
-      preheader,
+      preheader: "",
       htmlContent,
       ctaLabel: String(parsed.data.ctaLabel || "").trim(),
       ctaUrl: String(parsed.data.ctaUrl || "").trim(),
@@ -1745,7 +1744,7 @@ router.post(
         campaignId: Number(parsed.data.campaignId || 0) || null,
         requestedByUserId: req.user.id,
         subject: String(parsed.data.subject || "").trim(),
-        preheader: String(parsed.data.preheader || "").trim(),
+        preheader: "",
         ctaLabel: String(parsed.data.ctaLabel || "").trim(),
         ctaUrl: String(parsed.data.ctaUrl || "").trim(),
         sharedDocument,

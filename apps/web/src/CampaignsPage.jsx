@@ -719,10 +719,23 @@ function normalizeAudienceContact(rawContact) {
   };
 }
 
-function normalizeCampaignForm(form) {
+function normalizeCampaignForm(
+  form,
+  campaignGoalText,
+  classificationGuideContext,
+  classificationGuideExamples,
+) {
   return {
     name: String(form.name || "").trim(),
     description: String(form.description || "").trim() || null,
+    campaign_goal_text: String(campaignGoalText || "").trim() || null,
+    classification_guide_context:
+      String(classificationGuideContext || "").trim() || null,
+    classification_guide_examples: Array.isArray(classificationGuideExamples)
+      ? classificationGuideExamples
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
     tipo_campana: String(form.tipo_campana || "").trim(),
     subtipo_campana: String(form.subtipo_campana || "").trim(),
     estado_campana: String(form.estado_campana || "").trim(),
@@ -914,6 +927,59 @@ function normalizeClassificationGuideAi({
       .slice(0, 5),
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeClassificationGuideFromDb(campaign) {
+  const tipo = String(campaign?.tipo_campana || "").trim();
+  const subtipo = String(campaign?.subtipo_campana || "").trim();
+  const context = String(campaign?.classification_guide_context || "").trim();
+  const examples = Array.isArray(campaign?.classification_guide_examples)
+    ? campaign.classification_guide_examples
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+
+  if (!context && !examples.length) {
+    return null;
+  }
+
+  return {
+    source: "db",
+    tipoCampana: tipo,
+    tipo_campana: tipo,
+    subtipoCampana: subtipo,
+    subtipo_campana: subtipo,
+    context,
+    examples,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function DismissibleAlert({ message, variant = "error" }) {
+  const normalizedMessage = String(message || "").trim();
+  const [dismissedMessage, setDismissedMessage] = useState("");
+
+  if (!normalizedMessage || dismissedMessage === normalizedMessage) {
+    return null;
+  }
+
+  const variantClass =
+    variant === "success" ? "campaigns-alert-success" : "campaigns-alert-error";
+
+  return (
+    <div className={`campaigns-alert ${variantClass} campaigns-alert-dismissible`} role="alert">
+      <span>{normalizedMessage}</span>
+      <button
+        type="button"
+        className="campaigns-alert-close"
+        aria-label="Cerrar notificacion"
+        onClick={() => setDismissedMessage(normalizedMessage)}
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 function getSubtypeCompatibilityLevel(
@@ -1109,12 +1175,6 @@ function toChatbotSafeMessage(value) {
   const MAX_SAFE = 3950;
   if (text.length <= MAX_SAFE) return text;
   return `${text.slice(0, MAX_SAFE - 1).trim()}…`;
-}
-
-function buildAiRawResponseNotification(title, rawText) {
-  const text = trimForPrompt(String(rawText || "").trim(), 1200);
-  if (!text) return "";
-  return `${title}: ${text}`;
 }
 
 function buildCompatibilityPromptSnippet(policyByType) {
@@ -1986,7 +2046,6 @@ export default function CampaignsPage() {
     useState({});
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
-  const [aiResponseNotification, setAiResponseNotification] = useState("");
   const [campaignGoalText, setCampaignGoalText] = useState("");
   const [aiSuggestionReason, setAiSuggestionReason] = useState("");
   const [isSuggestingCombination, setIsSuggestingCombination] = useState(false);
@@ -2023,7 +2082,13 @@ export default function CampaignsPage() {
         return;
       }
 
-      setCampaignGoalText(String(selectedCampaign?.description || "").trim());
+      setCampaignGoalText(
+        String(
+          selectedCampaign?.campaign_goal_text ||
+            selectedCampaign?.description ||
+            "",
+        ).trim(),
+      );
       return;
     }
 
@@ -2606,6 +2671,11 @@ export default function CampaignsPage() {
             starts_at: toDateInputValue(campaignsData[0].starts_at),
             ends_at: toDateInputValue(campaignsData[0].ends_at),
           });
+          const persistedGuide = normalizeClassificationGuideFromDb(
+            campaignsData[0],
+          );
+          setClassificationGuideAi(persistedGuide);
+          setClassificationGuideAiSource(persistedGuide);
         }
       } catch (requestError) {
         if (mounted) {
@@ -2837,7 +2907,6 @@ export default function CampaignsPage() {
     });
     setFeedback("");
     setError("");
-    setAiResponseNotification("");
     setCampaignGoalText("");
     setAiSuggestionReason("");
     setClassificationGuideAi(null);
@@ -2863,14 +2932,14 @@ export default function CampaignsPage() {
     });
     setFeedback("");
     setError("");
-    setAiResponseNotification("");
     setCampaignGoalText(
       readCampaignGoalTextFromStorage(campaign.id) ||
-        String(campaign?.description || "").trim(),
+        String(campaign?.campaign_goal_text || campaign?.description || "").trim(),
     );
     setAiSuggestionReason("");
-    setClassificationGuideAi(null);
-    setClassificationGuideAiSource(null);
+    const persistedGuide = normalizeClassificationGuideFromDb(campaign);
+    setClassificationGuideAi(persistedGuide);
+    setClassificationGuideAiSource(persistedGuide);
     setClassificationGuideFallbackNote("");
   }
 
@@ -2924,13 +2993,6 @@ export default function CampaignsPage() {
         `IA sugiere: ${formatCampaignTypeLabel(suggestion.tipo_campana)} + ${formatCampaignTypeLabel(suggestion.subtipo_campana)}.`,
       );
       setAiSuggestionReason(String(suggestion?.razon || "").trim());
-      setAiResponseNotification(
-        buildAiRawResponseNotification(
-          "Respuesta IA (sugerencia)",
-          suggestion?.raw_response,
-        ),
-      );
-
       const suggestionContext = String(suggestion?.context || "").trim();
       const suggestionExamples = Array.isArray(suggestion?.examples)
         ? suggestion.examples
@@ -2986,7 +3048,6 @@ export default function CampaignsPage() {
       );
       setFeedback("");
       setAiSuggestionReason("");
-      setAiResponseNotification("");
       return null;
     } finally {
       setIsSuggestingCombination(false);
@@ -3022,13 +3083,6 @@ export default function CampaignsPage() {
         subtipoCampana: subtipo,
         campaignGoalText,
       });
-      setAiResponseNotification(
-        buildAiRawResponseNotification(
-          "Respuesta IA (contexto y ejemplos)",
-          enriched?.raw_response,
-        ),
-      );
-
       const normalizedGuide = normalizeClassificationGuideAi({
         enriched,
         tipoCampana: tipo,
@@ -3059,7 +3113,6 @@ export default function CampaignsPage() {
           "No fue posible generar la guía con IA. Reintenta con un objetivo más específico.",
         ),
       );
-      setAiResponseNotification("");
     } finally {
       setIsEnrichingClassificationGuide(false);
     }
@@ -3106,7 +3159,12 @@ export default function CampaignsPage() {
     setFeedback("");
 
     try {
-      const payload = normalizeCampaignForm(campaignForm);
+      const payload = normalizeCampaignForm(
+        campaignForm,
+        campaignGoalText,
+        selectedClassificationUsageGuide.context,
+        selectedClassificationUsageGuide.examples,
+      );
       let savedCampaign = null;
 
       if (selectedCampaignId) {
@@ -3147,6 +3205,9 @@ export default function CampaignsPage() {
         starts_at: toDateInputValue(savedCampaign.starts_at),
         ends_at: toDateInputValue(savedCampaign.ends_at),
       });
+      const persistedGuide = normalizeClassificationGuideFromDb(savedCampaign);
+      setClassificationGuideAi(persistedGuide);
+      setClassificationGuideAiSource(persistedGuide);
       setFeedback(
         selectedCampaignId ? "Campaña actualizada" : "Campaña creada",
       );
@@ -3268,18 +3329,8 @@ export default function CampaignsPage() {
         </div>
       </header>
 
-      {error ? (
-        <p className="campaigns-alert campaigns-alert-error">{error}</p>
-      ) : null}
-      {feedback ? (
-        <p className="campaigns-alert campaigns-alert-success">{feedback}</p>
-      ) : null}
-      {aiResponseNotification ? (
-        <p className="campaigns-alert campaigns-alert-success">
-          {aiResponseNotification}
-        </p>
-      ) : null}
-
+      <DismissibleAlert message={error} variant="error" />
+      <DismissibleAlert message={feedback} variant="success" />
       <div className="campaigns-layout">
         <aside className="campaigns-sidebar">
           <div className="campaigns-sidebar-head">
@@ -3795,10 +3846,11 @@ export default function CampaignsPage() {
                     <p className="campaigns-empty">Calculando sugerencias...</p>
                   ) : null}
 
-                  {!isLoadingSuggestedAccounts && suggestedAccountsError ? (
-                    <p className="campaigns-alert campaigns-alert-error">
-                      {suggestedAccountsError}
-                    </p>
+                  {!isLoadingSuggestedAccounts ? (
+                    <DismissibleAlert
+                      message={suggestedAccountsError}
+                      variant="error"
+                    />
                   ) : null}
 
                   {!isLoadingSuggestedAccounts &&
@@ -4238,10 +4290,8 @@ export default function CampaignsPage() {
                 <p className="campaigns-empty">Cargando contactos...</p>
               ) : null}
 
-              {!isLoadingAddContacts && addContactsError ? (
-                <p className="campaigns-alert campaigns-alert-error">
-                  {addContactsError}
-                </p>
+              {!isLoadingAddContacts ? (
+                <DismissibleAlert message={addContactsError} variant="error" />
               ) : null}
 
               {!isLoadingAddContacts &&

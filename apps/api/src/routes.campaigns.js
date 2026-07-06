@@ -192,6 +192,18 @@ const CAMPAIGN_TYPE_SUBTYPE_POLICY = {
 const campaignUpsertSchema = z.object({
   name: z.string().trim().min(2).max(180),
   description: z.string().trim().max(10000).optional().nullable(),
+  campaign_goal_text: z.string().trim().max(10000).optional().nullable(),
+  classification_guide_context: z
+    .string()
+    .trim()
+    .max(12000)
+    .optional()
+    .nullable(),
+  classification_guide_examples: z
+    .array(z.string().trim().max(1200))
+    .max(10)
+    .optional()
+    .nullable(),
   tipo_campana: z.enum(TIPO_CAMPANA_VALUES),
   subtipo_campana: z.enum(SUBTIPO_CAMPANA_VALUES),
   aprobacion_compatibilidad: z.boolean().optional(),
@@ -228,6 +240,20 @@ const upsertCampaignAccountSchema = accountInteractionInputSchema.omit({
   account_id: true,
 });
 
+const campaignEmailGuideUpsertSchema = z.object({
+  campaign_email_guide: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .nullable(),
+});
+
+const campaignEmailDraftUpsertSchema = z.object({
+  campaign_email_draft: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .nullable(),
+});
+
 function toDateOrNull(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -235,10 +261,60 @@ function toDateOrNull(value) {
 }
 
 function mapCampaignRow(row) {
+  let classificationGuideExamples = [];
+  try {
+    const parsed = JSON.parse(row.classification_guide_examples_json || "[]");
+    if (Array.isArray(parsed)) {
+      classificationGuideExamples = parsed
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .slice(0, 10);
+    }
+  } catch {
+    classificationGuideExamples = [];
+  }
+
+  let campaignEmailGuide = null;
+  try {
+    const rawGuide = row.campaign_email_guide_json;
+    const parsedGuide =
+      typeof rawGuide === "string" ? JSON.parse(rawGuide) : rawGuide;
+    if (
+      parsedGuide &&
+      typeof parsedGuide === "object" &&
+      !Array.isArray(parsedGuide)
+    ) {
+      campaignEmailGuide = parsedGuide;
+    }
+  } catch {
+    campaignEmailGuide = null;
+  }
+
+  let campaignEmailDraft = null;
+  try {
+    const rawDraft = row.campaign_email_draft_json;
+    const parsedDraft =
+      typeof rawDraft === "string" ? JSON.parse(rawDraft) : rawDraft;
+    if (
+      parsedDraft &&
+      typeof parsedDraft === "object" &&
+      !Array.isArray(parsedDraft)
+    ) {
+      campaignEmailDraft = parsedDraft;
+    }
+  } catch {
+    campaignEmailDraft = null;
+  }
+
   return {
     id: Number(row.id),
     name: row.name || "",
     description: row.description || "",
+    campaign_goal_text: row.campaign_goal_text || "",
+    classification_guide_context: row.classification_guide_context || "",
+    classification_guide_examples: classificationGuideExamples,
+    campaign_email_guide: campaignEmailGuide,
+    campaign_email_draft: campaignEmailDraft,
     tipo_campana: row.tipo_campana,
     subtipo_campana: row.subtipo_campana,
     compatibilidad_nivel: row.compatibilidad_nivel || "permitido",
@@ -882,8 +958,10 @@ router.get(
     }
 
     if (search) {
-      where.push("(c.name LIKE ? OR c.description LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`);
+      where.push(
+        "(c.name LIKE ? OR c.description LIKE ? OR c.campaign_goal_text LIKE ?)",
+      );
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const rows = await query(
@@ -932,14 +1010,17 @@ router.post(
 
     const result = await query(
       `INSERT INTO campaigns
-       (name, description, tipo_campana, subtipo_campana,
+       (name, description, campaign_goal_text, classification_guide_context, classification_guide_examples_json, tipo_campana, subtipo_campana,
         compatibilidad_nivel, compatibilidad_aprobada, compatibilidad_justificacion, compatibilidad_evaluada_at,
         estado_campana, etapa_ciclo_vida,
         starts_at, ends_at, created_by, updated_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payload.name,
         payload.description || null,
+        payload.campaign_goal_text || null,
+        payload.classification_guide_context || null,
+        JSON.stringify(payload.classification_guide_examples || []),
         payload.tipo_campana,
         payload.subtipo_campana,
         compatibilidad.nivel,
@@ -998,6 +1079,114 @@ router.get(
 );
 
 router.patch(
+  "/:campaignId/email-draft",
+  requireAnyPermission(CAMPAIGN_UPDATE_PERMISSIONS),
+  async (req, res) => {
+    const campaignId = Number(req.params.campaignId);
+    if (!Number.isInteger(campaignId) || campaignId <= 0) {
+      return res.status(400).json({ message: "campaignId invalido" });
+    }
+
+    const parsed = campaignEmailDraftUpsertSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const payload = parsed.data;
+    const now = new Date();
+
+    const updateResult = await query(
+      `UPDATE campaigns
+       SET campaign_email_draft_json = ?,
+           updated_by = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      [
+        payload.campaign_email_draft
+          ? JSON.stringify(payload.campaign_email_draft)
+          : null,
+        Number(req.user.id),
+        now,
+        campaignId,
+      ],
+    );
+
+    if (!Number(updateResult.affectedRows || 0)) {
+      return res.status(404).json({ message: "Campana no encontrada" });
+    }
+
+    const rows = await query(
+      `SELECT c.*, COUNT(cai.id) AS targeted_accounts_count
+       FROM campaigns c
+       LEFT JOIN campaign_account_interactions cai ON cai.campaign_id = c.id
+       WHERE c.id = ?
+       GROUP BY c.id
+       LIMIT 1`,
+      [campaignId],
+    );
+
+    return res.json({ campaign: mapCampaignRow(rows[0]) });
+  },
+);
+
+router.patch(
+  "/:campaignId/email-guide",
+  requireAnyPermission(CAMPAIGN_UPDATE_PERMISSIONS),
+  async (req, res) => {
+    const campaignId = Number(req.params.campaignId);
+    if (!Number.isInteger(campaignId) || campaignId <= 0) {
+      return res.status(400).json({ message: "campaignId invalido" });
+    }
+
+    const parsed = campaignEmailGuideUpsertSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const payload = parsed.data;
+    const now = new Date();
+
+    const updateResult = await query(
+      `UPDATE campaigns
+       SET campaign_email_guide_json = ?,
+           updated_by = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      [
+        payload.campaign_email_guide
+          ? JSON.stringify(payload.campaign_email_guide)
+          : null,
+        Number(req.user.id),
+        now,
+        campaignId,
+      ],
+    );
+
+    if (!Number(updateResult.affectedRows || 0)) {
+      return res.status(404).json({ message: "Campana no encontrada" });
+    }
+
+    const rows = await query(
+      `SELECT c.*, COUNT(cai.id) AS targeted_accounts_count
+       FROM campaigns c
+       LEFT JOIN campaign_account_interactions cai ON cai.campaign_id = c.id
+       WHERE c.id = ?
+       GROUP BY c.id
+       LIMIT 1`,
+      [campaignId],
+    );
+
+    return res.json({ campaign: mapCampaignRow(rows[0]) });
+  },
+);
+
+router.patch(
   "/:campaignId",
   requireAnyPermission(CAMPAIGN_UPDATE_PERMISSIONS),
   async (req, res) => {
@@ -1035,6 +1224,9 @@ router.patch(
       `UPDATE campaigns
      SET name = ?,
          description = ?,
+         campaign_goal_text = ?,
+         classification_guide_context = ?,
+         classification_guide_examples_json = ?,
          tipo_campana = ?,
          subtipo_campana = ?,
          compatibilidad_nivel = ?,
@@ -1051,6 +1243,9 @@ router.patch(
       [
         payload.name,
         payload.description || null,
+        payload.campaign_goal_text || null,
+        payload.classification_guide_context || null,
+        JSON.stringify(payload.classification_guide_examples || []),
         payload.tipo_campana,
         payload.subtipo_campana,
         compatibilidad.nivel,

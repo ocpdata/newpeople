@@ -51,6 +51,29 @@
   font-size: 0.92rem;
 }
 
+.campaigns-alert-dismissible {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.campaigns-alert-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.05rem 0.2rem;
+  border-radius: 0.25rem;
+}
+
+.campaigns-alert-close:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
 .campaigns-alert-error {
   background: #fef2f2;
   border: 1px solid #fecaca;
