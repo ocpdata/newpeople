@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { api, getApiErrorMessage } from "./api";
+import { api, getApiErrorMessage, normalizeUiMessage } from "./api";
 import "./campaign-email-module.css";
 
 const MODULE_TABS = [
@@ -2745,6 +2745,7 @@ export default function CampaignEmailModulePage() {
   const [isStartingSend, setIsStartingSend] = useState(false);
   const [testSendSummary, setTestSendSummary] = useState(null);
   const [testSendResults, setTestSendResults] = useState([]);
+  const [testSendNotice, setTestSendNotice] = useState(null);
   const [campaignDispatch, setCampaignDispatch] = useState(null);
   const [campaignDispatchResults, setCampaignDispatchResults] = useState([]);
   const [isLoadingDispatch, setIsLoadingDispatch] = useState(false);
@@ -2783,6 +2784,31 @@ export default function CampaignEmailModulePage() {
       campaigns.find((campaign) => campaign.id === selectedCampaignId) || null
     );
   }, [campaigns, selectedCampaignId]);
+
+  const persistedCampaignGuideAnalysis = useMemo(() => {
+    if (!selectedCampaign) return null;
+    if (!hasCampaignGuideContent(selectedCampaign.campaign_email_guide)) {
+      return null;
+    }
+    return normalizeCampaignGuideAnalysis(selectedCampaign.campaign_email_guide);
+  }, [selectedCampaign]);
+
+  const normalizedCurrentCampaignGuideAnalysis = useMemo(() => {
+    if (!hasCampaignGuideContent(campaignGuideAnalysis)) {
+      return null;
+    }
+    return normalizeCampaignGuideAnalysis(campaignGuideAnalysis);
+  }, [campaignGuideAnalysis]);
+
+  const isCampaignGuideDirty = useMemo(() => {
+    const currentSerialized = JSON.stringify(
+      normalizedCurrentCampaignGuideAnalysis || null,
+    );
+    const persistedSerialized = JSON.stringify(
+      persistedCampaignGuideAnalysis || null,
+    );
+    return currentSerialized !== persistedSerialized;
+  }, [normalizedCurrentCampaignGuideAnalysis, persistedCampaignGuideAnalysis]);
 
   const currentDraft = useMemo(() => {
     const key = String(selectedCampaignId || "");
@@ -2869,23 +2895,9 @@ export default function CampaignEmailModulePage() {
       SUBTYPE_STAGE_CLARITY[subtipoCampana] ||
       CAMPAIGN_STAGE_CLARITY[tipoCampana] ||
       null;
-    const campaignGoalTextForGuide = (() => {
-      if (typeof window === "undefined") return "";
-      const campaignId = Number(selectedCampaign?.id || 0);
-      if (!Number.isInteger(campaignId) || campaignId <= 0) {
-        return String(selectedCampaign?.description || "").trim();
-      }
-      try {
-        const storedGoal = String(
-          window.localStorage.getItem(
-            `campaigns-page-goal-text:${campaignId}`,
-          ) || "",
-        ).trim();
-        return storedGoal || String(selectedCampaign?.description || "").trim();
-      } catch {
-        return String(selectedCampaign?.description || "").trim();
-      }
-    })();
+    const campaignGoalTextForGuide = String(
+      selectedCampaign?.campaign_goal_text || "",
+    ).trim();
     const objectiveForGuide = campaignGoalTextForGuide || playbook.objective;
 
     const hasCtaUrl = Boolean(String(currentDraft.cta_url || "").trim());
@@ -2925,6 +2937,7 @@ export default function CampaignEmailModulePage() {
       stageClarity,
       objective: objectiveForGuide,
       campaignGoalText: campaignGoalTextForGuide,
+      campaignDescription: String(selectedCampaign?.description || "").trim(),
       objectiveDetail: buildObjectiveDetail({
         tipoCampana,
         subtipoCampana,
@@ -2997,27 +3010,41 @@ export default function CampaignEmailModulePage() {
       setIsAnalyzingCampaignGuide(true);
       setCampaignGuideAnalysisNote("Analizando la guia con IA...");
 
-      const campaignGoalText = (() => {
-        if (typeof window === "undefined") return "";
-        const campaignId = Number(selectedCampaign.id || 0);
-        if (!Number.isInteger(campaignId) || campaignId <= 0) return "";
-        try {
-          return String(
-            window.localStorage.getItem(
-              `campaigns-page-goal-text:${campaignId}`,
-            ) || "",
-          ).trim();
-        } catch {
-          return "";
-        }
-      })();
+      const campaignGoalText = String(
+        selectedCampaign.campaign_goal_text || "",
+      ).trim();
+      const campaignDescriptionText = String(
+        selectedCampaign.description || "",
+      ).trim();
+      const campaignClassificationContextText = String(
+        selectedCampaign.classification_guide_context || "",
+      ).trim();
+      const campaignClassificationExamples = Array.isArray(
+        selectedCampaign.classification_guide_examples,
+      )
+        ? selectedCampaign.classification_guide_examples
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+      const campaignContextExamplesText = [
+        campaignClassificationContextText
+          ? `Contexto: ${campaignClassificationContextText}`
+          : "",
+        campaignClassificationExamples.length
+          ? `Ejemplos: ${campaignClassificationExamples.join(" | ")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
 
       const campaignSnapshot = {
         name: String(selectedCampaign.name || "").trim(),
         type: String(selectedCampaign.tipo_campana || "").trim(),
         subtype: String(selectedCampaign.subtipo_campana || "").trim(),
-        goalText:
-          campaignGoalText || String(selectedCampaign.description || "").trim(),
+        goalText: campaignGoalText,
+        descriptionText: campaignDescriptionText,
       };
 
       let campaignMatrixRows = [];
@@ -3050,106 +3077,6 @@ export default function CampaignEmailModulePage() {
       const configuredExampleEmail = String(
         configuredMatrixRow?.exampleEmail || "",
       ).trim();
-
-      const campaignContextExamplesText = (() => {
-        if (typeof window === "undefined") return "";
-        const campaignId = Number(selectedCampaign.id || 0);
-        const tipo = String(campaignSnapshot.type || "").trim();
-        const subtipo = String(campaignSnapshot.subtype || "").trim();
-        if (!Number.isInteger(campaignId) || campaignId <= 0) return "";
-
-        const toGuide = (payload) => {
-          if (!payload || typeof payload !== "object") return null;
-          if (payload.guide && typeof payload.guide === "object") {
-            return payload.guide;
-          }
-          return payload;
-        };
-
-        const extractContextExamples = (guide) => {
-          if (!guide || typeof guide !== "object") {
-            return { context: "", examples: [] };
-          }
-          const context = String(
-            guide.context ||
-              guide.contexto ||
-              guide.campaignContextDescription ||
-              guide.subtypeContextDescription ||
-              "",
-          ).trim();
-          const examplesRaw = Array.isArray(guide.examples)
-            ? guide.examples
-            : Array.isArray(guide.ejemplos)
-              ? guide.ejemplos
-              : Array.isArray(guide.resourceExamples)
-                ? guide.resourceExamples
-                : [];
-          const examples = examplesRaw
-            .map((item) => String(item || "").trim())
-            .filter(Boolean)
-            .slice(0, 5);
-          return { context, examples };
-        };
-
-        const toText = ({ context, examples }) => {
-          const parts = [];
-          if (context) {
-            parts.push(`Contexto: ${context}`);
-          }
-          if (examples.length > 0) {
-            parts.push(`Ejemplos: ${examples.join(" | ")}`);
-          }
-          return parts.join("\n").trim();
-        };
-
-        const parseStorageGuide = (raw) => {
-          try {
-            const parsed = JSON.parse(String(raw || ""));
-            const guide = toGuide(parsed);
-            return extractContextExamples(guide);
-          } catch {
-            return { context: "", examples: [] };
-          }
-        };
-
-        const storagePrefix = `campaigns-page-classification-guide:${campaignId}:`;
-        const exactKey = `${storagePrefix}${tipo}:${subtipo}`;
-
-        try {
-          const exactRaw = window.localStorage.getItem(exactKey);
-          const exactPayload = parseStorageGuide(exactRaw);
-          const exactText = toText(exactPayload);
-          if (exactText) {
-            return exactText;
-          }
-
-          let bestPayload = { context: "", examples: [] };
-          let bestScore = -1;
-
-          for (let index = 0; index < window.localStorage.length; index += 1) {
-            const key = String(window.localStorage.key(index) || "");
-            if (!key.startsWith(storagePrefix)) continue;
-
-            const payload = parseStorageGuide(window.localStorage.getItem(key));
-            const payloadText = toText(payload);
-            if (!payloadText) continue;
-
-            let score = 0;
-            if (payload.context) score += 2;
-            if (payload.examples.length > 0) score += 1;
-            if (key.includes(`:${tipo}:${subtipo}`)) score += 3;
-
-            if (score > bestScore) {
-              bestScore = score;
-              bestPayload = payload;
-            }
-          }
-
-          return toText(bestPayload);
-        } catch {
-          return "";
-        }
-      })();
 
       const sessionRes = await api.post("/api/chatbot/sessions", {
         locale: "es",
@@ -3299,6 +3226,7 @@ export default function CampaignEmailModulePage() {
         `Campaña: ${trimForPrompt(campaignSnapshot.name, 250)}`,
         `Tipo/Subtipo: ${formatLabel(campaignSnapshot.type)} / ${formatLabel(campaignSnapshot.subtype)}`,
         `Qué quieres lograr con la campaña: ${trimForPrompt(campaignSnapshot.goalText, 700) || "(sin texto registrado)"}`,
+        `Descripción de la campaña: ${trimForPrompt(campaignSnapshot.descriptionText, 700) || "(sin descripcion registrada)"}`,
         `Contexto y ejemplos de la campaña (obligatorio usar): ${trimForPrompt(campaignContextExamplesText, 1800) || "(sin contexto y ejemplos registrados)"}`,
         `Fila de matriz vigente (si aplica): tipo=${campaignSnapshot.type} | subtipo=${campaignSnapshot.subtype} | prioridad=${configuredPriority || "(no definida)"} | tipo_correo=${configuredEmailType || "(no definido)"} | requisito_operativo=${trimForPrompt(configuredOperationalRequirement, 280) || "(no definido)"}`,
         `Ejemplo de correo de la matriz (si aplica): ${trimForPrompt(configuredExampleEmail, 420) || "(no definido)"}`,
@@ -4146,6 +4074,36 @@ export default function CampaignEmailModulePage() {
       .filter(Boolean);
   }
 
+  function formatTestSendStatusLabel(status) {
+    const normalized = String(status || "").trim().toLowerCase();
+    if (normalized === "sent") return "Enviado";
+    if (normalized === "failed") return "Fallido";
+    if (normalized === "invalid") return "Inválido";
+    if (normalized === "skipped") return "Omitido";
+    return String(status || "").trim() || "Sin estado";
+  }
+
+  function formatTestSendDetailMessage(message) {
+    const text = String(message || "").trim();
+    const lower = text.toLowerCase();
+    if (!text) return "Sin detalle";
+    if (lower.includes("recipient") && lower.includes("required")) {
+      return "Falta el destinatario del correo.";
+    }
+    const normalized = normalizeUiMessage(text);
+    if (
+      normalized === "Google no permitió enviar el correo." &&
+      lower.includes("google_send_failed")
+    ) {
+      return "Google no permitió enviar el correo de prueba.";
+    }
+    return normalized;
+  }
+
+  function formatGlobalAlertMessage(rawMessage) {
+    return normalizeUiMessage(rawMessage);
+  }
+
   function hasInvalidEmail(entries) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return entries.some((entry) => !emailRegex.test(entry));
@@ -4156,15 +4114,18 @@ export default function CampaignEmailModulePage() {
 
     const recipients = parseTestRecipients(currentDraft.test_recipients);
     if (!recipients.length) {
-      setError("Debes indicar al menos un correo de prueba en el editor");
+      const message = "Debes indicar al menos un correo de prueba en el editor";
+      setError(message);
+      setTestSendNotice({ variant: "error", message });
       setSuccess("");
       return;
     }
 
     if (hasInvalidEmail(recipients)) {
-      setError(
-        "La lista de correos de prueba contiene direcciones con formato inválido",
-      );
+      const message =
+        "La lista de correos de prueba contiene direcciones con formato inválido";
+      setError(message);
+      setTestSendNotice({ variant: "error", message });
       setSuccess("");
       return;
     }
@@ -4177,13 +4138,17 @@ export default function CampaignEmailModulePage() {
     );
 
     if (!subject) {
-      setError("Debes definir asunto antes de enviar prueba");
+      const message = "Debes definir asunto antes de enviar prueba";
+      setError(message);
+      setTestSendNotice({ variant: "error", message });
       setSuccess("");
       return;
     }
 
     if (!htmlContent) {
-      setError("Debes definir contenido HTML antes de enviar prueba");
+      const message = "Debes definir contenido HTML antes de enviar prueba";
+      setError(message);
+      setTestSendNotice({ variant: "error", message });
       setSuccess("");
       return;
     }
@@ -4192,6 +4157,7 @@ export default function CampaignEmailModulePage() {
       setIsSendingTestEmail(true);
       setError("");
       setSuccess("");
+      setTestSendNotice(null);
 
       const { data } = await api.post("/api/campaign-emails/test-send", {
         recipients,
@@ -4210,16 +4176,16 @@ export default function CampaignEmailModulePage() {
       const sent = Number(data?.summary?.sent || 0);
       const failed = Number(data?.summary?.failed || 0);
       const invalid = Number(data?.summary?.invalid || 0);
-      setSuccess(
-        `Prueba enviada. Exitos: ${sent}, Fallidos: ${failed}, Invalidos: ${invalid}.`,
-      );
+      const message = `Prueba enviada. Exitos: ${sent}, Fallidos: ${failed}, Invalidos: ${invalid}.`;
+      setSuccess(message);
+      setTestSendNotice({ variant: "success", message });
     } catch (requestError) {
-      setError(
-        getApiErrorMessage(
-          requestError,
-          "No fue posible enviar correos de prueba",
-        ),
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible enviar correos de prueba",
       );
+      setError(message);
+      setTestSendNotice({ variant: "error", message });
       setSuccess("");
       setTestSendSummary(null);
       setTestSendResults([]);
@@ -4835,7 +4801,7 @@ export default function CampaignEmailModulePage() {
 
       {error ? (
         <div className="campaign-email-alert campaign-email-alert-error">
-          <span>{error}</span>
+          <span>{formatGlobalAlertMessage(error)}</span>
           <button
             type="button"
             className="campaign-email-alert-close"
@@ -4848,7 +4814,7 @@ export default function CampaignEmailModulePage() {
       ) : null}
       {success ? (
         <div className="campaign-email-alert campaign-email-alert-success">
-          <span>{success}</span>
+          <span>{formatGlobalAlertMessage(success)}</span>
           <button
             type="button"
             className="campaign-email-alert-close"
@@ -4958,13 +4924,20 @@ export default function CampaignEmailModulePage() {
                             className="campaign-email-guide-ai-button"
                             onClick={handleSaveGuide}
                             disabled={
-                              isAnalyzingCampaignGuide || isSavingCampaignGuide
+                              isAnalyzingCampaignGuide ||
+                              isSavingCampaignGuide ||
+                              !isCampaignGuideDirty
                             }
                           >
                             {isSavingCampaignGuide
                               ? "Guardando guia..."
                               : "Guardar guia"}
                           </button>
+                          <small className="campaign-email-muted">
+                            {isCampaignGuideDirty
+                              ? "Cambios pendientes en guia"
+                              : "Guia guardada"}
+                          </small>
                           {campaignGuidance ? (
                             <span
                               className={`campaign-email-guide-priority campaign-email-guide-priority-${campaignGuidance.priority}`}
@@ -5383,20 +5356,6 @@ export default function CampaignEmailModulePage() {
                                     placeholder="Ej. Registrarme"
                                   />
                                 </div>
-                                <div className="campaign-email-editor-input-stack">
-                                  <span className="campaign-email-editor-input-label">
-                                    URL final
-                                  </span>
-                                  <input
-                                    value={currentDraft.cta_url}
-                                    onChange={(event) =>
-                                      updateDraft({
-                                        cta_url: event.target.value,
-                                      })
-                                    }
-                                    placeholder="https://..."
-                                  />
-                                </div>
                               </label>
 
                               <label className="campaign-email-editor-field campaign-email-editor-field-stack">
@@ -5412,7 +5371,13 @@ export default function CampaignEmailModulePage() {
                                     Landings relacionadas
                                   </span>
                                   <select
-                                    value=""
+                                    value={
+                                      visibleLandingUrlSuggestions.some(
+                                        (entry) => entry.url === currentDraft.cta_url,
+                                      )
+                                        ? currentDraft.cta_url
+                                        : ""
+                                    }
                                     onChange={(event) => {
                                       const value = String(
                                         event.target.value || "",
@@ -5443,6 +5408,20 @@ export default function CampaignEmailModulePage() {
                                       </option>
                                     )}
                                   </select>
+                                </div>
+                                <div className="campaign-email-editor-input-stack">
+                                  <span className="campaign-email-editor-input-label">
+                                    URL final
+                                  </span>
+                                  <input
+                                    value={currentDraft.cta_url}
+                                    onChange={(event) =>
+                                      updateDraft({
+                                        cta_url: event.target.value,
+                                      })
+                                    }
+                                    placeholder="https://..."
+                                  />
                                 </div>
                               </label>
                             </div>
@@ -5894,6 +5873,25 @@ export default function CampaignEmailModulePage() {
                             : "Guardar"}
                         </button>
                       </div>
+                      {testSendNotice ? (
+                        <div
+                          className={`campaign-email-alert ${
+                            testSendNotice.variant === "error"
+                              ? "campaign-email-alert-error"
+                              : "campaign-email-alert-success"
+                          }`}
+                        >
+                          <span>{testSendNotice.message}</span>
+                          <button
+                            type="button"
+                            className="campaign-email-alert-close"
+                            onClick={() => setTestSendNotice(null)}
+                            aria-label="Cerrar notificacion de envio de prueba"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : null}
                       {testSendSummary ? (
                         <div className="campaign-email-test-send-summary">
                           <strong>Resultado de envio de prueba</strong>
@@ -5919,8 +5917,10 @@ export default function CampaignEmailModulePage() {
                               {testSendResults.map((item) => (
                                 <tr key={`${item.email}-${item.status}`}>
                                   <td>{item.email}</td>
-                                  <td>{item.status}</td>
-                                  <td>{item.message}</td>
+                                  <td>{formatTestSendStatusLabel(item.status)}</td>
+                                  <td>
+                                    {formatTestSendDetailMessage(item.message)}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>

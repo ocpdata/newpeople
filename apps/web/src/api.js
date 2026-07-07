@@ -162,63 +162,114 @@ function formatHttpStatusFallback(error) {
   return statusText ? `HTTP ${status}: ${statusText}` : `HTTP ${status}`;
 }
 
+export function normalizeUiMessage(rawMessage) {
+  const text = String(rawMessage || "").trim();
+  if (!text) return "";
+
+  const lower = text.toLowerCase();
+
+  if (lower.includes("insufficient authentication scopes")) {
+    return "La cuenta de Google no tiene permisos para enviar correos. Reconecta Gmail con permisos de envío.";
+  }
+
+  if (lower.includes("invalid_grant") || lower.includes("invalid token")) {
+    return "La sesión de Google expiró o es inválida. Reconecta tu cuenta de Google.";
+  }
+
+  if (lower.includes("quota") || lower.includes("rate limit")) {
+    return "Se alcanzó un límite de envío de Google. Intenta nuevamente más tarde.";
+  }
+
+  if (lower.includes("google_send_failed")) {
+    return "Google no permitió enviar el correo.";
+  }
+
+  if (lower.includes("network error")) {
+    return "Error de red. Verifica tu conexión e inténtalo nuevamente.";
+  }
+
+  if (lower.startsWith("request failed with status code")) {
+    const codeMatch = text.match(/status code\s+(\d{3})/i);
+    const code = codeMatch ? codeMatch[1] : "";
+    return code
+      ? `La solicitud falló con el código ${code}.`
+      : "La solicitud falló.";
+  }
+
+  return text
+    .replace(/\bsent\b/gi, "enviado")
+    .replace(/\bfailed\b/gi, "fallido")
+    .replace(/\binvalid\b/gi, "inválido")
+    .replace(/\bsuccess\b/gi, "éxito");
+}
+
 export function getApiErrorMessage(error, fallback = "Error de red") {
   const data = error?.response?.data;
   if (!data) {
     if (String(error?.message || "").trim() === "Network Error") {
-      return "No se recibió respuesta del servidor. La conexión pudo haberse interrumpido o algún proxy/API cortó la solicitud antes de responder.";
+      return normalizeUiMessage(
+        "No se recibió respuesta del servidor. La conexión pudo haberse interrumpido o algún proxy/API cortó la solicitud antes de responder.",
+      );
     }
 
     if (error?.code === "ECONNABORTED") {
-      return String(
+      return normalizeUiMessage(
+        String(
         error?.message || "La solicitud excedió el tiempo de espera",
+        ),
       );
     }
 
     if (String(error?.message || "").trim()) {
-      return String(error.message).trim();
+      return normalizeUiMessage(String(error.message).trim());
     }
 
-    return fallback;
+    return normalizeUiMessage(fallback);
   }
 
   const gatewayTimeoutMessage = formatGatewayTimeoutMessage(error, data);
   if (gatewayTimeoutMessage) {
-    return gatewayTimeoutMessage;
+    return normalizeUiMessage(gatewayTimeoutMessage);
   }
 
   const rawBodyDetail = formatRawErrorBody(data);
   if (rawBodyDetail) {
-    return rawBodyDetail;
+    return normalizeUiMessage(rawBodyDetail);
   }
 
   const validationDetail = formatValidationErrors(data.errors);
   if (validationDetail) {
-    return data.message
+    return normalizeUiMessage(
+      data.message
       ? `${data.message}: ${validationDetail}`
-      : validationDetail;
+      : validationDetail,
+    );
   }
 
   const issueDetail = formatIssueList(data.issues);
   if (issueDetail) {
-    return data.message ? `${data.message}: ${issueDetail}` : issueDetail;
+    return normalizeUiMessage(
+      data.message ? `${data.message}: ${issueDetail}` : issueDetail,
+    );
   }
 
   const extraDetail = formatExtraErrorDetail(data);
   if (extraDetail) {
-    return data.message && data.message !== extraDetail
+    return normalizeUiMessage(
+      data.message && data.message !== extraDetail
       ? `${data.message}: ${extraDetail}`
-      : extraDetail;
+      : extraDetail,
+    );
   }
 
   if (typeof data.message === "string" && data.message.trim()) {
-    return data.message.trim();
+    return normalizeUiMessage(data.message.trim());
   }
 
   const httpStatusFallback = formatHttpStatusFallback(error);
   if (httpStatusFallback) {
-    return httpStatusFallback;
+    return normalizeUiMessage(httpStatusFallback);
   }
 
-  return fallback;
+  return normalizeUiMessage(fallback);
 }

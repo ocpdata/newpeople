@@ -6,6 +6,10 @@ import { parseAuditChangedFields } from "./audit.js";
 
 const router = express.Router();
 
+function buildInPlaceholders(values = []) {
+  return values.map(() => "?").join(", ");
+}
+
 const listQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
@@ -97,28 +101,103 @@ router.get("/", requirePermission("audit.read"), async (req, res) => {
     `SELECT l.id, l.module, l.action, l.entity_type, l.entity_id,
             l.status, l.detail, l.changed_fields,
             l.performed_by_user_id, l.performed_by_name, l.performed_by_email,
-            l.created_at,
-            CASE
-              WHEN l.entity_type = 'user' THEN u.full_name
-              WHEN l.entity_type = 'role' THEN r.name
-              WHEN l.entity_type = 'account' THEN a.name
-              WHEN l.entity_type = 'contact' THEN CONCAT(ct.first_name, ' ', ct.last_name)
-              ELSE NULL
-            END AS entity_name
+            l.created_at
      FROM audit_log l
-     LEFT JOIN users u
-       ON l.entity_type = 'user' AND l.entity_id = u.id
-     LEFT JOIN roles r
-       ON l.entity_type = 'role' AND l.entity_id = r.id
-     LEFT JOIN accounts a
-       ON l.entity_type = 'account' AND l.entity_id = a.id
-     LEFT JOIN contacts ct
-       ON l.entity_type = 'contact' AND l.entity_id = ct.id
      ${whereSql}
-     ORDER BY l.created_at DESC, l.id DESC
+     ORDER BY l.id DESC
      LIMIT ? OFFSET ?`,
     [...params, pageSize, offset],
   );
+
+  const userEntityIds = Array.from(
+    new Set(
+      rows
+        .filter((row) => row.entity_type === "user" && Number(row.entity_id))
+        .map((row) => Number(row.entity_id)),
+    ),
+  );
+  const roleEntityIds = Array.from(
+    new Set(
+      rows
+        .filter((row) => row.entity_type === "role" && Number(row.entity_id))
+        .map((row) => Number(row.entity_id)),
+    ),
+  );
+  const accountEntityIds = Array.from(
+    new Set(
+      rows
+        .filter(
+          (row) => row.entity_type === "account" && Number(row.entity_id),
+        )
+        .map((row) => Number(row.entity_id)),
+    ),
+  );
+  const contactEntityIds = Array.from(
+    new Set(
+      rows
+        .filter(
+          (row) => row.entity_type === "contact" && Number(row.entity_id),
+        )
+        .map((row) => Number(row.entity_id)),
+    ),
+  );
+
+  const entityNames = new Map();
+
+  if (userEntityIds.length) {
+    const userRows = await query(
+      `SELECT id, full_name FROM users WHERE id IN (${buildInPlaceholders(
+        userEntityIds,
+      )})`,
+      userEntityIds,
+    );
+    for (const row of userRows) {
+      entityNames.set(`user:${Number(row.id)}`, String(row.full_name || ""));
+    }
+  }
+
+  if (roleEntityIds.length) {
+    const roleRows = await query(
+      `SELECT id, name FROM roles WHERE id IN (${buildInPlaceholders(
+        roleEntityIds,
+      )})`,
+      roleEntityIds,
+    );
+    for (const row of roleRows) {
+      entityNames.set(`role:${Number(row.id)}`, String(row.name || ""));
+    }
+  }
+
+  if (accountEntityIds.length) {
+    const accountRows = await query(
+      `SELECT id, name FROM accounts WHERE id IN (${buildInPlaceholders(
+        accountEntityIds,
+      )})`,
+      accountEntityIds,
+    );
+    for (const row of accountRows) {
+      entityNames.set(`account:${Number(row.id)}`, String(row.name || ""));
+    }
+  }
+
+  if (contactEntityIds.length) {
+    const contactRows = await query(
+      `SELECT id, first_name, last_name
+       FROM contacts
+       WHERE id IN (${buildInPlaceholders(contactEntityIds)})`,
+      contactEntityIds,
+    );
+    for (const row of contactRows) {
+      const fullName = String(
+        `${String(row.first_name || "").trim()} ${String(
+          row.last_name || "",
+        ).trim()}`,
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+      entityNames.set(`contact:${Number(row.id)}`, fullName);
+    }
+  }
 
   res.json({
     page,
@@ -127,6 +206,9 @@ router.get("/", requirePermission("audit.read"), async (req, res) => {
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
     items: rows.map((row) => ({
       ...row,
+      entity_name:
+        entityNames.get(`${String(row.entity_type || "")}:${Number(row.entity_id || 0)}`) ||
+        null,
       changed_fields: parseAuditChangedFields(row.changed_fields),
     })),
   });

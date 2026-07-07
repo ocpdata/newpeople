@@ -1758,7 +1758,8 @@ async function sendLandingConfirmationEmail({
             from: connection.google_email,
             to: displayTo,
             subject: displaySubject,
-            messageBody: displayHtml,
+            messageBody: "Confirmamos tu registro.",
+            htmlBody: displayHtml,
             attachments: [],
           });
 
@@ -3392,7 +3393,7 @@ publicRouter.post("/api/public/landing/v1/:slug/submit", async (req, res) => {
         field_keys: Array.from(fieldsMap.keys()),
       }),
       JSON.stringify(normalizedPayload),
-      CRM_STATUS_PENDING_MANUAL,
+      CRM_STATUS_PENDING,
     ],
   );
 

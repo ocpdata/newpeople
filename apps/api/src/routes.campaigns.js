@@ -101,6 +101,16 @@ const campaignUpsertSchema = z.object({
     .max(10)
     .optional()
     .nullable(),
+  audience_account_type_filters: z
+    .array(z.string().trim().max(120))
+    .max(200)
+    .optional()
+    .nullable(),
+  audience_sector_filters: z
+    .array(z.string().trim().max(120))
+    .max(200)
+    .optional()
+    .nullable(),
   tipo_campana: z.enum(TIPO_CAMPANA_VALUES),
   subtipo_campana: z.enum(SUBTIPO_CAMPANA_VALUES),
   aprobacion_compatibilidad: z.boolean().optional(),
@@ -151,19 +161,37 @@ function toDateOrNull(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function mapCampaignRow(row) {
-  let classificationGuideExamples = [];
+function parseJsonStringArray(rawValue, maxItems) {
   try {
-    const parsed = JSON.parse(row.classification_guide_examples_json || "[]");
-    if (Array.isArray(parsed)) {
-      classificationGuideExamples = parsed
-        .map((item) => String(item || "").trim())
-        .filter(Boolean)
-        .slice(0, 10);
+    const parsed =
+      typeof rawValue === "string"
+        ? JSON.parse(rawValue || "[]")
+        : rawValue;
+    if (!Array.isArray(parsed)) {
+      return [];
     }
+    return parsed
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, maxItems);
   } catch {
-    classificationGuideExamples = [];
+    return [];
   }
+}
+
+function mapCampaignRow(row) {
+  const classificationGuideExamples = parseJsonStringArray(
+    row.classification_guide_examples_json,
+    10,
+  );
+  const audienceAccountTypeFilters = parseJsonStringArray(
+    row.audience_account_type_filters_json,
+    200,
+  );
+  const audienceSectorFilters = parseJsonStringArray(
+    row.audience_sector_filters_json,
+    200,
+  );
 
   let campaignEmailGuide = null;
   try {
@@ -204,6 +232,8 @@ function mapCampaignRow(row) {
     campaign_goal_text: row.campaign_goal_text || "",
     classification_guide_context: row.classification_guide_context || "",
     classification_guide_examples: classificationGuideExamples,
+    audience_account_type_filters: audienceAccountTypeFilters,
+    audience_sector_filters: audienceSectorFilters,
     campaign_email_guide: campaignEmailGuide,
     campaign_email_draft: campaignEmailDraft,
     tipo_campana: row.tipo_campana,
@@ -922,17 +952,21 @@ router.post(
 
     const result = await query(
       `INSERT INTO campaigns
-       (name, description, campaign_goal_text, classification_guide_context, classification_guide_examples_json, tipo_campana, subtipo_campana,
+       (name, description, campaign_goal_text, classification_guide_context, classification_guide_examples_json,
+        audience_account_type_filters_json, audience_sector_filters_json,
+        tipo_campana, subtipo_campana,
         compatibilidad_nivel, compatibilidad_aprobada, compatibilidad_justificacion, compatibilidad_evaluada_at,
         estado_campana, etapa_ciclo_vida,
         starts_at, ends_at, created_by, updated_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payload.name,
         payload.description || null,
         payload.campaign_goal_text || null,
         payload.classification_guide_context || null,
         JSON.stringify(payload.classification_guide_examples || []),
+        JSON.stringify(payload.audience_account_type_filters || []),
+        JSON.stringify(payload.audience_sector_filters || []),
         payload.tipo_campana,
         payload.subtipo_campana,
         compatibilidad.nivel,
@@ -1141,6 +1175,8 @@ router.patch(
          campaign_goal_text = ?,
          classification_guide_context = ?,
          classification_guide_examples_json = ?,
+         audience_account_type_filters_json = ?,
+         audience_sector_filters_json = ?,
          tipo_campana = ?,
          subtipo_campana = ?,
          compatibilidad_nivel = ?,
@@ -1160,6 +1196,8 @@ router.patch(
         payload.campaign_goal_text || null,
         payload.classification_guide_context || null,
         JSON.stringify(payload.classification_guide_examples || []),
+        JSON.stringify(payload.audience_account_type_filters || []),
+        JSON.stringify(payload.audience_sector_filters || []),
         payload.tipo_campana,
         payload.subtipo_campana,
         compatibilidad.nivel,

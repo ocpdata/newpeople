@@ -19,6 +19,9 @@ const EMPTY_ACCOUNT_FORM = {
   last_interaction_at: "",
 };
 
+const CHATBOT_JOB_POLL_INTERVAL_MS = 1200;
+const CHATBOT_JOB_TIMEOUT_MS = 90_000;
+
 const CAMPAIGN_TYPE_DESCRIPTIONS = {
   reconocimiento:
     "Aumenta visibilidad y recordacion de marca en audiencias nuevas.",
@@ -724,6 +727,8 @@ function normalizeCampaignForm(
   campaignGoalText,
   classificationGuideContext,
   classificationGuideExamples,
+  selectedAccountTypeFilters,
+  selectedSectorFilters,
 ) {
   return {
     name: String(form.name || "").trim(),
@@ -736,6 +741,16 @@ function normalizeCampaignForm(
           .map((item) => String(item || "").trim())
           .filter(Boolean)
       : [],
+    audience_account_type_filters: Array.isArray(selectedAccountTypeFilters)
+      ? selectedAccountTypeFilters
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    audience_sector_filters: Array.isArray(selectedSectorFilters)
+      ? selectedSectorFilters
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
     tipo_campana: String(form.tipo_campana || "").trim(),
     subtipo_campana: String(form.subtipo_campana || "").trim(),
     estado_campana: String(form.estado_campana || "").trim(),
@@ -745,35 +760,10 @@ function normalizeCampaignForm(
   };
 }
 
-function getCampaignGoalStorageKey(campaignId) {
-  const key = String(campaignId || "__draft__").trim() || "__draft__";
-  return `campaigns-page-goal-text:${key}`;
-}
-
-function readCampaignGoalTextFromStorage(campaignId) {
-  if (typeof window === "undefined") return "";
-
-  try {
-    return String(
-      window.localStorage.getItem(getCampaignGoalStorageKey(campaignId)) || "",
-    ).trim();
-  } catch {
-    return "";
-  }
-}
-
-function writeCampaignGoalTextToStorage(campaignId, value) {
-  if (typeof window === "undefined") return;
-  if (!campaignId) return;
-
-  try {
-    window.localStorage.setItem(
-      getCampaignGoalStorageKey(campaignId),
-      String(value || "").trim(),
-    );
-  } catch {
-    // Ignore persistence failures.
-  }
+function normalizeSavedFilterList(values) {
+  return Array.isArray(values)
+    ? values.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
 }
 
 function getClassificationGuideStorageKey(
@@ -1276,25 +1266,25 @@ async function waitForChatbotJobCompletion({
   failedMessage,
   timeoutMessage,
 }) {
-  let completed = false;
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < CHATBOT_JOB_TIMEOUT_MS) {
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, CHATBOT_JOB_POLL_INTERVAL_MS),
+    );
     const jobRes = await api.get(
       `/api/chatbot/jobs/${encodeURIComponent(jobId)}`,
     );
     const status = String(jobRes?.data?.status || "queued").trim();
     if (status === "completed") {
-      completed = true;
-      break;
+      return;
     }
     if (status === "failed") {
       throw new Error(String(jobRes?.data?.error?.message || failedMessage));
     }
   }
 
-  if (!completed) {
-    throw new Error(timeoutMessage);
-  }
+  throw new Error(timeoutMessage);
 }
 
 function normalizeCatalogToken(value) {
@@ -2158,12 +2148,6 @@ export default function CampaignsPage() {
 
   useEffect(() => {
     if (selectedCampaignId) {
-      const storedText = readCampaignGoalTextFromStorage(selectedCampaignId);
-      if (storedText) {
-        setCampaignGoalText(storedText);
-        return;
-      }
-
       setCampaignGoalText(
         String(
           selectedCampaign?.campaign_goal_text ||
@@ -2175,7 +2159,11 @@ export default function CampaignsPage() {
     }
 
     setCampaignGoalText("");
-  }, [selectedCampaignId, selectedCampaign?.description]);
+  }, [
+    selectedCampaign?.campaign_goal_text,
+    selectedCampaign?.description,
+    selectedCampaignId,
+  ]);
 
   useEffect(() => {
     if (!selectedCampaignId) {
@@ -2183,27 +2171,27 @@ export default function CampaignsPage() {
       return;
     }
 
+    const persistedGuide = normalizeClassificationGuideFromDb(selectedCampaign);
     const currentType = String(campaignForm.tipo_campana || "").trim();
     const currentSubtype = String(campaignForm.subtipo_campana || "").trim();
-    const storedGuide = readStoredClassificationGuide(
-      selectedCampaignId,
-      currentType,
-      currentSubtype,
-    );
 
-    if (storedGuide) {
-      setClassificationGuideAi(storedGuide.guide || null);
-      setClassificationGuideAiSource(storedGuide);
+    if (isCampaignGuideConsistent(persistedGuide, currentType, currentSubtype)) {
+      setClassificationGuideAi(persistedGuide);
+      setClassificationGuideAiSource(persistedGuide);
       setClassificationGuideFallbackNote("");
       return;
     }
 
-    setClassificationGuideAi(null);
-    setClassificationGuideAiSource(null);
-    setClassificationGuideFallbackNote("");
+    if (!isCampaignGuideConsistent(classificationGuideAi, currentType, currentSubtype)) {
+      setClassificationGuideAi(null);
+      setClassificationGuideAiSource(null);
+      setClassificationGuideFallbackNote("");
+    }
   }, [
+    classificationGuideAi,
     campaignForm.subtipo_campana,
     campaignForm.tipo_campana,
+    selectedCampaign,
     selectedCampaignId,
   ]);
 
@@ -2465,7 +2453,11 @@ export default function CampaignsPage() {
       ),
     );
 
-    return selectedUniqueIds
+    const filteredSelectedIds = selectedUniqueIds.filter((accountId) =>
+      filteredAudienceAccountsById.has(accountId),
+    );
+
+    return filteredSelectedIds
       .map((accountId) => {
         const savedAccount = campaignAccountsById.get(accountId);
         const suggestedAccount = filteredAudienceAccountsById.get(accountId);
@@ -2600,7 +2592,7 @@ export default function CampaignsPage() {
     });
   }, [visibleAudienceAccounts, visibleContactsByAccountId]);
   const sortedVisibleAudienceAccounts = useMemo(() => {
-    const items = [...visibleAudienceAccountsWithContacts];
+    const items = [...visibleAudienceAccounts];
 
     items.sort((first, second) => {
       if (audienceSortMode === "name_desc") {
@@ -2637,7 +2629,7 @@ export default function CampaignsPage() {
     });
 
     return items;
-  }, [audienceSortMode, visibleAudienceAccountsWithContacts]);
+  }, [audienceSortMode, visibleAudienceAccounts]);
   const addContactsAccount = useMemo(() => {
     const targetId = Number(addContactsAccountId || 0);
     if (!targetId) return null;
@@ -2756,6 +2748,16 @@ export default function CampaignsPage() {
             starts_at: toDateInputValue(campaignsData[0].starts_at),
             ends_at: toDateInputValue(campaignsData[0].ends_at),
           });
+          setSelectedAccountTypeFilters(
+            normalizeSavedFilterList(
+              campaignsData[0].audience_account_type_filters,
+            ),
+          );
+          setSelectedSectorFilters(
+            normalizeSavedFilterList(campaignsData[0].audience_sector_filters),
+          );
+          setAccountTypeFiltersInitialized(true);
+          setSectorFiltersInitialized(true);
           const persistedGuide = normalizeClassificationGuideFromDb(
             campaignsData[0],
           );
@@ -2978,6 +2980,17 @@ export default function CampaignsPage() {
   }, [campaignForm.subtipo_campana, compatibleSubtypeOptions]);
 
   function startNewCampaign() {
+    const preferredTypes = new Set([
+      "potencial",
+      "principal",
+      "prospecto",
+      "puntual",
+      "otro",
+    ]);
+    const defaultAccountTypeFilters = accountTypeOptions.filter((accountType) =>
+      preferredTypes.has(normalizeClassificationValue(accountType)),
+    );
+
     setSelectedCampaignId(null);
     setPreferSavedAudienceSelection(true);
     setCampaignForm({
@@ -2990,6 +3003,14 @@ export default function CampaignsPage() {
         visibleCampaignStates,
       ),
     });
+    setSelectedAccountTypeFilters(
+      defaultAccountTypeFilters.length
+        ? defaultAccountTypeFilters
+        : accountTypeOptions,
+    );
+    setAccountTypeFiltersInitialized(accountTypeOptions.length > 0);
+    setSelectedSectorFilters(sectorOptions);
+    setSectorFiltersInitialized(sectorOptions.length > 0);
     setFeedback("");
     setError("");
     setCampaignGoalText("");
@@ -3015,13 +3036,18 @@ export default function CampaignsPage() {
       starts_at: toDateInputValue(campaign.starts_at),
       ends_at: toDateInputValue(campaign.ends_at),
     });
+    setSelectedAccountTypeFilters(
+      normalizeSavedFilterList(campaign.audience_account_type_filters),
+    );
+    setSelectedSectorFilters(
+      normalizeSavedFilterList(campaign.audience_sector_filters),
+    );
+    setAccountTypeFiltersInitialized(true);
+    setSectorFiltersInitialized(true);
     setFeedback("");
     setError("");
     setCampaignGoalText(
-      readCampaignGoalTextFromStorage(campaign.id) ||
-        String(
-          campaign?.campaign_goal_text || campaign?.description || "",
-        ).trim(),
+      String(campaign?.campaign_goal_text || campaign?.description || "").trim(),
     );
     setAiSuggestionReason("");
     const persistedGuide = normalizeClassificationGuideFromDb(campaign);
@@ -3252,6 +3278,8 @@ export default function CampaignsPage() {
         campaignGoalText,
         selectedClassificationUsageGuide.context,
         selectedClassificationUsageGuide.examples,
+        selectedAccountTypeFilters,
+        selectedSectorFilters,
       );
       let savedCampaign = null;
 
@@ -3269,9 +3297,6 @@ export default function CampaignsPage() {
       if (!savedCampaign) {
         throw new Error("No se recibio la campana guardada");
       }
-
-      const goalTextToPersist = String(campaignGoalText || "").trim();
-      writeCampaignGoalTextToStorage(savedCampaign.id, goalTextToPersist);
 
       setCampaigns((previous) => {
         const withoutCurrent = previous.filter(
@@ -3293,6 +3318,14 @@ export default function CampaignsPage() {
         starts_at: toDateInputValue(savedCampaign.starts_at),
         ends_at: toDateInputValue(savedCampaign.ends_at),
       });
+      setSelectedAccountTypeFilters(
+        normalizeSavedFilterList(savedCampaign.audience_account_type_filters),
+      );
+      setSelectedSectorFilters(
+        normalizeSavedFilterList(savedCampaign.audience_sector_filters),
+      );
+      setAccountTypeFiltersInitialized(true);
+      setSectorFiltersInitialized(true);
       const persistedGuide = normalizeClassificationGuideFromDb(savedCampaign);
       setClassificationGuideAi(persistedGuide);
       setClassificationGuideAiSource(persistedGuide);
@@ -3338,40 +3371,21 @@ export default function CampaignsPage() {
         campaignForm.etapa_ciclo_vida,
       );
 
-      const responses = await Promise.all(
-        selectedIds.map((accountId) =>
-          api.patch(
-            `/api/campaigns/${selectedCampaignId}/accounts/${accountId}`,
-            {
-              etapa_ciclo_vida: payload.etapa_ciclo_vida,
-              estado_interaccion: payload.estado_interaccion,
-              contact_ids: (visibleContactsByAccountId.get(accountId) || [])
-                .map((contact) => Number(contact?.contact_id || 0))
-                .filter(
-                  (contactId) => Number.isInteger(contactId) && contactId > 0,
-                ),
-              last_interaction_at: payload.last_interaction_at,
-            },
-          ),
-        ),
-      );
-
-      const savedItems = responses
-        .map((response) => response?.data?.item)
-        .filter(Boolean);
-      if (!savedItems.length) {
-        throw new Error("No se recibieron registros de audiencia guardados");
-      }
-
-      setCampaignAccounts((previous) => {
-        const idsSet = new Set(
-          savedItems.map((item) => Number(item.account_id)),
-        );
-        const withoutUpdated = previous.filter(
-          (existing) => !idsSet.has(Number(existing.account_id)),
-        );
-        return [...savedItems, ...withoutUpdated];
+      await api.put(`/api/campaigns/${selectedCampaignId}/accounts`, {
+        items: selectedIds.map((accountId) => ({
+          account_id: accountId,
+          etapa_ciclo_vida: payload.etapa_ciclo_vida,
+          estado_interaccion: payload.estado_interaccion,
+          contact_ids: (visibleContactsByAccountId.get(accountId) || [])
+            .map((contact) => Number(contact?.contact_id || 0))
+            .filter((contactId) => Number.isInteger(contactId) && contactId > 0),
+          last_interaction_at: payload.last_interaction_at,
+        })),
       });
+
+      const { data } = await api.get(`/api/campaigns/${selectedCampaignId}/accounts`);
+      const savedItems = Array.isArray(data?.items) ? data.items : [];
+      setCampaignAccounts(savedItems);
       setFeedback(
         `${savedItems.length} cuentas incluidas/actualizadas en la campaña`,
       );
@@ -3492,10 +3506,6 @@ export default function CampaignsPage() {
                         onChange={(event) => {
                           const nextValue = event.target.value;
                           setCampaignGoalText(nextValue);
-                          writeCampaignGoalTextToStorage(
-                            selectedCampaignId,
-                            nextValue,
-                          );
                         }}
                         placeholder="Ej. Quiero avisar de un webinar y lograr que se registren esta semana"
                       />
@@ -3918,7 +3928,7 @@ export default function CampaignsPage() {
                       </label>
                       <small>
                         Seleccionadas con contacto:{" "}
-                        {sortedVisibleAudienceAccounts.length}
+                        {visibleAudienceAccountsWithContacts.length}
                       </small>
                     </div>
                   </div>
@@ -3943,7 +3953,7 @@ export default function CampaignsPage() {
 
                   {!isLoadingSuggestedAccounts &&
                   !suggestedAccountsError &&
-                  visibleAudienceAccountsWithContacts.length === 0 ? (
+                  sortedVisibleAudienceAccounts.length === 0 ? (
                     <p className="campaigns-empty">
                       No hay cuentas seleccionadas con contactos. Usa el icono
                       de anadir para recuperar cuentas y contactos.
@@ -3952,7 +3962,7 @@ export default function CampaignsPage() {
 
                   {!isLoadingSuggestedAccounts &&
                   !suggestedAccountsError &&
-                  visibleAudienceAccountsWithContacts.length > 0 ? (
+                  sortedVisibleAudienceAccounts.length > 0 ? (
                     <div className="campaigns-account-checklist">
                       {sortedVisibleAudienceAccounts.map((item) => {
                         const accountId = Number(item.account_id);

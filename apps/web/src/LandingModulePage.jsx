@@ -496,6 +496,114 @@ function extractHtmlFromAssistantText(value) {
   return candidate;
 }
 
+function extractAssistantText(value) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const candidates = [
+    value.answer,
+    value.content,
+    value.text,
+    value.html,
+    value.message,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return "";
+}
+
+function extractJsonObjectFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  const fencedJson = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const directCandidate = fencedJson ? fencedJson[1].trim() : text;
+  const candidates = [directCandidate];
+
+  const braceMatch = directCandidate.match(/\{[\s\S]*\}/);
+  if (braceMatch && braceMatch[0] !== directCandidate) {
+    candidates.push(String(braceMatch[0] || "").trim());
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Keep fallback behavior when the assistant does not return valid JSON.
+    }
+  }
+
+  return null;
+}
+
+function normalizeEmailSubject(value, eventName = "") {
+  const normalized = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized) {
+    return normalized.slice(0, 300);
+  }
+
+  const safeEventName = String(eventName || "").trim();
+  return safeEventName
+    ? `Confirmamos tu registro en ${safeEventName}`
+    : "Confirmamos tu registro";
+}
+
+function extractConfirmationEmailDraftFromAssistant(rawValue, eventName = "") {
+  const objectSubject =
+    rawValue && typeof rawValue === "object"
+      ? extractAssistantText(
+          rawValue.asunto ||
+            rawValue.subject ||
+            rawValue.email_subject ||
+            rawValue.title,
+        )
+      : "";
+
+  const fallbackText = extractAssistantText(rawValue);
+  const parsed = extractJsonObjectFromText(fallbackText);
+
+  const parsedSubject = parsed
+    ? extractAssistantText(
+        parsed.asunto ||
+          parsed.subject ||
+          parsed.email_subject ||
+          parsed.title,
+      )
+    : "";
+
+  const parsedHtml = parsed
+    ? extractAssistantText(
+        parsed.html ||
+          parsed.email_body_html ||
+          parsed.body_html ||
+          parsed.body ||
+          parsed.content,
+      )
+    : "";
+
+  return {
+    subject: normalizeEmailSubject(parsedSubject || objectSubject, eventName),
+    html: String(parsedHtml || fallbackText || "").trim(),
+  };
+}
+
 function delay(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -748,6 +856,9 @@ export default function LandingModulePage() {
   const [confirmationConfig, setConfirmationConfig] = useState(
     DEFAULT_CONFIRMATION_CONFIG,
   );
+  const [savedConfirmationConfig, setSavedConfirmationConfig] = useState(
+    DEFAULT_CONFIRMATION_CONFIG,
+  );
   const [securityConfig, setSecurityConfig] = useState(DEFAULT_SECURITY_CONFIG);
   const [securityAllowedOriginsText, setSecurityAllowedOriginsText] =
     useState("");
@@ -778,6 +889,48 @@ export default function LandingModulePage() {
       ) || null
     );
   }, [landingDetail, selectedVersionId]);
+
+  const selectedVersionEditorSnapshot = useMemo(() => {
+    if (!selectedVersion) {
+      return {
+        html: String(DEFAULT_HTML || ""),
+        formSchemaText: prettyJson(DEFAULT_FORM_SCHEMA),
+      };
+    }
+
+    let schemaValue = DEFAULT_FORM_SCHEMA;
+    if (typeof selectedVersion.form_schema_json === "string") {
+      try {
+        schemaValue = JSON.parse(selectedVersion.form_schema_json || "{}");
+      } catch {
+        schemaValue = DEFAULT_FORM_SCHEMA;
+      }
+    } else if (
+      selectedVersion.form_schema_json &&
+      typeof selectedVersion.form_schema_json === "object"
+    ) {
+      schemaValue = selectedVersion.form_schema_json;
+    }
+
+    return {
+      html: String(selectedVersion.html_content || DEFAULT_HTML),
+      formSchemaText: prettyJson(schemaValue),
+    };
+  }, [selectedVersion]);
+
+  const isEditorVersionDirty = useMemo(() => {
+    if (!selectedVersion) return false;
+    return (
+      String(editorHtml || "") !== selectedVersionEditorSnapshot.html ||
+      String(editorFormSchemaText || "") !==
+        selectedVersionEditorSnapshot.formSchemaText
+    );
+  }, [
+    editorFormSchemaText,
+    editorHtml,
+    selectedVersion,
+    selectedVersionEditorSnapshot,
+  ]);
 
   const isSelectedLandingPublished =
     String(landingDetail?.landing_page?.status || "")
@@ -959,6 +1112,28 @@ export default function LandingModulePage() {
     setGlobalSuccess("");
   }, []);
 
+  const normalizeConfirmationConfig = useCallback(
+    (value) => ({
+      enabled: Boolean(value?.enabled),
+      response_type: String(value?.response_type || "email").trim() || "email",
+      email_subject: String(value?.email_subject || ""),
+      email_body_html: String(value?.email_body_html || ""),
+      redirect_url: String(value?.redirect_url || ""),
+      page_html: String(value?.page_html || ""),
+    }),
+    [],
+  );
+
+  const isConfirmationConfigDirty = useMemo(() => {
+    const current = normalizeConfirmationConfig(confirmationConfig);
+    const saved = normalizeConfirmationConfig(savedConfirmationConfig);
+    return JSON.stringify(current) !== JSON.stringify(saved);
+  }, [
+    confirmationConfig,
+    normalizeConfirmationConfig,
+    savedConfirmationConfig,
+  ]);
+
   const loadCampaignNameOptions = useCallback(async () => {
     try {
       const { data } = await api.get("/api/campaigns");
@@ -1049,7 +1224,7 @@ export default function LandingModulePage() {
           typeof rawConfirmation === "string"
             ? JSON.parse(rawConfirmation || "{}")
             : rawConfirmation || {};
-        setConfirmationConfig({
+        const normalizedConfirmation = normalizeConfirmationConfig({
           enabled: Boolean(parsedConfirmation.enabled),
           response_type: parsedConfirmation.response_type || "email",
           email_subject: parsedConfirmation.email_subject || "",
@@ -1057,6 +1232,8 @@ export default function LandingModulePage() {
           redirect_url: parsedConfirmation.redirect_url || "",
           page_html: parsedConfirmation.page_html || "",
         });
+        setConfirmationConfig(normalizedConfirmation);
+        setSavedConfirmationConfig(normalizedConfirmation);
 
         const parsedSecurity = parseSecurityConfigFromApi(
           data?.landing_page?.security_config_json,
@@ -1076,7 +1253,7 @@ export default function LandingModulePage() {
         setIsLoadingDetail(false);
       }
     },
-    [pushError],
+    [normalizeConfirmationConfig, pushError],
   );
 
   const loadSubmissions = useCallback(async () => {
@@ -1455,19 +1632,25 @@ export default function LandingModulePage() {
 
   async function handleSaveConfirmationConfig() {
     if (!selectedLandingId) return;
+
+    const normalizedConfirmation = normalizeConfirmationConfig(
+      confirmationConfig,
+    );
+
     try {
       setIsSavingConfirmation(true);
       await api.patch(
         `/api/landing/v1/landing-pages/${selectedLandingId}/confirmation-config`,
         {
-          enabled: confirmationConfig.enabled,
-          response_type: confirmationConfig.response_type || "email",
-          email_subject: confirmationConfig.email_subject || null,
-          email_body_html: confirmationConfig.email_body_html || null,
-          redirect_url: confirmationConfig.redirect_url || null,
-          page_html: confirmationConfig.page_html || null,
+          enabled: normalizedConfirmation.enabled,
+          response_type: normalizedConfirmation.response_type || "email",
+          email_subject: normalizedConfirmation.email_subject || null,
+          email_body_html: normalizedConfirmation.email_body_html || null,
+          redirect_url: normalizedConfirmation.redirect_url || null,
+          page_html: normalizedConfirmation.page_html || null,
         },
       );
+      setSavedConfirmationConfig(normalizedConfirmation);
       pushSuccess("Configuración de respuesta guardada");
     } catch (error) {
       pushError(
@@ -1583,7 +1766,8 @@ export default function LandingModulePage() {
 
       const aiInstruction = [
         "Genera un correo de confirmación de registro en HTML para enviar al asistente.",
-        "Devuelve solo el HTML del cuerpo del correo (sin explicaciones, sin markdown).",
+        'Devuelve SOLO JSON válido con esta estructura: {"asunto":"...","html":"..."}.',
+        "No agregues markdown ni texto fuera del JSON.",
         "Debe ser un HTML limpio, responsive, profesional y en español.",
         "Incluye: saludo personalizado con {first_name}, confirmación de registro, nombre del evento, CTA de agregar al calendario si aplica.",
         `Evento: ${eventName || "Evento"}`,
@@ -1610,15 +1794,35 @@ export default function LandingModulePage() {
         );
         const status = String(jobRes?.data?.status || "queued").trim();
         if (status === "completed") {
-          const generated = String(
-            jobRes?.data?.reply || jobRes?.data?.result || "",
-          ).trim();
-          if (generated) {
+          let generatedPayload = jobRes?.data?.reply || jobRes?.data?.result;
+          let generatedText = extractAssistantText(generatedPayload);
+
+          if (!generatedText) {
+            const historyRes = await api.get(
+              `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+            );
+            const items = Array.isArray(historyRes?.data?.items)
+              ? historyRes.data.items
+              : [];
+            const assistantMessage = [...items]
+              .reverse()
+              .find((entry) => String(entry?.role || "") === "assistant");
+            generatedPayload = assistantMessage?.content || "";
+            generatedText = extractAssistantText(generatedPayload);
+          }
+
+          const draft = extractConfirmationEmailDraftFromAssistant(
+            generatedPayload,
+            eventName,
+          );
+
+          if (draft.html) {
             setConfirmationConfig((prev) => ({
               ...prev,
-              email_body_html: generated,
+              email_subject: draft.subject,
+              email_body_html: draft.html,
             }));
-            pushSuccess("Correo generado por IA");
+            pushSuccess("Asunto y correo generados por IA");
           } else {
             pushError("La IA no devolvió contenido");
           }
@@ -1698,9 +1902,9 @@ export default function LandingModulePage() {
         );
         const status = String(jobRes?.data?.status || "queued").trim();
         if (status === "completed") {
-          const generated = String(
-            jobRes?.data?.reply || jobRes?.data?.result || "",
-          ).trim();
+          const generated =
+            extractAssistantText(jobRes?.data?.reply) ||
+            extractAssistantText(jobRes?.data?.result);
           let html = extractHtmlFromAssistantText(generated);
 
           if (!html) {
@@ -2467,7 +2671,10 @@ export default function LandingModulePage() {
                     <div className="landing-editor-section-main">
                       <div className="landing-action-group">
                         <span className="landing-action-group-label">
-                          Acciones de versión
+                          Acciones de versión · {" "}
+                          {isEditorVersionDirty
+                            ? "Cambios pendientes"
+                            : "Sin cambios"}
                         </span>
                         <div className="landing-inline-actions landing-editor-actions">
                           <button
@@ -2476,7 +2683,8 @@ export default function LandingModulePage() {
                             disabled={
                               isSavingEditor ||
                               isLoadingDetail ||
-                              isGeneratingWithAi
+                              isGeneratingWithAi ||
+                              !isEditorVersionDirty
                             }
                           >
                             Guardar versión
@@ -2905,13 +3113,20 @@ export default function LandingModulePage() {
                             <button
                               type="button"
                               onClick={handleSaveConfirmationConfig}
-                              disabled={isSavingConfirmation}
+                              disabled={
+                                isSavingConfirmation || !isConfirmationConfigDirty
+                              }
                               className="landing-save-btn"
                             >
                               {isSavingConfirmation
                                 ? "Guardando..."
                                 : "Guardar configuración"}
                             </button>
+                            <small className="landing-muted">
+                              {isConfirmationConfigDirty
+                                ? "Cambios pendientes en configuración"
+                                : "Configuración guardada"}
+                            </small>
                           </>
                         ) : null}
                       </fieldset>

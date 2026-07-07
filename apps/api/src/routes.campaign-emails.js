@@ -827,11 +827,12 @@ async function createDispatch({
         html_content,
         batch_size, max_sends_per_hour, max_sends_per_day,
         timezone, started_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UTC', NOW(3), NOW(3), NOW(3))`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3), NOW(3))`,
     [
       publicId,
       campaignId || null,
       Number(requestedByUserId),
+      "running",
       subject,
       null,
       String(ctaLabel || "").trim() || null,
@@ -843,6 +844,7 @@ async function createDispatch({
       FIXED_BATCH_SIZE,
       FIXED_MAX_SENDS_PER_HOUR,
       FIXED_MAX_SENDS_PER_DAY,
+      "UTC",
     ],
   );
 
